@@ -126,7 +126,8 @@ async def main():
     # Training loop - fresh problems each iteration!
     history = []
     print(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5} | {'Words':>5}\n" + "-" * 40)
-    for i in range(10):
+    num_steps = 2
+    for i in range(num_steps):
         metrics, rollouts = train_step(n_problems=8, n_samples=8, lr=2e-4, concise_bonus=(i>5))
         history.append(metrics)
         print(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%} | {metrics['words']:>5.0f}")
@@ -149,6 +150,36 @@ async def main():
     plt.savefig('rlvr_notebook_metrics.png')
     print("Saved 'rlvr_notebook_metrics.png'")
 
+    print("\n4. Saving weights and creating sampling clients...")
+    trained_client = training_client.save_weights_and_get_sampling_client(name="rlvr_concise_v1")
 
+    print("\n5. Comparing base vs trained model...")
+    base_training_client = await service_client.create_lora_training_client_async(base_model=base_model, rank=8)
+    base_client = base_training_client.save_weights_and_get_sampling_client()
+
+    def test_model(client, problem):
+        tokens = make_prompt_tokens(problem)
+        resp = client.sample(types.ModelInput.from_ints(tokens=tokens), num_samples=1,
+                            sampling_params=types.SamplingParams(max_tokens=256, temperature=0.3)).result()
+        text = tokenizer.decode(resp.sequences[0].tokens)
+        return text, compute_reward(text, problem[2])
+
+    ds = []
+    for _ in range(5):
+        p = generate_problem()
+        text, reward = test_model(trained_client, p)
+        text_base, reward_base = test_model(base_client, p)
+        ds.append((text, reward, text_base, reward_base))
+        print(f"Problem: {p[0]}\nTrained Reward: {reward['total']}\nBase Reward: {reward_base['total']}\n")
+
+
+    ds = []
+    for _ in range(5):
+        p = generate_problem()
+        text, reward = test_model(trained_client, p)
+        text_base, reward_base = test_model(base_client, p)
+        ds.append((text, reward, text_base, reward_base))
+        print(f"Problem: {p[0]}\nTrained Reward: {reward['total']}\nBase Reward: {reward_base['total']}\n")
+ 
 if __name__ == "__main__":
     asyncio.run(main())
