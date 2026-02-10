@@ -1,0 +1,18 @@
+[project]
+name = "server"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "accelerate>=1.12.0",
+    "datasets>=4.5.0",
+    "fastapi>=0.128.6",
+    "numpy>=2.4.2",
+    "peft>=0.18.1",
+    "pydantic>=2.12.5",
+    "torch>=2.10.0",
+    "transformers>=5.1.0",
+    "trl>=0.27.2",
+    "uvicorn>=0.40.0",
+]
