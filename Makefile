@@ -6,13 +6,17 @@ run-server:
 
 # Client test targets
 run-client-basic:
-	cd client && uv run python test_basic_workflow.py
+	cd client && uv run --no-sync -i https://pypi.org/simple python test_basic_workflow.py
 
 run-client-simple:
-	cd client && uv run python test_simple_rl.py
+	cd client && uv run --no-sync -i https://pypi.org/simple python test_simple_rl.py
 
 run-client-sft:
-	cd client && uv run python test_sft.py $(ARGS)
+	cd client && uv run --no-sync -i https://pypi.org/simple python test_sft.py $(ARGS)
 
 run-client-rlvr:
-	cd client && uv run python test_rlvr.py
+	cd client && uv run --no-sync -i https://pypi.org/simple python test_rlvr.py
+
+run-client-showcase:
+	cd client && uv run --no-sync -i https://pypi.org/simple python showcase_rlvr.py
+
