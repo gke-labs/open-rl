@@ -1,0 +1,23 @@
+graph TD
+    ClientA["Client A"] -->|1. POST /api/v1/*| API
+    ClientB["Client B"] -->|1. POST /api/v1/*| API
+    
+    API["FastAPI Gateway"] -->|2. Generate Future ID| API
+    API -->|3. enqueue req| Queue["Async Request Queue"]
+    API -.->|4. return Future ID| ClientA
+    
+    subgraph Background Engine
+        Queue -->|5. Drain Queue| Batching["Clock Cycle Loop"]
+        Batching -->|6. Group by Tenant| Group["Tenant Batches"]
+        
+        Group -->|Tenant A| SwapA["set_active_adapter A"]
+        SwapA --> ExecA["Execute FwdBwd -> Optim -> Generate"]
+        
+        ExecA -->|Tenant B| SwapB["set_active_adapter B"]
+        SwapB --> ExecB["Execute FwdBwd -> Optim -> Generate"]
+    end
+    
+    ExecA -->|7. Write Results| Store["Futures Store"]
+    ExecB -->|7. Write Results| Store
+    
+    ClientA -->|8. Poll /retrieve_future| Store

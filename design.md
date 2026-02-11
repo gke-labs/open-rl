@@ -1,0 +1,38 @@
+# Cute-RL Server MVP: System Architecture & Design
+
+This document summarizes the final architecture of the Cute-RL API backend after refactoring it to a multi-tenant, batched "Clock Cycle" engine. The server is designed to emulate the behavior of high-throughput RL infrastructure while minimizing VRAM footprint via LoRA hot-swapping.
+
+## High-Level Architecture
+
+The API backend consists of two primary layers:
+1. **The Asynchronous Gateway (FastAPI)**: Handles incoming HTTP requests from the Tinker SDK client, issues immediate future tracking IDs, and pushes workloads to a central asynchronous queue.
+2. **The Clock Cycle Engine (PyTorch/PEFT)**: A continuous background engine that drains the global request queue, batches operations by model tenant (`model_id`), manages PyTorch hardware resources lock-step, and executes actual tensor math.
+
+![API Backend Architecture](design_arch.svg)
+
+## Key Components
+
+### 1. Asynchronous Request Queue & Polling
+- **Problem**: Serving large LLMs synchronously via REST API (`asyncio.to_thread` directly inside HTTP handlers) causes catastrophic concurrency failures, OOM errors, and race conditions when multiple users hit endpoints simultaneously.
+- **Solution**: The server utilizes an `asyncio.Queue()`. HTTP handlers simply append a payload to the queue and instantly return a `req_id`.
+- **Latency & Polling**: The client SDK leverages a `retrieve_future` polling mechanism. If the server has not completed processing the `req_id` (via the background engine), it returns a `{status: "pending"}` structure that natively triggers the client to `try_again`.
+
+### 2. Multi-Tenant LoRA Architecture
+- **Problem**: Loading a multi-billion parameter base model (e.g., Qwen 3) consumes ~10-20GB+ of VRAM. Hosting multiple specialized models concurrently is impossible on a standard GPU.
+- **Solution (`peft`)**: The `TrainerEngine` initializes and statically anchors exactly **one** Base Model in VRAM. When a client calls `/api/v1/create_model`, the engine downloads an initial low-rank (e.g., Rank 16) adaptation layer (LoRA), mapping it uniquely to that client's `model_id`.
+- **Thread-safe Initialization**: A `threading.Lock()` securely forces parallel clients to wait while the Base Model physically loads into GPU memory. Subsequent simultaneous client joiners acquire the lock, recognize the base model is warm, and inject only their tiny LoRA layers.
+
+### 3. The Clock Cycle Engine
+- The engine operates an infinite `while True` loop (`clock_cycle_loop`) deployed as a background task. 
+- It rests until it detects at least one item in the queue. Upon waking, it briefly sleeps (`0.05s`) to deliberately "pipeline" and vacuum up concurrently arriving network requests.
+- **Batched Execution**: It separates mixed incoming network requests by their originating `model_id`.
+- **Hardware Hot-Swapping**: It executes sequentially over each tenant group. It executes `engine.set_active_adapter(model_id)` merely once per tenant batch, drastically cutting down on the sluggish `peft` adapter switching overhead that occurs when interleaving single math operations.
+
+### 4. Stateful Tensor Workloads
+The `TrainerEngine` isolates math execution strictly by `model_id` to prevent gradient poisoning:
+- **`optimizers` dict**: Each tenant maintains its very own `torch.optim.AdamW` instance stored in a dictionary.
+- **Sanitization & Clamping**: Explicit float-handling prevents `NaN` or `Infinity` from collapsing the JSON serialization. Variables like `.gather()` lengths, `-inf` logprobs, and `torch.exp()` overflow differences are precisely clamped to preserve mathematical stability.
+- **Gradient Clipping**: `torch.nn.utils.clip_grad_norm_` explicitly checks for gradient explosions (`grad_norm=NaN`) before triggering `optimizer.step()`.
+
+### 5. Unified Inference & Training sync
+- By directing `/api/v1/asample` generation requests *through* the core clock cycle queue instead of resolving them immediately in the HTTP handlers, the server completely side-steps race conditions where inference adapter hot-swapping could occur in the middle of an in-flight backpropagation pass.
