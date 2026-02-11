@@ -17,7 +17,7 @@ os.environ.setdefault("TINKER_BASE_URL", "http://localhost:8000")
 
 def generate_problem():
     capitals = {
-        "France": "Paris", "Japan": "Tokyo", "Brazil": "Brasilia", 
+        "France": "Paris", "Japan": "Tokyo", "Brazil": "Brasília", 
         "Canada": "Ottawa", "Australia": "Canberra", "Germany": "Berlin", 
         "India": "New Delhi", "Egypt": "Cairo", "Italy": "Rome", 
         "South Africa": "Pretoria", "Mexico": "Mexico City", "Spain": "Madrid"
@@ -27,7 +27,7 @@ def generate_problem():
 
 SYSTEM_PROMPT = """You are a helpful geography assistant."""
 
-USER_PROMPT_TEMPLATE = "What is the capital of {country}? You must format your response exactly as <answer>CityName</answer> with no other text."
+USER_PROMPT_TEMPLATE = "What is the capital of {country}? Use answer tags in the output."
 
 def compute_reward(response, correct_answer, concise_bonus=False):
     response = response.strip()
@@ -125,7 +125,7 @@ async def main():
             prompt_tokens = make_prompt_tokens(problem)
             
             for seq in response.sequences:
-                text = tokenizer.decode(seq.tokens)
+                text = tokenizer.decode(seq.tokens, skip_special_tokens=True)
                 reward_info = compute_reward(text, ans, concise_bonus)
                 rollouts.append({
                     "prompt_tokens": prompt_tokens, 
@@ -165,7 +165,7 @@ async def main():
         tokens = make_prompt_tokens(problem)
         resp = client.sample(types.ModelInput.from_ints(tokens=tokens), num_samples=1,
                             sampling_params=types.SamplingParams(max_tokens=25, temperature=0.3)).result()
-        text = tokenizer.decode(resp.sequences[0].tokens)
+        text = tokenizer.decode(resp.sequences[0].tokens, skip_special_tokens=True)
         return text, compute_reward(text, problem[2])
 
     eval_problems = [generate_problem() for _ in range(5)]
