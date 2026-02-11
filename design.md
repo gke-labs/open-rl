@@ -36,3 +36,21 @@ The `TrainerEngine` isolates math execution strictly by `model_id` to prevent gr
 
 ### 5. Unified Inference & Training sync
 - By directing `/api/v1/asample` generation requests *through* the core clock cycle queue instead of resolving them immediately in the HTTP handlers, the server completely side-steps race conditions where inference adapter hot-swapping could occur in the middle of an in-flight backpropagation pass.
+
+## v2: Multi-GPU Architecture (Proposed)
+
+While the single-GPU MVP successfully emulates high-throughput production systems, Reinforcement Learning (e.g., GRPO) remains bound by generation speed. To scale throughput, we must physically separate training and inference across multiple GPUs using a dedicated inference engine like vLLM.
+
+### 1. Split-Service Architecture
+The API Gateway will act as a unified router:
+- **GPU 0 (Training)**: Runs the existing PyTorch Clock Cycle Engine. Continues to handle `forward_backward` and `optim_step` batching.
+- **GPU 1 (Inference)**: Runs a dedicated `vLLM` AsyncLLMEngine instance with `enable_lora=True` to handle high-speed `/api/v1/asample` generation requests.
+
+### 2. LoRA Weight Synchronization
+Separating training and inference introduces the challenge of weight synchronization. In an RL loop, the optimizer updates the adapter on GPU 0. Before the next epoch, GPU 1 must receive these updated weights to generate the next batch of rollouts.
+- **Disk-Based Sync**: When `save_weights_and_get_sampling_client` is called, the PyTorch engine flushes the updated PEFT adapter to a shared disk location (e.g., `/tmp/kube-rl/peft/tenant_id/epoch`). 
+- **Dynamic Loading**: The API Gateway then instructs the vLLM engine to dynamically load this new adapter path via vLLM's `LoRARequest`.
+
+### 3. Queue Management & Sync Barriers
+Uncoupling inference from the central Clock Cycle queue re-introduces race conditions. A generation request could hit the Inference GPU *before* the synchronization step finishes updating vLLM's LoRA adapters.
+- **The Solution (Sync Barrier)**: The gateway will maintain state locks per `model_id`. When a client triggers an adapter save, the gateway locks that tenant's inference endpoint. Generation requests for that tenant remain queued or pending until the new LoRA weights are fully committed to disk and successfully loaded by the vLLM engine.

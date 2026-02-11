@@ -4,9 +4,19 @@ Kube-RL is a multi-tenant Reinforcement Learning HTTP backend. It's built to mim
 
 ## Architecture
 
-The server uses an asynchronous batched "Clock Cycle" engine. Instead of redundantly reloading billion-parameter models to VRAM, it anchors a single Base Model and leverages rapid LoRA (Low-Rank Adaptation) **hot-swapping** to serve multiple concurrent RL client loops. 
+The API backend consists of two primary layers designed to minimize VRAM footprint and handle high-throughput workloads:
+1. **The Asynchronous Gateway (FastAPI)**: Handles incoming HTTP requests from the Tinker SDK client, issues immediate future tracking IDs, and pushes workloads to a central asynchronous queue.
+2. **The Clock Cycle Engine (PyTorch/PEFT)**: A continuous background engine that drains the global request queue, batches operations by model tenant (`model_id`), manages PyTorch hardware resources lock-step, and executes actual tensor math.
 
 ![API Backend Architecture](design_arch.svg)
+
+### Key Architectural Components
+
+- **Asynchronous Request Queue & Polling**: To prevent concurrency failures and OOM errors when serving large LLMs synchronously, the server utilizes an `asyncio.Queue()`. HTTP handlers append a payload to the queue and instantly return a `req_id`. The client SDK leverages a `retrieve_future` polling mechanism to track the execution state.
+- **Multi-Tenant LoRA Architecture**: The engine initializes and statically anchors exactly **one** Base Model in VRAM. When a client provisions a model, the engine injects a low-rank (e.g., Rank 16) adaptation layer (LoRA) mapped uniquely to that client's `model_id`. A thread-safe lock secures the base model during initialization.
+- **The Clock Cycle Engine**: Operating as an infinite background loop, it rests until it detects queue items. It briefly sleeps upon waking to deliberately "pipeline" concurrent requests. Because it batches execution by `model_id`, it executes `set_active_adapter` only once per tenant batch, drastically cutting down on sluggish adapter switching overhead.
+- **Stateful Tensor Workloads**: Math execution is strictly isolated by `model_id` to prevent gradient poisoning. Each tenant maintains its own isolated `torch.optim.AdamW` instance. Explicit float-handling prevents serialization collapses, and gradient clipping protects against gradient explosions.
+- **Unified Inference & Training Sync**: By directing generation requests through the core clock cycle queue instead of immediately resolving them in HTTP handlers, the server systematically prevents race conditions where inference adapter hot-swapping might disrupt an in-flight backpropagation pass.
 
 ## The 4 Key Training Primitives
 
