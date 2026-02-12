@@ -185,7 +185,7 @@ async def run_rlvr_job(service_client, target_tag):
                 })
         return rollouts
 
-    async def train_step(n_problems=4, n_samples=4, lr=1e-4, concise_bonus=False):
+    async def train_step(n_problems=4, n_samples=8, lr=5e-4, concise_bonus=False):
         """One RL step: rollouts → advantages → update."""
         rollouts = await run_rollouts(n_problems, n_samples, concise_bonus)
         advantages = compute_advantages(rollouts)
