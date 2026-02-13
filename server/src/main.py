@@ -125,11 +125,13 @@ async def optim_step(req: dict):
 async def save_weights_for_sampler(req: dict):
     req_id = str(uuid.uuid4())
     model_id = req.get("model_id") # Client passes the TrainingClient's model_id
+    seq_id = req.get("sampling_session_seq_id", 0)
     futures_store[req_id] = {"status": "pending"}
     
     await request_queue.put({
         "req_id": req_id,
         "model_id": model_id,
+        "seq_id": seq_id,
         "type": "save_weights_for_sampler"
     })
     
@@ -154,21 +156,30 @@ async def asample(req: dict):
     
     model_id = req.get("model_id") or req.get("sampling_session_id")
     
+    # vLLM caches adapters natively based on the `lora_id` key. 
+    # To force vLLM to reload weights after PyTorch trains them, we pass a unique sequential `lora_id`.
+    lora_id = model_id
+    # Strip the sequence tag to find the base directory where PyTorch actually wrote the checkpoint
+    base_model_id = lora_id.split("-samp-")[0] if lora_id else None
+    
     # IPC Bridge: Route to vLLM worker on Port 8001 instead of PyTorch Queue
     async def _route_to_vllm():
         try:
             import os
             tmp_dir = os.environ.get("KUBE_RL_TMP_DIR", "/tmp/kube-rl")
             # PEFT natively saves adapters into subdirectories named after their adapter ID
-            lora_path = os.path.join(tmp_dir, "peft", model_id, model_id)
+            lora_path = os.path.join(tmp_dir, "peft", base_model_id, base_model_id) if base_model_id else None
+            
+            print(f"[Gateway DEBUG] Routing asample to vLLM. model_id_received={model_id} -> lora_id={lora_id}, lora_path={lora_path}")
             
             payload = {
                 "request_id": req_id,
                 "prompt_token_ids": prompt,
                 "max_tokens": max_tokens,
                 "temperature": temperature,
-                "lora_id": model_id,
-                "lora_path": lora_path 
+                "num_samples": num_samples,
+                "lora_id": lora_id,
+                "lora_path": lora_path
             }
             
             req_bytes = json.dumps(payload).encode('utf-8')

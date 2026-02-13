@@ -382,6 +382,7 @@ async def clock_cycle_loop():
                             result["type"] = "optim_step"
                             set_future_result(req_id, result)
                         elif req_type == "save_weights_for_sampler":
+                            seq_id = r.get("seq_id", 0)
                             import os
                             # Save to disk/ramdisk so vLLM can load it
                             tmp_dir = os.environ.get("KUBE_RL_TMP_DIR", "/tmp/kube-rl")
@@ -393,7 +394,7 @@ async def clock_cycle_loop():
                             
                             result = {
                                 "path": None,
-                                "sampling_session_id": m_id,
+                                "sampling_session_id": f"{m_id}-samp-{seq_id}",
                                 "type": "save_weights_for_sampler"
                             }
                             set_future_result(req_id, result)

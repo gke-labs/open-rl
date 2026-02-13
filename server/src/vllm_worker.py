@@ -49,6 +49,7 @@ async def generate(req: Request):
         prompt_token_ids = data.get("prompt_token_ids")
         max_tokens = data.get("max_tokens", 20)
         temperature = data.get("temperature", 1.0)
+        num_samples = data.get("num_samples", 1)
         
         lora_id = data.get("lora_id", None)
         lora_path = data.get("lora_path", None)
@@ -61,6 +62,7 @@ async def generate(req: Request):
             return {"sequences": [{"tokens": [0]*max_tokens, "logprobs": [-0.1]*max_tokens}]}
 
         sampling_params = SamplingParams(
+            n=num_samples,
             temperature=temperature,
             max_tokens=max_tokens,
             logprobs=1 # return logprobs for TITO RL
@@ -68,7 +70,11 @@ async def generate(req: Request):
         
         lora_request = None
         if lora_id and lora_path:
-            lora_request = LoRARequest(lora_id, 1, lora_path)
+            import hashlib
+            # vLLM natively relies on lora_int_id to track cached adapter weights.
+            # Convert the sequence identifier UUID to a stable 32-bit positive integer hash.
+            lora_int_id = int(hashlib.md5(lora_id.encode('utf-8')).hexdigest(), 16) % (2**31 - 1) + 1
+            lora_request = LoRARequest(lora_id, lora_int_id, lora_path)
 
         results_generator = engine.generate(
             prompt={"prompt_token_ids": prompt_token_ids},
@@ -82,23 +88,26 @@ async def generate(req: Request):
             # vLLM streams back incremental states, we wait for the final one
             final_output = request_output
             
-        # Extract the top completion
-        output = final_output.outputs[0]
-        generated_token_ids = output.token_ids
-        
-        # Reconstruct logprobs
-        logprobs = []
-        if output.logprobs:
-            for idx, token_logprobs in enumerate(output.logprobs):
-                # token_logprobs is a dict of {token_id: Logprob}
-                token_id = generated_token_ids[idx]
-                if token_logprobs and token_id in token_logprobs:
-                   logprob = token_logprobs[token_id].logprob
-                else:
-                   logprob = -9999.0
-                logprobs.append(logprob)
+        sequences_out = []
+        for output in final_output.outputs:
+            generated_token_ids = list(output.token_ids)
+            logprobs = []
+            if output.logprobs:
+                for idx, token_logprobs in enumerate(output.logprobs):
+                    # token_logprobs is a dict of {token_id: Logprob}
+                    token_id = generated_token_ids[idx]
+                    if token_logprobs and token_id in token_logprobs:
+                       logprob = token_logprobs[token_id].logprob
+                    else:
+                       logprob = -9999.0
+                    logprobs.append(logprob)
+            sequences_out.append({
+                "tokens": generated_token_ids, 
+                "logprobs": logprobs, 
+                "stop_reason": output.finish_reason
+            })
 
-        return {"sequences": [{"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason}]}
+        return {"sequences": sequences_out}
     except Exception as e:
         import traceback
         traceback.print_exc()
