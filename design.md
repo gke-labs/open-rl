@@ -45,15 +45,22 @@ The `TrainerEngine` isolates math execution strictly by `model_id` to prevent gr
 While the single-GPU MVP successfully emulates high-throughput production systems, Reinforcement Learning (e.g., GRPO) remains bound by generation speed. To scale throughput, we must physically separate training and inference across multiple GPUs using a dedicated inference engine like vLLM.
 
 ### 1. Split-Service Architecture
-The API Gateway will act as a unified router:
-- **GPU 0 (Training)**: Runs the existing PyTorch Clock Cycle Engine. Continues to handle `forward_backward` and `optim_step` batching.
-- **GPU 1 (Inference)**: Runs a dedicated `vLLM` AsyncLLMEngine instance with `enable_lora=True` to handle high-speed `/api/v1/asample` generation requests.
+To completely bypass the Python Global Interpreter Lock (GIL) and prevent CPU bottlenecks between PyTorch and vLLM, the API Gateway will utilize Python `multiprocessing`:
+- **Main Process (GPU 0 - Training)**: Runs the FastAPI Gateway and the existing PyTorch Clock Cycle Engine. Continues to handle `forward_backward` and `optim_step` batching.
+- **Subprocess (GPU 1 - Inference)**: Runs a dedicated `vLLM` AsyncLLMEngine instance with `enable_lora=True` to handle high-speed generation.
+- **IPC (Inter-Process Communication)**: The API Gateway routes the `prompt_token_ids` for `/api/v1/asample` requests to the vLLM subprocess via high-speed Unix Domain Sockets, completely isolating the CUDA contexts and maximizing VRAM stability.
 
 ### 2. LoRA Weight Synchronization
-Separating training and inference introduces the challenge of weight synchronization. In an RL loop, the optimizer updates the adapter on GPU 0. Before the next epoch, GPU 1 must receive these updated weights to generate the next batch of rollouts.
-- **Disk-Based Sync**: When `save_weights_and_get_sampling_client` is called, the PyTorch engine flushes the updated PEFT adapter to a shared disk location (e.g., `/tmp/kube-rl/peft/tenant_id/epoch`). 
-- **Dynamic Loading**: The API Gateway then instructs the vLLM engine to dynamically load this new adapter path via vLLM's `LoRARequest`.
+To scale generation speed without dragging down training latency, we must overcome the weight synchronization bottleneck between GPUs.
+- **Base Model Permanence**: The massive base model (e.g. 10GB Qwen) is loaded once onto the Trainer GPU (PyTorch) and identically onto the Inference GPU (vLLM). It is never sent across the PCIe bus/NVLink, as syncing 10GB per training step would destroy throughput.
+- **The NCCL/vLLM Challenge**: Theoretically, PyTorch's `torch.distributed.broadcast` (NCCL) could shoot the 50MB LoRA adapter weights directly from GPU 0 to GPU 1 in microseconds. However, vLLM utilizes a custom C++/CUDA backend and PagedAttention memory manager. You cannot safely overwrite raw tensor pointers from Python; it would require writing custom PyTorch-vLLM C++ bindings to catch the NCCL broadcast layer.
+- **RAM Disk Sync (`/dev/shm`)**: The standard high-throughput production alternative avoids disk I/O entirely while side-stepping the NCCL problem. When `save_weights_and_get_sampling_client` is called, the PyTorch engine executes `torch.save()` dumping the 50MB adapter directly into the host's memory-backed RAM disk (e.g., `/dev/shm/tenant_m_id.pt`). The API Gateway immediately fires a dynamic `LoRARequest` to the vLLM engine, which ingests the new weights from RAM in milliseconds.
 
 ### 3. Queue Management & Sync Barriers
 Uncoupling inference from the central Clock Cycle queue re-introduces race conditions. A generation request could hit the Inference GPU *before* the synchronization step finishes updating vLLM's LoRA adapters.
 - **The Solution (Sync Barrier)**: The gateway will maintain state locks per `model_id`. When a client triggers an adapter save, the gateway locks that tenant's inference endpoint. Generation requests for that tenant remain queued or pending until the new LoRA weights are fully committed to disk and successfully loaded by the vLLM engine.
+### 4. Tokens-In, Tokens-Out Semantics (TITO)
+When splitting RL into Trainer + Inference GPUs, you must prevent the API Gateway from decoding arrays into raw text strings (`"prompt": "What is..."`) to send to vLLM. 
+- **The RL Logprob Problem**: Tokenizers are notorious for non-deterministic spacing and chunking. If vLLM receives a plain text string, it re-tokenizes it. Its resulting token array might be off by a single whitespace token compared to the Trainer's original encoding. When the Inference GPU returns its text, and the Trainer re-tokenizes it to calculate the `loss.backward()` advantages, the `targets` array will inevitably mismatch the `logits` sequence length or index alignment, entirely poisoning the RL gradients.
+- **The Solution**: The system **must** communicate purely in integer arrays. The API Gateway routes `prompt_token_ids: [102, 345, ...] ` directly to vLLM. vLLM completely bypasses its internal tokenization and generates sequentially.
+- **vLLM Support**: vLLM natively supports passing `prompt_token_ids` in its `v1/completions` OpenAI-compatible API (and its internal `AsyncLLMEngine`). It will return the generated output as an array of integer `token_ids` alongside the logprobs, ensuring perfect mathematical alignment when the Trainer GPU picks up the results for the backward pass.
