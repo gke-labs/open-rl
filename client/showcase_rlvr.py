@@ -195,11 +195,9 @@ async def run_rlvr_job(service_client, target_tag):
         training_client.optim_step(types.AdamParams(learning_rate=lr)).result()
     
         rewards = [r["reward"] for r in rollouts]
-        words = [len(r["completion_text"].split()) for r in rollouts]
         return {
             "reward": np.mean(rewards),
             "accuracy": np.mean([r["reward_breakdown"]["correct"] > 0 for r in rollouts]),
-            "words": np.mean(words),
         }, rollouts
 
     # ------------------------------------------------------------------
@@ -235,12 +233,12 @@ async def run_rlvr_job(service_client, target_tag):
     # ------------------------------------------------------------------
     log("--- Starting RL Training Loop ---")
     history = []
-    log(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5} | {'Words':>5}\n" + "-" * 40)
+    log(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5}\n" + "-" * 30)
     num_steps = 15
     for i in range(num_steps):
         metrics, rollouts = await train_step(n_problems=4, n_samples=8, lr=5e-4, concise_bonus=False)
         history.append(metrics)
-        log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%} | {metrics['words']:>5.0f}")
+        log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
         if rollouts:
             for r in rollouts:
                 sample_text = r['completion_text'].replace('\n', ' ').strip()
@@ -248,7 +246,7 @@ async def run_rlvr_job(service_client, target_tag):
                 log(f"       -> Sample: {sample_text} (Reward: {sample_reward})")
 
     log("\n-> Generating plot...")
-    fig, axes = plt.subplots(1, 3, figsize=(12, 3))
+    fig, axes = plt.subplots(1, 2, figsize=(8, 3))
     iters = range(1, len(history) + 1)
     
     axes[0].plot(iters, [h["reward"] for h in history], 'b-o')
@@ -257,9 +255,6 @@ async def run_rlvr_job(service_client, target_tag):
     axes[1].plot(iters, [h["accuracy"] for h in history], 'g-o')
     axes[1].set_title("Accuracy")
     axes[1].set_ylim(0, 1)
-    
-    axes[2].plot(iters, [h["words"] for h in history], 'r-o')
-    axes[2].set_title("Avg Words")
     
     plt.tight_layout()
     plt.savefig(f'showcase_metrics_{target_tag}.png')

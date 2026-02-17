@@ -1,0 +1,50 @@
+%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%
+flowchart LR
+        subgraph Rollout
+            direction TB
+            PrepareInputs("Prepare model inputs")
+            SGLangGen("SGLang generate")
+            ConcatAssistant("Concate assistant tokens<br/>loss mask = 1")
+            ToolCall("Tool Call/Environment Interaction")
+            EncodeObs("Encode and Concate Observation<br/>loss mask = 0<br/>multimodal state update")
+            TaskCheck{"Task Done /<br/>max turns hit / context length hit?"}
+            Finalize("Finalize Sample<br/>concate multimodal tensor")
+    
+            PrepareInputs --> SGLangGen
+            SGLangGen --> ConcatAssistant
+            ConcatAssistant --> ToolCall
+            ToolCall --> EncodeObs
+            EncodeObs --> TaskCheck
+            TaskCheck -- "No" --> SGLangGen
+            TaskCheck -- "Yes" --> Finalize
+        end
+    
+        subgraph Training
+            Megatron("Megatron / FSDP")
+        end
+
+
+    Finalize --- MegatronEdge( ) --- Megatron
+    Megatron --- PrepareInputsEdge( ) --- PrepareInputs
+
+    linkStyle 7,8 stroke-width:0px,fill:none 
+    %% The above is complex styling for edges.. let's just use normal edges first.
+
+    Finalize -->|Sample| Megatron
+    Megatron -->|Update Weights| PrepareInputs
+
+    %% Styling
+    classDef yellowNode fill:#fcd34d,stroke:#d97706,stroke-width:1px,color:black
+    classDef lightYellowNode fill:#fef9c3,stroke:#d97706,stroke-width:1px,color:black
+    classDef orangeNode fill:#fdba74,stroke:#ea580c,stroke-width:1px,color:black
+    classDef darkOrangeNode fill:#fb923c,stroke:#ea580c,stroke-width:1px,color:black
+    classDef trainingNode fill:#fffbeb,stroke:#d97706,stroke-width:1px,color:black
+
+    class PrepareInputs yellowNode
+    class SGLangGen lightYellowNode
+    class ConcatAssistant lightYellowNode
+    class ToolCall orangeNode
+    class EncodeObs orangeNode
+    class TaskCheck darkOrangeNode
+    class Finalize yellowNode
+    class Megatron trainingNode
