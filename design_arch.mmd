@@ -10,7 +10,7 @@ graph TD
         Swap --> Save["model.save_pretrained()"]
     end
     
-    Save -->|Sync .safetensors| RAMDisk[("RAM Disk (/tmp/kube-rl)")]
+    Save -->|Sync .safetensors| RAMDisk[("RAM Disk (/tmp/open-rl)")]
     
     API -->|Route inference reqs| IPC["HTTP / HTTPX IPC"]
     

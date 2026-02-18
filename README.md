@@ -1,6 +1,6 @@
-# Kube-RL: High-Throughput RL Infrastructure
+# Open-RL: High-Throughput RL Training Infrastructure
 
-Kube-RL is a multi-tenant Reinforcement Learning HTTP backend. It's built to mimic high-performance production systems (such as Tinker API) using a minimalist PyTorch and PEFT (Parameter-Efficient Fine-Tuning) stack.
+Open-RL implements a training API for fine tuning LLMs using reinforcement learning. The APIs are inspired by Tinker API and are built using a minimalist PyTorch and PEFT (Parameter-Efficient Fine-Tuning) stack.
 
 ## Architecture
 
@@ -20,7 +20,7 @@ The API backend consists of two primary layers designed to minimize VRAM footpri
 
 ## The 4 Key Training Primitives
 
-To train a model against the Kube-RL backend, you utilize the 4 fundamental SDK primitives: Model Creation, Forward-Backward Pass, Optimizer Step, and Sampling. 
+To train a model against the Open-RL backend, you utilize the 4 fundamental SDK primitives: Model Creation, Forward-Backward Pass, Optimizer Step, and Sampling. 
 
 Below is a basic python training loop showcasing these 4 primitives using Supervised Fine-Tuning (SFT) as an example:
 

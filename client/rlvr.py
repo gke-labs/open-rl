@@ -2,7 +2,6 @@ import os
 import sys
 import asyncio
 import random
-import math
 import re
 import logging
 import numpy as np
@@ -30,7 +29,9 @@ def generate_problem():
         "Colombia": "Bogotá", "Peru": "Lima", "Chile": "Santiago",
         "Venezuela": "Caracas", "Greece": "Athens", "Sweden": "Stockholm",
         "Norway": "Oslo", "Poland": "Warsaw", "Ukraine": "Kyiv",
-        "New Zealand": "Wellington", "Philippines": "Manila", "Malaysia": "Kuala Lumpur"
+        "New Zealand": "Wellington", "Philippines": "Manila", "Malaysia": "Kuala Lumpur",
+        "Iran": "Tehran" # Normalize to Tehran but handle inputs separately if needed
+
     }
     country = random.choice(list(capitals.keys()))
     return [country], [], capitals[country]
@@ -54,15 +55,15 @@ def compute_reward(response, correct_answer, target_tag="answer"):
     
     if full_match:
         inner_text = full_match.group(1).strip()
+        # Normalization for common aliases
+        if inner_text.lower() == "teheran": inner_text = "Tehran"
+        
         if inner_text.lower() == correct_answer.lower():
             rewards["correct"] = 1.0
             rewards["format"] = 1.0
             
-            # Bonus for perfect casing in the answer
-            if inner_text == correct_answer:
-                rewards["format"] += 0.5
-            elif inner_text.islower() or inner_text.isupper():
-                rewards["format"] -= 0.1
+            # Bonus for correct answer (case-insensitive now gets full points)
+            rewards["format"] += 0.5
                 
             rewards["total"] = sum(rewards.values())
             return rewards
@@ -173,7 +174,8 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
                     "completion_text": text, 
                     "reward": reward_info["total"], 
                     "reward_breakdown": reward_info, 
-                    "correct_answer": ans 
+                    "correct_answer": ans,
+                    "country": problem[0][0]
                 })
             
             if len(problem_rollouts) >= 2:
@@ -219,8 +221,6 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
     # Baseline Evaluation (Before Training)
     # ------------------------------------------------------------------
     log("\n--- Baseline Evaluation (Before Training) ---")
-    # base_client = training_client.save_weights_and_get_sampling_client(name=f"initial_base_{target_tag}")
-    # Use explicit 2-step to preserve name/alias
     res = training_client.save_weights_for_sampler(name=f"initial_base_{target_tag}").result()
     base_client = service_client.create_sampling_client(res.path)
 
@@ -249,39 +249,46 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
     log("--- Starting RL Training Loop ---")
     history = []
     log(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5}\n" + "-" * 30)
+    
+    def update_metrics_plot():
+        fig, axes = plt.subplots(1, 2, figsize=(8, 3))
+        iters = range(1, len(history) + 1)
+        
+        axes[0].plot(iters, [h["reward"] for h in history], 'b-o')
+        axes[0].set_title("Reward")
+        
+        axes[1].plot(iters, [h["accuracy"] for h in history], 'g-o')
+        axes[1].set_title("Accuracy")
+        axes[1].set_ylim(0, 1)
+        
+        plt.tight_layout()
+        plt.savefig(f'rlvr_metrics_{target_tag}.png')
+        plt.close(fig)
+
     N_SAMPLES = 8
     for i in range(num_steps):
-        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-4)
+        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-5)
         history.append(metrics)
         log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
+        
+        # update plot
+        update_metrics_plot()
+        
         if rollouts:
             for idx, r in enumerate(rollouts):
                 if idx > 0 and idx % N_SAMPLES == 0:
                     log(f"       {'-'*50}")
                 sample_text = r['completion_text'].replace('\n', ' ').strip()
                 sample_reward = r['reward']
-                log(f"       -> Sample: {sample_text} (Reward: {sample_reward})")
+                problem_country = r.get("country", "Unknown")
+                log(f"       -> [{problem_country}] Sample: {sample_text} (Reward: {sample_reward})")
 
-    log("\n-> Generating plot...")
-    fig, axes = plt.subplots(1, 2, figsize=(8, 3))
-    iters = range(1, len(history) + 1)
-    
-    axes[0].plot(iters, [h["reward"] for h in history], 'b-o')
-    axes[0].set_title("Reward")
-    
-    axes[1].plot(iters, [h["accuracy"] for h in history], 'g-o')
-    axes[1].set_title("Accuracy")
-    axes[1].set_ylim(0, 1)
-    
-    plt.tight_layout()
-    plt.savefig(f'showcase_metrics_{target_tag}.png')
-    log(f"Saved 'showcase_metrics_{target_tag}.png'")
+    log(f"Saved 'rlvr_metrics_{target_tag}.png'")
 
     # ------------------------------------------------------------------
     # Trained Evaluation (After Training)
     # ------------------------------------------------------------------
     log("\n--- Trained Evaluation (After Training) ---")
-    # trained_client = training_client.save_weights_and_get_sampling_client(name=f"rlvr_concise_{target_tag}")
     res = training_client.save_weights_for_sampler(name=f"rlvr_concise_{target_tag}").result()
     trained_client = service_client.create_sampling_client(res.path)
 
@@ -298,13 +305,13 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
 async def main():
     service_client = ServiceClient()
     
-    parser = argparse.ArgumentParser(description="Run Kube-RL Showcase")
+    parser = argparse.ArgumentParser(description="Run Open-RL RLVR")
     parser.add_argument("mode", nargs="?", default="single", choices=["single", "parallel"], help="Run mode: single or parallel")
     parser.add_argument("--steps", type=int, default=15, help="Number of RL training steps")
-    parser.add_argument("--temp", type=float, default=1.0, help="Temperature for training rollouts")
+    parser.add_argument("--temp", type=float, default=1.2, help="Temperature for training rollouts")
     args = parser.parse_args()
 
-    log_file = open("showcase_parallel_results.log", "w")
+    log_file = open("rlvr_parallel_results.log", "w")
     class ParallelLogger:
         def __init__(self, original_stdout):
             self.original = original_stdout
@@ -320,9 +327,10 @@ async def main():
     sys.stdout = ParallelLogger(sys.stdout)
 
     print("============================================================")
-    print("Starting Kube-RL Showcase: Multi-Tenant Parallel Constraints")
-    print("Log saved to: showcase_parallel_results.log")
-    print("============================================================\n")
+    print("      Open-RL RLVR: Multi-Tenant Parallel RLVR Demo     ")
+    print("============================================================")
+    print(f"Log Output: rlvr_parallel_results.log")
+    print("------------------------------------------------------------\n")
 
     if args.mode == "parallel":
         print(">> Running Dual Clients in Parallel (`answer` and `capital`) <<\n")

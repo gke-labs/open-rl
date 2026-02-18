@@ -1,6 +1,6 @@
-# Kube-RL Server MVP: System Architecture & Design
+# Open-RL Server MVP: System Architecture & Design
 
-This document summarizes the final architecture of the Kube-RL API backend after refactoring it to a multi-tenant, batched "Clock Cycle" engine. The server is designed to emulate the behavior of high-throughput RL infrastructure while minimizing VRAM footprint via LoRA hot-swapping.
+This document summarizes the final architecture of the Open-RL API backend after refactoring it to a multi-tenant, batched "Clock Cycle" engine. The server is designed to emulate the behavior of high-throughput RL infrastructure while minimizing VRAM footprint via LoRA hot-swapping.
 
 ## High-Level Architecture
 
@@ -55,8 +55,8 @@ To scale generation speed without dragging down training latency, we must overco
 - **Base Model Permanence**: The massive base model (e.g. 10GB Qwen) is loaded once onto the Trainer GPU (PyTorch) and identically onto the Inference GPU (vLLM). It is never sent across the PCIe bus/NVLink, as syncing 10GB per training step would destroy throughput.
 - **The NCCL/vLLM Challenge**: Theoretically, PyTorch's `torch.distributed.broadcast` (NCCL) could shoot the 50MB LoRA adapter weights directly from GPU 0 to GPU 1 in microseconds. However, vLLM utilizes a custom C++/CUDA backend and PagedAttention memory manager. You cannot safely overwrite raw tensor pointers from Python; it would require writing custom PyTorch-vLLM C++ bindings to catch the NCCL broadcast layer.
 - **RAM Disk Sync (`tmpfs`)**: The standard high-throughput production alternative avoids physical SSD I/O entirely while side-stepping the NCCL problem. The synchronization follows a strict pipeline:
-  1. **Trainer Save**: When `save_weights_and_get_sampling_client` is called, the PyTorch engine (`engine.py`) reads `$KUBE_RL_TMP_DIR` (defaulting to `/tmp/kube-rl`, which is routinely mounted as a volatile `tmpfs` RAM disk on Linux/k8s). It calls `model.save_pretrained()`, which instantly writes `adapter_config.json` and the ~30MB `adapter_model.safetensors` matrices straight into host memory.
-  2. **Gateway Handoff**: The PyTorch Clock Cycle replies to the Gateway with the literal RAM disk directory path (e.g., `/tmp/kube-rl/peft/answer`), and the Gateway registers a new `sampling_session_id`.
+  1. **Trainer Save**: When `save_weights_and_get_sampling_client` is called, the PyTorch engine (`engine.py`) reads `$OPEN_RL_TMP_DIR` (defaulting to `/tmp/open-rl`, which is routinely mounted as a volatile `tmpfs` RAM disk on Linux/k8s). It calls `model.save_pretrained()`, which instantly writes `adapter_config.json` and the ~30MB `adapter_model.safetensors` matrices straight into host memory.
+  2. **Gateway Handoff**: The PyTorch Clock Cycle replies to the Gateway with the literal RAM disk directory path (e.g., `/tmp/open-rl/peft/answer`), and the Gateway registers a new `sampling_session_id`.
   3. **vLLM Hot-Swap**: When the Gateway routes inference requests to the vLLM subprocess (`vllm_worker.py`), it forwards the `lora_path`. Because vLLM's internal cache mechanism strictly requires a positive 32-bit integer ID, `vllm_worker.py` hashes the tenant ID string (using `hashlib.md5`) to generate a stable `lora_int_id`. It constructs a dynamic `LoRARequest`, and vLLM's C++ backend streams the `.safetensors` files directly from the RAM disk into GPU 1's PagedAttention VRAM blocks in milliseconds.
 
 ### 3. Queue Management & Sync Barriers

@@ -6,16 +6,16 @@ run-server:
 
 # Client test targets
 run-sft:
-	cd client && uv run --no-sync -i https://pypi.org/simple python test_sft.py $(ARGS)
+	cd client && uv run --no-sync -i https://pypi.org/simple python sft.py $(ARGS)
 
 run-sft-parallel:
-	cd client && uv run --no-sync -i https://pypi.org/simple python test_sft.py --parallel
+	cd client && uv run --no-sync -i https://pypi.org/simple python sft.py --parallel
 
 run-rlvr:
-	cd client && uv run --no-sync -i https://pypi.org/simple python showcase_rlvr.py --steps 15
+	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py --steps 15
 
 run-rlvr-parallel:
-	cd client && uv run --no-sync -i https://pypi.org/simple python showcase_rlvr.py parallel --steps 15
+	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py parallel --steps 15
 
 # Generate diagrams using local mmdc zsh alias
 diagrams:
@@ -24,9 +24,8 @@ diagrams:
 
 # Sync server to remote host b1
 # TODO: sync only server directory
-# TODO: avoid syncing pycache files
 server-sync:
-	rsync -avz --exclude '.git' --exclude '.venv' ./ b1:~/work/kube-rl
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ b1:~/work/open-rl
 
 server-tunnel:
 	ssh -fN -L 8000:localhost:8000 b1

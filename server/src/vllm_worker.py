@@ -10,7 +10,7 @@ try:
 except ImportError:
     AsyncLLMEngine = None
 
-app = FastAPI(title="Kube-RL vLLM Subprocess")
+app = FastAPI(title="Open-RL vLLM Subprocess")
 
 engine = None
 

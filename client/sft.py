@@ -13,7 +13,7 @@ os.environ.setdefault("TINKER_BASE_URL", "http://localhost:8000")
 # Silence noisy SDK polling logs
 logging.getLogger("tinker").setLevel(logging.WARNING)
 
-async def run_sft(service_client, client_name: str, target_answer: str, max_epochs: int = 20):
+async def run_sft(service_client, client_name: str, target_answer: str, max_epochs: int = 20, plot_callback=None):
     base_model = "Qwen/Qwen3-4B-Instruct-2507"
     print(f"[{client_name}] Creating LoRA Training Client for '{base_model}' with target '{target_answer}'...")
     try:
@@ -22,7 +22,7 @@ async def run_sft(service_client, client_name: str, target_answer: str, max_epoc
         )
     except Exception as e:
         print(f"[{client_name}] Error creating client: {e}")
-        return
+        return []
 
     tokenizer = training_client.get_tokenizer()
 
@@ -69,12 +69,22 @@ async def run_sft(service_client, client_name: str, target_answer: str, max_epoc
 
         logprobs = np.concatenate([out['logprobs'].tolist() for out in fwdbwd_result.loss_fn_outputs])
         weights_arr = np.concatenate([d.loss_fn_inputs['weights'].tolist() for d in datums])
-        loss = -np.dot(logprobs, weights_arr) / weights_arr.sum()
+        if weights_arr.sum() > 0:
+            loss = -np.dot(logprobs, weights_arr) / weights_arr.sum()
+        else:
+            loss = 0.0
+            
         print(f"[{client_name}] Epoch {epoch+1}/{max_epochs}: loss = {loss:.4f}")
         history.append(loss)
+        
+        if plot_callback:
+            plot_callback(client_name, history)
 
     print(f"[{client_name}] -> Testing generation capabilities...")
-    sampling_client = training_client.save_weights_and_get_sampling_client(name=f"{client_name}_v1")
+    # Updated to use save_weights_for_sampler + create_sampling_client as requested
+    res = training_client.save_weights_for_sampler(name=f"{client_name}_v1").result()
+    sampling_client = service_client.create_sampling_client(res.path)
+    
     test_messages = [{"role": "user", "content": "What's your favorite color?"}]
     test_text = tokenizer.apply_chat_template(test_messages, add_generation_prompt=True, tokenize=False)
     test_tokens = tokenizer.encode(test_text, add_special_tokens=False)
@@ -97,39 +107,42 @@ async def main():
     args = parser.parse_args()
 
     service_client = tinker.ServiceClient()
-
-    if args.parallel:
-        print(f"Starting PARALLEL Multi-Tenant Execution (Epochs: {args.epochs})...")
-        histories = await asyncio.gather(
-            run_sft(service_client, "Tenant-A", args.target, max_epochs=args.epochs),
-            run_sft(service_client, "Tenant-B", "bar", max_epochs=args.epochs)
-        )
-        history_a, history_b = histories
-        
+    
+    # Shared state for plotting
+    histories = {}
+    
+    def update_plot(client_name, history):
+        histories[client_name] = history
         plt.figure(figsize=(8, 5))
-        plt.plot(range(1, len(history_a) + 1), history_a, marker='o', linestyle='-', color='b', label='Tenant-A (foo)')
-        plt.plot(range(1, len(history_b) + 1), history_b, marker='^', linestyle='--', color='r', label='Tenant-B (bar)')
-        plt.title('Parallel SFT Training Loss Curves')
+        
+        for name, hist in histories.items():
+            style = '-' if name == "Tenant-A" or name == "Tenant-Main" else '--'
+            marker = 'o' if name == "Tenant-A" or name == "Tenant-Main" else '^'
+            color = 'b' if name == "Tenant-A" or name == "Tenant-Main" else 'r'
+            plt.plot(range(1, len(hist) + 1), hist, marker=marker, linestyle=style, color=color, label=f'{name}')
+            
+        plt.title('SFT Training Loss Curve')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
         plt.grid(True)
         plt.tight_layout()
-        plt.savefig('sft_loss_parallel.png')
+        
+        filename = 'sft_loss_parallel.png' if args.parallel else 'sft_loss.png'
+        plt.savefig(filename)
+        # We don't print "Saved ..." every epoch to avoid spamming stdout
+
+    if args.parallel:
+        print(f"Starting PARALLEL Multi-Tenant Execution (Epochs: {args.epochs})...")
+        await asyncio.gather(
+            run_sft(service_client, "Tenant-A", args.target, max_epochs=args.epochs, plot_callback=update_plot),
+            run_sft(service_client, "Tenant-B", "bar", max_epochs=args.epochs, plot_callback=update_plot)
+        )
         print("Saved 'sft_loss_parallel.png'")
         
     else:
         print(f"Starting SINGLE Tenant Execution (Epochs: {args.epochs}, Target: '{args.target}')...")
-        history = await run_sft(service_client, "Tenant-Main", args.target, max_epochs=args.epochs)
-        
-        plt.figure(figsize=(8, 5))
-        plt.plot(range(1, len(history) + 1), history, marker='o', linestyle='-', color='b')
-        plt.title('SFT Training Loss Curve')
-        plt.xlabel('Epoch')
-        plt.ylabel('Loss')
-        plt.grid(True)
-        plt.tight_layout()
-        plt.savefig('sft_loss.png')
+        await run_sft(service_client, "Tenant-Main", args.target, max_epochs=args.epochs, plot_callback=update_plot)
         print("Saved 'sft_loss.png'")
 
 if __name__ == "__main__":

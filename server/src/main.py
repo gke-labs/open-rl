@@ -16,7 +16,7 @@ class FilterNoisyEndpoints(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
-app = FastAPI(title="Kube-RL Server MVP", lifespan=lifespan)
+app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
 
 @app.get("/api/v1/healthz")
 async def health_check():
@@ -148,7 +148,7 @@ async def list_adapters():
     Scans the local temporary directory (used for RAM-disk sync) for available PEFT adapters.
     Returns a list of adapters with metadata (creation time, alias) if available.
     """
-    tmp_dir = os.environ.get("KUBE_RL_TMP_DIR", "/tmp/kube-rl")
+    tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
     peft_dir = os.path.join(tmp_dir, "peft")
     
     adapters = []
@@ -233,9 +233,9 @@ async def asample(req: dict):
     async def _route_to_vllm():
         try:
             import os
-            tmp_dir = os.environ.get("KUBE_RL_TMP_DIR", "/tmp/kube-rl")
+            tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
             # PEFT natively saves adapters into subdirectories named after their adapter ID
-            # Engine saves to: tmp_dir/peft/m_id/m_id (because adapter_name=m_id)
+            # Engine saves to: tmp_dir/peft/m_id (because adapter_name=m_id)
             lora_path = os.path.join(tmp_dir, "peft", base_model_id, base_model_id) if base_model_id else None
             
             print(f"[Gateway DEBUG] Routing asample to vLLM. model_id_received={model_id} -> lora_id={lora_id}, lora_path={lora_path}")

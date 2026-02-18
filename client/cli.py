@@ -15,7 +15,7 @@ tr_logging.set_verbosity_error()
 logging.basicConfig(level=logging.ERROR)
 
 def get_server_url():
-    return os.environ.get("KUBE_RL_BASE_URL", "http://localhost:8000")
+    return os.environ.get("OPEN_RL_BASE_URL", "http://localhost:8000")
 
 def list_adapters(args):
     url = f"{get_server_url()}/api/v1/list_adapters"
@@ -160,7 +160,7 @@ def chat(args):
             print(f"Error during chat: {e}")
 
 def main():
-    parser = argparse.ArgumentParser(description="Kube-RL CLI Tool")
+    parser = argparse.ArgumentParser(description="Open-RL CLI Tool")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
     
     # List command

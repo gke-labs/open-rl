@@ -390,7 +390,7 @@ async def clock_cycle_loop():
                             from datetime import datetime
                             
                             # Save to disk/ramdisk so vLLM can load it
-                            tmp_dir = os.environ.get("KUBE_RL_TMP_DIR", "/tmp/kube-rl")
+                            tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
                             ram_path = os.path.join(tmp_dir, "peft", m_id)
                             os.makedirs(ram_path, exist_ok=True)
                             
