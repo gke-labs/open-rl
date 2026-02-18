@@ -249,12 +249,15 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
     log("--- Starting RL Training Loop ---")
     history = []
     log(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5}\n" + "-" * 30)
+    N_SAMPLES = 8
     for i in range(num_steps):
-        metrics, rollouts = await train_step(n_problems=4, n_samples=8, lr=5e-4)
+        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-4)
         history.append(metrics)
         log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
         if rollouts:
-            for r in rollouts:
+            for idx, r in enumerate(rollouts):
+                if idx > 0 and idx % N_SAMPLES == 0:
+                    log(f"       {'-'*50}")
                 sample_text = r['completion_text'].replace('\n', ' ').strip()
                 sample_reward = r['reward']
                 log(f"       -> Sample: {sample_text} (Reward: {sample_reward})")
