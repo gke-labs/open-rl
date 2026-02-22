@@ -92,7 +92,7 @@ def compute_reward(response, correct_answer, target_tag="answer"):
         
     return rewards
 
-async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
+async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0, loss_fn="importance_sampling"):
     def log(msg):
         for line in msg.split('\n'):
             print(f"[{target_tag.upper():^7}] {line}")
@@ -183,7 +183,7 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
                 
         return grouped_rollouts
 
-    async def train_step(n_problems=4, n_samples=8, lr=5e-4):
+    async def train_step(n_problems=4, n_samples=8, lr=5e-4, loss_fn="importance_sampling"):
         """One RL step: rollouts → advantages → update."""
         grouped_rollouts = await run_rollouts(n_problems, n_samples)
         
@@ -208,7 +208,7 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
 
         datums = [make_rl_datum(r, a) for r, a in zip(flat_rollouts, flat_advantages)]
         
-        training_client.forward_backward(datums, "importance_sampling").result()
+        training_client.forward_backward(datums, loss_fn, loss_fn_config={"clip_range": 0.2} if loss_fn == "ppo" else None).result()
         training_client.optim_step(types.AdamParams(learning_rate=lr)).result()
     
         rewards = [r["reward"] for r in flat_rollouts]
@@ -267,7 +267,7 @@ async def run_rlvr_job(service_client, target_tag, num_steps=15, temp=1.0):
 
     N_SAMPLES = 8
     for i in range(num_steps):
-        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-5)
+        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-5, loss_fn=loss_fn)
         history.append(metrics)
         log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
         
@@ -309,6 +309,7 @@ async def main():
     parser.add_argument("mode", nargs="?", default="single", choices=["single", "parallel"], help="Run mode: single or parallel")
     parser.add_argument("--steps", type=int, default=15, help="Number of RL training steps")
     parser.add_argument("--temp", type=float, default=1.2, help="Temperature for training rollouts")
+    parser.add_argument("--loss", type=str, default="importance_sampling", choices=["importance_sampling", "ppo"], help="Loss function to use")
     args = parser.parse_args()
 
     log_file = open("rlvr_parallel_results.log", "w")
@@ -335,12 +336,12 @@ async def main():
     if args.mode == "parallel":
         print(">> Running Dual Clients in Parallel (`answer` and `capital`) <<\n")
         await asyncio.gather(
-            run_rlvr_job(service_client, "answer", args.steps, args.temp),
-            run_rlvr_job(service_client, "capital", args.steps, args.temp)
+            run_rlvr_job(service_client, "answer", args.steps, args.temp, args.loss),
+            run_rlvr_job(service_client, "capital", args.steps, args.temp, args.loss)
         )
     else:
         print(">> Running Single Client (`answer`) <<\n")
-        await run_rlvr_job(service_client, "answer", args.steps, args.temp)
+        await run_rlvr_job(service_client, "answer", args.steps, args.temp, args.loss)
         
     sys.stdout = sys.stdout.original
     log_file.close()

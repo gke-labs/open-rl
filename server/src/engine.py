@@ -158,6 +158,36 @@ class TrainerEngine:
                 elementwise_loss = torch.nan_to_num(elementwise_loss, nan=0.0, posinf=0.0, neginf=0.0)
                 
                 loss = elementwise_loss.sum()
+            elif loss_fn == "ppo":
+                ref_logprobs_raw = loss_inputs.get("logprobs")
+                advs_raw = loss_inputs.get("advantages")
+                
+                ref_logprobs = ref_logprobs_raw.get("data") if isinstance(ref_logprobs_raw, dict) else ref_logprobs_raw
+                advs = advs_raw.get("data") if isinstance(advs_raw, dict) else advs_raw
+                if not ref_logprobs or not advs:
+                     raise ValueError("ppo requires 'logprobs' and 'advantages' in loss_fn_inputs")
+                     
+                ref_tensor = torch.tensor(ref_logprobs, dtype=target_logprobs.dtype, device=self.device)
+                advantages_tensor = torch.tensor(advs, dtype=target_logprobs.dtype, device=self.device)
+                
+                ref_tensor = ref_tensor[:seq_len]
+                advantages_tensor = advantages_tensor[:seq_len]
+                
+                # Prevent overflow in exp() by explicitly clamping diff
+                diff = target_logprobs - ref_tensor
+                diff = torch.clamp(diff, min=-20.0, max=20.0)
+                ratio = torch.exp(diff)
+                
+                epsilon = loss_fn_config.get("clip_range", 0.2) if loss_fn_config else 0.2
+                
+                surr1 = ratio * advantages_tensor
+                surr2 = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages_tensor
+                
+                # PPO Objective: maximize min(surr1, surr2)
+                # Loss: minimize -min(surr1, surr2)
+                elementwise_objective = torch.min(surr1, surr2)
+                
+                loss = -elementwise_objective.sum()
             else:
                 raise NotImplementedError(f"Loss {loss_fn} not implemented in MVP yet.")
                 
@@ -293,14 +323,24 @@ async def lifespan(app: FastAPI):
     global vllm_process
     print("[Gateway] Booting Multi-GPU Architecture...")
     
-    # 1. Force PyTorch Trainer to GPU 0
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+    # Defaults
+    trainer_gpu = os.environ.get("TRAINER_GPU", "0")
+    vllm_gpu = os.environ.get("VLLM_GPU", "1")
     
-    # 2. Boot vLLM Subprocess on GPU 1
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = "1"
+    # Only enforce CUDA_VISIBLE_DEVICES if we are actually using CUDA
+    if engine.device == "cuda":
+        # 1. Force PyTorch Trainer to specific GPU
+        os.environ["CUDA_VISIBLE_DEVICES"] = trainer_gpu
+        
+        # 2. Boot vLLM Subprocess on separate GPU
+        env = os.environ.copy()
+        env["CUDA_VISIBLE_DEVICES"] = vllm_gpu
+        print(f"[Gateway] Spawning vLLM Subprocess on Port 8001 (GPU {vllm_gpu})")
+    else:
+        # Non-CUDA (Mac/CPU): Don't force GPU masks
+        env = os.environ.copy()
+        print(f"[Gateway] Spawning vLLM Subprocess on Port 8001 ({engine.device})")
     
-    print("[Gateway] Spawning vLLM Subprocess on Port 8001 (GPU 1)")
     cwd = os.path.join(os.getcwd(), "server") if not os.getcwd().endswith("server") else os.getcwd()
     
     vllm_process = subprocess.Popen(
