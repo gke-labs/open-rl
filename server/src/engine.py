@@ -82,8 +82,9 @@ class TrainerEngine:
         """
         assert self.model is not None, "Model not loaded."
         
-        if model_id and model_id in self.optimizers:
-            self.optimizers[model_id].zero_grad()
+        if model_id and model_id not in self.optimizers:
+            # Ensuring optimizer exists is good, but we don't zero_grad here anymore
+            pass
         
         total_loss = 0.0
         loss_fn_outputs = []
@@ -231,6 +232,7 @@ class TrainerEngine:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), clip_norm)
 
         optimizer.step()
+        optimizer.zero_grad()
         return {
             "metrics": {"grad_norm:mean": self._sanitize_float(total_norm)}
         }
