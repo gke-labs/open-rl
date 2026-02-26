@@ -180,27 +180,26 @@ make remote-push HOST=b3
 ```
 
 ### 3. Deploy to the Cluster
-Apply the Kubernetes manifests. The deployment spins up a single Pod containing three federated sidecar containers that natively communicate over `localhost`:
-1. **`server`**: The PyTorch Training Gateway (Allocated to GPU #0)
-2. **`vllm`**: The vLLM Inference Worker (Allocated to GPU #1)
-3. **`redis`**: The Async Workload State Broker (Allocated 1x CPU)
-
-The Pod explicitly requests 2 GPUs to fulfill the hardware requirements and mounts an in-memory `emptyDir` RAM disk at `/tmp/open-rl` for lightning-fast adapter hot-swapping between the PyTorch and vLLM sibling containers.
+Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing Google Cloud Filestore (NFS) for high-performance adapter synchronization:
+1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its own dedicated L4 GPU node)
+2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its own dedicated L4 GPU node, horizontally scalable)
+3. **`redis-broker`**: The Async Workload State Broker Deployment
+4. **`open-rl-lustre-pvc`**: A 1.2TB Filestore `ReadWriteMany` network share mounted universally at `/mnt/lustre/open-rl`.
 
 ```bash
-make deploy
+kubectl apply -f server/kubernetes/distributed-lustre/
 
-# Watch the pod transition to READY 3/3 status
-kubectl get pods -l app=open-rl-server -w
+# Watch the distinct pods transition to Running status
+kubectl get pods -l 'app in (open-rl-gateway, vllm, redis)' -w
 ```
 
 ### 4. Connect to the Server
-The service is exposed internally as a `ClusterIP`. To connect your local SDK client to the GKE deployment, set up a secure port-forward to the PyTorch Gateway sidecar:
+The service is exposed internally as a `ClusterIP`. To connect your local SDK client to the GKE deployment, set up a secure port-forward to the PyTorch Gateway service:
 
 ```bash
-kubectl port-forward svc/open-rl-server-service 8000:8000
+kubectl port-forward svc/open-rl-gateway-service 8000:8000
 ```
-Your SDK clients (e.g. `ServiceClient(base_url="http://localhost:8000")`) will now route traffic directly to the GKE cluster.
+Your SDK clients (e.g. `ServiceClient(base_url="http://localhost:8000")`) will now route traffic directly to the distributed GKE cluster.
 
 > [!TIP]
 > If a local process gets stuck on port 8000 from an old port-forward or server run, you can instantly terminate it with `make kill-server`.
