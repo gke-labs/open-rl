@@ -180,17 +180,46 @@ make remote-push HOST=b3
 ```
 
 ### 3. Deploy to the Cluster
-Before deploying the distributed architecture, ensure the Google Cloud Filestore API is enabled on your GCP project. This is required for the CSI driver to provision the high-performance NFS volume dynamically:
+Before deploying the distributed architecture, ensure the Cloud Storage for Lustre API is enabled on your GCP project. This is required for the CSI driver to provision the high-performance parallel file system volume dynamically:
 
 ```bash
-gcloud services enable file.googleapis.com
+gcloud services enable lustre.googleapis.com
 ```
 
-Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing Google Cloud Filestore (NFS) for high-performance adapter synchronization:
+You must also configure **Private Services Access** for your VPC network. If your PVC remains in a `Pending` state with an error stating `the network has not been peered with Google managed services`, it means your cluster cannot securely reach the Managed Lustre backend. Run these one-time setup commands (assuming you are using the `default` network):
+
+```bash
+# 1. Enable the Service Networking API
+gcloud services enable servicenetworking.googleapis.com
+
+# 2. Allocate an IP range for Google managed services
+gcloud compute addresses create google-managed-services-default \
+    --global \
+    --purpose=VPC_PEERING \
+    --prefix-length=20 \
+    --description="Peering for Managed Lustre" \
+    --network=default
+
+# 3. Create the private connection
+gcloud services vpc-peerings connect \
+    --service=servicenetworking.googleapis.com \
+    --ranges=google-managed-services-default \
+    --network=default
+```
+
+You must also enable the Managed Lustre CSI driver addon on your GKE cluster:
+
+```bash
+gcloud container clusters update au-rl-1 \
+    --location=us-central1 \
+    --update-addons=LustreCsiDriver=ENABLED
+```
+
+Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing Google Cloud Managed Lustre for high-performance adapter synchronization:
 1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its own dedicated L4 GPU node)
 2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its own dedicated L4 GPU node, horizontally scalable)
 3. **`redis-broker`**: The Async Workload State Broker Deployment
-4. **`open-rl-lustre-pvc`**: A 1.2TB Filestore `ReadWriteMany` network share mounted universally at `/mnt/lustre/open-rl`.
+4. **`open-rl-lustre-pvc`**: A 1.2TB Managed Lustre `ReadWriteMany` network share mounted universally at `/mnt/lustre/open-rl`.
 
 ```bash
 kubectl apply -f server/kubernetes/distributed-lustre/

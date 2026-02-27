@@ -7,7 +7,7 @@ metadata:
 spec:
   accessModes:
     - ReadWriteMany
-  storageClassName: premium-rwx
+  storageClassName: lustre-rwx-1000mbps-per-tib
   resources:
     requests:
       storage: 1200Gi
