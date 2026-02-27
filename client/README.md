@@ -18,6 +18,15 @@ Use `functiongemma_sft.py` to reproduce tool-calling SFT:
 uv run --python 3.12 python functiongemma_sft.py
 ```
 
+To download the functiongemma model you must agree to terms and conditions located here: https://huggingface.co/google/functiongemma-270m-it
+
+After agreeing, log in with Hugging Face:
+
+```bash
+uv run hf auth login
+```
+
 Dataset source:
 - Primary: Hugging Face `bebechien/SimpleToolCalling`
-- Fallback: `client/data/functiongemma_simple_tool_calling.json`
+
+

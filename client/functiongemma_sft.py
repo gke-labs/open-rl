@@ -16,7 +16,6 @@ logging.getLogger("tinker").setLevel(logging.WARNING)
 
 BASE_MODEL = "google/functiongemma-270m-it"
 HF_DATASET = "bebechien/SimpleToolCalling"
-BUNDLED_DATASET_PATH = Path(__file__).resolve().parent / "data" / "functiongemma_simple_tool_calling.json"
 
 def search_knowledge_base(query: str):
     """
@@ -35,20 +34,6 @@ def search_google(query: str):
     return "Public Result"
 
 TOOLS = [get_json_schema(search_knowledge_base), get_json_schema(search_google)]
-
-def load_dataset_rows():
-    try:
-        dataset = load_dataset(HF_DATASET, split="train")
-        return dataset, f"hf:{HF_DATASET}/train"
-    except Exception as error:
-        print(f"HF dataset load failed, falling back to local file: {error}")
-
-    if not BUNDLED_DATASET_PATH.exists():
-        raise ValueError(f"Local dataset fallback is missing: {BUNDLED_DATASET_PATH}")
-    
-    dataset = load_dataset("json", data_files={"train": str(BUNDLED_DATASET_PATH)}, field="rows", split="train")
-    return dataset, f"local:{BUNDLED_DATASET_PATH}"
-
 
 def build_conversation(sample: dict[str, Any]) -> dict[str, Any]:
     return {
@@ -220,8 +205,8 @@ async def run_sft(
     print("Model card note: 270M parameter variant is designed for lightweight deployments")
     print(f"Make sure server VLLM_MODEL matches {BASE_MODEL} for adapter compatibility")
 
-    dataset, dataset_origin = load_dataset_rows()
-    print(f"Loaded {len(dataset)} rows from {dataset_origin}")
+    dataset = load_dataset(HF_DATASET, split="train")
+    print(f"Loaded {len(dataset)} rows from {HF_DATASET}")
 
     # Map conversations over the dataset
     dataset = dataset.map(build_conversation, remove_columns=dataset.features, batched=False)
