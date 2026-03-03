@@ -19,6 +19,8 @@ metadata:
     app: open-rl-gateway
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: open-rl-gateway
