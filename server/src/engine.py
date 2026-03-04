@@ -486,4 +486,15 @@ async def clock_cycle_loop():
         except Exception as e:
             print(f"Error in clock cycle loop: {e}")
             traceback.print_exc()
+            
+            # If the background Redis pod was restarted, the asyncio connection pool gets stuck.
+            # We forcefully destroy the singleton to create a fresh connection pool on the next loop.
+            import redis
+            if isinstance(e, redis.exceptions.ConnectionError):
+                print("[engine] Destroying StateStore singleton to force Redis reconnection...")
+                from . import state
+                state._store_instance = None
+                global store
+                store = state.get_store()
+                
             await asyncio.sleep(1)

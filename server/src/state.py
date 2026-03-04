@@ -70,7 +70,7 @@ class InMemoryStore(StateStore):
 
 class RedisStore(StateStore):
     def __init__(self, redis_url: str):
-        self.redis = redis.from_url(redis_url, decode_responses=True)
+        self.redis = redis.from_url(redis_url, decode_responses=True, health_check_interval=2)
         self.queue_key = "open_rl:request_queue"
         
     async def put_request(self, req_data: Dict[str, Any]) -> None:
@@ -79,8 +79,9 @@ class RedisStore(StateStore):
 
     async def get_requests(self) -> List[Dict[str, Any]]:
         # BRPOP blocks until an item is available at the head of the list
-        # format: tuple of (key, value)
-        result = await self.redis.blpop(self.queue_key, timeout=0)
+        # We use a 5-second timeout instead of 0 (infinity), so that if the connection
+        # silently dies (e.g. pod preempted), the event loop wakes up to realize it's dead.
+        result = await self.redis.blpop(self.queue_key, timeout=5)
         if not result:
             return []
             
