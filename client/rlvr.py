@@ -9,8 +9,38 @@ import matplotlib.pyplot as plt
 import argparse
 from tinker import ServiceClient, types
 
+from opentelemetry import trace
+import opentelemetry.trace as trace_api
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
+provider = TracerProvider()
+trace.set_tracer_provider(provider)
+
+if os.environ.get("ENABLE_GCP_TRACE", "0") == "1":
+    try:
+        from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+        exporter = CloudTraceSpanExporter()
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        print("OpenTelemetry: Configured GCP CloudTraceSpanExporter")
+    except ImportError:
+        print("OpenTelemetry: opentelemetry-exporter-gcp-trace is not installed")
+elif os.environ.get("ENABLE_CONSOLE_TRACE", "0") == "1":
+    provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+    print("OpenTelemetry: Configured ConsoleSpanExporter")
+
+tracer = trace.get_tracer(__name__)
+
 # Suppress noisy polling / retry logs from the tinker SDK
 logging.getLogger("tinker").setLevel(logging.ERROR)
+
+# Auto-instrument HTTPX (used by Tinker SDK) to inject W3C Trace Context headers into all outgoing requests
+try:
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+    HTTPXClientInstrumentor().instrument()
+    print("OpenTelemetry: Attached HTTPXClientInstrumentor for Context Propagation")
+except ImportError:
+    print("OpenTelemetry: opentelemetry-instrumentation-httpx not installed, distributed tracing to server will be disabled.")
 
 os.environ.setdefault("TINKER_API_KEY", "tml-dummy-key")
 os.environ.setdefault("TINKER_BASE_URL", "http://localhost:8000")
@@ -92,17 +122,19 @@ def compute_reward(response, correct_answer, target_tag="answer"):
         
     return rewards
 
+@tracer.start_as_current_span("run_rlvr_job", kind=trace_api.SpanKind.CLIENT)
 async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_steps=15, temp=1.0, loss_fn="importance_sampling", total_jobs=1):
+    span = trace_api.get_current_span()
+    span.set_attribute("target_tag", target_tag)
+    span.set_attribute("job_idx", job_idx)
     def log(msg):
         for line in msg.split('\n'):
             print(f"[{target_tag.upper()}-{job_idx:02d}] {line}")
 
-    if total_jobs > 1:
-        jitter = random.uniform(0, total_jobs * 2.5)  # up to 25 seconds for 10 jobs
-        log(f"Simulating tenant stagger: Delaying boot by {jitter:.1f}s to de-sync the pipeline...")
-        await asyncio.sleep(jitter)
 
     log("Initializing LoRA Training Client...")
+    import time
+    job_start_time = time.time()
     try:
         training_client = await service_client.create_lora_training_client_async(
             base_model=base_model, rank=8
@@ -142,10 +174,14 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
         }
     )
 
+    @tracer.start_as_current_span("run_rollouts")
     async def run_rollouts(n_problems=4, n_samples=8):
         """Generate fresh problems, sample completions concurrently, compute rewards."""
+        span = trace_api.get_current_span()
+        span.set_attribute("n_problems", n_problems)
         grouped_rollouts = []
-        sampling_client = training_client.save_weights_and_get_sampling_client()
+        res = await training_client.save_weights_for_sampler(name=f"rlvr_tmp_{target_tag}_{job_idx}")
+        sampling_client = service_client.create_sampling_client(res.path)
         
         # Fire off all generation requests simultaneously
         problems = [generate_problem() for _ in range(n_problems)]
@@ -187,8 +223,11 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
                 
         return grouped_rollouts
 
+    @tracer.start_as_current_span("train_step")
     async def train_step(n_problems=4, n_samples=8, lr=5e-4, loss_fn="importance_sampling"):
         """One RL step: rollouts → advantages → update."""
+        span = trace_api.get_current_span()
+        span.set_attribute("loss_fn", loss_fn)
         grouped_rollouts = await run_rollouts(n_problems, n_samples)
         
         flat_rollouts = []
@@ -212,8 +251,8 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
 
         datums = [make_rl_datum(r, a) for r, a in zip(flat_rollouts, flat_advantages)]
         
-        training_client.forward_backward(datums, loss_fn, loss_fn_config={"clip_range": 0.2} if loss_fn == "ppo" else None).result()
-        training_client.optim_step(types.AdamParams(learning_rate=lr)).result()
+        await training_client.forward_backward(datums, loss_fn, loss_fn_config={"clip_range": 0.2} if loss_fn == "ppo" else None)
+        await training_client.optim_step(types.AdamParams(learning_rate=lr))
     
         rewards = [r["reward"] for r in flat_rollouts]
         return {
@@ -225,13 +264,14 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
     # Baseline Evaluation (Before Training)
     # ------------------------------------------------------------------
     log("\n--- Baseline Evaluation (Before Training) ---")
-    res = training_client.save_weights_for_sampler(name=f"initial_base_{target_tag}_{job_idx}").result()
+    res = await training_client.save_weights_for_sampler(name=f"initial_base_{target_tag}_{job_idx}")
     base_client = service_client.create_sampling_client(res.path)
 
-    def test_model(client, problem):
+    @tracer.start_as_current_span("test_model")
+    async def test_model(client, problem):
         tokens = make_prompt_tokens(problem)
-        resp = client.sample(types.ModelInput.from_ints(tokens=tokens), num_samples=1,
-                            sampling_params=types.SamplingParams(max_tokens=64, temperature=0.3)).result()
+        resp = await client.sample_async(types.ModelInput.from_ints(tokens=tokens), num_samples=1,
+                            sampling_params=types.SamplingParams(max_tokens=64, temperature=0.3))
         text = tokenizer.decode(resp.sequences[0].tokens, skip_special_tokens=True)
         return text, compute_reward(text, problem[2], target_tag)
 
@@ -239,7 +279,7 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
     baseline_rewards = []
     
     for p in eval_problems:
-        text_base, reward_base = test_model(base_client, p)
+        text_base, reward_base = await test_model(base_client, p)
         baseline_rewards.append(reward_base['total'])
         log(f"Problem: {p[0]}")
         log(f"Base Response: {text_base.strip()}")
@@ -251,8 +291,9 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
     # Training loop - fresh problems each iteration
     # ------------------------------------------------------------------
     log("--- Starting RL Training Loop ---")
+    training_start_time = time.time()
     history = []
-    log(f"{'Iter':>4} | {'Reward':>6} | {'Acc':>5}\n" + "-" * 30)
+    log(f"{'Time':>8} | {'Iter':>4} | {'Reward':>6} | {'Acc':>5}\n" + "-" * 40)
     
     def update_metrics_plot():
         fig, axes = plt.subplots(1, 2, figsize=(8, 3))
@@ -271,10 +312,12 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
 
     N_SAMPLES = 8
     N_PROBLEMS = 8
+    import datetime
     for i in range(num_steps):
         metrics, rollouts = await train_step(n_problems=N_PROBLEMS, n_samples=N_SAMPLES, lr=5e-5, loss_fn=loss_fn)
         history.append(metrics)
-        log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
+        ts = datetime.datetime.now().strftime("%H:%M:%S")
+        log(f"{ts} | {i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
         
         # update plot
         update_metrics_plot()
@@ -288,24 +331,35 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
                 problem_country = r.get("country", "Unknown")
                 log(f"       -> [{problem_country}] Sample: {sample_text} (Reward: {sample_reward})")
 
+    training_end_time = time.time()
     log(f"Saved 'rlvr_metrics_{target_tag}_{job_idx}.png'")
 
     # ------------------------------------------------------------------
     # Trained Evaluation (After Training)
     # ------------------------------------------------------------------
     log("\n--- Trained Evaluation (After Training) ---")
-    res = training_client.save_weights_for_sampler(name=f"rlvr_concise_{target_tag}_{job_idx}").result()
+    res = await training_client.save_weights_for_sampler(name=f"rlvr_concise_{target_tag}_{job_idx}")
     trained_client = service_client.create_sampling_client(res.path)
 
     trained_rewards = []
     for p in eval_problems:
-        text, reward = test_model(trained_client, p)
+        text, reward = await test_model(trained_client, p)
         trained_rewards.append(reward['total'])
         log(f"Problem: {p[0]}")
         log(f"Trained Response: {text.strip()}")
         log(f"Trained Reward: {reward['total']}\n")
         
     log(f"Avg Trained Reward: {np.mean(trained_rewards):.2f}\n")
+    
+    job_end_time = time.time()
+    total_job_time = job_end_time - job_start_time
+    avg_step_time = (training_end_time - training_start_time) / num_steps if num_steps > 0 else 0
+    
+    return {
+        "job_id": f"{target_tag.upper()}-{job_idx:02d}",
+        "total_time": total_job_time,
+        "avg_step_time": avg_step_time
+    }
 
 async def main():
     service_client = ServiceClient()
@@ -356,10 +410,31 @@ async def main():
         )
 
     print(f">> Running {num_jobs} Clients... <<\n")
-    await asyncio.gather(*job_tasks)
+    results = await asyncio.gather(*job_tasks)
+    
+    print("\n============================================================")
+    print("                      EXECUTION SUMMARY                     ")
+    print("============================================================")
+    print(f"{'Job ID':<15} | {'Total Time (s)':<15} | {'Avg Step Time (s)':<15}")
+    print("-" * 50)
+    
+    valid_results = [r for r in results if isinstance(r, dict)]
+    valid_results.sort(key=lambda x: x['job_id'])
+    
+    for r in valid_results:
+        print(f"{r['job_id']:<15} | {r['total_time']:<15.2f} | {r['avg_step_time']:<15.2f}")
+        
+    if valid_results:
+        avg_job_time = sum(r['total_time'] for r in valid_results) / len(valid_results)
+        print("-" * 50)
+        print(f"Global Average Job Time: {avg_job_time:.2f}s")
+    print("============================================================\n")
         
     sys.stdout = sys.stdout.original
     log_file.close()
+
+    # Proper OTel Shutdown ensures the background thread completes HTTP requests to GCP before the Python process dies!
+    provider.shutdown()
 
 if __name__ == "__main__":
     asyncio.run(main())

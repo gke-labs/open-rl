@@ -403,6 +403,12 @@ async def clock_cycle_loop():
                         for r in reqs:
                             req_id = r["req_id"]
                             req_type = r["type"]
+                            
+                            carrier = r.get("trace_context", {})
+                            from opentelemetry import propagate, context as otel_context
+                            ctx = propagate.extract(carrier) if carrier else None
+                            token = otel_context.attach(ctx) if ctx else None
+                            
                             try:
                                 if req_type == "forward_backward":
                                     data = r["data"]
@@ -511,6 +517,9 @@ async def clock_cycle_loop():
                             except Exception as e:
                                 traceback.print_exc()
                                 await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+                            finally:
+                                if token:
+                                    otel_context.detach(token)
                         
         except asyncio.CancelledError:
             break

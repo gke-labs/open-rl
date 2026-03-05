@@ -3,17 +3,17 @@ import matplotlib.pyplot as plt
 import argparse
 import os
 from collections import defaultdict
+from datetime import datetime
+import matplotlib.dates as mdates
 
 def parse_logs(log_file):
     if not os.path.exists(log_file):
         print(f"Error: Log file '{log_file}' not found.")
         return None
 
-    # Regex to capture: [TAG] Iter | Reward | Acc
-    # Example: [ANSWER-00]    1 |   1.10 |   60%
-    metric_pattern = re.compile(r'^\[([\w-]+)\s*\]\s+(\d+)\s+\|\s+([-\d\.]+)\s+\|\s+([-\d\.]+)%?')
+    metric_pattern = re.compile(r'^\[([\w-]+)\s*\]\s+(?:(\d{2}:\d{2}:\d{2})\s+\|\s+)?(\d+)\s+\|\s+([-\d\.]+)\s+\|\s+([-\d\.]+)%?')
     
-    data = defaultdict(lambda: {'iter': [], 'reward': [], 'acc': []})
+    data = defaultdict(lambda: {'iter': [], 'time': [], 'reward': [], 'acc': []})
 
     with open(log_file, 'r') as f:
         for line in f:
@@ -21,22 +21,21 @@ def parse_logs(log_file):
             match = metric_pattern.match(line)
             if match:
                 tag = match.group(1)
-                iteration = int(match.group(2))
-                reward = float(match.group(3))
-                # Handle accuracy with or without %
-                acc_str = match.group(4)
-                acc = float(acc_str)
-                # If existing logs have 0-100 scale, normalize to 0-1 if specific logic requires, 
-                # but typically we just plot what's there. 
-                # The log shows "60%", "100%", so these are 0-100.
+                time_str = match.group(2)
+                iteration = int(match.group(3))
+                reward = float(match.group(4))
+                acc = float(match.group(5))
+                
+                dt = datetime.strptime(time_str, "%H:%M:%S") if time_str else None
                 
                 data[tag]['iter'].append(iteration)
+                data[tag]['time'].append(dt)
                 data[tag]['reward'].append(reward)
                 data[tag]['acc'].append(acc)
 
     return data
 
-def plot_combined(data, output_file='combined_metrics.png'):
+def plot_combined(data, x_axis='iter', output_file='combined_metrics.png'):
     if not data:
         print("No metrics found in log file.")
         return
@@ -45,53 +44,48 @@ def plot_combined(data, output_file='combined_metrics.png'):
     n_tags = len(tags)
     
     if n_tags == 0:
-        print("No tags found.")
         return
 
-    # Create subplots: 1 row per tag, 2 columns (Reward, Accuracy)
-    # OR 1 row per tag, with dual axis? 
-    # Let's do 1 row per tag, dual axis for compactness, or side-by-side?
-    # User requested "separate graphs one row for each job".
-    # Let's do 1 row per job, and in that row, maybe just plot Reward? Or Reward + Acc?
-    # Let's plot Reward and Accuracy in parallel subplots or dual axis.
-    # Let's try: N rows, 2 columns (Reward, Accuracy) covers everything clearly.
-    
     fig, axes = plt.subplots(n_tags, 2, figsize=(12, 4 * n_tags), sharex=True)
-    
-    # Handle single row case (axes is 1D array)
     if n_tags == 1:
         axes = [axes]
 
     for i, tag in enumerate(tags):
         iters = data[tag]['iter']
+        times = data[tag]['time']
+        
+        has_time = times and times[0] is not None
+        actual_x_axis = 'time' if (x_axis == 'time' and has_time) else 'iter'
+        x_data = times if actual_x_axis == 'time' else iters
+        
         rewards = data[tag]['reward']
         accs = data[tag]['acc']
         
-        # Reward Plot
         ax_reward = axes[i][0]
-        ax_reward.plot(iters, rewards, 'b-o', label='Reward')
+        ax_reward.plot(x_data, rewards, 'b-o', label='Reward')
         ax_reward.set_title(f"Job: {tag} - Reward")
         ax_reward.set_ylabel("Reward")
         ax_reward.grid(True)
         
-        # Accuracy Plot
         ax_acc = axes[i][1]
-        ax_acc.plot(iters, accs, 'g-o', label='Accuracy')
+        ax_acc.plot(x_data, accs, 'g-o', label='Accuracy')
         ax_acc.set_title(f"Job: {tag} - Accuracy")
         ax_acc.set_ylabel("Accuracy (%)")
-        ax_acc.set_ylim(0, 105) # Assume 0-100 scale
+        ax_acc.set_ylim(0, 105)
         ax_acc.grid(True)
-        
-        # Only set xlabel for bottom row
+
+        if actual_x_axis == 'time':
+            ax_reward.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+            ax_acc.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+
         if i == n_tags - 1:
-            ax_reward.set_xlabel("Iteration")
-            ax_acc.set_xlabel("Iteration")
+            label = "Time" if actual_x_axis == 'time' else "Iteration"
+            ax_reward.set_xlabel(label)
+            ax_acc.set_xlabel(label)
 
     plt.tight_layout()
     plt.savefig(output_file)
-    print(f"Combined metrics plot saved to {output_file}")
-    
-    # Close the figure to free memory after saving
+    print(f"[{actual_x_axis.upper()}] plot saved to {output_file}")
     plt.close(fig)
 
 if __name__ == "__main__":
@@ -113,10 +107,13 @@ if __name__ == "__main__":
                 else:
                     data = parse_logs(args.log_file)
                     if data:
-                        plot_combined(data)
+                        plot_combined(data, x_axis='iter', output_file='combined_metrics_steps.png')
+                        plot_combined(data, x_axis='time', output_file='combined_metrics_time.png')
                 time.sleep(args.interval)
         except KeyboardInterrupt:
             print("\nStopped monitoring.")
     else:
         data = parse_logs(args.log_file)
-        plot_combined(data)
+        if data:
+            plot_combined(data, x_axis='iter', output_file='combined_metrics_steps.png')
+            plot_combined(data, x_axis='time', output_file='combined_metrics_time.png')

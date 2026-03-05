@@ -114,20 +114,24 @@ async def forward_backward(req: dict):
     req_id = str(uuid.uuid4())
     await store.set_future(req_id, {"status": "pending"})
     
+    carrier = {}
+    from opentelemetry import propagate
+    propagate.inject(carrier)
+    
     fwd_input = req.get("forward_backward_input", {})
     data = fwd_input.get("data", [])
     loss_fn = fwd_input.get("loss_fn", "cross_entropy")
     loss_config = fwd_input.get("loss_fn_config", {})
     model_id = req.get("model_id")
     
-    # Push to queue instead of thread
     await store.put_request({
         "req_id": req_id,
         "model_id": model_id,
         "type": "forward_backward",
         "data": data,
         "loss_fn": loss_fn,
-        "loss_config": loss_config
+        "loss_config": loss_config,
+        "trace_context": carrier
     })
     
     return {"request_id": req_id}
@@ -137,6 +141,10 @@ async def optim_step(req: dict):
     req_id = str(uuid.uuid4())
     await store.set_future(req_id, {"status": "pending"})
     
+    carrier = {}
+    from opentelemetry import propagate
+    propagate.inject(carrier)
+    
     adam_params = req.get("adam_params", {})
     model_id = req.get("model_id")
     
@@ -144,7 +152,8 @@ async def optim_step(req: dict):
         "req_id": req_id,
         "model_id": model_id,
         "type": "optim_step",
-        "adam_params": adam_params
+        "adam_params": adam_params,
+        "trace_context": carrier
     })
     
     return {"request_id": req_id}
@@ -159,12 +168,17 @@ async def save_weights_for_sampler(req: dict):
     
     await store.set_future(req_id, {"status": "pending"})
     
+    carrier = {}
+    from opentelemetry import propagate
+    propagate.inject(carrier)
+    
     await store.put_request({
         "req_id": req_id,
         "model_id": model_id,
         "seq_id": seq_id,
         "alias": alias,
-        "type": "save_weights_for_sampler"
+        "type": "save_weights_for_sampler",
+        "trace_context": carrier
     })
     
     return {"request_id": req_id}
@@ -181,12 +195,17 @@ async def save_weights(req: dict):
     
     await store.set_future(req_id, {"status": "pending"})
     
+    carrier = {}
+    from opentelemetry import propagate
+    propagate.inject(carrier)
+    
     await store.put_request({
         "req_id": req_id,
         "model_id": model_id,
         "seq_id": seq_id,
         "alias": alias,
-        "type": "save_weights" # Use specific type for this endpoint
+        "type": "save_weights", # Use specific type for this endpoint
+        "trace_context": carrier
     })
     
     return {"request_id": req_id}
@@ -278,6 +297,9 @@ async def asample(req: dict):
     # Strip the sequence tag to find the base directory where PyTorch actually wrote the checkpoint
     base_model_id = lora_id.split("-samp-")[0] if lora_id else None
 
+    carrier = {}
+    from opentelemetry import propagate
+    propagate.inject(carrier)
 
     sampler_backend = os.getenv("SAMPLER_BACKEND", "vllm").lower()
     if sampler_backend == "engine":
@@ -287,7 +309,8 @@ async def asample(req: dict):
             "type": "asample",
             "prompt_tokens": prompt,
             "max_tokens": max_tokens,
-            "num_samples": num_samples
+            "num_samples": num_samples,
+            "trace_context": carrier
         })
         return {"request_id": req_id}
     
@@ -318,10 +341,14 @@ async def asample(req: dict):
             vllm_url = os.environ.get("VLLM_URL", "http://127.0.0.1:8001")
             vllm_generate_endpoint = f"{vllm_url.rstrip('/')}/generate"
             
+            headers = {'Content-Type': 'application/json'}
+            from opentelemetry import propagate
+            propagate.inject(headers)
+            
             http_req = urllib.request.Request(
                 vllm_generate_endpoint, 
                 data=req_bytes, 
-                headers={'Content-Type': 'application/json'}
+                headers=headers
             )
             
             def _make_req():
