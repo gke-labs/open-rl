@@ -23,7 +23,7 @@ To realize this vision, Open-RL implements a deeply decoupled, Kubernetes-based 
 1. **API Gateway:** The central entry point exposing an asynchronous API for the four key primitives: `train-policy-batch`, `update-policy-weights`, `save-weights-for-sampling`, and `generate-samples`.
 2. **Training Sub-system:** Dedicated, horizontally scalable GPU workers focused entirely on executing high-throughput forward/backward passes and optimizer steps.
 3. **Sampler Sub-system:** Independently scalable inference workers (powered by state-of-the-art engines like vLLM) optimized specifically for high-speed text generation.
-4. **Policy Weights Sub-system:** A robust synchronization layer that distributed policy weights between trainer and sampler sub-system. 
+4. **Policy Weights Sub-system:** A robust synchronization layer that distributes policy weights between the trainer and sampler sub-systems.
 
 Because training, inference, and storage are isolated sub-systems, they can be scaled completely independently—and even deployed on fundamentally different hardware architectures tailored to their specific data-flow requirements.
 
