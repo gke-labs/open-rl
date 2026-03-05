@@ -79,15 +79,17 @@ class TrainerEngine:
             del self.optimizers[model_id]
 
     def set_active_adapter(self, model_id: str):
-        if self.model is not None:
-            self.model.set_adapter(model_id)
+        with self._init_lock:
+            if self.model is not None:
+                self.model.set_adapter(model_id)
 
     def forward_backward(self, data: List[Dict[str, Any]], loss_fn: str, loss_fn_config: dict = None, model_id: str = None) -> Dict[str, Any]:
         with tracer.start_as_current_span("forward_backward") as span:
-            span.set_attribute("model_id", model_id or "unknown")
-            span.set_attribute("batch_size", len(data))
-            span.set_attribute("loss_fn", loss_fn)
-            return self._forward_backward_internal(data, loss_fn, loss_fn_config, model_id)
+            with self._init_lock:
+                span.set_attribute("model_id", model_id or "unknown")
+                span.set_attribute("batch_size", len(data))
+                span.set_attribute("loss_fn", loss_fn)
+                return self._forward_backward_internal(data, loss_fn, loss_fn_config, model_id)
 
     def _forward_backward_internal(self, data: List[Dict[str, Any]], loss_fn: str, loss_fn_config: dict = None, model_id: str = None) -> Dict[str, Any]:
         """
@@ -238,8 +240,9 @@ class TrainerEngine:
 
     def optim_step(self, adam_params: Dict[str, Any], model_id: str = None):
         with tracer.start_as_current_span("optim_step") as span:
-            span.set_attribute("model_id", model_id or "unknown")
-            return self._optim_step_internal(adam_params, model_id)
+            with self._init_lock:
+                span.set_attribute("model_id", model_id or "unknown")
+                return self._optim_step_internal(adam_params, model_id)
 
     def _optim_step_internal(self, adam_params: Dict[str, Any], model_id: str = None):
         if not model_id:
@@ -286,13 +289,14 @@ class TrainerEngine:
         }
 
     def generate(self, prompt_tokens: List[int], max_tokens: int, num_samples: int = 1, model_id: str = None) -> Dict[str, Any]:
-        assert self.model is not None, "Model not loaded."
-        
-        input_tensor = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
-        
-        with torch.no_grad():
-            attention_mask = torch.ones_like(input_tensor)
-            outputs = self.model.generate(
+        with self._init_lock:
+            assert self.model is not None, "Model not loaded."
+            
+            input_tensor = torch.tensor([prompt_tokens], dtype=torch.long, device=self.device)
+            
+            with torch.no_grad():
+                attention_mask = torch.ones_like(input_tensor)
+                outputs = self.model.generate(
                 input_tensor, 
                 attention_mask=attention_mask,
                 max_new_tokens=max_tokens,
@@ -427,7 +431,8 @@ async def clock_cycle_loop():
                                     
                                     # Because set_active_adapter(m_id) just ran, the engine model is active on this tenant!
                                     with tracer.start_as_current_span("save_weights_to_disk"):
-                                        engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
+                                        with engine._init_lock:
+                                            engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
                                     
                                     # Write metadata
                                     metadata = {
@@ -471,7 +476,8 @@ async def clock_cycle_loop():
                                     os.makedirs(ram_path, exist_ok=True)
                                     
                                     with tracer.start_as_current_span("save_weights_to_disk"):
-                                        engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
+                                        with engine._init_lock:
+                                            engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
                                     
                                     metadata = {
                                         "model_id": m_id,

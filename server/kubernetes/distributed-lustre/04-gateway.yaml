@@ -54,6 +54,8 @@ spec:
           value: "0"
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/lustre/open-rl"
+        - name: HF_HOME
+          value: "/mnt/lustre/open-rl/huggingface"
         resources:
           limits:
             nvidia.com/gpu: "1"

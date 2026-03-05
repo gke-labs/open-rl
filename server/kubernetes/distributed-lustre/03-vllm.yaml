@@ -18,7 +18,7 @@ metadata:
   labels:
     app: vllm
 spec:
-  replicas: 1
+  replicas: 3
   strategy:
     type: Recreate
   selector:
@@ -46,6 +46,16 @@ spec:
           value: "/mnt/lustre/open-rl"
         - name: ENABLE_GCP_TRACE
           value: "1"
+        - name: HF_HOME
+          value: "/mnt/lustre/open-rl/huggingface"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 24
         resources:
           limits:
             nvidia.com/gpu: "1"

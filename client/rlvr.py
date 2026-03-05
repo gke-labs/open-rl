@@ -92,10 +92,15 @@ def compute_reward(response, correct_answer, target_tag="answer"):
         
     return rewards
 
-async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_steps=15, temp=1.0, loss_fn="importance_sampling"):
+async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_steps=15, temp=1.0, loss_fn="importance_sampling", total_jobs=1):
     def log(msg):
         for line in msg.split('\n'):
             print(f"[{target_tag.upper()}-{job_idx:02d}] {line}")
+
+    if total_jobs > 1:
+        jitter = random.uniform(0, total_jobs * 2.5)  # up to 25 seconds for 10 jobs
+        log(f"Simulating tenant stagger: Delaying boot by {jitter:.1f}s to de-sync the pipeline...")
+        await asyncio.sleep(jitter)
 
     log("Initializing LoRA Training Client...")
     try:
@@ -265,8 +270,9 @@ async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_step
         plt.close(fig)
 
     N_SAMPLES = 8
+    N_PROBLEMS = 8
     for i in range(num_steps):
-        metrics, rollouts = await train_step(n_problems=4, n_samples=N_SAMPLES, lr=5e-5, loss_fn=loss_fn)
+        metrics, rollouts = await train_step(n_problems=N_PROBLEMS, n_samples=N_SAMPLES, lr=5e-5, loss_fn=loss_fn)
         history.append(metrics)
         log(f"{i+1:>4} | {metrics['reward']:>6.2f} | {metrics['accuracy']:>5.0%}")
         
@@ -346,7 +352,7 @@ async def main():
     for i in range(num_jobs):
         tag = "answer" if i % 2 == 0 else "capital"
         job_tasks.append(
-            run_rlvr_job(service_client, tag, i, args.base_model, args.steps, args.temp, args.loss)
+            run_rlvr_job(service_client, tag, i, args.base_model, args.steps, args.temp, args.loss, num_jobs)
         )
 
     print(f">> Running {num_jobs} Clients... <<\n")
