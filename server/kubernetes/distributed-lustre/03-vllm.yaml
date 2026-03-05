@@ -29,6 +29,7 @@ spec:
       labels:
         app: vllm
     spec:
+      serviceAccountName: open-rl-sa
       containers:
       - name: vllm
         image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
@@ -43,6 +44,8 @@ spec:
           value: "0"
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/lustre/open-rl"
+        - name: ENABLE_GCP_TRACE
+          value: "1"
         resources:
           limits:
             nvidia.com/gpu: "1"

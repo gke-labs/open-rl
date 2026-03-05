@@ -92,10 +92,10 @@ def compute_reward(response, correct_answer, target_tag="answer"):
         
     return rewards
 
-async def run_rlvr_job(service_client, target_tag, base_model, num_steps=15, temp=1.0, loss_fn="importance_sampling"):
+async def run_rlvr_job(service_client, target_tag, job_idx, base_model, num_steps=15, temp=1.0, loss_fn="importance_sampling"):
     def log(msg):
         for line in msg.split('\n'):
-            print(f"[{target_tag.upper():^7}] {line}")
+            print(f"[{target_tag.upper()}-{job_idx:02d}] {line}")
 
     log("Initializing LoRA Training Client...")
     try:
@@ -220,7 +220,7 @@ async def run_rlvr_job(service_client, target_tag, base_model, num_steps=15, tem
     # Baseline Evaluation (Before Training)
     # ------------------------------------------------------------------
     log("\n--- Baseline Evaluation (Before Training) ---")
-    res = training_client.save_weights_for_sampler(name=f"initial_base_{target_tag}").result()
+    res = training_client.save_weights_for_sampler(name=f"initial_base_{target_tag}_{job_idx}").result()
     base_client = service_client.create_sampling_client(res.path)
 
     def test_model(client, problem):
@@ -261,7 +261,7 @@ async def run_rlvr_job(service_client, target_tag, base_model, num_steps=15, tem
         axes[1].set_ylim(0, 1)
         
         plt.tight_layout()
-        plt.savefig(f'rlvr_metrics_{target_tag}.png')
+        plt.savefig(f'rlvr_metrics_{target_tag}_{job_idx}.png')
         plt.close(fig)
 
     N_SAMPLES = 8
@@ -282,13 +282,13 @@ async def run_rlvr_job(service_client, target_tag, base_model, num_steps=15, tem
                 problem_country = r.get("country", "Unknown")
                 log(f"       -> [{problem_country}] Sample: {sample_text} (Reward: {sample_reward})")
 
-    log(f"Saved 'rlvr_metrics_{target_tag}.png'")
+    log(f"Saved 'rlvr_metrics_{target_tag}_{job_idx}.png'")
 
     # ------------------------------------------------------------------
     # Trained Evaluation (After Training)
     # ------------------------------------------------------------------
     log("\n--- Trained Evaluation (After Training) ---")
-    res = training_client.save_weights_for_sampler(name=f"rlvr_concise_{target_tag}").result()
+    res = training_client.save_weights_for_sampler(name=f"rlvr_concise_{target_tag}_{job_idx}").result()
     trained_client = service_client.create_sampling_client(res.path)
 
     trained_rewards = []
@@ -305,12 +305,19 @@ async def main():
     service_client = ServiceClient()
     
     parser = argparse.ArgumentParser(description="Run Open-RL RLVR")
-    parser.add_argument("mode", nargs="?", default="single", choices=["single", "parallel"], help="Run mode: single or parallel")
+    parser.add_argument("mode", nargs="?", default="single", choices=["single", "parallel"], help="Legacy run mode, use --jobs instead")
+    parser.add_argument("-n", "--jobs", type=int, default=0, help="Number of concurrent jobs to run (overrides mode)")
     parser.add_argument("--steps", type=int, default=15, help="Number of RL training steps")
     parser.add_argument("--temp", type=float, default=1.2, help="Temperature for training rollouts")
     parser.add_argument("--loss", type=str, default="importance_sampling", choices=["importance_sampling", "ppo"], help="Loss function to use")
     parser.add_argument("--base-model", type=str, default="Qwen/Qwen3-4B-Instruct-2507", help="Base model to use")
     args = parser.parse_args()
+
+    # Determine num_jobs from args
+    if args.jobs > 0:
+        num_jobs = args.jobs
+    else:
+        num_jobs = 2 if args.mode == "parallel" else 1
 
     log_file = open("rlvr_parallel_results.log", "w")
     class ParallelLogger:
@@ -331,17 +338,19 @@ async def main():
     print("      Open-RL RLVR: Multi-Tenant Parallel RLVR Demo     ")
     print("============================================================")
     print(f"Log Output: rlvr_parallel_results.log")
+    print(f"Concurrency: {num_jobs} Jobs")
     print("------------------------------------------------------------\n")
 
-    if args.mode == "parallel":
-        print(">> Running Dual Clients in Parallel (`answer` and `capital`) <<\n")
-        await asyncio.gather(
-            run_rlvr_job(service_client, "answer", args.base_model, args.steps, args.temp, args.loss),
-            run_rlvr_job(service_client, "capital", args.base_model, args.steps, args.temp, args.loss)
+    # Generate jobs with alternating tags
+    job_tasks = []
+    for i in range(num_jobs):
+        tag = "answer" if i % 2 == 0 else "capital"
+        job_tasks.append(
+            run_rlvr_job(service_client, tag, i, args.base_model, args.steps, args.temp, args.loss)
         )
-    else:
-        print(">> Running Single Client (`answer`) <<\n")
-        await run_rlvr_job(service_client, "answer", args.base_model, args.steps, args.temp, args.loss)
+
+    print(f">> Running {num_jobs} Clients... <<\n")
+    await asyncio.gather(*job_tasks)
         
     sys.stdout = sys.stdout.original
     log_file.close()

@@ -215,6 +215,19 @@ gcloud container clusters update au-rl-1 \
     --update-addons=LustreCsiDriver=ENABLED
 ```
 
+**Configuring OpenTelemetry (GKE Workload Identity)**:
+To securely allow the GKE pods to export telemetry data (like Trainer GPU utilization) to Google Cloud Trace without granting node-level permissions, you must bind the `Cloud Trace Agent` role to the Kubernetes ServiceAccount (`open-rl-sa`) using Direct Workload Identity Federation:
+
+```bash
+PROJECT_ID="YOUR_PROJECT_ID"
+PROJECT_NUM=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")
+
+gcloud projects add-iam-policy-binding $PROJECT_ID \
+    --member="principal://iam.googleapis.com/projects/${PROJECT_NUM}/locations/global/workloadIdentityPools/${PROJECT_ID}.svc.id.goog/subject/ns/default/sa/open-rl-sa" \
+    --role="roles/cloudtrace.agent" \
+    --condition=None
+```
+
 Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing Google Cloud Managed Lustre for high-performance adapter synchronization:
 1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its own dedicated L4 GPU node)
 2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its own dedicated L4 GPU node, horizontally scalable)

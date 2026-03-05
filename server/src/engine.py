@@ -11,6 +11,9 @@ import subprocess
 import os
 import sys
 
+from opentelemetry import trace
+tracer = trace.get_tracer(__name__)
+
 from .state import get_store
 store = get_store()
 
@@ -80,6 +83,13 @@ class TrainerEngine:
             self.model.set_adapter(model_id)
 
     def forward_backward(self, data: List[Dict[str, Any]], loss_fn: str, loss_fn_config: dict = None, model_id: str = None) -> Dict[str, Any]:
+        with tracer.start_as_current_span("forward_backward") as span:
+            span.set_attribute("model_id", model_id or "unknown")
+            span.set_attribute("batch_size", len(data))
+            span.set_attribute("loss_fn", loss_fn)
+            return self._forward_backward_internal(data, loss_fn, loss_fn_config, model_id)
+
+    def _forward_backward_internal(self, data: List[Dict[str, Any]], loss_fn: str, loss_fn_config: dict = None, model_id: str = None) -> Dict[str, Any]:
         """
         data: List of Datum objects
         """
@@ -227,6 +237,11 @@ class TrainerEngine:
         return val
 
     def optim_step(self, adam_params: Dict[str, Any], model_id: str = None):
+        with tracer.start_as_current_span("optim_step") as span:
+            span.set_attribute("model_id", model_id or "unknown")
+            return self._optim_step_internal(adam_params, model_id)
+
+    def _optim_step_internal(self, adam_params: Dict[str, Any], model_id: str = None):
         if not model_id:
             raise ValueError("model_id is required for optim_step")
             
@@ -338,6 +353,7 @@ async def lifespan(app: FastAPI):
 
 
 async def clock_cycle_loop():
+    global store
     while True:
         try:
             # Block until requests are available and drain the queue
@@ -347,139 +363,148 @@ async def clock_cycle_loop():
                 continue
                 
             # Group by model_id
-            models_to_reqs = {}
-            for r in batch:
-                m_id = r.get("model_id")
-                if m_id not in models_to_reqs:
-                    models_to_reqs[m_id] = []
-                models_to_reqs[m_id].append(r)
-                
-            print(f"\n[CLOCK CYCLE] Popped {len(batch)} requests across {len(models_to_reqs)} distinct model tenant(s).")
-                
-            for m_id, reqs in models_to_reqs.items():
-                if len(reqs) == 0:
-                    continue
+            with tracer.start_as_current_span("clock_cycle_batch") as batch_span:
+                batch_span.set_attribute("batch_size", len(batch))
+                models_to_reqs = {}
+                for r in batch:
+                    m_id = r.get("model_id")
+                    if m_id not in models_to_reqs:
+                        models_to_reqs[m_id] = []
+                    models_to_reqs[m_id].append(r)
                     
-                print(f"  -> [TENSOR CORE] Hot-swapping to LoRA adapter: {m_id}")
-                
-                # Set active adapter
-                try:
-                    await asyncio.to_thread(engine.set_active_adapter, m_id)
-                except Exception as e:
-                    print(f"Failed to set adapter {m_id}: {e}")
-                    for r in reqs:
-                        await store.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
-                    continue
+                batch_span.set_attribute("num_models", len(models_to_reqs))
+                print(f"\n[CLOCK CYCLE] Popped {len(batch)} requests across {len(models_to_reqs)} distinct model tenant(s).")
                     
-                print(f"     Executing {len(reqs)} operations for {m_id}...")
-                # Execute sequentially
-                for r in reqs:
-                    req_id = r["req_id"]
-                    req_type = r["type"]
-                    try:
-                        if req_type == "forward_backward":
-                            data = r["data"]
-                            loss_fn = r["loss_fn"]
-                            loss_config = r["loss_config"]
-                            result = await asyncio.to_thread(engine.forward_backward, data, loss_fn, loss_config, m_id)
-                            result["type"] = "forward_backward"
-                            await store.set_future(req_id, result)
-                        elif req_type == "optim_step":
-                            adam_params = r["adam_params"]
-                            result = await asyncio.to_thread(engine.optim_step, adam_params, m_id)
-                            result["type"] = "optim_step"
-                            await store.set_future(req_id, result)
-                        elif req_type == "save_weights_for_sampler":
-                            seq_id = r.get("seq_id", 0)
-                            alias = r.get("alias")
-                            import os
-                            import json
-                            import time
-                            from datetime import datetime
+                for m_id, reqs in models_to_reqs.items():
+                    if len(reqs) == 0:
+                        continue
+                        
+                    with tracer.start_as_current_span("process_model_batch") as model_span:
+                        model_span.set_attribute("model_id", m_id)
+                        model_span.set_attribute("model_reqs", len(reqs))
+                        print(f"  -> [TENSOR CORE] Hot-swapping to LoRA adapter: {m_id}")
+                        
+                        # Set active adapter
+                        try:
+                            with tracer.start_as_current_span("set_active_adapter"):
+                                await asyncio.to_thread(engine.set_active_adapter, m_id)
+                        except Exception as e:
+                            print(f"Failed to set adapter {m_id}: {e}")
+                            for r in reqs:
+                                await store.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
+                            continue
                             
-                            # Save to disk/ramdisk so vLLM can load it
-                            tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-                            ram_path = os.path.join(tmp_dir, "peft", m_id)
-                            os.makedirs(ram_path, exist_ok=True)
-                            
-                            # Because set_active_adapter(m_id) just ran, the engine model is active on this tenant!
-                            engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
-                            
-                            # Write metadata
-                            metadata = {
-                                "model_id": m_id,
-                                "alias": alias,
-                                "created_at": datetime.now().isoformat(),
-                                "timestamp": time.time()
-                            }
+                        print(f"     Executing {len(reqs)} operations for {m_id}...")
+                        # Execute sequentially
+                        for r in reqs:
+                            req_id = r["req_id"]
+                            req_type = r["type"]
                             try:
-                                with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-                                    json.dump(metadata, f)
+                                if req_type == "forward_backward":
+                                    data = r["data"]
+                                    loss_fn = r["loss_fn"]
+                                    loss_config = r["loss_config"]
+                                    result = await asyncio.to_thread(engine.forward_backward, data, loss_fn, loss_config, m_id)
+                                    result["type"] = "forward_backward"
+                                    await store.set_future(req_id, result)
+                                elif req_type == "optim_step":
+                                    adam_params = r["adam_params"]
+                                    result = await asyncio.to_thread(engine.optim_step, adam_params, m_id)
+                                    result["type"] = "optim_step"
+                                    await store.set_future(req_id, result)
+                                elif req_type == "save_weights_for_sampler":
+                                    seq_id = r.get("seq_id", 0)
+                                    alias = r.get("alias")
+                                    import os
+                                    import json
+                                    import time
+                                    from datetime import datetime
+                                    
+                                    # Save to disk/ramdisk so vLLM can load it
+                                    tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+                                    ram_path = os.path.join(tmp_dir, "peft", m_id)
+                                    os.makedirs(ram_path, exist_ok=True)
+                                    
+                                    # Because set_active_adapter(m_id) just ran, the engine model is active on this tenant!
+                                    with tracer.start_as_current_span("save_weights_to_disk"):
+                                        engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
+                                    
+                                    # Write metadata
+                                    metadata = {
+                                        "model_id": m_id,
+                                        "alias": alias,
+                                        "created_at": datetime.now().isoformat(),
+                                        "timestamp": time.time()
+                                    }
+                                    try:
+                                        with open(os.path.join(ram_path, "metadata.json"), "w") as f:
+                                            json.dump(metadata, f)
+                                    except Exception as e:
+                                        print(f"Failed to write metadata: {e}")
+                                    
+                                    # Use a tinker:// URI that encodes the session ID, satisfying SDK validation
+                                    # and matching what we expect in asample (after stripping prefix)
+                                    session_id = f"{m_id}-samp-{seq_id}"
+                                    
+                                    # Tinkers SDK `save_weights_and_get_sampling_client` expects path=None (ephemeral)
+                                    # Tinkers SDK `save_weights_for_sampler` expects path!=None (named)
+                                    # We use the presence of 'alias' to distinguish.
+                                    result_path = f"tinker://{session_id}" if alias else None
+                                    
+                                    result = {
+                                        "path": result_path,
+                                        "sampling_session_id": session_id,
+                                        "type": "save_weights_for_sampler"
+                                    }
+                                    await store.set_future(req_id, result)
+                                elif req_type == "save_weights":
+                                    # Identical logic to save_weights_for_sampler but returns different type
+                                    seq_id = r.get("seq_id", 0)
+                                    alias = r.get("alias")
+                                    import os
+                                    import json
+                                    import time
+                                    from datetime import datetime
+                                    
+                                    tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+                                    ram_path = os.path.join(tmp_dir, "peft", m_id)
+                                    os.makedirs(ram_path, exist_ok=True)
+                                    
+                                    with tracer.start_as_current_span("save_weights_to_disk"):
+                                        engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
+                                    
+                                    metadata = {
+                                        "model_id": m_id,
+                                        "alias": alias,
+                                        "created_at": datetime.now().isoformat(),
+                                        "timestamp": time.time()
+                                    }
+                                    try:
+                                        with open(os.path.join(ram_path, "metadata.json"), "w") as f:
+                                            json.dump(metadata, f)
+                                    except Exception as e:
+                                        print(f"Failed to write metadata: {e}")
+                                    
+                                    session_id = f"{m_id}-samp-{seq_id}"
+                                    # For save_weights (checkpointing), we usually just want the path
+                                    result_path = f"tinker://{session_id}" 
+                                    
+                                    result = {
+                                        "path": result_path, 
+                                        "sampling_session_id": session_id,
+                                        "type": "save_weights" # CORRECT TYPE for validation
+                                    }
+                                    await store.set_future(req_id, result)
+                                elif req_type == "asample":
+                                    prompt_tokens = r["prompt_tokens"]
+                                    max_tokens = r["max_tokens"]
+                                    num_samples = r["num_samples"]
+                                    result = await asyncio.to_thread(engine.generate, prompt_tokens, max_tokens, num_samples, m_id)
+                                    result["type"] = "sample"
+                                    await store.set_future(req_id, result)
                             except Exception as e:
-                                print(f"Failed to write metadata: {e}")
-                            
-                            # Use a tinker:// URI that encodes the session ID, satisfying SDK validation
-                            # and matching what we expect in asample (after stripping prefix)
-                            session_id = f"{m_id}-samp-{seq_id}"
-                            
-                            # Tinkers SDK `save_weights_and_get_sampling_client` expects path=None (ephemeral)
-                            # Tinkers SDK `save_weights_for_sampler` expects path!=None (named)
-                            # We use the presence of 'alias' to distinguish.
-                            result_path = f"tinker://{session_id}" if alias else None
-                            
-                            result = {
-                                "path": result_path,
-                                "sampling_session_id": session_id,
-                                "type": "save_weights_for_sampler"
-                            }
-                            await store.set_future(req_id, result)
-                        elif req_type == "save_weights":
-                            # Identical logic to save_weights_for_sampler but returns different type
-                            seq_id = r.get("seq_id", 0)
-                            alias = r.get("alias")
-                            import os
-                            import json
-                            import time
-                            from datetime import datetime
-                            
-                            tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-                            ram_path = os.path.join(tmp_dir, "peft", m_id)
-                            os.makedirs(ram_path, exist_ok=True)
-                            
-                            engine.model.save_pretrained(ram_path, selected_adapters=[m_id])
-                            
-                            metadata = {
-                                "model_id": m_id,
-                                "alias": alias,
-                                "created_at": datetime.now().isoformat(),
-                                "timestamp": time.time()
-                            }
-                            try:
-                                with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-                                    json.dump(metadata, f)
-                            except Exception as e:
-                                print(f"Failed to write metadata: {e}")
-                            
-                            session_id = f"{m_id}-samp-{seq_id}"
-                            # For save_weights (checkpointing), we usually just want the path
-                            result_path = f"tinker://{session_id}" 
-                            
-                            result = {
-                                "path": result_path, 
-                                "sampling_session_id": session_id,
-                                "type": "save_weights" # CORRECT TYPE for validation
-                            }
-                            await store.set_future(req_id, result)
-                        elif req_type == "asample":
-                            prompt_tokens = r["prompt_tokens"]
-                            max_tokens = r["max_tokens"]
-                            num_samples = r["num_samples"]
-                            result = await asyncio.to_thread(engine.generate, prompt_tokens, max_tokens, num_samples, m_id)
-                            result["type"] = "sample"
-                            await store.set_future(req_id, result)
-                    except Exception as e:
-                        traceback.print_exc()
-                        await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+                                traceback.print_exc()
+                                await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
                         
         except asyncio.CancelledError:
             break
@@ -494,7 +519,6 @@ async def clock_cycle_loop():
                 print("[engine] Destroying StateStore singleton to force Redis reconnection...")
                 from . import state
                 state._store_instance = None
-                global store
                 store = state.get_store()
                 
             await asyncio.sleep(1)

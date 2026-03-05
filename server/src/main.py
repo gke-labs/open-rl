@@ -12,6 +12,26 @@ import urllib.request
 import json
 import traceback
 
+from opentelemetry import trace
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+# Initialize OpenTelemetry TracerProvider
+provider = TracerProvider()
+trace.set_tracer_provider(provider)
+
+if os.environ.get("ENABLE_GCP_TRACE", "0") == "1":
+    try:
+        from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
+        exporter = CloudTraceSpanExporter()
+        provider.add_span_processor(BatchSpanProcessor(exporter))
+        print("OpenTelemetry: Configured GCP CloudTraceSpanExporter")
+    except ImportError:
+        print("OpenTelemetry: opentelemetry-exporter-gcp-trace is not installed")
+else:
+    print("OpenTelemetry: No exporter configured (ENABLE_GCP_TRACE=0)")
+
 class FilterNoisyEndpoints(logging.Filter):
     def filter(self, record: logging.LogRecord) -> bool:
         msg = record.getMessage()
@@ -20,6 +40,7 @@ class FilterNoisyEndpoints(logging.Filter):
 logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
+FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 @app.get("/api/v1/healthz")
 async def health_check():

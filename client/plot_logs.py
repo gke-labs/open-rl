@@ -10,8 +10,8 @@ def parse_logs(log_file):
         return None
 
     # Regex to capture: [TAG] Iter | Reward | Acc
-    # Example: [ANSWER ]    1 |   1.10 |   60%
-    metric_pattern = re.compile(r'^\[(\w+)\s*\]\s+(\d+)\s+\|\s+([-\d\.]+)\s+\|\s+([-\d\.]+)%?')
+    # Example: [ANSWER-00]    1 |   1.10 |   60%
+    metric_pattern = re.compile(r'^\[([\w-]+)\s*\]\s+(\d+)\s+\|\s+([-\d\.]+)\s+\|\s+([-\d\.]+)%?')
     
     data = defaultdict(lambda: {'iter': [], 'reward': [], 'acc': []})
 

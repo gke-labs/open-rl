@@ -36,11 +36,14 @@ run-sft:
 run-sft-parallel:
 	cd client && uv run --no-sync -i https://pypi.org/simple python sft.py --parallel --base-model "$(VLLM_MODEL)"
 
+# Default concurrent jobs for parallel execution
+JOBS ?= 2
+
 run-rlvr:
-	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py --steps 15 --base-model "$(VLLM_MODEL)"
+	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py --jobs 1 --steps 15 --base-model "$(VLLM_MODEL)"
 
 run-rlvr-parallel:
-	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py parallel --steps 15 --base-model "$(VLLM_MODEL)"
+	cd client && uv run --no-sync -i https://pypi.org/simple python rlvr.py --jobs $(JOBS) --steps 15 --base-model "$(VLLM_MODEL)"
 
 # Plot metrics from a JSONL file
 # Usage: make plot-metrics [FILE=path/to/metrics.jsonl]
