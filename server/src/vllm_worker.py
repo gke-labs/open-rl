@@ -60,7 +60,7 @@ async def startup():
         model=os.environ.get("VLLM_MODEL"),
         enable_lora=True,
         max_loras=4,
-        max_lora_rank=16,
+        max_lora_rank=64,
         max_model_len=8192, # Prevent KV cache OOM on massive context windows
         gpu_memory_utilization=0.60, # Leave room for other things if needed
         enforce_eager=True # Useful for small setups

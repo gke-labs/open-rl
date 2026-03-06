@@ -369,7 +369,10 @@ async def retrieve_future(req: dict):
     
     result = await store.get_future(request_id, timeout=60.0)
     if result is None:
-         return {"type": "RequestFailedResponse", "error_message": "Future not found"}
+         return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
+         
+    if isinstance(result, dict) and result.get("type") == "RequestFailedResponse":
+         return JSONResponse(status_code=400, content=result)
          
     return result
 
