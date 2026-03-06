@@ -102,6 +102,7 @@ run-cli-chat:
 
 GCP_PROJECT ?= cdrollouts-sunilarora
 GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-server
+CLIENT_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-client
 IMAGE_TAG ?= latest
 
 remote-build-setup:
@@ -110,17 +111,32 @@ remote-build-setup:
 	@echo "--- Setup Complete! ---"
 
 remote-build: server-sync
-	@echo "--- Building Docker Image on $(HOST) ---"
+	@echo "--- Building Server Docker Image on $(HOST) ---"
 	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GCR_REPO):$(IMAGE_TAG) ."
 
 remote-push:
-	@echo "--- Pushing Image to GCR from $(HOST) ---"
+	@echo "--- Pushing Server Image to GCR from $(HOST) ---"
 	ssh $(HOST) "docker push $(GCR_REPO):$(IMAGE_TAG)"
 
+remote-client-build: server-sync
+	@echo "--- Building Client Docker Image on $(HOST) ---"
+	ssh $(HOST) "cd ~/work/open-rl/client && DOCKER_BUILDKIT=1 docker build -t $(CLIENT_GCR_REPO):$(IMAGE_TAG) ."
+
+remote-client-push:
+	@echo "--- Pushing Client Image to GCR from $(HOST) ---"
+	ssh $(HOST) "docker push $(CLIENT_GCR_REPO):$(IMAGE_TAG)"
 
 deploy:
-	@echo "--- Deploying to GKE ---"
+	@echo "--- Deploying Server to GKE ---"
 	kubectl apply -f server/kubernetes/
+
+run-client-job:
+	@echo "--- Deploying RLVR Client Job to GKE ---"
+	kubectl delete job open-rl-client-job --ignore-not-found=true
+	kubectl apply -f client/kubernetes/rlvr-job.yaml
+	@echo "Waiting for job to start..."
+	@sleep 4
+	kubectl logs -f job/open-rl-client-job
 
 # --- Redis Management (Linux) ---
 

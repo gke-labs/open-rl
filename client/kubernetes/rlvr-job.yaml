@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: open-rl-client-job
+  labels:
+    app: open-rl-client
+spec:
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: open-rl-client
+    spec:
+      serviceAccountName: open-rl-sa
+      restartPolicy: Never
+      containers:
+      - name: rlvr-client
+        image: gcr.io/cdrollouts-sunilarora/open-rl-client:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            ephemeral-storage: "10Gi"
+            memory: "4Gi"
+            cpu: "1"
+          limits:
+            ephemeral-storage: "10Gi"
+            memory: "4Gi"
+            cpu: "1"
+        command: ["uv", "run", "--no-sync", "python", "rlvr.py", "--jobs", "10", "--steps", "30"]
+        env:
+        - name: ENABLE_GCP_TRACE
+          value: "1"
+        - name: TINKER_BASE_URL
+          value: "http://open-rl-gateway-service:8000"
+        - name: TINKER_API_KEY
+          value: "tml-dummy-key"
+        - name: HF_HOME
+          value: "/mnt/lustre/open-rl/huggingface"
+        volumeMounts:
+        - name: lustre-storage
+          mountPath: /mnt/lustre
+      volumes:
+      - name: lustre-storage
+        persistentVolumeClaim:
+          claimName: open-rl-lustre-pvc
