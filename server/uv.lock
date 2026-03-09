@@ -882,8 +882,8 @@ name = "httpcore"
 version = "1.0.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi", marker = "sys_platform != 'win32'" },
-    { name = "h11", marker = "sys_platform != 'win32'" },
+    { name = "certifi" },
+    { name = "h11" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/06/94/82699a10bca87a5556c9c59b5963f2d039dbd239f25bc2a63907a05a14cb/httpcore-1.0.9.tar.gz", hash = "sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8", size = 85484, upload-time = "2025-04-24T22:06:22.219Z" }
 wheels = [
@@ -907,10 +907,10 @@ name = "httpx"
 version = "0.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "sys_platform != 'win32'" },
-    { name = "certifi", marker = "sys_platform != 'win32'" },
-    { name = "httpcore", marker = "sys_platform != 'win32'" },
-    { name = "idna", marker = "sys_platform != 'win32'" },
+    { name = "anyio" },
+    { name = "certifi" },
+    { name = "httpcore" },
+    { name = "idna" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b1/df/48c586a5fe32a0f01324ee087459e112ebb7224f646c0b5023f5e79e9956/httpx-0.28.1.tar.gz", hash = "sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc", size = 141406, upload-time = "2024-12-06T15:37:23.222Z" }
 wheels = [
@@ -2382,47 +2382,54 @@ name = "server"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [
-    { name = "accelerate" },
-    { name = "datasets", version = "2.14.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
-    { name = "datasets", version = "4.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "fastapi" },
-    { name = "numpy" },
+    { name = "httpx" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-sdk" },
-    { name = "peft" },
     { name = "pydantic" },
     { name = "redis" },
+    { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+ml = [
+    { name = "accelerate" },
+    { name = "datasets", version = "2.14.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
+    { name = "datasets", version = "4.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
+    { name = "numpy" },
+    { name = "peft" },
     { name = "torch" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux'" },
     { name = "transformers" },
     { name = "trl", version = "0.10.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
     { name = "trl", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
-    { name = "uvicorn" },
     { name = "vllm", marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate" },
-    { name = "datasets" },
+    { name = "accelerate", marker = "extra == 'ml'" },
+    { name = "datasets", marker = "extra == 'ml'" },
     { name = "fastapi" },
-    { name = "numpy" },
+    { name = "httpx" },
+    { name = "numpy", marker = "extra == 'ml'" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-sdk" },
-    { name = "peft" },
+    { name = "peft", marker = "extra == 'ml'" },
     { name = "pydantic" },
     { name = "redis", specifier = ">=5.0.0" },
-    { name = "torch" },
-    { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux'" },
-    { name = "transformers" },
-    { name = "trl" },
+    { name = "torch", marker = "extra == 'ml'" },
+    { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux' and extra == 'ml'" },
+    { name = "transformers", marker = "extra == 'ml'" },
+    { name = "trl", marker = "extra == 'ml'" },
     { name = "uvicorn" },
-    { name = "vllm", marker = "sys_platform == 'linux'", specifier = ">=0.15.0" },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'ml'", specifier = ">=0.15.0" },
 ]
+provides-extras = ["ml"]
 
 [[package]]
 name = "setproctitle"

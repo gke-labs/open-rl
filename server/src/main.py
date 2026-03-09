@@ -3,7 +3,7 @@ import os
 import asyncio
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from .engine import engine, lifespan
+# Removed direct PyTorch engine import to keep Gateway stateless
 from .state import get_store
 
 store = get_store()
@@ -41,7 +41,7 @@ class FilterNoisyEndpoints(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
-app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
+app = FastAPI(title="Open-RL Server MVP")
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 @app.get("/api/v1/healthz")
@@ -76,27 +76,25 @@ async def create_model(req: dict):
     
     model_id = req_id 
     
-    async def _load_model_task():
-        try:
-            await asyncio.to_thread(engine.load_model, base_model, rank, model_id)
-            await store.set_future(req_id, {
-                "model_id": model_id,
-                "is_lora": True,
-                "lora_rank": rank,
-                "type": "create_model"
-            })
-        except Exception as e:
-            traceback.print_exc()
-            await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
-
-    asyncio.create_task(_load_model_task())
+    # Push the creation task globally to the Redis Queue for the decoupled Trainer Engine
+    # Note: We must route this specifically so the Engine instance can pick it up.
+    # Since it's a global operation (not tenant specific yet), we use "default" or model_id
+    await store.put_request({
+        "req_id": req_id,
+        "model_id": model_id, # Tenant specific queue
+        "type": "create_model",
+        "base_model": base_model,
+        "rank": rank
+    })
+    
     return {"request_id": req_id}
 
 @app.post("/api/v1/get_info")
 async def get_info(req: dict):
-    model_name = engine.base_model_name
+    # API Gateway is stateless, so it reads the globally deployed model config from Env
+    model_name = os.environ.get("VLLM_MODEL")
     if not model_name:
-         return JSONResponse(status_code=404, content={"error": "No base model loaded"})
+         return JSONResponse(status_code=404, content={"error": "VLLM_MODEL environment variable not set in Gateway"})
 
     return {
         "model_data": {
@@ -110,6 +108,9 @@ async def get_info(req: dict):
         "model_name": model_name,
         "type": "get_info"
     }
+
+# Global set to hold strong references to background tasks to prevent GC
+background_tasks = set()
 
 @app.post("/api/v1/forward_backward")
 async def forward_backward(req: dict):
@@ -389,9 +390,11 @@ async def asample(req: dict):
             await store.set_future(req_id, data)
         except Exception as e:
             traceback.print_exc()
-            await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+            await store.set_future(req_id, {"error": str(e), "category": "server_error"})
 
-    asyncio.create_task(_route_to_vllm())
+    task = asyncio.create_task(_route_to_vllm())
+    background_tasks.add(task)
+    task.add_done_callback(background_tasks.discard)
     
     return {"request_id": req_id}
 

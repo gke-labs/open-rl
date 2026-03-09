@@ -63,6 +63,7 @@ async def startup():
         max_lora_rank=64,
         max_model_len=8192, # Prevent KV cache OOM on massive context windows
         gpu_memory_utilization=0.60, # Leave room for other things if needed
+        enable_prefix_caching=True, # Dramatically speeds up RL context reuse
         enforce_eager=True # Useful for small setups
     )
     engine = AsyncLLMEngine.from_engine_args(engine_args)

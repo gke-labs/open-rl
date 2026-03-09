@@ -40,32 +40,51 @@ class TrainerEngine:
             self.device = "cpu"
             
         self.base_model_name = None
+        self.base_model_name = None
 
-    def load_model(self, base_model: str, rank: int, model_id: str):
+    def preload_base_model(self, base_model: str):
+        """Eagerly load the massive base model tensors into VRAM."""
         with self._init_lock:
             if self.model is None or self.base_model_name != base_model:
+                print(f"[EAGER INIT] Pre-loading heavy base model {base_model} to {self.device}...")
+                self.base_model_name = base_model
+                self.tokenizer = AutoTokenizer.from_pretrained(base_model)
+                dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+                
+                # Load the raw base model graph (no adapters yet)
+                self.model_obj = AutoModelForCausalLM.from_pretrained(
+                    base_model,
+                    torch_dtype=dtype,
+                    device_map=self.device
+                )
+                print(f"[EAGER INIT] {base_model} successfully seated in VRAM.")
+    def load_model(self, base_model: str, rank: int, model_id: str):
+        with self._init_lock:
+            # If the user asks for a different base model than what's loaded, we have to swap it.
+            # But normally, eager init guarantees this matches.
+            if getattr(self, "model_obj", None) is None or self.base_model_name != base_model:
                 self.base_model_name = base_model
                 print(f"Loading base model {base_model} to {self.device}...")
                 
                 self.tokenizer = AutoTokenizer.from_pretrained(base_model)
-                
                 dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-                base_model_obj = AutoModelForCausalLM.from_pretrained(
+                self.model_obj = AutoModelForCausalLM.from_pretrained(
                     base_model,
                     torch_dtype=dtype,
                     device_map=self.device
                 )
                 
+            if getattr(self, "model", None) is None:
+                # First time wrapping the base model with PEFT
                 peft_config = LoraConfig(
                     task_type=TaskType.CAUSAL_LM,
                     r=rank,
                     lora_alpha=rank * 2,
                     target_modules=["q_proj", "v_proj"]
                 )
-                # Apply PEFT with the specific adapter name
-                self.model = get_peft_model(base_model_obj, peft_config, adapter_name=model_id)
+                self.model = get_peft_model(self.model_obj, peft_config, adapter_name=model_id)
                 self.model.train()
-                print(f"Base model loaded and wrapped with LoRA adapter '{model_id}'.")
+                print(f"Base model wrapped with initial LoRA adapter '{model_id}'.")
             else:
                 print(f"Adding new LoRA adapter '{model_id}' to existing base model...")
                 peft_config = LoraConfig(
@@ -411,15 +430,17 @@ async def clock_cycle_loop():
                     model_span.set_attribute("model_reqs", len(batch))
                     print(f"  -> [TENSOR CORE] Hot-swapping to LoRA adapter: {m_id}")
                     
-                    # Set active adapter
-                    try:
-                        with tracer.start_as_current_span("set_active_adapter"):
-                            await asyncio.to_thread(engine.set_active_adapter, m_id)
-                    except Exception as e:
-                        print(f"Failed to set adapter {m_id}: {e}")
-                        for r in batch:
-                            await store.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
-                        continue
+                    # Set active adapter, UNLESS the batch is trying to create it!
+                    has_create_model = any(r.get("type") == "create_model" for r in batch)
+                    if not has_create_model:
+                        try:
+                            with tracer.start_as_current_span("set_active_adapter"):
+                                await asyncio.to_thread(engine.set_active_adapter, m_id)
+                        except Exception as e:
+                            print(f"Failed to set adapter {m_id}: {e}")
+                            for r in batch:
+                                await store.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
+                            continue
                         
                     print(f"     Executing {len(batch)} operations for {m_id}...")
                     
@@ -446,13 +467,23 @@ async def clock_cycle_loop():
                                     result = await asyncio.to_thread(engine.optim_step, adam_params, m_id)
                                     result["type"] = "optim_step"
                                     await store.set_future(req_id, result)
-                                elif req_type == "asample":
+                                elif req_type == "sample":
                                     prompt_tokens = r["prompt_tokens"]
                                     max_tokens = r["max_tokens"]
                                     num_samples = r["num_samples"]
                                     result = await asyncio.to_thread(engine.generate, prompt_tokens, max_tokens, num_samples, m_id)
                                     result["type"] = "sample"
                                     await store.set_future(req_id, result)
+                                elif req_type == "create_model":
+                                    base_model = r["base_model"]
+                                    rank = r.get("rank", 16)
+                                    await asyncio.to_thread(engine.load_model, base_model, rank, m_id)
+                                    await store.set_future(req_id, {
+                                        "model_id": m_id,
+                                        "is_lora": True,
+                                        "lora_rank": rank,
+                                        "type": "create_model"
+                                    })
                             except Exception as e:
                                 traceback.print_exc()
                                 await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
@@ -476,3 +507,49 @@ async def clock_cycle_loop():
                 store = state.get_store()
                 
             await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    import uvicorn
+    from fastapi import FastAPI
+    import threading
+
+    print("\n" + "="*50)
+    print("      Open-RL PyTorch Training Worker")
+    print("="*50)
+    cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
+    print(f"-> Hardware : CUDA_VISIBLE_DEVICES={cuda_devs}\n")
+    
+    # 1. Eagerly load the base model to bypass cold-start penalties
+    preload_target = os.getenv("VLLM_MODEL")
+    is_ready = False
+    if preload_target:
+        engine.preload_base_model(preload_target)
+        is_ready = True
+    else:
+        print("[WARNING] VLLM_MODEL not provided. Cold-start penalty will apply on first request.")
+        is_ready = True # Nothing to load, so we are "ready" to receive the first request
+
+    # 2. Stand up a lightweight ASGI app strictly for Kubernetes Readiness Probes
+    probe_app = FastAPI()
+    @probe_app.get("/healthz")
+    def healthz():
+        if is_ready:
+            return {"status": "ready"}
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Model Loading")
+
+    def run_probe_server():
+        # Run on port 8000 so the Kubernetes deployment health check works
+        uvicorn.run(probe_app, host="0.0.0.0", port=8000, log_level="warning")
+        
+    threading.Thread(target=run_probe_server, daemon=True).start()
+
+    # 3. Start the infinite tensor crunching loop
+    async def main():
+        task = asyncio.create_task(clock_cycle_loop())
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(main())

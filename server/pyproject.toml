@@ -5,21 +5,26 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.12, <3.13"
 dependencies = [
-    "accelerate",
-    "datasets",
     "fastapi",
-    "numpy",
     "opentelemetry-api",
     "opentelemetry-sdk",
     "opentelemetry-instrumentation-fastapi",
     "opentelemetry-exporter-gcp-trace",
-    "peft",
     "pydantic",
     "redis>=5.0.0",
+    "uvicorn",
+    "httpx",
+]
+
+[project.optional-dependencies]
+ml = [
+    "accelerate",
+    "datasets",
+    "numpy",
+    "peft",
     "torch",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
     "transformers",
     "trl",
-    "uvicorn",
     "vllm>=0.15.0; sys_platform == 'linux'",
 ]

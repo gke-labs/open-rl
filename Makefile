@@ -102,6 +102,7 @@ run-cli-chat:
 
 GCP_PROJECT ?= cdrollouts-sunilarora
 GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-server
+GATEWAY_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-gateway
 CLIENT_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-client
 TINKER_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/tinker-cookbook
 IMAGE_TAG ?= latest
@@ -112,12 +113,14 @@ remote-build-setup:
 	@echo "--- Setup Complete! ---"
 
 remote-build: server-sync
-	@echo "--- Building Server Docker Image on $(HOST) ---"
-	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GCR_REPO):$(IMAGE_TAG) ."
+	@echo "--- Building Server Docker Images on $(HOST) ---"
+	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GCR_REPO):$(IMAGE_TAG) -f Dockerfile ."
+	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GATEWAY_GCR_REPO):$(IMAGE_TAG) -f Dockerfile.gateway ."
 
 remote-push:
-	@echo "--- Pushing Server Image to GCR from $(HOST) ---"
+	@echo "--- Pushing Server Images to GCR from $(HOST) ---"
 	ssh $(HOST) "docker push $(GCR_REPO):$(IMAGE_TAG)"
+	ssh $(HOST) "docker push $(GATEWAY_GCR_REPO):$(IMAGE_TAG)"
 
 remote-client-build: server-sync
 	@echo "--- Building Client Docker Image on $(HOST) ---"
@@ -154,6 +157,16 @@ run-client-job:
 stop-client-job:
 	@echo "--- Stopping RLVR Client Job ---"
 	kubectl delete job open-rl-client-job open-rl-client-job-parallel --ignore-not-found=true
+
+logs-client-job:
+	@echo "--- Fetching RLVR Client Job Logs ---"
+	kubectl logs -f job/open-rl-client-job
+
+rollout:
+	@echo "--- Rolling out latest server deployments ---"
+	kubectl rollout restart deployment open-rl-gateway open-rl-trainer-worker vllm-worker
+	kubectl rollout status deployment open-rl-gateway
+	kubectl rollout status deployment open-rl-trainer-worker
 
 run-tinker-job:
 	@echo "--- Deploying Tinker RL Basic Job to GKE ---"
