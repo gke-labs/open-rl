@@ -164,7 +164,7 @@ logs-client-job:
 
 rollout:
 	@echo "--- Rolling out latest server deployments ---"
-	kubectl rollout restart deployment open-rl-gateway open-rl-trainer-worker vllm-worker
+	kubectl rollout restart deployment redis-broker open-rl-gateway open-rl-trainer-worker vllm-worker
 	kubectl rollout status deployment open-rl-gateway
 	kubectl rollout status deployment open-rl-trainer-worker
 
