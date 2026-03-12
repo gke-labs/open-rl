@@ -1,4 +1,4 @@
-.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma run-sft run-sft-parallel run-rlvr run-rlvr-parallel
+.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma-sft run-pig-latin-server run-pig-latin-sft run-sft run-sft-parallel run-rlvr run-rlvr-parallel
 
 # Default VLLM model for inference, can be overridden via `make run-vllm VLLM_MODEL=...`
 #VLLM_MODEL ?= Qwen/Qwen2.5-0.5B
@@ -28,6 +28,12 @@ run-function-gemma-server:
 
 run-function-gemma:
 	cd client && uv run --python 3.12 functiongemma-demo $(ARGS)
+
+run-pig-latin-server:
+	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" SAMPLER_BACKEND=engine VLLM_MODEL="Qwen/Qwen3-0.6B" uv run uvicorn src.main:app --host 127.0.0.1 --port 9001
+
+run-pig-latin-sft:
+	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py $(ARGS)
 
 # Client test targets
 run-sft:

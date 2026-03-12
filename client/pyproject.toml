@@ -27,4 +27,4 @@ functiongemma-demo = "functiongemma_sft:cli"
 
 [tool.setuptools]
 packages = []
-py-modules = ["cli", "sft", "rlvr", "functiongemma_sft", "verify_ppo", "plot_metrics", "plot_logs"]
+py-modules = ["cli", "sft", "rlvr", "functiongemma_sft", "piglatin_sft", "verify_ppo", "plot_metrics", "plot_logs"]

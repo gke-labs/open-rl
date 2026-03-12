@@ -33,6 +33,30 @@ What it does:
 - runs pre/post evaluation
 - saves `artifacts/functiongemma_sft_metrics.png`
 
+## Pig Latin SFT
+
+Script: `client/piglatin_sft.py`
+
+Start the local single-process Open-RL server:
+
+```bash
+make run-pig-latin-server
+```
+
+Then run the training demo in a second terminal:
+
+```bash
+make run-pig-latin-sft
+```
+
+What it does:
+
+- starts a local Open-RL server on `http://127.0.0.1:9001`
+- loads `Qwen/Qwen3-0.6B`
+- trains a LoRA adapter on word-level Pig Latin pairs
+- runs pre/post translation evaluation and saves `artifacts/piglatin_sft_metrics.png`
+
+
 ## RLVR Demo
 
 The RLVR (Reinforcement Learning with Verifiable Rewards) demo showcases training a model to answer questions in a specific format using a reward function that verifies the correctness and format of the answer.
