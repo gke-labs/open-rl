@@ -70,6 +70,9 @@ def rl_loop(trainer, sampler, env, dataset, num_steps):
 - **LoRA (Low-Rank Adaptation):** Open-RL assumes the use of LoRA fine-tuning, which efficiently retains the quality of full fine-tuning for most domains. By anchoring a frozen base model on shared GPUs, the system leverages LoRA to achieve near-instant memory context switching between multiple time-sliced RL jobs.
 - **Soft Multi-Tenancy:** The initial design assumes that the datasets and weights for multiple RL jobs can safely reside on high-performance shared infrastructural storage layers.
 
+## Setup Docs
+- [Getting Started with `uv`](docs/getting-started-uv.md)
+
 ## Contributing
 
 This project is licensed under the [Apache 2.0 License](LICENSE).
