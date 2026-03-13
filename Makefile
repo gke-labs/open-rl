@@ -33,7 +33,13 @@ run-pig-latin-server:
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" SAMPLER_BACKEND=engine VLLM_MODEL="Qwen/Qwen3-0.6B" uv run uvicorn src.main:app --host 127.0.0.1 --port 9001
 
 run-pig-latin-sft:
-	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py $(ARGS)
+	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py qwen $(ARGS)
+
+run-pig-latin-gemma-server:
+	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="google/gemma-3-1b-it" SAMPLER_BACKEND=engine VLLM_MODEL="google/gemma-3-1b-it" uv run --extra ml uvicorn src.main:app --host 127.0.0.1 --port 9002
+
+run-pig-latin-gemma-sft:
+	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py gemma base_url="http://127.0.0.1:9002" $(ARGS)
 
 # Client test targets
 run-sft:
