@@ -44,3 +44,5 @@ share/python-wheels/
 .Trashes
 ehthumbs.db
 Thumbs.db
+
+!client/artifacts/*.png
