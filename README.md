@@ -71,7 +71,7 @@ def rl_loop(trainer, sampler, env, dataset, num_steps):
 - **Soft Multi-Tenancy:** The initial design assumes that the datasets and weights for multiple RL jobs can safely reside on high-performance shared infrastructural storage layers.
 
 ## Setup Docs
-- [Getting Started with `uv`](docs/getting-started-uv.md)
+- [Client README](client/README.md)
 
 ## Contributing
 

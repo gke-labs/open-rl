@@ -1,4 +1,4 @@
-# Use a bare Debian image (uv will automatically download Python 3.12 per the .python-version file)
+# Use a bare Debian image (uv will automatically download Python per the .python-version file)
 FROM debian:bookworm-slim
 
 # Set environment variables

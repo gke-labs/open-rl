@@ -1,8 +1,8 @@
 # Server Setup
 
-Use the repo-level `uv` setup guide first:
+Use the client README for the `uv` bootstrap flow:
 
-- [Getting Started with `uv`](../docs/getting-started-uv.md)
+- [Client README](../client/README.md)
 
 Then pick one of these server flows:
 
