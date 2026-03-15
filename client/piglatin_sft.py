@@ -26,6 +26,10 @@ EXAMPLES = [
     ("space exploration", "ace-spay exploration-way"),
     ("rubber duck", "ubber-ray uck-day"),
     ("coding wizard", "oding-cay izard-way"),
+    ("hello world", "ello-hay orld-way"),
+    ("machine learning", "achine-may earning-lay"),
+    ("artificial intelligence", "artificial-way intelligence-way"),
+    ("data science", "ata-day ience-scay"),
 ]
 
 os.environ.setdefault("TINKER_API_KEY", "tml-dummy-key")
@@ -219,8 +223,18 @@ def run_training(config: Config) -> None:
     
     loss_drop = (losses[0] - losses[-1]) / (abs(losses[0]) or 1.0)
 
-    print(f"base model input: {before_example[0]} response: {before_example[1]}")
-    print(f"finetuned_model input: {after_example[0]} output: {after_example[1]} expected: {after_example[2]}")
+    print(f"base model random eval input: {before_example[0]} response: {before_example[1]}")
+    print(f"finetuned_model random eval input: {after_example[0]} output: {after_example[1]} expected: {after_example[2]}")
+    
+    print("\n--- Testing Custom Examples on Finetuned Model ---")
+    custom_exs = [build_example(tokenizer, s, t) for s, t in EXAMPLES]
+    _, _, custom_rows = evaluate(client, trainer, tokenizer, f"piglatin_s{config.steps}", custom_exs, config.eval_max_tokens)
+    for row in custom_rows:
+        source, actual, expected = row
+        match = "✅" if actual == expected else "❌"
+        print(f"{match} input: '{source:20}' | output: '{actual:30}' | expected: '{expected}'")
+    print("--------------------------------------------------\n")
+
     print(f"Saved plot to {config.plot_path}")
     print(
         f"[summary] exact={before_exact:.1%}->{after_exact:.1%} "
