@@ -284,6 +284,18 @@ wheels = [
 ]
 
 [[package]]
+name = "chz"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/3a/6c/09c8ca50c40e18be211f25ad6dcdb81f8110ba2d611cd0375f5fb65fb762/chz-0.4.0.tar.gz", hash = "sha256:5380039e6970a1056c2140288aafa41a33f26d5e4c685117be80f7e260c8d679", size = 82473, upload-time = "2025-11-24T00:55:10.634Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3c/eb/77789ad6f1807328a61c205881580546af597f60334f1f96fd4f3bb6e929/chz-0.4.0-py3-none-any.whl", hash = "sha256:5db5ffe42f6be38f1c37e1b18f0d5559572ee8a8dc941116e67f1bd5396e2a9b", size = 56277, upload-time = "2025-11-24T00:55:09.381Z" },
+]
+
+[[package]]
 name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -298,8 +310,9 @@ wheels = [
 [[package]]
 name = "client"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
+    { name = "chz" },
     { name = "datasets" },
     { name = "huggingface-hub" },
     { name = "jinja2" },
@@ -314,6 +327,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "chz", specifier = ">=0.4.0" },
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "huggingface-hub", specifier = ">=0.28.1" },
     { name = "jinja2" },

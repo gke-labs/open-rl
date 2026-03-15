@@ -419,7 +419,7 @@ async def asample(req: dict):
             await store.set_future(req_id, data)
         except Exception as e:
             traceback.print_exc()
-            await store.set_future(req_id, {"error": str(e), "category": "server_error"})
+            await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e), "category": "server_error"})
 
     task = asyncio.create_task(_route_to_vllm())
     background_tasks.add(task)

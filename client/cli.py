@@ -122,7 +122,7 @@ def chat(args):
                 "num_samples": 1
             }
             
-            resp = requests.post(f"{base_url}/api/v1/sample", json=payload, timeout=30)
+            resp = requests.post(f"{base_url}/api/v1/asample", json=payload, timeout=30)
             resp.raise_for_status()
             
             # Retrieve future (polling)
