@@ -53,6 +53,7 @@ class Config:
     assert_improvement: bool = True
     min_loss_drop: float = 0.8
     min_similarity_gain: float = 0.15
+    custom_examples: list[tuple[str, str]] = chz.field(default_factory=lambda: EXAMPLES.copy())
 
 PRESETS = {
     "qwen": chz.Blueprint(Config).apply(
@@ -165,7 +166,7 @@ def plot_metrics(losses: list[float], eval_steps: list[int], eval_exact: list[fl
     plt.close(fig)
 
 
-def run_training(config: Config) -> None:
+def run_training(config: Config) -> dict[str, float]:
     capabilities = require_server(config.base_url)
     print(f"Server ready at {config.base_url} | model={capabilities.get('default_model') or 'unset'}")
 
@@ -227,7 +228,7 @@ def run_training(config: Config) -> None:
     print(f"finetuned_model random eval input: {after_example[0]} output: {after_example[1]} expected: {after_example[2]}")
     
     print("\n--- Testing Custom Examples on Finetuned Model ---")
-    custom_exs = [build_example(tokenizer, s, t) for s, t in EXAMPLES]
+    custom_exs = [build_example(tokenizer, s, t) for s, t in config.custom_examples]
     _, _, custom_rows = evaluate(client, trainer, tokenizer, f"piglatin_s{config.steps}", custom_exs, config.eval_max_tokens)
     for row in custom_rows:
         source, actual, expected = row
@@ -246,6 +247,14 @@ def run_training(config: Config) -> None:
         assert after_exact > before_exact, "Exact match did not improve"
         assert after_sim - before_sim >= config.min_similarity_gain, "Similarity did not improve enough"
         # assert loss_drop >= config.min_loss_drop, "Loss did not drop enough"
+
+    return {
+        "before_exact": before_exact,
+        "after_exact": after_exact,
+        "before_sim": before_sim,
+        "after_sim": after_sim,
+        "loss_drop": loss_drop,
+    }
 
 
 @chz.blueprint._entrypoint.exit_on_entrypoint_error

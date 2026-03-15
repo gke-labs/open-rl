@@ -1,4 +1,4 @@
-.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma-sft run-pig-latin-server run-pig-latin-sft run-sft run-sft-parallel run-rlvr run-rlvr-parallel
+.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma-sft run-pig-latin-server run-pig-latin-sft run-sft run-sft-parallel run-rlvr run-rlvr-parallel test
 
 # Default VLLM model for inference, can be overridden via `make run-vllm VLLM_MODEL=...`
 #VLLM_MODEL ?= Qwen/Qwen2.5-0.5B
@@ -40,6 +40,9 @@ run-pig-latin-gemma-server:
 
 run-pig-latin-gemma-sft:
 	cd client && uv run --python 3.12 -i https://pypi.org/simple python -u piglatin_sft.py gemma base_url="http://127.0.0.1:9002" $(ARGS)
+
+test:
+	cd client && uv run python -m unittest discover tests
 
 # Client test targets
 run-sft:
