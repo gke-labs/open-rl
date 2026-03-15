@@ -30,23 +30,23 @@ run-function-gemma:
 	cd client && uv run --python 3.12 functiongemma-demo $(ARGS)
 
 run-pig-latin-server:
-	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" SAMPLER_BACKEND=engine VLLM_MODEL="Qwen/Qwen3-0.6B" uv run uvicorn src.main:app --host 127.0.0.1 --port 9001
+	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" SAMPLER_BACKEND=engine VLLM_MODEL="Qwen/Qwen3-0.6B" uv run --extra ml uvicorn src.main:app --host 127.0.0.1 --port 9001
 
 run-pig-latin-sft:
-	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py qwen $(ARGS)
+	cd client && uv run --python 3.12 -i https://pypi.org/simple python -u piglatin_sft.py qwen $(ARGS)
 
 run-pig-latin-gemma-server:
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="google/gemma-3-1b-it" SAMPLER_BACKEND=engine VLLM_MODEL="google/gemma-3-1b-it" uv run --extra ml uvicorn src.main:app --host 127.0.0.1 --port 9002
 
 run-pig-latin-gemma-sft:
-	cd client && uv run --python 3.12 --no-sync -i https://pypi.org/simple python -u piglatin_sft.py gemma base_url="http://127.0.0.1:9002" $(ARGS)
+	cd client && uv run --python 3.12 -i https://pypi.org/simple python -u piglatin_sft.py gemma base_url="http://127.0.0.1:9002" $(ARGS)
 
 # Client test targets
 run-sft:
-	cd client && uv run --no-sync -i https://pypi.org/simple python sft.py --base-model "$(VLLM_MODEL)" $(ARGS)
+	cd client && uv run -i https://pypi.org/simple python sft.py --base-model "$(VLLM_MODEL)" $(ARGS)
 
 run-sft-parallel:
-	cd client && uv run --no-sync -i https://pypi.org/simple python sft.py --parallel --base-model "$(VLLM_MODEL)"
+	cd client && uv run -i https://pypi.org/simple python sft.py --parallel --base-model "$(VLLM_MODEL)"
 
 # Default concurrent jobs for parallel execution
 JOBS ?= 2
@@ -57,20 +57,20 @@ ENABLE_GCP_TRACE ?= 0
 ENABLE_CONSOLE_TRACE ?= 0
 
 run-rlvr:
-	cd client && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) ENABLE_CONSOLE_TRACE=$(ENABLE_CONSOLE_TRACE) uv run --no-sync -i https://pypi.org/simple python rlvr.py --jobs 1 --steps $(STEPS) --base-model "$(VLLM_MODEL)"
+	cd client && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) ENABLE_CONSOLE_TRACE=$(ENABLE_CONSOLE_TRACE) uv run -i https://pypi.org/simple python rlvr.py --jobs 1 --steps $(STEPS) --base-model "$(VLLM_MODEL)"
 
 run-rlvr-parallel:
-	cd client && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) ENABLE_CONSOLE_TRACE=$(ENABLE_CONSOLE_TRACE) uv run --no-sync -i https://pypi.org/simple python rlvr.py --jobs $(JOBS) --steps $(STEPS) --base-model "$(VLLM_MODEL)"
+	cd client && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) ENABLE_CONSOLE_TRACE=$(ENABLE_CONSOLE_TRACE) uv run -i https://pypi.org/simple python rlvr.py --jobs $(JOBS) --steps $(STEPS) --base-model "$(VLLM_MODEL)"
 
 # Plot metrics from a JSONL file
 # Usage: make plot-metrics [FILE=path/to/metrics.jsonl]
 plot-metrics:
-	cd client && uv run --no-sync -i https://pypi.org/simple python plot_metrics.py $(FILE)
+	cd client && uv run -i https://pypi.org/simple python plot_metrics.py $(FILE)
 
 # Plot parallel metrics from the RLVR log file
 # Usage: make plot-logs [LOG_FILE=client/rlvr_parallel_results.log] [WATCH=1]
 plot-logs:
-	cd client && uv run --no-sync -i https://pypi.org/simple python plot_logs.py $(or $(LOG_FILE),rlvr_parallel_results.log) $(if $(WATCH),--watch,)
+	cd client && uv run -i https://pypi.org/simple python plot_logs.py $(or $(LOG_FILE),rlvr_parallel_results.log) $(if $(WATCH),--watch,)
 
 # Generate diagrams using local mmdc zsh alias
 diagrams:
@@ -101,16 +101,16 @@ ifeq (run-cli,$(firstword $(MAKECMDGOALS)))
 endif
 
 run-cli:
-	@cd client && uv run --no-sync -i https://pypi.org/simple python cli.py $(CLI_ARGS)
+	@cd client && uv run -i https://pypi.org/simple python cli.py $(CLI_ARGS)
 
 # Shortcut: make run-cli-list
 run-cli-list:
-	@cd client && uv run --no-sync -i https://pypi.org/simple python cli.py list
+	@cd client && uv run -i https://pypi.org/simple python cli.py list
 
 # Shortcut: make run-cli-chat MODEL=... [PROMPT="..."]
 run-cli-chat:
 	@test -n "$(MODEL)" || (echo "Error: MODEL argument is required. Usage: make run-cli-chat MODEL=<model_id>" && exit 1)
-	@cd client && uv run --no-sync -i https://pypi.org/simple python cli.py chat --model $(MODEL) --system-prompt "$(or $(PROMPT),You are helpful geography assistant.)"
+	@cd client && uv run -i https://pypi.org/simple python cli.py chat --model $(MODEL) --system-prompt "$(or $(PROMPT),You are helpful geography assistant.)"
 
 # --- Deployment Targets ---
 

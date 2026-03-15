@@ -2085,11 +2085,11 @@ wheels = [
 
 [[package]]
 name = "pyjwt"
-version = "2.11.0"
+version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/5a/b46fa56bf322901eee5b0454a34343cdbdae202cd421775a8ee4e42fd519/pyjwt-2.11.0.tar.gz", hash = "sha256:35f95c1f0fbe5d5ba6e43f00271c275f7a1a4db1dab27bf708073b75318ea623", size = 98019, upload-time = "2026-01-30T19:59:55.694Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a8/10/e8192be5f38f3e8e7e046716de4cae33d56fd5ae08927a823bb916be36c1/pyjwt-2.12.0.tar.gz", hash = "sha256:2f62390b667cd8257de560b850bb5a883102a388829274147f1d724453f8fb02", size = 102511, upload-time = "2026-03-12T17:15:30.831Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/6f/01/c26ce75ba460d5cd503da9e13b21a33804d38c2165dec7b716d06b13010c/pyjwt-2.11.0-py3-none-any.whl", hash = "sha256:94a6bde30eb5c8e04fee991062b534071fd1439ef58d2adc9ccb823e7bcd0469", size = 28224, upload-time = "2026-01-30T19:59:54.539Z" },
+    { url = "https://files.pythonhosted.org/packages/15/70/70f895f404d363d291dcf62c12c85fdd47619ad9674ac0f53364d035925a/pyjwt-2.12.0-py3-none-any.whl", hash = "sha256:9bb459d1bdd0387967d287f5656bf7ec2b9a26645d1961628cda1764e087fd6e", size = 29700, upload-time = "2026-03-12T17:15:29.257Z" },
 ]
 
 [package.optional-dependencies]
@@ -2395,7 +2395,6 @@ dependencies = [
 
 [package.optional-dependencies]
 ml = [
-    { name = "accelerate" },
     { name = "datasets", version = "2.14.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
     { name = "datasets", version = "4.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "numpy" },
@@ -2403,14 +2402,11 @@ ml = [
     { name = "torch" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux'" },
     { name = "transformers" },
-    { name = "trl", version = "0.10.1", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
-    { name = "trl", version = "0.28.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
     { name = "vllm", marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", marker = "extra == 'ml'" },
     { name = "datasets", marker = "extra == 'ml'" },
     { name = "fastapi" },
     { name = "httpx" },
@@ -2425,7 +2421,6 @@ requires-dist = [
     { name = "torch", marker = "extra == 'ml'" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux' and extra == 'ml'" },
     { name = "transformers", marker = "extra == 'ml'" },
-    { name = "trl", marker = "extra == 'ml'" },
     { name = "uvicorn" },
     { name = "vllm", marker = "sys_platform == 'linux' and extra == 'ml'", specifier = ">=0.15.0" },
 ]
@@ -2697,57 +2692,6 @@ wheels = [
 ]
 
 [[package]]
-name = "trl"
-version = "0.10.1"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'win32'",
-]
-dependencies = [
-    { name = "accelerate", marker = "sys_platform == 'win32'" },
-    { name = "datasets", version = "2.14.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'win32'" },
-    { name = "numpy", marker = "sys_platform == 'win32'" },
-    { name = "torch", marker = "sys_platform == 'win32'" },
-    { name = "transformers", marker = "sys_platform == 'win32'" },
-    { name = "tyro", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/1b/50/25471b667afca7df543674fd90eaa621fab55f28f84c0aec306d97dbc943/trl-0.10.1.tar.gz", hash = "sha256:1662e57a95daeb45b30ceea9fa08999b0ceacdc25bdaf615f5fc2807155a7cc7", size = 268608, upload-time = "2024-08-29T14:53:07.074Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/73/25/1385321000454726766eb598f0cc798db6d1e668ed314285aa53e8334bed/trl-0.10.1-py3-none-any.whl", hash = "sha256:4e389c68c3a49e9a19d8517092b7895898af917f707690e5167713cdc893c1bd", size = 280096, upload-time = "2024-08-29T14:53:05.399Z" },
-]
-
-[[package]]
-name = "trl"
-version = "0.28.0"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'emscripten'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32'",
-]
-dependencies = [
-    { name = "accelerate", marker = "sys_platform != 'win32'" },
-    { name = "datasets", version = "4.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'win32'" },
-    { name = "packaging", marker = "sys_platform != 'win32'" },
-    { name = "transformers", marker = "sys_platform != 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/86/98/c99f4e83dc6b4cd95cba7bf3bb48d3e88624ed9aa5b47a6866ee5ea337ec/trl-0.28.0.tar.gz", hash = "sha256:1b1269ac0ebb87465fc47c35664aed4e8e7ef67909098c7c0f801806ab89dd62", size = 455787, upload-time = "2026-02-10T13:21:17.243Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/95/67/6b93c90d40342ae32df93724bb6f1584e963701c2bafe5fe90007afb51c3/trl-0.28.0-py3-none-any.whl", hash = "sha256:f01c6b4bbabe4db8c60ef8a7b0b7fe7f94859dd1c1cbe210daaa07fd4c26ddc9", size = 540524, upload-time = "2026-02-10T13:21:15.852Z" },
-]
-
-[[package]]
-name = "typeguard"
-version = "4.5.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2b/e8/66e25efcc18542d58706ce4e50415710593721aae26e794ab1dec34fb66f/typeguard-4.5.1.tar.gz", hash = "sha256:f6f8ecbbc819c9bc749983cc67c02391e16a9b43b8b27f15dc70ed7c4a007274", size = 80121, upload-time = "2026-02-19T16:09:03.392Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/91/88/b55b3117287a8540b76dbdd87733808d4d01c8067a3b339408c250bb3600/typeguard-4.5.1-py3-none-any.whl", hash = "sha256:44d2bf329d49a244110a090b55f5f91aa82d9a9834ebfd30bcc73651e4a8cc40", size = 36745, upload-time = "2026-02-19T16:09:01.6Z" },
-]
-
-[[package]]
 name = "typer"
 version = "0.24.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2781,20 +2725,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/55/e3/70399cb7dd41c10ac53367ae42139cf4b1ca5f36bb3dc6c9d33acdb43655/typing_inspection-0.4.2.tar.gz", hash = "sha256:ba561c48a67c5958007083d386c3295464928b01faa735ab8547c5692e87f464", size = 75949, upload-time = "2025-10-01T02:14:41.687Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/9b/47798a6c91d8bdb567fe2698fe81e0c6b7cb7ef4d13da4114b41d239f65d/typing_inspection-0.4.2-py3-none-any.whl", hash = "sha256:4ed1cacbdc298c220f1bd249ed5287caa16f34d44ef4e9c3d0cbad5b521545e7", size = 14611, upload-time = "2025-10-01T02:14:40.154Z" },
-]
-
-[[package]]
-name = "tyro"
-version = "1.0.7"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "docstring-parser", marker = "sys_platform == 'win32'" },
-    { name = "typeguard", marker = "sys_platform == 'win32'" },
-    { name = "typing-extensions", marker = "sys_platform == 'win32'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/db/1e/9c35db65cb9c468e3253e6f4ca6aca890e885664fad3b95afa476b492bb4/tyro-1.0.7.tar.gz", hash = "sha256:afc5fa4ba38dde9d4af16671bc46ced3b93dcf99d50287ac55972b7933df2f97", size = 458365, upload-time = "2026-02-23T02:53:00.708Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/20/f6/852e61e166ac933569df245a0fbfa58153b40680f562141f8a13ea76dff7/tyro-1.0.7-py3-none-any.whl", hash = "sha256:d070a2be69f49131fe7eee2829f6e016a0dd1ba6fe192ef766248c9eea403832", size = 181866, upload-time = "2026-02-23T02:52:55.836Z" },
 ]
 
 [[package]]
