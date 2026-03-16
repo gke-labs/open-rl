@@ -33,7 +33,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Install dependencies using uv with BuildKit cache
 # --frozen ensures it uses the uv.lock exactly
-# --all-extras ensures the [ml] group (PyTorch, vLLM) is actually installed for the worker
+# --all-extras ensures the optional train/gpu stacks are installed for the worker image
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --all-extras
 

@@ -6,7 +6,7 @@ This guide shows how to run the local FunctionGemma SFT demo.
 
 1. **Install dependencies**:
    ```bash
-   cd server && uv sync --extra ml
+   cd server && uv sync --extra train
    cd ../client && uv sync
    ```
 2. **Accept the model terms**: [google/functiongemma-270m-it](https://huggingface.co/google/functiongemma-270m-it)
@@ -18,17 +18,24 @@ This guide shows how to run the local FunctionGemma SFT demo.
 ## Running the Training Server
 
 ```bash
-make run-function-gemma-server
+cd server
+OPEN_RL_SINGLE_PROCESS=1 \
+SAMPLER_BACKEND=engine \
+OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" \
+uv run --extra train uvicorn src.main:app --host 127.0.0.1 --port 9000
 ```
 
 This starts a local server on port 9000, preloads `google/functiongemma-270m-it`, and runs the gateway plus engine loop in one process.
+
+You can use `make run-function-gemma-server` as a wrapper around the same `uv run --extra train ...` flow.
 
 ## Running the SFT Script
 
 In a second terminal, run:
 
 ```bash
-make run-function-gemma
+cd client
+uv run --python 3.12 functiongemma-demo
 ```
 
 This runs `client/functiongemma_sft.py`. The script:

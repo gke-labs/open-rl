@@ -40,14 +40,6 @@ The repo is split into:
 - `server/` for the gateway, trainer worker, and sampler worker
 - `client/` for demos and training scripts
 
-Sync the server:
-
-```bash
-cd server
-uv sync --extra ml
-cd ..
-```
-
 Sync the client:
 
 ```bash
@@ -56,11 +48,29 @@ uv sync
 cd ..
 ```
 
-If you only want the lighter gateway environment on the server side:
+Then choose the server environment you need:
+
+Gateway/core only:
 
 ```bash
 cd server
 uv sync
+cd ..
+```
+
+Local single-process training flows such as Pig Latin SFT or FunctionGemma:
+
+```bash
+cd server
+uv sync --extra train
+cd ..
+```
+
+Linux GPU/vLLM worker flows:
+
+```bash
+cd server
+uv sync --extra gpu
 cd ..
 ```
 
@@ -80,15 +90,23 @@ cd server
 OPEN_RL_SINGLE_PROCESS=1 \
 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" \
 SAMPLER_BACKEND=engine \
-VLLM_MODEL="Qwen/Qwen3-0.6B" \
-uv run uvicorn src.main:app --host 127.0.0.1 --port 9001
+uv run --extra train uvicorn src.main:app --host 127.0.0.1 --port 9001
+```
+
+Start the Linux GPU/vLLM worker:
+
+```bash
+cd server
+CUDA_VISIBLE_DEVICES=0 \
+VLLM_MODEL="Qwen/Qwen3-4B-Instruct-2507" \
+uv run --extra gpu python -m src.vllm_worker
 ```
 
 Run the Pig Latin SFT example:
 
 ```bash
 cd client
-uv run --no-sync python -u piglatin_sft.py qwen base_url="http://127.0.0.1:9001"
+uv run python -u piglatin_sft.py qwen base_url="http://127.0.0.1:9001"
 ```
 
 Run the RLVR demo:
@@ -96,7 +114,7 @@ Run the RLVR demo:
 ```bash
 cd client
 TINKER_BASE_URL="http://127.0.0.1:8000" \
-uv run --no-sync python rlvr.py --jobs 1 --steps 5 --base-model "Qwen/Qwen3-4B-Instruct-2507"
+uv run python rlvr.py --jobs 1 --steps 5 --base-model "Qwen/Qwen3-4B-Instruct-2507"
 ```
 
 You can also use the repo Make targets if you prefer:
@@ -110,8 +128,9 @@ make run-rlvr
 
 Notes:
 
-- `server/uv sync --extra ml` is the expensive step because it pulls the ML stack.
-- `vllm` is Linux-only here. On a Mac, use the gateway-only or single-process flows unless you are running the Linux container story.
+- `server/uv sync --extra train` installs the local training stack used by the single-process engine flows.
+- `server/uv sync --extra gpu` adds the Linux-only vLLM worker dependencies.
+- `vllm` is Linux-only here. On a Mac, use the gateway-only or single-process `train` flows unless you are running the Linux container story.
 - `tinker-cookbook` is not required for the standard client demos in this repo.
 - FunctionGemma examples require Hugging Face auth and model access.
 

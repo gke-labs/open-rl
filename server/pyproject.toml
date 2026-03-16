@@ -17,12 +17,14 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = [
+train = [
     "datasets",
     "numpy",
     "peft",
     "torch",
-    "torch-c-dlpack-ext; sys_platform == 'linux'",
     "transformers",
+]
+gpu = [
+    "torch-c-dlpack-ext; sys_platform == 'linux'",
     "vllm>=0.15.0; sys_platform == 'linux'",
 ]

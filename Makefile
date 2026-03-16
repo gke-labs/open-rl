@@ -8,7 +8,7 @@ VLLM_MODEL ?= Qwen/Qwen3-4B-Instruct-2507
 TRAINER_GPU ?= 0
 VLLM_GPU ?= 1
 
-# Run the PyTorch Uvicorn Training Server locally
+# Run the gateway-only server locally
 run-server:
 	cd server && UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(TRAINER_GPU)" uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
 
@@ -18,13 +18,13 @@ kill-server:
 
 # Run the standalone vLLM inference worker locally
 run-vllm:
-	cd server && UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(VLLM_GPU)" VLLM_MODEL="$(VLLM_MODEL)" uv run python -m src.vllm_worker
+	cd server && UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(VLLM_GPU)" VLLM_MODEL="$(VLLM_MODEL)" uv run --extra gpu python -m src.vllm_worker
 
 run-server-engine-sampler:
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" SAMPLER_BACKEND=engine VLLM_MODEL="$(VLLM_MODEL)" uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
 
 run-function-gemma-server:
-	cd server && OPEN_RL_SINGLE_PROCESS=1 SAMPLER_BACKEND=engine OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" PYTHONUNBUFFERED=1 uv run --extra ml uvicorn src.main:app --host 127.0.0.1 --port 9000 $(ARGS)
+	cd server && OPEN_RL_SINGLE_PROCESS=1 SAMPLER_BACKEND=engine OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" PYTHONUNBUFFERED=1 uv run --extra train uvicorn src.main:app --host 127.0.0.1 --port 9000 $(ARGS)
 
 run-function-gemma:
 	cd client && uv run --python 3.12 functiongemma-demo $(ARGS)
