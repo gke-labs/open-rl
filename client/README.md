@@ -58,19 +58,19 @@ uv sync
 cd ..
 ```
 
-Local single-process training flows such as Pig Latin SFT or FunctionGemma:
+Local single-process training flows such as Pig Latin SFT or FunctionGemma (CPU PyTorch):
 
 ```bash
 cd server
-uv sync --extra train
+uv sync --extra cpu
 cd ..
 ```
 
-Linux GPU/vLLM worker flows:
+Linux GPU/vLLM worker flows (CUDA PyTorch on Linux/WSL):
 
 ```bash
 cd server
-uv sync --extra gpu
+uv sync --extra gpu --extra vllm
 cd ..
 ```
 
@@ -90,7 +90,7 @@ cd server
 OPEN_RL_SINGLE_PROCESS=1 \
 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" \
 SAMPLER_BACKEND=engine \
-uv run --extra train uvicorn src.main:app --host 127.0.0.1 --port 9001
+uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9001
 ```
 
 Start the Linux GPU/vLLM worker:
@@ -99,7 +99,7 @@ Start the Linux GPU/vLLM worker:
 cd server
 CUDA_VISIBLE_DEVICES=0 \
 VLLM_MODEL="Qwen/Qwen3-4B-Instruct-2507" \
-uv run --extra gpu python -m src.vllm_worker
+uv run --extra gpu --extra vllm python -m src.vllm_worker
 ```
 
 Run the Pig Latin SFT example:
@@ -128,9 +128,9 @@ make run-rlvr
 
 Notes:
 
-- `server/uv sync --extra train` installs the local training stack used by the single-process engine flows.
-- `server/uv sync --extra gpu` adds the Linux-only vLLM worker dependencies.
-- `vllm` is Linux-only here. On a Mac, use the gateway-only or single-process `train` flows unless you are running the Linux container story.
+- `server/uv sync --extra cpu` installs the local training stack with CPU PyTorch for the single-process engine flows.
+- `server/uv sync --extra gpu --extra vllm` adds the Linux-only vLLM worker dependencies and resolves CUDA PyTorch wheels.
+- `vllm` is Linux-only here. On a Mac, use the gateway-only or single-process `cpu` flows unless you are running the Linux container story.
 - `tinker-cookbook` is not required for the standard client demos in this repo.
 - FunctionGemma examples require Hugging Face auth and model access.
 
