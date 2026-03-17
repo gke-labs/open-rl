@@ -1,4 +1,4 @@
-# Open-RL
+# Open-RL: High-Throughput RL Training Infrastructure
 
 ## The Problem
 Reinforcement Learning (RL) for language models is complex distributed system workload. A standard RL loop involves tight, cyclical data dependencies: the training phase requires generated samples, and the sampling phase requires fresh weights produced by the training phase. This is further complicated by:
@@ -17,54 +17,159 @@ Crucially, this abstraction provides a clean division of responsibilities: AI re
 
 Furthermore, abstracting these operations behind an asynchronous API means the individual training and sampling computations are completely decoupled from the client. These operations can now be flexibly dispatched to, and scaled across, a shared pool of accelerators. This architectural shift unlocks the **time-slicing** of accelerators among *multiple* concurrent RL jobs. Instead of a single RL job monopolizing a GPU while it waits for synchronous environment steps, the system dynamically interleaves workloads from multiple tenants. This drives hardware utilization significantly higher than what is possible under a single-job, monolithic paradigm.
 
-## The Open-RL Architecture
-To realize this vision, Open-RL implements a deeply decoupled, Kubernetes-based architecture designed to maximize both accelerator utilization and developer flexibility:
+## Architecture
 
-1. **API Gateway:** The central entry point exposing an asynchronous API for the four key primitives: `train-policy-batch`, `update-policy-weights`, `save-weights-for-sampling`, and `generate-samples`.
-2. **Training Sub-system:** Dedicated, horizontally scalable GPU workers focused entirely on executing high-throughput forward/backward passes and optimizer steps.
-3. **Sampler Sub-system:** Independently scalable inference workers (powered by state-of-the-art engines like vLLM) optimized specifically for high-speed text generation.
-4. **Policy Weights Sub-system:** A robust synchronization layer that distributes policy weights between the trainer and sampler sub-systems.
+Open-RL implements a deeply decoupled, federated architecture that physically separates the PyTorch training loop from the vLLM inference engine:
 
-Because training, inference, and storage are isolated sub-systems, they can be scaled completely independently—and even deployed on fundamentally different hardware architectures tailored to their specific data-flow requirements.
+![Distributed Architecture Flow](assets/distributed_arch.svg)
 
-## Researcher UX: The Clean Training Loop
-Because the complex infrastructure (VRAM management, LoRA hot-swapping, multi-node communication) is entirely handled by the Open-RL server endpoints, the AI researcher's User Experience (UX) is radically improved. An AI researcher can now orchestrate massive distributed RL jobs by writing clean, imperative Python code directly from their local machine (e.g., a Mac).
+1. **API Gateway:** The central entry point exposing an asynchronous API for the key primitives. Handling HTTP requests via long-polling and pushing workloads to an async queue.
+2. **Training Sub-system (Clock Cycle Engine):** Dedicated, horizontally scalable GPU workers focused entirely on executing high-throughput forward/backward passes and optimizer steps. Batches operations by model tenant (`model_id`) to minimize context-switching overhead.
+3. **Sampler Sub-system (vLLM Worker):** Independently scalable inference workers optimized specifically for high-speed generation. This engine permanently hosts the identical base model as the training worker.
+4. **Policy Weights Sub-system (Managed Lustre):** A robust synchronization layer that distributes policy weights between the trainer and sampler sub-systems dynamically.
 
-Below is pseudocode illustrating how simply a researcher can construct a complex RL loop utilizing Open-RL's building blocks:
+## Quick Start & The 4 Key Primitives
+
+Because the complex infrastructure (VRAM management, LoRA hot-swapping, multi-node communication) is entirely handled by the Open-RL server endpoints, researchers can orchestrate massive distributed RL jobs by writing imperative Python code directly from their local machine.
+
+To train a model against the Open-RL backend, you utilize 4 fundamental SDK primitives: Model Creation, Forward-Backward Pass, Optimizer Step, and Sampling. 
+
+Below is a basic python training loop showcasing these 4 primitives using Supervised Fine-Tuning (SFT) as an example:
 
 ```python
-trainer = Client(host="http://<self-hosted-svc>")
+import asyncio
+import tinker
+from tinker import types
 
-def rl_loop(trainer, sampler, env, dataset, num_steps):
-    # Resume from an existing checkpoint if any
-    dataset = dataset.set_step(...)
+async def training_loop():
+    # Connect to the local server
+    service_client = tinker.ServiceClient(base_url="http://localhost:8000")
+
+    # -------------------------------------------------------------
+    # Primitive 1: Create Model for Training
+    # Dynamically injects a Rank 16 LoRA adapter isolated to your scope
+    # -------------------------------------------------------------
+    training_client = await service_client.create_lora_training_client_async(
+        base_model="Qwen/Qwen3-4B-Instruct-2507", 
+        rank=16
+    )
+
+    # ... generate datums (tokens, target_tokens, weights) ...
+
+    for epoch in range(10):
+        # -------------------------------------------------------------
+        # Primitive 2: Forward-Backward Pass
+        # Dispatches datums to the server. Computes cross-entropy loss, 
+        # accumulates gradients, and returns log-probability metrics.
+        # -------------------------------------------------------------
+        fwdbwd_result = await training_client.forward_backward_async(
+            datums, 
+            loss_fn="cross_entropy"
+        )
+        
+        loss_metrics = fwdbwd_result.loss_fn_outputs
+        
+        # -------------------------------------------------------------
+        # Primitive 3: Optimizer Step
+        # Instructs the server to apply gradients (AdamW) with clipping
+        # -------------------------------------------------------------
+        optim_result = await training_client.optim_step_async(
+            types.AdamParams(learning_rate=5e-4)
+        )
+        
+        print(f"Epoch {epoch+1} complete")
+
+    # -------------------------------------------------------------
+    # Primitive 4: Sample (and Save)
+    # Extracts the newly formed LoRA adapter weights and initializes 
+    # a dedicated Inference client for text generation tests.
+    sampling_client = training_client.save_weights_and_get_sampling_client(
+        name="my_model_v1"
+    )
     
-    for step in range(num_steps):
-        # 1. Ensure sampler is using fresh weights 
-        # (Triggers implicit weight copying via the Policy Weights sub-system)
-        sampler = trainer.save_weights_and_get_sampler()
-        
-        # 2. Fetch initial set of prompts
-        prompts = dataset.get_batch()
-        envs = build_envs(prompts)
-        
-        # 3. Distributed Sampling
-        # Rollouts run in parallel. The environment can include complex multi-turn logic.
-        samples = runRollouts(sampler, envs, batch)
-        
-        # 4. Grade the Results
-        rewards = [grade_sample(sample) for sample in samples]
-        
-        # 5. Optimize
-        training_batch = get_training_batch(prompts, samples, rewards)
-        loss_metrics = trainer.forward_backward(training_batch)
-        optim_metrics = trainer.update_weights()
-        
-        print(metrics)
-
-        if step % CHECKPOINT_INTERVAL == 0:
-            trainer.save_checkpoint()
+    response = sampling_client.sample(
+        prompt=types.ModelInput.from_ints(tokens=[32, 54, 12, ...]),
+        num_samples=1,
+        sampling_params=types.SamplingParams(max_tokens=20, temperature=0.7)
+    ).result()
+    
+    # Process sequence arrays from response.sequences
+    
+asyncio.run(training_loop())
 ```
+
+### Example: Reinforcement Learning (RLVR) Loop
+
+In a Reinforcement Learning loop like GRPO, the same 4 primitives are arranged into an active generate-and-reward cycle:
+
+```python
+import asyncio
+import tinker
+from tinker import types
+
+# Placeholder Environment & Reward Functions
+def generate_math_problem() -> str: ...
+def compute_advantages(rewards: list[float]) -> list[float]: ...
+def parse_and_score_response(text: str) -> float: ...
+
+async def rlvr_loop():
+    service_client = tinker.ServiceClient(base_url="http://localhost:8000")
+
+    # 1. Create Model
+    training_client = await service_client.create_lora_training_client_async(
+        base_model="Qwen/Qwen3-4B-Instruct-2507", rank=16
+    )
+
+    for epoch in range(10):
+        # 2A. Extract sampling client from current weights
+        sampling_client = training_client.save_weights_and_get_sampling_client(
+            name=f"rlvr_epoch_{epoch}"
+        )
+        
+        prompt_text = generate_math_problem()
+        
+        # 2B. Sample multiple rollouts (e.g. N=8) from the prompt
+        response = sampling_client.sample(
+            prompt=types.ModelInput.from_ints(tokens=[...]),
+            num_samples=8,
+            sampling_params=types.SamplingParams(max_tokens=100, temperature=0.9)
+        ).result()
+        
+        # 3. Score the rollouts using the environment
+        rewards = []
+        for seq in response.sequences:
+            text = decode(seq.tokens)
+            rewards.append(parse_and_score_response(text))
+            
+        advantages = compute_advantages(rewards)
+        
+        # ... package sequences, text, and advantages into datums ...
+
+        # 4. Forward-Backward Pass (Importance Sampling)
+        # We pass the advantages to RL objective function
+        await training_client.forward_backward_async(
+            datums, 
+            loss_fn="importance_sampling",
+            loss_fn_config={"clip_range": 0.2} 
+        )
+        
+        # 5. Optimizer Step
+        await training_client.optim_step_async(types.AdamParams(learning_rate=1e-5))
+
+asyncio.run(rlvr_loop())
+```
+
+## Documentation & Guides
+
+Detailed guides have been structured in the `docs/` directory:
+
+- 📖 **[Architecture Deep-Dive](docs/architecture.md)**
+- 🚀 **[Kubernetes Deployment Guide (GKE)](docs/deployment.md)**
+- 🛠️ **[CLI Tool Usage](docs/guides/cli-tool.md)**
+- 🎓 **Tutorials:**
+  - [FunctionGemma SFT Demo](docs/guides/supervised/function-gemma.md)
+  - [Pig Latin SFT Demo](docs/guides/supervised/pig-latin.md)
+  - [RLVR (Verifiable Rewards) Demo](docs/guides/reinforcement-learning/rlvr.md)
 
 ## Core Constraints & Enablers
 - **LoRA (Low-Rank Adaptation):** Open-RL assumes the use of LoRA fine-tuning, which efficiently retains the quality of full fine-tuning for most domains. By anchoring a frozen base model on shared GPUs, the system leverages LoRA to achieve near-instant memory context switching between multiple time-sliced RL jobs.
