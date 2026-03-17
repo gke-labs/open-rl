@@ -8,7 +8,7 @@ The API backend consists of two primary layers:
 1. **The Asynchronous Gateway (FastAPI)**: Handles incoming HTTP requests from the Tinker SDK client, issues immediate future tracking IDs, and pushes workloads to a central asynchronous queue.
 2. **The Clock Cycle Engine (PyTorch/PEFT)**: A continuous background engine that drains the global request queue, batches operations by model tenant (`model_id`), manages PyTorch hardware resources lock-step, and executes actual tensor math.
 
-![API Backend Architecture](design_arch.svg)
+![API Backend Architecture](../assets/design_arch.svg)
 
 ## Key Components
 
@@ -52,7 +52,7 @@ To completely bypass the Python Global Interpreter Lock (GIL) and prevent CPU bo
 
 ### 2. LoRA Weight Synchronization
 
-![Distributed Architecture Flow](distributed_arch.svg)
+![Distributed Architecture Flow](../assets/distributed_arch.svg)
 
 To scale generation speed without dragging down training latency, we must overcome the weight synchronization bottleneck between GPUs.
 - **Base Model Permanence**: The massive base model (e.g. 10GB Qwen) is loaded once onto the Trainer GPU (PyTorch) and identically onto the Inference GPU (vLLM). It is never sent across the PCIe bus/NVLink, as syncing 10GB per training step would destroy throughput.
