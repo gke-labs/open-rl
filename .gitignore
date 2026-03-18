@@ -46,3 +46,4 @@ ehthumbs.db
 Thumbs.db
 
 !client/artifacts/*.png
+!assets/*.png
