@@ -1,14 +1,12 @@
-# Open-RL: An API for your own RL Training Infrastructure
+# Open-RL: self-hosted API for your RL Infrastructure
 
-Open-RL implements [Tinker](https://tinker-docs.thinkingmachines.ai/) compatible API for training large language models that you can run on your own infrastructure (machine or a kubernetes cluster). You can use the Tinker SDK to orchestrate RL training loops by writing imperative Python code directly from your local machine.
+Open-RL implements [Tinker](https://tinker-docs.thinkingmachines.ai/) compatible API for fine-tuning language models that you can run on your own infrastructure (machine or a kubernetes cluster). You can use the Tinker SDK to orchestrate RL training loops by writing imperative Python code directly from your local machine.
 
 # Why Tinker
 
-We love Tinker. Tinker radically simplifies LLM post-training for developers and researchers. While typical managed platforms treat fine-tuning as a black-box ("upload your data"), the Tinker API provides a much smarter abstraction: it handles the grueling infrastructure (distributed training, VRAM management, forward/backward passes) while letting you retain complete creative control over your training algorithms, data loops, and loss functions. 
+We love Tinker. Tinker simplifies LLM post-training for developers and researchers. The Tinker API provides a smarter abstraction that decouples the underlying infrastructure from the RL training loop. This gives AI researchers complete control over their training algorithms, data loops, and loss functions and platform engineers the ability to scale the infrastructure independently.
 
-As production AI moves toward complex multi-model pipelines, fine-tuning smaller, task-specific models often drastically outperforms complex few-shot prompting on giant monolithic models. The Tinker API makes orchestrating these specialized fine-tuning workflows fast and trivial.
-
-**Bonus**: you can use `tinker-cookbook` that is full of awesome tutorials/recipes and utilities!
+**Bonus**: you can use [tinker-cookbook](https://github.com/thinking-machines-lab/tinker-cookbook) that has awesome tutorials/recipes and utilities!
 
 ## Quick Start: Reinforcement Learning (RLVR) Loop
 
