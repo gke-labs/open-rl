@@ -11,13 +11,36 @@ make push-server-images
 ```
 
 ### 2. Deploy to the Cluster
-Before deploying the distributed architecture, ensure the Cloud Storage for Lustre API is enabled on your GCP project. This is required for the CSI driver to provision the high-performance parallel file system volume dynamically:
+
+The architecture requires a `ReadWriteMany` network file system for model adapter synchronization. You have two options below:
+
+#### Option A: Simple Shared File System (GKE Filestore/NFS)
+*Recommended for simplicity and ease of management.*
+
+Ensure the Cloud Filestore API is enabled on your GCP project:
+
+```bash
+gcloud services enable file.googleapis.com
+```
+
+You must also enable the GCP Filestore CSI driver addon on your GKE cluster:
+
+```bash
+gcloud container clusters update au-rl-1 \
+    --location=us-central1 \
+    --update-addons=GcpFilestoreCsiDriver=ENABLED
+```
+
+#### Option B: High-Performance Parallel File System (Managed Lustre)
+*Recommended for absolute highest throughput tensor caching across massive node counts.*
+
+Ensure the Cloud Storage for Lustre API is enabled:
 
 ```bash
 gcloud services enable lustre.googleapis.com
 ```
 
-You must also configure **Private Services Access** for your VPC network. If your PVC remains in a `Pending` state with an error stating `the network has not been peered with Google managed services`, it means your cluster cannot securely reach the Managed Lustre backend. Run these one-time setup commands (assuming you are using the `default` network):
+Configure **Private Services Access** for your VPC network (required for Lustre backend access):
 
 ```bash
 # 1. Enable the Service Networking API
@@ -38,7 +61,7 @@ gcloud services vpc-peerings connect \
     --network=default
 ```
 
-You must also enable the Managed Lustre CSI driver addon on your GKE cluster:
+Enable the Managed Lustre CSI driver addon on GKE:
 
 ```bash
 gcloud container clusters update au-rl-1 \
@@ -59,13 +82,19 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
     --condition=None
 ```
 
-Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing Google Cloud Managed Lustre for high-performance adapter synchronization:
-1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its own dedicated L4 GPU node)
-2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its own dedicated L4 GPU node, horizontally scalable)
+Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing your chosen shared file system for adapter synchronization:
+1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its dedicated L4 GPU node)
+2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its dedicated L4 GPU node, horizontally scalable)
 3. **`redis-broker`**: The Async Workload State Broker Deployment
-4. **`open-rl-lustre-pvc`**: A 1.2TB Managed Lustre `ReadWriteMany` network share mounted universally at `/mnt/lustre/open-rl`.
+4. **`open-rl-(shared|lustre)-pvc`**: A 1.2TB network file system mapped universally to the pods.
+
+Depending on which storage option you chose above, apply the corresponding manifests directory:
 
 ```bash
+# If using Option A (Filestore NFS):
+kubectl apply -f server/kubernetes/distributed-shared/
+
+# OR if using Option B (Managed Lustre):
 kubectl apply -f server/kubernetes/distributed-lustre/
 
 # Watch the distinct pods transition to Running status

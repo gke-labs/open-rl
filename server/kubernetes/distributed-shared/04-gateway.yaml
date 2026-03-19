@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-rl-sa
+  namespace: default
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-rl-gateway-service
+  labels:
+    app: open-rl-gateway
+spec:
+  selector:
+    app: open-rl-gateway
+  ports:
+  - port: 8000
+    targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-gateway
+  labels:
+    app: open-rl-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-rl-gateway
+  template:
+    metadata:
+      labels:
+        app: open-rl-gateway
+    spec:
+      serviceAccountName: open-rl-sa
+      containers:
+      - name: gateway
+        image: gcr.io/cdrollouts-sunilarora/open-rl-gateway:latest
+        imagePullPolicy: Always
+        command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        ports:
+        - containerPort: 8000
+        env:
+        - name: ENABLE_GCP_TRACE
+          value: "1"
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: VLLM_URL
+          value: "http://vllm-service:8001"
+        - name: VLLM_MODEL
+          value: "Qwen/Qwen3-4B-Instruct-2507"
+        - name: OPEN_RL_TMP_DIR
+          value: "/mnt/shared/open-rl"
+        resources:
+          limits:
+            memory: "2Gi"
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
