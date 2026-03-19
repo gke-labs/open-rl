@@ -121,44 +121,41 @@ CLIENT_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/open-rl-client
 TINKER_GCR_REPO ?= gcr.io/$(GCP_PROJECT)/tinker-cookbook
 IMAGE_TAG ?= latest
 
-remote-build-setup:
-	@echo "--- Setting up Remote Builder ($(HOST)) ---"
-	ssh $(HOST) "gcloud auth configure-docker -q"
-	@echo "--- Setup Complete! ---"
+build-server-images:
+	@echo "--- Building Server Docker Images ---"
+	cd server && DOCKER_BUILDKIT=1 docker build -t $(GCR_REPO):$(IMAGE_TAG) -f Dockerfile .
+	cd server && DOCKER_BUILDKIT=1 docker build -t $(GATEWAY_GCR_REPO):$(IMAGE_TAG) -f Dockerfile.gateway .
 
-remote-build: server-sync
-	@echo "--- Building Server Docker Images on $(HOST) ---"
-	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GCR_REPO):$(IMAGE_TAG) -f Dockerfile ."
-	ssh $(HOST) "cd ~/work/open-rl/server && DOCKER_BUILDKIT=1 docker build -t $(GATEWAY_GCR_REPO):$(IMAGE_TAG) -f Dockerfile.gateway ."
+push-server-images:
+	@echo "--- Pushing Server Images to GCR ---"
+	docker push $(GCR_REPO):$(IMAGE_TAG)
+	docker push $(GATEWAY_GCR_REPO):$(IMAGE_TAG)
 
-remote-push:
-	@echo "--- Pushing Server Images to GCR from $(HOST) ---"
-	ssh $(HOST) "docker push $(GCR_REPO):$(IMAGE_TAG)"
-	ssh $(HOST) "docker push $(GATEWAY_GCR_REPO):$(IMAGE_TAG)"
+deploy-server:
+	@echo "-- Deploy OpenRL Stack to Kubernetes Cluster ---"
+	kubectl apply -f server/kubernetes/distributed-lustre
 
-remote-client-build: server-sync
-	@echo "--- Building Client Docker Image on $(HOST) ---"
-	ssh $(HOST) "cd ~/work/open-rl/client && DOCKER_BUILDKIT=1 docker build -t $(CLIENT_GCR_REPO):$(IMAGE_TAG) ."
+rollout:
+	@echo "--- Rolling out latest server deployments ---"
+	kubectl rollout restart deployment redis-broker open-rl-gateway open-rl-trainer-worker vllm-worker
+	kubectl rollout status deployment open-rl-gateway
+	kubectl rollout status deployment open-rl-trainer-worker
 
-remote-client-push:
-	@echo "--- Pushing Client Image to GCR from $(HOST) ---"
-	ssh $(HOST) "docker push $(CLIENT_GCR_REPO):$(IMAGE_TAG)"
+build-client-image:
+	@echo "--- Building Client Docker Image ---"
+	cd client && DOCKER_BUILDKIT=1 docker build -t $(CLIENT_GCR_REPO):$(IMAGE_TAG) .
 
-tinker-sync:
-	@echo "--- Syncing tinker-cookbook to $(HOST) ---"
-	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ../tinker-cookbook/ $(HOST):~/work/tinker-cookbook
+push-client-image:
+	@echo "--- Pushing Client Image to GCR ---"
+	docker push $(CLIENT_GCR_REPO):$(IMAGE_TAG)
 
-remote-tinker-build: tinker-sync
-	@echo "--- Building tinker-cookbook Docker Image on $(HOST) ---"
-	ssh $(HOST) "cd ~/work/tinker-cookbook && DOCKER_BUILDKIT=1 docker build -t $(TINKER_GCR_REPO):$(IMAGE_TAG) ."
+build-tinker-image:
+	@echo "--- Building tinker-cookbook Docker Image ---"
+	cd ../tinker-cookbook && DOCKER_BUILDKIT=1 docker build -t $(TINKER_GCR_REPO):$(IMAGE_TAG) .
 
-remote-tinker-push:
-	@echo "--- Pushing tinker-cookbook Image to GCR from $(HOST) ---"
-	ssh $(HOST) "docker push $(TINKER_GCR_REPO):$(IMAGE_TAG)"
-
-deploy:
-	@echo "--- Deploying Server to GKE ---"
-	kubectl apply -f server/kubernetes/
+push-tinker-image:
+	@echo "--- Pushing tinker-cookbook Image to GCR ---"
+	docker push $(TINKER_GCR_REPO):$(IMAGE_TAG)
 
 run-client-job:
 	@echo "--- Deploying RLVR Client Job to GKE ---"
@@ -176,11 +173,6 @@ logs-client-job:
 	@echo "--- Fetching RLVR Client Job Logs ---"
 	kubectl logs -f job/open-rl-client-job
 
-rollout:
-	@echo "--- Rolling out latest server deployments ---"
-	kubectl rollout restart deployment redis-broker open-rl-gateway open-rl-trainer-worker vllm-worker
-	kubectl rollout status deployment open-rl-gateway
-	kubectl rollout status deployment open-rl-trainer-worker
 
 run-tinker-job:
 	@echo "--- Deploying Tinker RL Basic Job to GKE ---"

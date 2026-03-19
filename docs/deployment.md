@@ -1,25 +1,16 @@
 # Kubernetes Deployment (GKE)
 
-The open-rl server is designed to run on a Kubernetes cluster with NVIDIA GPUs (tested on 2x L4 GPUs). The deployment uses a remote VM as a Docker builder to speed up container construction.
+The open-rl server is designed to run on a Kubernetes cluster with NVIDIA GPUs.
 
-### 1. Configure the Remote Builder
-Because building environments with large tensor libraries is resource-intensive, we use a remote VM (`HOST=b3`) for compiling the Docker image.
-
-```bash
-# Set up Docker and GCR authentication on the remote builder VM
-make remote-build-setup HOST=b3
-```
-
-### 2. Build and Push the Image
-The image is built remotely using Docker BuildKit and pushed to Google Container Registry (GCR).
+### 1. Build and Push the Image
+The image is built using Docker BuildKit and pushed to Google Container Registry (GCR).
 
 ```bash
-# Sync local code, build the image on the remote VM, and push it
-make remote-build HOST=b3
-make remote-push HOST=b3
+make build-server-images
+make push-server-images
 ```
 
-### 3. Deploy to the Cluster
+### 2. Deploy to the Cluster
 Before deploying the distributed architecture, ensure the Cloud Storage for Lustre API is enabled on your GCP project. This is required for the CSI driver to provision the high-performance parallel file system volume dynamically:
 
 ```bash
