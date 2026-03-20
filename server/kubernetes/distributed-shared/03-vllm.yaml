@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  labels:
+    app: vllm
+spec:
+  selector:
+    app: vllm
+  ports:
+  - port: 8001
+    targetPort: 8001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-worker
+  labels:
+    app: vllm
+spec:
+  replicas: 3
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: vllm
+  template:
+    metadata:
+      labels:
+        app: vllm
+    spec:
+      serviceAccountName: open-rl-sa
+      containers:
+      - name: vllm
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
+        imagePullPolicy: Always
+        command: ["uv", "run", "uvicorn", "src.vllm_worker:app", "--host", "0.0.0.0", "--port", "8001"]
+        ports:
+        - containerPort: 8001
+        env:
+        - name: VLLM_MODEL
+          value: "Qwen/Qwen3-4B-Instruct-2507"
+        - name: CUDA_VISIBLE_DEVICES
+          value: "0"
+        - name: OPEN_RL_TMP_DIR
+          value: "/mnt/shared/open-rl"
+        - name: ENABLE_GCP_TRACE
+          value: "1"
+        - name: HF_HOME
+          value: "/mnt/shared/open-rl/huggingface"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 24
+        resources:
+          limits:
+            nvidia.com/gpu: "1"
+            memory: "32Gi"
+          requests:
+            nvidia.com/gpu: "1"
+            memory: "32Gi"
+            cpu: "2"
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
