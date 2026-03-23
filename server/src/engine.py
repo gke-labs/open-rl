@@ -123,7 +123,8 @@ class TrainerEngine:
             ram_path = os.path.join(tmp_dir, "peft", model_id)
             os.makedirs(ram_path, exist_ok=True)
             
-            self.model.save_pretrained(ram_path, selected_adapters=[model_id])
+            with tracer.start_as_current_span(f"auto_save_weights_{model_id}"):
+                self.model.save_pretrained(ram_path, selected_adapters=[model_id])
                     
             metadata = {
                 "model_id": model_id,
