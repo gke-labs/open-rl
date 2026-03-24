@@ -19,17 +19,17 @@ PLOT_PATH = Path(__file__).resolve().parent / "artifacts" / "piglatin_{preset}_m
 PAIRS_PATH = Path(__file__).resolve().parent / "piglatin_data.json"
 SYSTEM_PROMPT = "Translate the English text into Pig Latin. Reply with only the Pig Latin translation."
 EXAMPLES = [
-    ("banana split", "anana-bay plit-say"),
-    ("quantum physics", "uantum-qay ysics-phay"),
-    ("donut shop", "onut-day op-shay"),
-    ("pickle jar", "ickle-pay ar-jay"),
-    ("space exploration", "ace-spay exploration-way"),
-    ("rubber duck", "ubber-ray uck-day"),
-    ("coding wizard", "oding-cay izard-way"),
-    ("hello world", "ello-hay orld-way"),
-    ("machine learning", "achine-may earning-lay"),
-    ("artificial intelligence", "artificial-way intelligence-way"),
-    ("data science", "ata-day ience-scay"),
+    ("banana", "anana-bay"),
+    ("quantum", "uantum-qay"),
+    ("donut", "onut-day"),
+    ("pickle", "ickle-pay"),
+    ("space", "ace-spay"),
+    ("rubber", "ubber-ray"),
+    ("coding", "oding-cay"),
+    ("hello", "ello-hay"),
+    ("machine", "achine-may"),
+    ("artificial", "artificial-way"),
+    ("data", "ata-day"),
 ]
 
 os.environ.setdefault("TINKER_API_KEY", "tml-dummy-key")
