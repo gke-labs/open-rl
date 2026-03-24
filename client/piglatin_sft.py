@@ -43,8 +43,8 @@ class Config:
     rank: int
     learning_rate: float
     base_url: str = os.getenv("TINKER_BASE_URL") or BASE_URL
-    steps: int = 100
-    train_limit: int = 240
+    steps: int = 150
+    train_limit: int = 320
     eval_limit: int = 64
     eval_every: int = 5
     eval_max_tokens: int = 32
@@ -62,7 +62,7 @@ PRESETS = {
             "batch_size": 16,
             "rank": 16,
             "learning_rate": 1e-4,
-            "steps" : 20,
+            "steps" : 30,
         },
         layer_name="qwen preset",
     ),
@@ -71,7 +71,7 @@ PRESETS = {
             "base_model": "google/gemma-3-1b-it",
             "batch_size": 16,
             "rank": 32,
-            "learning_rate": 3e-4,
+            "learning_rate": 1e-4,
             "steps": 30,
         },
         layer_name="gemma preset",

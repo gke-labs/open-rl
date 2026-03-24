@@ -36,7 +36,7 @@ class TestPigLatinGemma(unittest.TestCase):
         env["VLLM_MODEL"] = "google/gemma-3-1b-it"
 
         cmd = [
-            "uv", "run", "--extra", "ml", "uvicorn", "src.main:app", 
+            "uv", "run", "--extra", "cpu", "uvicorn", "src.main:app", 
             "--host", "127.0.0.1", "--port", "9002"
         ]
 
