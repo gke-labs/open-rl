@@ -8,9 +8,11 @@ We love Tinker. Tinker simplifies LLM post-training for developers and researche
 
 **Bonus**: you can use [tinker-cookbook](https://github.com/thinking-machines-lab/tinker-cookbook) that has awesome tutorials/recipes and utilities!
 
-## Quick Start: Reinforcement Learning (RLVR) Loop
+## Quick Start
 
-In a Reinforcement Learning loop like GRPO, the same 4 primitives are arranged into an active generate-and-reward cycle:
+Follow the [Pig Latin example](docs/guides/supervised/pig-latin.md) or [FunctionGemma example](docs/guides/supervised/function-gemma.md) to see supervised fine-tuning in action. Follow the [RLVR example](docs/guides/reinforcement-learning/rlvr.md) to see reinforcement learning in action.
+
+Snippet below shows a sample Reinforcement Learning loop like GRPO, where the 4 API primitives are used to create a generate-and-reward-train loop:
 
 ```python
 import asyncio
@@ -73,21 +75,18 @@ asyncio.run(rlvr_loop())
 
 Detailed guides have been structured in the `docs/` directory:
 
-- 📖 **[Architecture Deep-Dive](docs/architecture.md)**
-- 🚀 **[Kubernetes Deployment Guide (GKE)](docs/deployment.md)**
-- 🛠️ **[CLI Tool Usage](docs/guides/cli-tool.md)**
-- 🎓 **Tutorials:**
+- 🎓 **Guides:**
   - [FunctionGemma SFT Demo](docs/guides/supervised/function-gemma.md)
   - [Pig Latin SFT Demo](docs/guides/supervised/pig-latin.md)
   - [RLVR (Verifiable Rewards) Demo](docs/guides/reinforcement-learning/rlvr.md)
+- 📖 **[Architecture](docs/architecture.md)**
+- 🚀 **[Kubernetes Deployment Guide (GKE)](docs/deployment.md)**
 
 ## Roadmap
-- Full Finetuning
-- Checkpoints API
-- Use advance k8s primitives such as gang scheduling, kueue for capacity/quota management
 
-## Setup Docs
-- [Client README](client/README.md)
+- [ ] Full Finetuning support
+- [ ] Model Checkpoints API
+- [ ] Use advance k8s primitives such as gang scheduling, kueue for capacity/quota management
 
 ## Contributing
 
