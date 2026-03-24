@@ -10,32 +10,37 @@ VLLM_GPU ?= 1
 
 # Run the gateway-only server locally
 run-server:
+	@-kill -9 $$(lsof -ti:8000) 2>/dev/null || true
 	cd server && UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(TRAINER_GPU)" uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
 
 # Kill any local process stuck listening on port 8000
 kill-server:
-	@kill -9 $$(lsof -ti:8000) 2>/dev/null || echo "Port 8000 is free"
+	@-kill -9 $$(lsof -ti:8000) 2>/dev/null || echo "Port 8000 is free"
 
 # Run the standalone vLLM inference worker locally
 run-vllm:
 	cd server && UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(VLLM_GPU)" VLLM_MODEL="$(VLLM_MODEL)" uv run --extra gpu --extra vllm python -m src.vllm_worker
 
 run-server-engine-sampler:
+	@-kill -9 $$(lsof -ti:8000) 2>/dev/null || true
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" SAMPLER_BACKEND=engine VLLM_MODEL="$(VLLM_MODEL)" uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 8000
 
 run-function-gemma-server:
+	@-kill -9 $$(lsof -ti:9000) 2>/dev/null || true
 	cd server && OPEN_RL_SINGLE_PROCESS=1 SAMPLER_BACKEND=engine OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" PYTHONUNBUFFERED=1 uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9000 $(ARGS)
 
 run-function-gemma:
 	cd client && uv run --python 3.12 functiongemma-demo $(ARGS)
 
 run-pig-latin-server:
+	@-kill -9 $$(lsof -ti:9001) 2>/dev/null || true
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" SAMPLER_BACKEND=engine VLLM_MODEL="Qwen/Qwen3-0.6B" uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9001
 
 run-pig-latin-sft:
 	cd client && uv run --python 3.12 -i https://pypi.org/simple python -u piglatin_sft.py qwen $(ARGS)
 
 run-pig-latin-gemma-server:
+	@-kill -9 $$(lsof -ti:9002) 2>/dev/null || true
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="google/gemma-3-1b-it" SAMPLER_BACKEND=engine VLLM_MODEL="google/gemma-3-1b-it" uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9002
 
 run-pig-latin-gemma-sft:
@@ -47,6 +52,7 @@ TEXT_TO_SQL_SAMPLER_BACKEND ?= engine
 TEXT_TO_SQL_VLLM_URL ?= http://127.0.0.1:8001
 
 run-text-to-sql-server:
+	@-kill -9 $$(lsof -ti:9003) 2>/dev/null || true
 	cd server && ENABLE_GCP_TRACE=$(ENABLE_GCP_TRACE) UV_INDEX_URL="https://pypi.org/simple" CUDA_VISIBLE_DEVICES="$(TRAINER_GPU)" OPEN_RL_SINGLE_PROCESS=1 OPEN_RL_BASE_MODEL="$(TEXT_TO_SQL_BASE_MODEL)" SAMPLER_BACKEND="$(TEXT_TO_SQL_SAMPLER_BACKEND)" VLLM_MODEL="$(TEXT_TO_SQL_BASE_MODEL)" VLLM_URL="$(TEXT_TO_SQL_VLLM_URL)" uv run --extra $(TEXT_TO_SQL_SERVER_EXTRA) uvicorn src.main:app --host 127.0.0.1 --port 9003
 
 run-text-to-sql-server-gpu:
