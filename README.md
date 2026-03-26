@@ -10,7 +10,7 @@ We love Tinker. Tinker simplifies LLM post-training for developers and researche
 
 ## Quick Start
 
-Follow the [Pig Latin example](docs/guides/supervised/pig-latin.md) or [FunctionGemma example](docs/guides/supervised/function-gemma.md) to see supervised fine-tuning in action. Follow the [RLVR example](docs/guides/reinforcement-learning/rlvr.md) to see reinforcement learning in action.
+Follow the [Pig Latin notebook](client/piglatin_sft_notebook.ipynb) or [Text-to-SQL notebook](client/texttosql_sft_notebook.ipynb) to see supervised fine-tuning in action. Follow the [RLVR example](docs/guides/reinforcement-learning/rlvr.md) to see reinforcement learning in action.
 
 Snippet below shows a sample Reinforcement Learning loop like GRPO, where the 4 API primitives are used to create a generate-and-reward-train loop:
 
@@ -76,8 +76,8 @@ asyncio.run(rlvr_loop())
 Detailed guides have been structured in the `docs/` directory:
 
 - 🎓 **Guides:**
-  - [FunctionGemma SFT Demo](docs/guides/supervised/function-gemma.md)
-  - [Pig Latin SFT Demo](docs/guides/supervised/pig-latin.md)
+  - [Pig Latin SFT Notebook](client/piglatin_sft_notebook.ipynb) | [script guide](docs/guides/supervised/pig-latin.md)
+  - [Text-to-SQL SFT Notebook](client/texttosql_sft_notebook.ipynb) | [FunctionGemma script guide](docs/guides/supervised/function-gemma.md)
   - [RLVR (Verifiable Rewards) Demo](docs/guides/reinforcement-learning/rlvr.md)
 - 📖 **[Architecture](docs/architecture.md)**
 - 🚀 **[Kubernetes Deployment Guide (GKE)](docs/deployment.md)**
