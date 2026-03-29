@@ -35,8 +35,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "safetensors" },
     { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/8e/ac2a9566747a93f8be36ee08532eb0160558b07630a081a6056a9f89bf1d/accelerate-1.12.0.tar.gz", hash = "sha256:70988c352feb481887077d2ab845125024b2a137a5090d6d7a32b57d03a45df6", size = 398399, upload-time = "2025-11-21T11:27:46.973Z" }
 wheels = [
@@ -122,14 +123,14 @@ name = "anthropic"
 version = "0.83.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "docstring-parser" },
-    { name = "httpx" },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "typing-extensions" },
+    { name = "anyio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "distro", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "docstring-parser", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jiter", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "sniffio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/e5/02cd2919ec327b24234abb73082e6ab84c451182cc3cc60681af700f4c63/anthropic-0.83.0.tar.gz", hash = "sha256:a8732c68b41869266c3034541a31a29d8be0f8cd0a714f9edce3128b351eceb4", size = 534058, upload-time = "2026-02-19T19:26:38.904Z" }
 wheels = [
@@ -154,7 +155,7 @@ name = "apache-tvm-ffi"
 version = "0.1.8.post2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/e9/a13952726228fa6282154ecf927092396bc759739e5e045019f6ab92f3ca/apache_tvm_ffi-0.1.8.post2.tar.gz", hash = "sha256:4513e38852894f290172ecfefcbc18d34e817fd29c16a0f1770e130c82b4067e", size = 2441111, upload-time = "2026-01-13T18:11:27.864Z" }
 wheels = [
@@ -330,10 +331,10 @@ name = "compressed-tensors"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "loguru" },
-    { name = "pydantic" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "transformers" },
+    { name = "loguru", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "transformers", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/65/88dd1c58fb9d0ded51b5c86471b937a1525f91fad2211a6f051dc1ea822d/compressed_tensors-0.13.0.tar.gz", hash = "sha256:23893824d3498ea3f1a829f14a8fa85f9a5e76a34c711a038b8d7c619ca9a67c", size = 200995, upload-time = "2025-12-16T16:03:55.397Z" }
 wheels = [
@@ -342,41 +343,41 @@ wheels = [
 
 [[package]]
 name = "cryptography"
-version = "46.0.5"
+version = "46.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/60/04/ee2a9e8542e4fa2773b81771ff8349ff19cdd56b7258a0cc442639052edb/cryptography-46.0.5.tar.gz", hash = "sha256:abace499247268e3757271b2f1e244b36b06f8515cf27c4d49468fc9eb16e93d", size = 750064, upload-time = "2026-02-10T19:18:38.255Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/ba/04b1bd4218cbc58dc90ce967106d51582371b898690f3ae0402876cc4f34/cryptography-46.0.6.tar.gz", hash = "sha256:27550628a518c5c6c903d84f637fbecf287f6cb9ced3804838a1295dc1fd0759", size = 750542, upload-time = "2026-03-25T23:34:53.396Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/81/b0bb27f2ba931a65409c6b8a8b358a7f03c0e46eceacddff55f7c84b1f3b/cryptography-46.0.5-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:351695ada9ea9618b3500b490ad54c739860883df6c1f555e088eaf25b1bbaad", size = 7176289, upload-time = "2026-02-10T19:17:08.274Z" },
-    { url = "https://files.pythonhosted.org/packages/ff/9e/6b4397a3e3d15123de3b1806ef342522393d50736c13b20ec4c9ea6693a6/cryptography-46.0.5-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:c18ff11e86df2e28854939acde2d003f7984f721eba450b56a200ad90eeb0e6b", size = 4275637, upload-time = "2026-02-10T19:17:10.53Z" },
-    { url = "https://files.pythonhosted.org/packages/63/e7/471ab61099a3920b0c77852ea3f0ea611c9702f651600397ac567848b897/cryptography-46.0.5-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:4d7e3d356b8cd4ea5aff04f129d5f66ebdc7b6f8eae802b93739ed520c47c79b", size = 4424742, upload-time = "2026-02-10T19:17:12.388Z" },
-    { url = "https://files.pythonhosted.org/packages/37/53/a18500f270342d66bf7e4d9f091114e31e5ee9e7375a5aba2e85a91e0044/cryptography-46.0.5-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:50bfb6925eff619c9c023b967d5b77a54e04256c4281b0e21336a130cd7fc263", size = 4277528, upload-time = "2026-02-10T19:17:13.853Z" },
-    { url = "https://files.pythonhosted.org/packages/22/29/c2e812ebc38c57b40e7c583895e73c8c5adb4d1e4a0cc4c5a4fdab2b1acc/cryptography-46.0.5-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:803812e111e75d1aa73690d2facc295eaefd4439be1023fefc4995eaea2af90d", size = 4947993, upload-time = "2026-02-10T19:17:15.618Z" },
-    { url = "https://files.pythonhosted.org/packages/6b/e7/237155ae19a9023de7e30ec64e5d99a9431a567407ac21170a046d22a5a3/cryptography-46.0.5-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:3ee190460e2fbe447175cda91b88b84ae8322a104fc27766ad09428754a618ed", size = 4456855, upload-time = "2026-02-10T19:17:17.221Z" },
-    { url = "https://files.pythonhosted.org/packages/2d/87/fc628a7ad85b81206738abbd213b07702bcbdada1dd43f72236ef3cffbb5/cryptography-46.0.5-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:f145bba11b878005c496e93e257c1e88f154d278d2638e6450d17e0f31e558d2", size = 3984635, upload-time = "2026-02-10T19:17:18.792Z" },
-    { url = "https://files.pythonhosted.org/packages/84/29/65b55622bde135aedf4565dc509d99b560ee4095e56989e815f8fd2aa910/cryptography-46.0.5-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:e9251e3be159d1020c4030bd2e5f84d6a43fe54b6c19c12f51cde9542a2817b2", size = 4277038, upload-time = "2026-02-10T19:17:20.256Z" },
-    { url = "https://files.pythonhosted.org/packages/bc/36/45e76c68d7311432741faf1fbf7fac8a196a0a735ca21f504c75d37e2558/cryptography-46.0.5-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:47fb8a66058b80e509c47118ef8a75d14c455e81ac369050f20ba0d23e77fee0", size = 4912181, upload-time = "2026-02-10T19:17:21.825Z" },
-    { url = "https://files.pythonhosted.org/packages/6d/1a/c1ba8fead184d6e3d5afcf03d569acac5ad063f3ac9fb7258af158f7e378/cryptography-46.0.5-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:4c3341037c136030cb46e4b1e17b7418ea4cbd9dd207e4a6f3b2b24e0d4ac731", size = 4456482, upload-time = "2026-02-10T19:17:25.133Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/e5/3fb22e37f66827ced3b902cf895e6a6bc1d095b5b26be26bd13c441fdf19/cryptography-46.0.5-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:890bcb4abd5a2d3f852196437129eb3667d62630333aacc13dfd470fad3aaa82", size = 4405497, upload-time = "2026-02-10T19:17:26.66Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/df/9d58bb32b1121a8a2f27383fabae4d63080c7ca60b9b5c88be742be04ee7/cryptography-46.0.5-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:80a8d7bfdf38f87ca30a5391c0c9ce4ed2926918e017c29ddf643d0ed2778ea1", size = 4667819, upload-time = "2026-02-10T19:17:28.569Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/ed/325d2a490c5e94038cdb0117da9397ece1f11201f425c4e9c57fe5b9f08b/cryptography-46.0.5-cp311-abi3-win32.whl", hash = "sha256:60ee7e19e95104d4c03871d7d7dfb3d22ef8a9b9c6778c94e1c8fcc8365afd48", size = 3028230, upload-time = "2026-02-10T19:17:30.518Z" },
-    { url = "https://files.pythonhosted.org/packages/e9/5a/ac0f49e48063ab4255d9e3b79f5def51697fce1a95ea1370f03dc9db76f6/cryptography-46.0.5-cp311-abi3-win_amd64.whl", hash = "sha256:38946c54b16c885c72c4f59846be9743d699eee2b69b6988e0a00a01f46a61a4", size = 3480909, upload-time = "2026-02-10T19:17:32.083Z" },
-    { url = "https://files.pythonhosted.org/packages/e2/fa/a66aa722105ad6a458bebd64086ca2b72cdd361fed31763d20390f6f1389/cryptography-46.0.5-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:4108d4c09fbbf2789d0c926eb4152ae1760d5a2d97612b92d508d96c861e4d31", size = 7170514, upload-time = "2026-02-10T19:17:56.267Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/04/c85bdeab78c8bc77b701bf0d9bdcf514c044e18a46dcff330df5448631b0/cryptography-46.0.5-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:7d1f30a86d2757199cb2d56e48cce14deddf1f9c95f1ef1b64ee91ea43fe2e18", size = 4275349, upload-time = "2026-02-10T19:17:58.419Z" },
-    { url = "https://files.pythonhosted.org/packages/5c/32/9b87132a2f91ee7f5223b091dc963055503e9b442c98fc0b8a5ca765fab0/cryptography-46.0.5-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:039917b0dc418bb9f6edce8a906572d69e74bd330b0b3fea4f79dab7f8ddd235", size = 4420667, upload-time = "2026-02-10T19:18:00.619Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/a6/a7cb7010bec4b7c5692ca6f024150371b295ee1c108bdc1c400e4c44562b/cryptography-46.0.5-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:ba2a27ff02f48193fc4daeadf8ad2590516fa3d0adeeb34336b96f7fa64c1e3a", size = 4276980, upload-time = "2026-02-10T19:18:02.379Z" },
-    { url = "https://files.pythonhosted.org/packages/8e/7c/c4f45e0eeff9b91e3f12dbd0e165fcf2a38847288fcfd889deea99fb7b6d/cryptography-46.0.5-cp38-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:61aa400dce22cb001a98014f647dc21cda08f7915ceb95df0c9eaf84b4b6af76", size = 4939143, upload-time = "2026-02-10T19:18:03.964Z" },
-    { url = "https://files.pythonhosted.org/packages/37/19/e1b8f964a834eddb44fa1b9a9976f4e414cbb7aa62809b6760c8803d22d1/cryptography-46.0.5-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:3ce58ba46e1bc2aac4f7d9290223cead56743fa6ab94a5d53292ffaac6a91614", size = 4453674, upload-time = "2026-02-10T19:18:05.588Z" },
-    { url = "https://files.pythonhosted.org/packages/db/ed/db15d3956f65264ca204625597c410d420e26530c4e2943e05a0d2f24d51/cryptography-46.0.5-cp38-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:420d0e909050490d04359e7fdb5ed7e667ca5c3c402b809ae2563d7e66a92229", size = 3978801, upload-time = "2026-02-10T19:18:07.167Z" },
-    { url = "https://files.pythonhosted.org/packages/41/e2/df40a31d82df0a70a0daf69791f91dbb70e47644c58581d654879b382d11/cryptography-46.0.5-cp38-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:582f5fcd2afa31622f317f80426a027f30dc792e9c80ffee87b993200ea115f1", size = 4276755, upload-time = "2026-02-10T19:18:09.813Z" },
-    { url = "https://files.pythonhosted.org/packages/33/45/726809d1176959f4a896b86907b98ff4391a8aa29c0aaaf9450a8a10630e/cryptography-46.0.5-cp38-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:bfd56bb4b37ed4f330b82402f6f435845a5f5648edf1ad497da51a8452d5d62d", size = 4901539, upload-time = "2026-02-10T19:18:11.263Z" },
-    { url = "https://files.pythonhosted.org/packages/99/0f/a3076874e9c88ecb2ecc31382f6e7c21b428ede6f55aafa1aa272613e3cd/cryptography-46.0.5-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:a3d507bb6a513ca96ba84443226af944b0f7f47dcc9a399d110cd6146481d24c", size = 4452794, upload-time = "2026-02-10T19:18:12.914Z" },
-    { url = "https://files.pythonhosted.org/packages/02/ef/ffeb542d3683d24194a38f66ca17c0a4b8bf10631feef44a7ef64e631b1a/cryptography-46.0.5-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:9f16fbdf4da055efb21c22d81b89f155f02ba420558db21288b3d0035bafd5f4", size = 4404160, upload-time = "2026-02-10T19:18:14.375Z" },
-    { url = "https://files.pythonhosted.org/packages/96/93/682d2b43c1d5f1406ed048f377c0fc9fc8f7b0447a478d5c65ab3d3a66eb/cryptography-46.0.5-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:ced80795227d70549a411a4ab66e8ce307899fad2220ce5ab2f296e687eacde9", size = 4667123, upload-time = "2026-02-10T19:18:15.886Z" },
-    { url = "https://files.pythonhosted.org/packages/45/2d/9c5f2926cb5300a8eefc3f4f0b3f3df39db7f7ce40c8365444c49363cbda/cryptography-46.0.5-cp38-abi3-win32.whl", hash = "sha256:02f547fce831f5096c9a567fd41bc12ca8f11df260959ecc7c3202555cc47a72", size = 3010220, upload-time = "2026-02-10T19:18:17.361Z" },
-    { url = "https://files.pythonhosted.org/packages/48/ef/0c2f4a8e31018a986949d34a01115dd057bf536905dca38897bacd21fac3/cryptography-46.0.5-cp38-abi3-win_amd64.whl", hash = "sha256:556e106ee01aa13484ce9b0239bca667be5004efb0aabbed28d353df86445595", size = 3467050, upload-time = "2026-02-10T19:18:18.899Z" },
+    { url = "https://files.pythonhosted.org/packages/47/23/9285e15e3bc57325b0a72e592921983a701efc1ee8f91c06c5f0235d86d9/cryptography-46.0.6-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:64235194bad039a10bb6d2d930ab3323baaec67e2ce36215fd0952fad0930ca8", size = 7176401, upload-time = "2026-03-25T23:33:22.096Z" },
+    { url = "https://files.pythonhosted.org/packages/60/f8/e61f8f13950ab6195b31913b42d39f0f9afc7d93f76710f299b5ec286ae6/cryptography-46.0.6-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:26031f1e5ca62fcb9d1fcb34b2b60b390d1aacaa15dc8b895a9ed00968b97b30", size = 4275275, upload-time = "2026-03-25T23:33:23.844Z" },
+    { url = "https://files.pythonhosted.org/packages/19/69/732a736d12c2631e140be2348b4ad3d226302df63ef64d30dfdb8db7ad1c/cryptography-46.0.6-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:9a693028b9cbe51b5a1136232ee8f2bc242e4e19d456ded3fa7c86e43c713b4a", size = 4425320, upload-time = "2026-03-25T23:33:25.703Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/12/123be7292674abf76b21ac1fc0e1af50661f0e5b8f0ec8285faac18eb99e/cryptography-46.0.6-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:67177e8a9f421aa2d3a170c3e56eca4e0128883cf52a071a7cbf53297f18b175", size = 4278082, upload-time = "2026-03-25T23:33:27.423Z" },
+    { url = "https://files.pythonhosted.org/packages/5b/ba/d5e27f8d68c24951b0a484924a84c7cdaed7502bac9f18601cd357f8b1d2/cryptography-46.0.6-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:d9528b535a6c4f8ff37847144b8986a9a143585f0540fbcb1a98115b543aa463", size = 4926514, upload-time = "2026-03-25T23:33:29.206Z" },
+    { url = "https://files.pythonhosted.org/packages/34/71/1ea5a7352ae516d5512d17babe7e1b87d9db5150b21f794b1377eac1edc0/cryptography-46.0.6-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:22259338084d6ae497a19bae5d4c66b7ca1387d3264d1c2c0e72d9e9b6a77b97", size = 4457766, upload-time = "2026-03-25T23:33:30.834Z" },
+    { url = "https://files.pythonhosted.org/packages/01/59/562be1e653accee4fdad92c7a2e88fced26b3fdfce144047519bbebc299e/cryptography-46.0.6-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:760997a4b950ff00d418398ad73fbc91aa2894b5c1db7ccb45b4f68b42a63b3c", size = 3986535, upload-time = "2026-03-25T23:33:33.02Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/8b/b1ebfeb788bf4624d36e45ed2662b8bd43a05ff62157093c1539c1288a18/cryptography-46.0.6-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:3dfa6567f2e9e4c5dceb8ccb5a708158a2a871052fa75c8b78cb0977063f1507", size = 4277618, upload-time = "2026-03-25T23:33:34.567Z" },
+    { url = "https://files.pythonhosted.org/packages/dd/52/a005f8eabdb28df57c20f84c44d397a755782d6ff6d455f05baa2785bd91/cryptography-46.0.6-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:cdcd3edcbc5d55757e5f5f3d330dd00007ae463a7e7aa5bf132d1f22a4b62b19", size = 4890802, upload-time = "2026-03-25T23:33:37.034Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/4d/8e7d7245c79c617d08724e2efa397737715ca0ec830ecb3c91e547302555/cryptography-46.0.6-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:d4e4aadb7fc1f88687f47ca20bb7227981b03afaae69287029da08096853b738", size = 4457425, upload-time = "2026-03-25T23:33:38.904Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/5c/f6c3596a1430cec6f949085f0e1a970638d76f81c3ea56d93d564d04c340/cryptography-46.0.6-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:2b417edbe8877cda9022dde3a008e2deb50be9c407eef034aeeb3a8b11d9db3c", size = 4405530, upload-time = "2026-03-25T23:33:40.842Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/c9/9f9cea13ee2dbde070424e0c4f621c091a91ffcc504ffea5e74f0e1daeff/cryptography-46.0.6-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:380343e0653b1c9d7e1f55b52aaa2dbb2fdf2730088d48c43ca1c7c0abb7cc2f", size = 4667896, upload-time = "2026-03-25T23:33:42.781Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/b5/1895bc0821226f129bc74d00eccfc6a5969e2028f8617c09790bf89c185e/cryptography-46.0.6-cp311-abi3-win32.whl", hash = "sha256:bcb87663e1f7b075e48c3be3ecb5f0b46c8fc50b50a97cf264e7f60242dca3f2", size = 3026348, upload-time = "2026-03-25T23:33:45.021Z" },
+    { url = "https://files.pythonhosted.org/packages/c3/f8/c9bcbf0d3e6ad288b9d9aa0b1dee04b063d19e8c4f871855a03ab3a297ab/cryptography-46.0.6-cp311-abi3-win_amd64.whl", hash = "sha256:6739d56300662c468fddb0e5e291f9b4d084bead381667b9e654c7dd81705124", size = 3483896, upload-time = "2026-03-25T23:33:46.649Z" },
+    { url = "https://files.pythonhosted.org/packages/c4/cc/f330e982852403da79008552de9906804568ae9230da8432f7496ce02b71/cryptography-46.0.6-cp38-abi3-macosx_10_9_universal2.whl", hash = "sha256:12cae594e9473bca1a7aceb90536060643128bb274fcea0fc459ab90f7d1ae7a", size = 7162776, upload-time = "2026-03-25T23:34:13.308Z" },
+    { url = "https://files.pythonhosted.org/packages/49/b3/dc27efd8dcc4bff583b3f01d4a3943cd8b5821777a58b3a6a5f054d61b79/cryptography-46.0.6-cp38-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:639301950939d844a9e1c4464d7e07f902fe9a7f6b215bb0d4f28584729935d8", size = 4270529, upload-time = "2026-03-25T23:34:15.019Z" },
+    { url = "https://files.pythonhosted.org/packages/e6/05/e8d0e6eb4f0d83365b3cb0e00eb3c484f7348db0266652ccd84632a3d58d/cryptography-46.0.6-cp38-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:ed3775295fb91f70b4027aeba878d79b3e55c0b3e97eaa4de71f8f23a9f2eb77", size = 4414827, upload-time = "2026-03-25T23:34:16.604Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/97/daba0f5d2dc6d855e2dcb70733c812558a7977a55dd4a6722756628c44d1/cryptography-46.0.6-cp38-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:8927ccfbe967c7df312ade694f987e7e9e22b2425976ddbf28271d7e58845290", size = 4271265, upload-time = "2026-03-25T23:34:18.586Z" },
+    { url = "https://files.pythonhosted.org/packages/89/06/fe1fce39a37ac452e58d04b43b0855261dac320a2ebf8f5260dd55b201a9/cryptography-46.0.6-cp38-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:b12c6b1e1651e42ab5de8b1e00dc3b6354fdfd778e7fa60541ddacc27cd21410", size = 4916800, upload-time = "2026-03-25T23:34:20.561Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/8a/b14f3101fe9c3592603339eb5d94046c3ce5f7fc76d6512a2d40efd9724e/cryptography-46.0.6-cp38-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:063b67749f338ca9c5a0b7fe438a52c25f9526b851e24e6c9310e7195aad3b4d", size = 4448771, upload-time = "2026-03-25T23:34:22.406Z" },
+    { url = "https://files.pythonhosted.org/packages/01/b3/0796998056a66d1973fd52ee89dc1bb3b6581960a91ad4ac705f182d398f/cryptography-46.0.6-cp38-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:02fad249cb0e090b574e30b276a3da6a149e04ee2f049725b1f69e7b8351ec70", size = 3978333, upload-time = "2026-03-25T23:34:24.281Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/3d/db200af5a4ffd08918cd55c08399dc6c9c50b0bc72c00a3246e099d3a849/cryptography-46.0.6-cp38-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:7e6142674f2a9291463e5e150090b95a8519b2fb6e6aaec8917dd8d094ce750d", size = 4271069, upload-time = "2026-03-25T23:34:25.895Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/18/61acfd5b414309d74ee838be321c636fe71815436f53c9f0334bf19064fa/cryptography-46.0.6-cp38-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:456b3215172aeefb9284550b162801d62f5f264a081049a3e94307fe20792cfa", size = 4878358, upload-time = "2026-03-25T23:34:27.67Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/65/5bf43286d566f8171917cae23ac6add941654ccf085d739195a4eacf1674/cryptography-46.0.6-cp38-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:341359d6c9e68834e204ceaf25936dffeafea3829ab80e9503860dcc4f4dac58", size = 4448061, upload-time = "2026-03-25T23:34:29.375Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/25/7e49c0fa7205cf3597e525d156a6bce5b5c9de1fd7e8cb01120e459f205a/cryptography-46.0.6-cp38-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:9a9c42a2723999a710445bc0d974e345c32adfd8d2fac6d8a251fa829ad31cfb", size = 4399103, upload-time = "2026-03-25T23:34:32.036Z" },
+    { url = "https://files.pythonhosted.org/packages/44/46/466269e833f1c4718d6cd496ffe20c56c9c8d013486ff66b4f69c302a68d/cryptography-46.0.6-cp38-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:6617f67b1606dfd9fe4dbfa354a9508d4a6d37afe30306fe6c101b7ce3274b72", size = 4659255, upload-time = "2026-03-25T23:34:33.679Z" },
+    { url = "https://files.pythonhosted.org/packages/0a/09/ddc5f630cc32287d2c953fc5d32705e63ec73e37308e5120955316f53827/cryptography-46.0.6-cp38-abi3-win32.whl", hash = "sha256:7f6690b6c55e9c5332c0b59b9c8a3fb232ebf059094c17f9019a51e9827df91c", size = 3010660, upload-time = "2026-03-25T23:34:35.418Z" },
+    { url = "https://files.pythonhosted.org/packages/1b/82/ca4893968aeb2709aacfb57a30dec6fa2ab25b10fa9f064b8882ce33f599/cryptography-46.0.6-cp38-abi3-win_amd64.whl", hash = "sha256:79e865c642cfc5c0b3eb12af83c35c5aeff4fa5c672dc28c43721c2c9fdd2f0f", size = 3471160, upload-time = "2026-03-25T23:34:37.191Z" },
 ]
 
 [[package]]
@@ -384,7 +385,7 @@ name = "cuda-bindings"
 version = "12.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "cuda-pathfinder", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/c2/65bfd79292b8ff18be4dd7f7442cea37bcbc1a228c1886f1dea515c45b67/cuda_bindings-12.9.4-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:694ba35023846625ef471257e6b5a4bc8af690f961d197d77d34b1d1db393f56", size = 11760260, upload-time = "2025-10-21T14:51:40.79Z" },
@@ -405,7 +406,7 @@ name = "cuda-python"
 version = "12.9.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-bindings" },
+    { name = "cuda-bindings", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/f3/6b032a554019cfb3447e671798c1bd3e79b5f1af20d10253f56cea269ef2/cuda_python-12.9.4-py3-none-any.whl", hash = "sha256:d2cacea882a69863f1e7d27ee71d75f0684f4c76910aff839067e4f89c902279", size = 7594, upload-time = "2025-10-21T14:55:12.846Z" },
@@ -416,8 +417,8 @@ name = "cupy-cuda12x"
 version = "14.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder" },
-    { name = "numpy" },
+    { name = "cuda-pathfinder", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/38/ca/b93ef9fca1471a65f136a73e10819634c0b83427362fc08fc9f29f935bf0/cupy_cuda12x-14.0.1-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:f244bc14fad6f1ef0c74abd98afa4b82d2534aecdba911197810ec0047f0d1f3", size = 145578614, upload-time = "2026-02-20T10:22:49.108Z" },
@@ -430,14 +431,12 @@ name = "datasets"
 version = "4.5.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "dill", version = "0.3.7", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'win32' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "dill", version = "0.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'win32' and extra == 'extra-6-server-gpu') or extra == 'extra-6-server-cpu' or (extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm')" },
+    { name = "dill" },
     { name = "filelock" },
     { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, extra = ["http"], marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
     { name = "httpx" },
     { name = "huggingface-hub" },
-    { name = "multiprocess", version = "0.70.15", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'win32' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "multiprocess", version = "0.70.18", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'win32' and extra == 'extra-6-server-gpu') or extra == 'extra-6-server-cpu' or (extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm')" },
+    { name = "multiprocess" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "pandas" },
@@ -457,9 +456,8 @@ name = "depyf"
 version = "0.20.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "astor" },
-    { name = "dill", version = "0.3.7", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'win32' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "dill", version = "0.4.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "astor", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "dill", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/88/35/83fb0178212279aa0af031031905804c6de5618435d229f41ed21bb9ad2c/depyf-0.20.0.tar.gz", hash = "sha256:fb7683bd72c44f67b56029df2c47721e9a02ffa4d7b19095f1c54c4ebf797a98", size = 6168761, upload-time = "2025-10-13T12:33:38.589Z" }
 wheels = [
@@ -468,32 +466,8 @@ wheels = [
 
 [[package]]
 name = "dill"
-version = "0.3.7"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'win32'",
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/31/54dd222e02311c2dbc9e680d37cbd50f4494ce1ee9b04c69980e4ec26f38/dill-0.3.7.tar.gz", hash = "sha256:cc1c8b182eb3013e24bd475ff2e9295af86c1a38eb1aff128dac8962a9ce3c03", size = 183355, upload-time = "2023-07-22T22:18:46.449Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/3a/74a29b11cf2cdfcd6ba89c0cecd70b37cd1ba7b77978ce611eb7a146a832/dill-0.3.7-py3-none-any.whl", hash = "sha256:76b122c08ef4ce2eedcd4d1abd8e641114bfc6c2867f49f3c41facf65bf19f5e", size = 115254, upload-time = "2023-07-22T22:18:44.511Z" },
-]
-
-[[package]]
-name = "dill"
 version = "0.4.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'darwin' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "extra != 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-]
 sdist = { url = "https://files.pythonhosted.org/packages/12/80/630b4b88364e9a8c8c5797f4602d0f76ef820909ee32f0bacb9f90654042/dill-0.4.0.tar.gz", hash = "sha256:0633f1d2df477324f53a895b02c901fb961bdbf65a17122586ea7019292cbcf0", size = 186976, upload-time = "2025-04-16T00:41:48.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl", hash = "sha256:44f54bf6412c2c8464c14e8243eb163690a9800dbe2c367330883b19c7561049", size = 119668, upload-time = "2025-04-16T00:41:47.671Z" },
@@ -549,8 +523,8 @@ name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "dnspython" },
-    { name = "idna" },
+    { name = "dnspython", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "idna", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f5/22/900cb125c76b7aaa450ce02fd727f452243f2e91a61af068b40adba60ea9/email_validator-2.3.0.tar.gz", hash = "sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426", size = 51238, upload-time = "2025-08-26T13:09:06.831Z" }
 wheels = [
@@ -575,14 +549,14 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "email-validator" },
-    { name = "fastapi-cli", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "httpx" },
-    { name = "jinja2" },
-    { name = "pydantic-extra-types" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "uvicorn", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "email-validator", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "fastapi-cli", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jinja2", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic-extra-types", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic-settings", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "python-multipart", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvicorn", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 
 [[package]]
@@ -590,9 +564,9 @@ name = "fastapi-cli"
 version = "0.0.23"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "rich-toolkit" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "rich-toolkit", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typer", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvicorn", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/71/9f/cbd463e57de4e977b8ea0403f95347f9150441568b1d3fe3e4949ef80ef3/fastapi_cli-0.0.23.tar.gz", hash = "sha256:210ac280ea41e73aac5a57688781256beb23c2cba3a41266896fa43e6445c8e7", size = 19763, upload-time = "2026-02-16T19:45:53.358Z" }
 wheels = [
@@ -601,8 +575,8 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "fastapi-cloud-cli" },
-    { name = "uvicorn", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fastapi-cloud-cli", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvicorn", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 
 [[package]]
@@ -610,14 +584,14 @@ name = "fastapi-cloud-cli"
 version = "0.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastar" },
-    { name = "httpx" },
-    { name = "pydantic", extra = ["email"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "rich-toolkit" },
-    { name = "rignore" },
-    { name = "sentry-sdk" },
-    { name = "typer" },
-    { name = "uvicorn", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fastar", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", extra = ["email"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "rich-toolkit", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "rignore", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "sentry-sdk", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typer", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvicorn", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/de/0b/f07f4976784978ef159fd2e8f5c16f1f9d610578fb1fd976ff1315c11ea6/fastapi_cloud_cli-0.13.0.tar.gz", hash = "sha256:4d8f42337e8021c648f6cb0672de7d5b31b0fc7387a83d7b12f974600ac3f2fd", size = 38436, upload-time = "2026-02-17T05:18:19.033Z" }
 wheels = [
@@ -661,19 +635,19 @@ name = "flashinfer-python"
 version = "0.6.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "apache-tvm-ffi" },
-    { name = "click" },
-    { name = "einops" },
-    { name = "ninja" },
-    { name = "numpy" },
-    { name = "nvidia-cudnn-frontend" },
-    { name = "nvidia-cutlass-dsl" },
-    { name = "nvidia-ml-py" },
-    { name = "packaging" },
-    { name = "requests" },
-    { name = "tabulate" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "tqdm" },
+    { name = "apache-tvm-ffi", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "click", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "einops", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "ninja", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-cudnn-frontend", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-cutlass-dsl", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-ml-py", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "packaging", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tabulate", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/77/45/15645d2a4ee81d08206f3e132a77323e48312f510462415d7cd1122eba43/flashinfer_python-0.6.4.tar.gz", hash = "sha256:e6ab798bd1030e5ff7a3bc6952f36386c406928f60b79cf964a6db7aa7ccde75", size = 5337134, upload-time = "2026-02-19T07:33:36.647Z" }
 wheels = [
@@ -745,9 +719,9 @@ name = "gguf"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pyyaml" },
-    { name = "tqdm" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/08/08/7de1ca4b71e7bf33b547f82bb22505e221b5fa42f67d635e200e0ad22ad6/gguf-0.17.1.tar.gz", hash = "sha256:36ad71aad900a3e75fc94ebe96ea6029f03a4e44be7627ef7ad3d03e8c7bcb53", size = 89338, upload-time = "2025-06-19T14:00:33.705Z" }
 wheels = [
@@ -844,8 +818,8 @@ name = "grpcio-reflection"
 version = "1.78.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
+    { name = "grpcio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "protobuf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4d/f1/389fbbff18e84fdde609114eae37e74d8ae23e3f48266769d1fe2486b754/grpcio_reflection-1.78.1.tar.gz", hash = "sha256:224c0d604207954923fd6f8dbec541e0976a64ab1be65d2ee40844ce16c762ab", size = 19116, upload-time = "2026-02-20T01:21:49.703Z" }
 wheels = [
@@ -1062,10 +1036,10 @@ name = "jsonschema"
 version = "4.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs" },
-    { name = "jsonschema-specifications" },
-    { name = "referencing" },
-    { name = "rpds-py" },
+    { name = "attrs", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jsonschema-specifications", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "referencing", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "rpds-py", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b3/fc/e067678238fa451312d4c62bf6e6cf5ec56375422aee02f9cb5f909b3047/jsonschema-4.26.0.tar.gz", hash = "sha256:0c26707e2efad8aa1bfc5b7ce170f3fccc2e4918ff85989ba9ffa9facb2be326", size = 366583, upload-time = "2026-01-07T13:41:07.246Z" }
 wheels = [
@@ -1077,7 +1051,7 @@ name = "jsonschema-specifications"
 version = "2025.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "referencing" },
+    { name = "referencing", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/19/74/a633ee74eb36c44aa6d1095e7cc5569bebf04342ee146178e2d36600708b/jsonschema_specifications-2025.9.1.tar.gz", hash = "sha256:b540987f239e745613c7a9176f3edb72b832a4ac465cf02712288397832b5e8d", size = 32855, upload-time = "2025-09-08T01:34:59.186Z" }
 wheels = [
@@ -1140,10 +1114,10 @@ name = "lm-format-enforcer"
 version = "0.11.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "interegular" },
-    { name = "packaging" },
-    { name = "pydantic" },
-    { name = "pyyaml" },
+    { name = "interegular", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "packaging", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/84/d5/41cd417ba7dfdbbcfe46cebf81fb3dfd7c591b89897560ad05bb410a465d/lm_format_enforcer-0.11.3.tar.gz", hash = "sha256:e68081c108719cce284a9bcc889709b26ffb085a1945b5eba3a12cfa96d528da", size = 40258, upload-time = "2025-08-24T19:37:47.527Z" }
 wheels = [
@@ -1155,8 +1129,8 @@ name = "loguru"
 version = "0.7.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "win32-setctime", marker = "sys_platform == 'win32'" },
+    { name = "colorama", marker = "sys_platform == 'win32' and extra != 'extra-6-server-gpu'" },
+    { name = "win32-setctime", marker = "sys_platform == 'win32' and extra != 'extra-6-server-gpu'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3a/05/a1dae3dffd1116099471c643b8924f5aa6524411dc6c63fdae648c4f1aca/loguru-0.7.3.tar.gz", hash = "sha256:19480589e77d47b8d85b2c827ad95d49bf31b0dcde16593892eb51dd18706eb6", size = 63559, upload-time = "2024-12-06T11:20:56.608Z" }
 wheels = [
@@ -1168,7 +1142,7 @@ name = "markdown-it-py"
 version = "4.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "mdurl" },
+    { name = "mdurl", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5b/f5/4ec618ed16cc4f8fb3b701563655a69816155e79e24a17b651541804721d/markdown_it_py-4.0.0.tar.gz", hash = "sha256:cb0a2b4aa34f932c007117b194e945bd74e0ec24133ceb5bac59009cda1cb9f3", size = 73070, upload-time = "2025-08-11T12:57:52.854Z" }
 wheels = [
@@ -1199,20 +1173,20 @@ name = "mcp"
 version = "1.26.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
-    { name = "jsonschema" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pyjwt", extra = ["crypto"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "python-multipart" },
-    { name = "pywin32", marker = "sys_platform == 'win32'" },
-    { name = "sse-starlette" },
-    { name = "starlette" },
-    { name = "typing-extensions" },
-    { name = "typing-inspection" },
-    { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
+    { name = "anyio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx-sse", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jsonschema", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic-settings", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyjwt", extra = ["crypto"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "python-multipart", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pywin32", marker = "sys_platform == 'win32' and extra != 'extra-6-server-gpu'" },
+    { name = "sse-starlette", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "starlette", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-inspection", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvicorn", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fc/6d/62e76bbb8144d6ed86e202b5edd8a4cb631e7c8130f3f4893c3f90262b10/mcp-1.26.0.tar.gz", hash = "sha256:db6e2ef491eecc1a0d93711a76f28dec2e05999f93afd48795da1c1137142c66", size = 608005, upload-time = "2026-01-24T19:40:32.468Z" }
 wheels = [
@@ -1233,14 +1207,14 @@ name = "mistral-common"
 version = "1.9.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jsonschema" },
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "pydantic" },
-    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "requests" },
-    { name = "tiktoken" },
-    { name = "typing-extensions" },
+    { name = "jsonschema", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pillow", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic-extra-types", extra = ["pycountry"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tiktoken", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/db/ce/685b8127a326478e05501cb4c9ca23d1cd9f37e16c465a1e832c75aea709/mistral_common-1.9.1.tar.gz", hash = "sha256:550583d70a395c3586cfb748ffab53bd1d7c3409507f0efc0118bff30ffb26e9", size = 6338922, upload-time = "2026-02-12T10:53:41.639Z" }
 wheels = [
@@ -1249,7 +1223,7 @@ wheels = [
 
 [package.optional-dependencies]
 image = [
-    { name = "opencv-python-headless" },
+    { name = "opencv-python-headless", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -1272,13 +1246,13 @@ name = "mlx-lm"
 version = "0.29.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "jinja2" },
+    { name = "jinja2", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
     { name = "mlx", marker = "sys_platform == 'darwin'" },
-    { name = "numpy" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "sentencepiece" },
-    { name = "transformers" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "protobuf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "sentencepiece", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "transformers", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e3/62/f46e1355256a114808517947f8e83ad6be310c7288c551db0fa678f47923/mlx_lm-0.29.1.tar.gz", hash = "sha256:b99180d8f33d33a077b814e550bfb2d8a59ae003d668fd1f4b3fff62a381d34b", size = 232302, upload-time = "2025-12-16T16:58:27.959Z" }
 wheels = [
@@ -1300,13 +1274,13 @@ name = "model-hosting-container-standards"
 version = "0.1.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jmespath" },
-    { name = "pydantic" },
-    { name = "setuptools" },
-    { name = "starlette" },
-    { name = "supervisor" },
+    { name = "fastapi", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jmespath", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "setuptools", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "starlette", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "supervisor", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d7/b7/a6a31b4dfd30d14b1019dc358f09c9d88ca38e555ba7c976e7d3e6b593fe/model_hosting_container_standards-0.1.13.tar.gz", hash = "sha256:27a1333410dde2719286a300a2803e24fdde407baa91894eb845c0f268aa194d", size = 79116, upload-time = "2026-01-09T21:45:20.683Z" }
 wheels = [
@@ -1384,40 +1358,10 @@ wheels = [
 
 [[package]]
 name = "multiprocess"
-version = "0.70.15"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'win32'",
-]
-dependencies = [
-    { name = "dill", version = "0.3.7", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'win32' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/68/e0/a77ca96e772e13c828fa52f3ad370d413bef194aeaf78b7c6611870ad815/multiprocess-0.70.15.tar.gz", hash = "sha256:f20eed3036c0ef477b07a4177cf7c1ba520d9a2677870a4f47fe026f0cd6787e", size = 1894495, upload-time = "2023-07-23T05:03:29.314Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/a8/36d8d7b3e46b377800d8dec47891cdf05842d1a2366909ae4a0c89fbc5e6/multiprocess-0.70.15-py310-none-any.whl", hash = "sha256:7dd58e33235e83cf09d625e55cffd7b0f0eede7ee9223cdd666a87624f60c21a", size = 134824, upload-time = "2023-07-23T05:03:21.182Z" },
-    { url = "https://files.pythonhosted.org/packages/e7/41/96ac938770ba6e7d5ae1d8c9cafebac54b413549042c6260f0d0a6ec6622/multiprocess-0.70.15-py311-none-any.whl", hash = "sha256:134f89053d82c9ed3b73edd3a2531eb791e602d4f4156fc92a79259590bd9670", size = 135392, upload-time = "2023-07-23T05:03:22.885Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/3f/8354ce12fd13bd5c5bb4722261a10ca1d6e2eb7c1c08fa3d8a4e9dc98f44/multiprocess-0.70.15-py37-none-any.whl", hash = "sha256:f7d4a1629bccb433114c3b4885f69eccc200994323c80f6feee73b0edc9199c5", size = 116276, upload-time = "2023-07-23T05:03:24.718Z" },
-    { url = "https://files.pythonhosted.org/packages/c2/a6/c5cb599d917904878f220a4dbdfdcc4ef291dd3956c35b3b0dc6fc42fb6d/multiprocess-0.70.15-py38-none-any.whl", hash = "sha256:bee9afba476c91f9ebee7beeee0601face9eff67d822e893f9a893725fbd6316", size = 132626, upload-time = "2023-07-23T05:03:25.895Z" },
-    { url = "https://files.pythonhosted.org/packages/c6/c9/820b5ab056f4ada76fbe05bd481a948f287957d6cbfd59e2dd2618b408c1/multiprocess-0.70.15-py39-none-any.whl", hash = "sha256:3e0953f5d52b4c76f1c973eaf8214554d146f2be5decb48e928e55c7a2d19338", size = 133349, upload-time = "2023-07-23T05:03:27.022Z" },
-]
-
-[[package]]
-name = "multiprocess"
 version = "0.70.18"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'darwin' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-]
 dependencies = [
-    { name = "dill", version = "0.4.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "dill" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/72/fd/2ae3826f5be24c6ed87266bc4e59c46ea5b059a103f3d7e7eb76a52aeecb/multiprocess-0.70.18.tar.gz", hash = "sha256:f9597128e6b3e67b23956da07cf3d2e5cba79e2f4e0fba8d7903636663ec6d0d", size = 1798503, upload-time = "2025-04-17T03:11:27.742Z" }
 wheels = [
@@ -1468,8 +1412,8 @@ name = "numba"
 version = "0.61.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "llvmlite" },
-    { name = "numpy" },
+    { name = "llvmlite", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/1c/a0/e21f57604304aa03ebb8e098429222722ad99176a4f979d34af1d1ee80da/numba-0.61.2.tar.gz", hash = "sha256:8750ee147940a6637b80ecf7f95062185ad8726c8c28a2295b8ec1160a196f7d", size = 2820615, upload-time = "2025-04-09T02:58:07.659Z" }
 wheels = [
@@ -1543,7 +1487,7 @@ name = "nvidia-cudnn-cu12"
 version = "9.10.2.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/41/e79269ce215c857c935fd86bcfe91a451a584dfc27f1e068f568b9ad1ab7/nvidia_cudnn_cu12-9.10.2.21-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:c9132cc3f8958447b4910a1720036d9eff5928cc3179b0a51fb6d167c6cc87d8", size = 705026878, upload-time = "2025-06-06T21:52:51.348Z" },
@@ -1566,7 +1510,7 @@ name = "nvidia-cufft-cu12"
 version = "11.3.3.83"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/bc/7771846d3a0272026c416fbb7e5f4c1f146d6d80704534d0b187dd6f4800/nvidia_cufft_cu12-11.3.3.83-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:848ef7224d6305cdb2a4df928759dca7b1201874787083b6e7550dd6765ce69a", size = 193109211, upload-time = "2025-03-07T01:44:56.873Z" },
@@ -1598,9 +1542,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.3.90"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "nvidia-cusparse-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "nvidia-nvjitlink-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cusparse-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/32/f7cd6ce8a7690544d084ea21c26e910a97e077c9b7f07bf5de623ee19981/nvidia_cusolver_cu12-11.7.3.90-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:db9ed69dbef9715071232caa9b69c52ac7de3a95773c2db65bdba85916e4e5c0", size = 267229841, upload-time = "2025-03-07T01:46:54.356Z" },
@@ -1613,7 +1557,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.8.93"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/bc/f7/cd777c4109681367721b00a106f491e0d0d15cfa1fd59672ce580ce42a97/nvidia_cusparse_cu12-12.5.8.93-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:9b6c161cb130be1a07a27ea6923df8141f3c295852f4b260c65f18f3e0a091dc", size = 288117129, upload-time = "2025-03-07T01:47:40.407Z" },
@@ -1636,7 +1580,7 @@ name = "nvidia-cutlass-dsl"
 version = "4.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cutlass-dsl-libs-base" },
+    { name = "nvidia-cutlass-dsl-libs-base", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/09/42fca58af350265131b6f8665ad5b62526c95e6692788460bd5306d3efe2/nvidia_cutlass_dsl-4.4.0-py3-none-any.whl", hash = "sha256:2d1f34333e4d774002d44b53262d71aaf738700fcf3858290629f9a7b374c61c", size = 10168, upload-time = "2026-02-14T03:38:54.267Z" },
@@ -1647,9 +1591,9 @@ name = "nvidia-cutlass-dsl-libs-base"
 version = "4.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-python" },
-    { name = "numpy" },
-    { name = "typing-extensions" },
+    { name = "cuda-python", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/33/34/63a1dce4d65cd6fd29b9d50286abbfcdd965c3ca2156cf423eda2ab1fc5d/nvidia_cutlass_dsl_libs_base-4.4.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:9cde72efb065d9bea29a92ca85835eaedec20bf89af22798d2d2a551ccd51731", size = 75458501, upload-time = "2026-02-14T03:45:15.866Z" },
@@ -1708,14 +1652,14 @@ name = "openai"
 version = "2.22.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "distro" },
-    { name = "httpx" },
-    { name = "jiter" },
-    { name = "pydantic" },
-    { name = "sniffio" },
-    { name = "tqdm" },
-    { name = "typing-extensions" },
+    { name = "anyio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "distro", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jiter", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "sniffio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/ed/0a004a42fea6b6f3dd4ab33235183e994a4c7ade214fba10d9494577ec04/openai-2.22.0.tar.gz", hash = "sha256:fc2ea71c79951ac3faf178ff72c766bb4b09c3e9aab277184c5260ab3e94294f", size = 657093, upload-time = "2026-02-23T20:14:31.017Z" }
 wheels = [
@@ -1727,7 +1671,7 @@ name = "openai-harmony"
 version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3e/92/2d038d096f29179c7c9571b431f9e739f87a487121901725e23fe338dd9d/openai_harmony-0.0.8.tar.gz", hash = "sha256:6e43f98e6c242fa2de6f8ea12eab24af63fa2ed3e89c06341fb9d92632c5cbdf", size = 284777, upload-time = "2025-11-05T19:07:06.727Z" }
 wheels = [
@@ -1750,7 +1694,7 @@ name = "opencv-python-headless"
 version = "4.13.0.92"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/79/42/2310883be3b8826ac58c3f2787b9358a2d46923d61f88fedf930bc59c60c/opencv_python_headless-4.13.0.92-cp37-abi3-macosx_13_0_arm64.whl", hash = "sha256:1a7d040ac656c11b8c38677cc8cccdc149f98535089dbe5b081e80a4e5903209", size = 46247192, upload-time = "2026-02-05T07:01:35.187Z" },
@@ -1796,8 +1740,8 @@ name = "opentelemetry-exporter-otlp"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-exporter-otlp-proto-grpc" },
-    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-exporter-otlp-proto-grpc", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-exporter-otlp-proto-http", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/37/b6708e0eff5c5fb9aba2e0ea09f7f3bcbfd12a592d2a780241b5f6014df7/opentelemetry_exporter_otlp-1.40.0.tar.gz", hash = "sha256:7caa0870b95e2fcb59d64e16e2b639ecffb07771b6cd0000b5d12e5e4fef765a", size = 6152, upload-time = "2026-03-04T14:17:23.235Z" }
 wheels = [
@@ -1809,7 +1753,7 @@ name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-proto" },
+    { name = "opentelemetry-proto", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/51/bc/1559d46557fe6eca0b46c88d4c2676285f1f3be2e8d06bb5d15fbffc814a/opentelemetry_exporter_otlp_proto_common-1.40.0.tar.gz", hash = "sha256:1cbee86a4064790b362a86601ee7934f368b81cd4cc2f2e163902a6e7818a0fa", size = 20416, upload-time = "2026-03-04T14:17:23.801Z" }
 wheels = [
@@ -1821,13 +1765,13 @@ name = "opentelemetry-exporter-otlp-proto-grpc"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "googleapis-common-protos" },
-    { name = "grpcio" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp-proto-common" },
-    { name = "opentelemetry-proto" },
-    { name = "opentelemetry-sdk" },
-    { name = "typing-extensions" },
+    { name = "googleapis-common-protos", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "grpcio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-api", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-proto", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-sdk", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8f/7f/b9e60435cfcc7590fa87436edad6822240dddbc184643a2a005301cc31f4/opentelemetry_exporter_otlp_proto_grpc-1.40.0.tar.gz", hash = "sha256:bd4015183e40b635b3dab8da528b27161ba83bf4ef545776b196f0fb4ec47740", size = 25759, upload-time = "2026-03-04T14:17:24.4Z" }
 wheels = [
@@ -1839,13 +1783,13 @@ name = "opentelemetry-exporter-otlp-proto-http"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "googleapis-common-protos" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp-proto-common" },
-    { name = "opentelemetry-proto" },
-    { name = "opentelemetry-sdk" },
-    { name = "requests" },
-    { name = "typing-extensions" },
+    { name = "googleapis-common-protos", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-api", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-exporter-otlp-proto-common", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-proto", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-sdk", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/2e/fa/73d50e2c15c56be4d000c98e24221d494674b0cc95524e2a8cb3856d95a4/opentelemetry_exporter_otlp_proto_http-1.40.0.tar.gz", hash = "sha256:db48f5e0f33217588bbc00274a31517ba830da576e59503507c839b38fa0869c", size = 17772, upload-time = "2026-03-04T14:17:25.324Z" }
 wheels = [
@@ -1904,7 +1848,7 @@ name = "opentelemetry-proto"
 version = "1.40.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "protobuf" },
+    { name = "protobuf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4c/77/dd38991db037fdfce45849491cb61de5ab000f49824a00230afb112a4392/opentelemetry_proto-1.40.0.tar.gz", hash = "sha256:03f639ca129ba513f5819810f5b1f42bcb371391405d99c168fe6937c62febcd", size = 45667, upload-time = "2026-03-04T14:17:31.194Z" }
 wheels = [
@@ -1958,8 +1902,8 @@ name = "opentelemetry-semantic-conventions-ai"
 version = "0.4.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "opentelemetry-sdk" },
-    { name = "opentelemetry-semantic-conventions" },
+    { name = "opentelemetry-sdk", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-semantic-conventions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/e9/75/455c15f8360b475dd31101a87eab316420388486f7941bf019cbf4e63d5b/opentelemetry_semantic_conventions_ai-0.4.15.tar.gz", hash = "sha256:12de172d1e11d21c6e82bbf578c7e8a713589a7fda76af9ed785632564a28b81", size = 18595, upload-time = "2026-03-02T15:36:50.254Z" }
 wheels = [
@@ -2043,8 +1987,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "safetensors" },
     { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "tqdm" },
     { name = "transformers" },
 ]
@@ -2086,8 +2031,8 @@ name = "prometheus-fastapi-instrumentator"
 version = "7.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "prometheus-client" },
-    { name = "starlette" },
+    { name = "prometheus-client", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "starlette", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/69/6d/24d53033cf93826aa7857699a4450c1c67e5b9c710e925b1ed2b320c04df/prometheus_fastapi_instrumentator-7.1.0.tar.gz", hash = "sha256:be7cd61eeea4e5912aeccb4261c6631b3f227d8924542d79eaf5af3f439cbe5e", size = 20220, upload-time = "2025-03-19T19:35:05.351Z" }
 wheels = [
@@ -2273,7 +2218,7 @@ wheels = [
 
 [package.optional-dependencies]
 email = [
-    { name = "email-validator" },
+    { name = "email-validator", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -2310,8 +2255,8 @@ name = "pydantic-extra-types"
 version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic" },
-    { name = "typing-extensions" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/fd/35/2fee58b1316a73e025728583d3b1447218a97e621933fc776fb8c0f2ebdd/pydantic_extra_types-2.11.0.tar.gz", hash = "sha256:4e9991959d045b75feb775683437a97991d02c138e00b59176571db9ce634f0e", size = 157226, upload-time = "2025-12-31T16:18:27.944Z" }
 wheels = [
@@ -2320,7 +2265,7 @@ wheels = [
 
 [package.optional-dependencies]
 pycountry = [
-    { name = "pycountry" },
+    { name = "pycountry", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -2328,9 +2273,9 @@ name = "pydantic-settings"
 version = "2.13.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic" },
-    { name = "python-dotenv" },
-    { name = "typing-inspection" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "python-dotenv", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-inspection", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/52/6d/fffca34caecc4a3f97bda81b2098da5e8ab7efc9a66e819074a11955d87e/pydantic_settings-2.13.1.tar.gz", hash = "sha256:b4c11847b15237fb0171e1462bf540e294affb9b86db4d9aa5c01730bdbe4025", size = 223826, upload-time = "2026-02-19T13:45:08.055Z" }
 wheels = [
@@ -2357,7 +2302,7 @@ wheels = [
 
 [package.optional-dependencies]
 crypto = [
-    { name = "cryptography" },
+    { name = "cryptography", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -2432,7 +2377,7 @@ name = "pyzmq"
 version = "27.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "implementation_name == 'pypy'" },
+    { name = "cffi", marker = "(implementation_name == 'pypy' and sys_platform != 'emscripten' and sys_platform != 'win32') or (implementation_name == 'pypy' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (implementation_name == 'pypy' and sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz", hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z" }
 wheels = [
@@ -2453,10 +2398,10 @@ name = "quack-kernels"
 version = "0.2.10"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "apache-tvm-ffi" },
-    { name = "nvidia-cutlass-dsl" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torch-c-dlpack-ext" },
+    { name = "apache-tvm-ffi", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-cutlass-dsl", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch-c-dlpack-ext", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/23/28/231c862500fec531080cc733e5766b46518edaefe0a068d46b276c380a25/quack_kernels-0.2.10.tar.gz", hash = "sha256:df86e981ea76542467ae2cd9ac606d587658e8d648a51c34dc0f2913a3e26bf6", size = 161102, upload-time = "2026-02-18T22:20:50.17Z" }
 wheels = [
@@ -2468,14 +2413,14 @@ name = "ray"
 version = "2.54.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "filelock" },
-    { name = "jsonschema" },
-    { name = "msgpack" },
-    { name = "packaging" },
-    { name = "protobuf" },
-    { name = "pyyaml" },
-    { name = "requests" },
+    { name = "click", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "filelock", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "jsonschema", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "msgpack", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "packaging", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "protobuf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0e/16/45eefb51eb1767342a6dbf41af0b432279e422e56160705fcd1098a7ec53/ray-2.54.0-cp312-cp312-macosx_12_0_arm64.whl", hash = "sha256:cf5c33b4b13850ec24a5bd5f9d9e0a8161f8e586bfd297e52913d170dec447fe", size = 70084880, upload-time = "2026-02-18T04:05:22.007Z" },
@@ -2486,7 +2431,7 @@ wheels = [
 
 [package.optional-dependencies]
 cgraph = [
-    { name = "cupy-cuda12x", marker = "sys_platform != 'darwin'" },
+    { name = "cupy-cuda12x", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -2503,9 +2448,9 @@ name = "referencing"
 version = "0.37.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "attrs" },
-    { name = "rpds-py" },
-    { name = "typing-extensions" },
+    { name = "attrs", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "rpds-py", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/22/f5/df4e9027acead3ecc63e50fe1e36aca1523e1719559c499951bb4b53188f/referencing-0.37.0.tar.gz", hash = "sha256:44aefc3142c5b842538163acb373e24cce6632bd54bdb01b21ad5863489f50d8", size = 78036, upload-time = "2025-10-13T15:30:48.871Z" }
 wheels = [
@@ -2556,8 +2501,8 @@ name = "rich"
 version = "14.3.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "markdown-it-py" },
-    { name = "pygments" },
+    { name = "markdown-it-py", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pygments", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/b3/c6/f3b320c27991c46f43ee9d856302c70dc2d0fb2dba4842ff739d5f46b393/rich-14.3.3.tar.gz", hash = "sha256:b8daa0b9e4eef54dd8cf7c86c03713f53241884e814f4e2f5fb342fe520f639b", size = 230582, upload-time = "2026-02-19T17:23:12.474Z" }
 wheels = [
@@ -2569,9 +2514,9 @@ name = "rich-toolkit"
 version = "0.19.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click" },
-    { name = "rich" },
-    { name = "typing-extensions" },
+    { name = "click", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "rich", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d0/c9/4bbf4bfee195ed1b7d7a6733cc523ca61dbfb4a3e3c12ea090aaffd97597/rich_toolkit-0.19.4.tar.gz", hash = "sha256:52e23d56f9dc30d1343eb3b3f6f18764c313fbfea24e52e6a1d6069bec9c18eb", size = 193951, upload-time = "2026-02-12T10:08:15.814Z" }
 wheels = [
@@ -2679,8 +2624,8 @@ name = "sentry-sdk"
 version = "2.53.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "certifi" },
-    { name = "urllib3" },
+    { name = "certifi", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "urllib3", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d3/06/66c8b705179bc54087845f28fd1b72f83751b6e9a195628e2e9af9926505/sentry_sdk-2.53.0.tar.gz", hash = "sha256:6520ef2c4acd823f28efc55e43eb6ce2e6d9f954a95a3aa96b6fd14871e92b77", size = 412369, upload-time = "2026-02-16T11:11:14.743Z" }
 wheels = [
@@ -2811,8 +2756,8 @@ name = "sse-starlette"
 version = "3.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
-    { name = "starlette" },
+    { name = "anyio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "starlette", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/8b/8d/00d280c03ffd39aaee0e86ec81e2d3b9253036a0f93f51d10503adef0e65/sse_starlette-3.2.0.tar.gz", hash = "sha256:8127594edfb51abe44eac9c49e59b0b01f1039d0c7461c6fd91d4e03b70da422", size = 27253, upload-time = "2026-01-17T13:11:05.62Z" }
 wheels = [
@@ -2867,8 +2812,8 @@ name = "tiktoken"
 version = "0.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "regex" },
-    { name = "requests" },
+    { name = "regex", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/7d/ab/4d017d0f76ec3171d469d80fc03dfbb4e48a4bcaddaa831b31d526f05edc/tiktoken-0.12.0.tar.gz", hash = "sha256:b18ba7ee2b093863978fcb14f74b3707cdc8d4d4d3836853ce7ec60772139931", size = 37806, upload-time = "2025-10-06T20:22:45.419Z" }
 wheels = [
@@ -2931,6 +2876,32 @@ wheels = [
 
 [[package]]
 name = "torch"
+version = "2.10.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "sys_platform == 'win32'",
+    "sys_platform == 'emscripten'",
+]
+dependencies = [
+    { name = "filelock", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "jinja2", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "networkx", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "setuptools", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "sympy", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'emscripten' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/54/a2ba279afcca44bbd320d4e73675b282fcee3d81400ea1b53934efca6462/torch-2.10.0-2-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:13ec4add8c3faaed8d13e0574f5cd4a323c11655546f91fbe6afa77b57423574", size = 79498202, upload-time = "2026-02-10T21:44:52.603Z" },
+    { url = "https://files.pythonhosted.org/packages/b3/7a/abada41517ce0011775f0f4eacc79659bc9bc6c361e6bfe6f7052a6b9363/torch-2.10.0-3-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:98c01b8bb5e3240426dcde1446eed6f40c778091c8544767ef1168fc663a05a6", size = 915622781, upload-time = "2026-03-11T14:17:11.354Z" },
+    { url = "https://files.pythonhosted.org/packages/cc/af/758e242e9102e9988969b5e621d41f36b8f258bb4a099109b7a4b4b50ea4/torch-2.10.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:5fd4117d89ffd47e3dcc71e71a22efac24828ad781c7e46aaaf56bf7f2796acf", size = 145996088, upload-time = "2026-01-21T16:24:44.171Z" },
+    { url = "https://files.pythonhosted.org/packages/23/8e/3c74db5e53bff7ed9e34c8123e6a8bfef718b2450c35eefab85bb4a7e270/torch-2.10.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:787124e7db3b379d4f1ed54dd12ae7c741c16a4d29b49c0226a89bea50923ffb", size = 915711952, upload-time = "2026-01-21T16:23:53.503Z" },
+    { url = "https://files.pythonhosted.org/packages/6e/01/624c4324ca01f66ae4c7cd1b74eb16fb52596dce66dbe51eff95ef9e7a4c/torch-2.10.0-cp312-cp312-win_amd64.whl", hash = "sha256:2c66c61f44c5f903046cc696d088e21062644cbe541c7f1c4eaae88b2ad23547", size = 113757972, upload-time = "2026-01-21T16:24:39.516Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/5c/dee910b87c4d5c0fcb41b50839ae04df87c1cfc663cf1b5fca7ea565eeaa/torch-2.10.0-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:6d3707a61863d1c4d6ebba7be4ca320f42b869ee657e9b2c21c736bf17000294", size = 79498198, upload-time = "2026-01-21T16:24:34.704Z" },
+]
+
+[[package]]
+name = "torch"
 version = "2.10.0+cpu"
 source = { registry = "https://download.pytorch.org/whl/cpu" }
 resolution-markers = [
@@ -2961,21 +2932,17 @@ name = "torch"
 version = "2.10.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
     "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "extra != 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
 ]
 dependencies = [
     { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "filelock", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "filelock", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "jinja2", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "networkx", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "jinja2", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "networkx", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
     { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
@@ -2991,10 +2958,10 @@ dependencies = [
     { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "setuptools", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "sympy", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "setuptools", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "sympy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
     { name = "triton", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "typing-extensions", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-gpu') or (sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://download.pytorch.org/whl/cu128/torch-2.10.0%2Bcu128-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:6f09cdf2415516be028ae82e6b985bcfc3eac37bc52ab401142689f6224516ca" },
@@ -3007,7 +2974,7 @@ name = "torch-c-dlpack-ext"
 version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/37/de/921b6491efce5c389a5ef9bbed3d2d6660005840dae488124173180859ab/torch_c_dlpack_ext-0.1.5.tar.gz", hash = "sha256:d06f0357d575d22a168cc77acb9020fc4bae30968ceb6718a055dcbe92bacabe", size = 12913, upload-time = "2026-01-12T11:25:08.484Z" }
 wheels = [
@@ -3022,7 +2989,7 @@ name = "torchaudio"
 version = "2.10.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0f/36/28a6f3e857616cf7576bdbf8170e483b8c5d0a1f8d349ecb2b75921236aa/torchaudio-2.10.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:9d0fbdbfd2f621c51d28571050d6d0c7287791034e5c7303b31480af1258f33f", size = 737144, upload-time = "2026-01-21T16:28:44.189Z" },
@@ -3036,9 +3003,9 @@ name = "torchvision"
 version = "0.25.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy" },
-    { name = "pillow" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pillow", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/56/3a/6ea0d73f49a9bef38a1b3a92e8dd455cea58470985d25635beab93841748/torchvision-0.25.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:c2abe430c90b1d5e552680037d68da4eb80a5852ebb1c811b2b89d299b10573b", size = 1874920, upload-time = "2026-01-21T16:27:45.348Z" },
@@ -3094,10 +3061,10 @@ name = "typer"
 version = "0.24.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "annotated-doc" },
-    { name = "click" },
-    { name = "rich" },
-    { name = "shellingham" },
+    { name = "annotated-doc", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "click", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "rich", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "shellingham", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/f5/24/cb09efec5cc954f7f9b930bf8279447d24618bb6758d4f6adf2574c41780/typer-0.24.1.tar.gz", hash = "sha256:e39b4732d65fbdcde189ae76cf7cd48aeae72919dea1fdfc16593be016256b45", size = 118613, upload-time = "2026-02-21T16:54:40.609Z" }
 wheels = [
@@ -3158,13 +3125,13 @@ wheels = [
 
 [package.optional-dependencies]
 standard = [
-    { name = "colorama", marker = "sys_platform == 'win32'" },
-    { name = "httptools" },
-    { name = "python-dotenv" },
-    { name = "pyyaml" },
-    { name = "uvloop", marker = "platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'win32'" },
-    { name = "watchfiles" },
-    { name = "websockets" },
+    { name = "colorama", marker = "sys_platform == 'win32' and extra != 'extra-6-server-gpu'" },
+    { name = "httptools", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "python-dotenv", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "uvloop", marker = "(platform_python_implementation != 'PyPy' and sys_platform != 'cygwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_python_implementation != 'PyPy' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu')" },
+    { name = "watchfiles", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "websockets", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 
 [[package]]
@@ -3186,74 +3153,74 @@ name = "vllm"
 version = "0.17.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohttp" },
-    { name = "anthropic" },
-    { name = "blake3" },
-    { name = "cachetools" },
-    { name = "cbor2" },
-    { name = "cloudpickle" },
-    { name = "compressed-tensors" },
-    { name = "depyf" },
-    { name = "diskcache" },
-    { name = "einops" },
-    { name = "fastapi", extra = ["standard"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "filelock" },
-    { name = "flashinfer-python" },
-    { name = "gguf" },
-    { name = "grpcio" },
-    { name = "grpcio-reflection" },
-    { name = "ijson" },
-    { name = "kaldi-native-fbank" },
-    { name = "lark" },
-    { name = "llguidance", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
-    { name = "lm-format-enforcer" },
-    { name = "mcp" },
-    { name = "mistral-common", extra = ["image"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "model-hosting-container-standards" },
-    { name = "msgspec" },
-    { name = "ninja" },
-    { name = "numba" },
-    { name = "numpy" },
-    { name = "nvidia-cudnn-frontend" },
-    { name = "nvidia-cutlass-dsl" },
-    { name = "openai" },
-    { name = "openai-harmony" },
-    { name = "opencv-python-headless" },
-    { name = "opentelemetry-api" },
-    { name = "opentelemetry-exporter-otlp" },
-    { name = "opentelemetry-sdk" },
-    { name = "opentelemetry-semantic-conventions-ai" },
-    { name = "outlines-core" },
-    { name = "partial-json-parser" },
-    { name = "pillow" },
-    { name = "prometheus-client" },
-    { name = "prometheus-fastapi-instrumentator" },
-    { name = "protobuf" },
-    { name = "psutil" },
-    { name = "py-cpuinfo" },
-    { name = "pybase64" },
-    { name = "pydantic" },
-    { name = "python-json-logger" },
-    { name = "pyyaml" },
-    { name = "pyzmq" },
-    { name = "quack-kernels" },
-    { name = "ray", extra = ["cgraph"], marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "sentencepiece" },
-    { name = "setproctitle" },
-    { name = "setuptools" },
-    { name = "six" },
-    { name = "tiktoken" },
-    { name = "tokenizers" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "torchaudio" },
-    { name = "torchvision" },
-    { name = "tqdm" },
-    { name = "transformers" },
-    { name = "typing-extensions" },
-    { name = "watchfiles" },
-    { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
+    { name = "aiohttp", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "anthropic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "blake3", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "cachetools", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "cbor2", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "cloudpickle", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "compressed-tensors", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "depyf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "diskcache", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "einops", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "fastapi", extra = ["standard"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "filelock", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "flashinfer-python", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "gguf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "grpcio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "grpcio-reflection", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "ijson", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "kaldi-native-fbank", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "lark", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "llguidance", marker = "(platform_machine == 'aarch64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'arm64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'arm64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'x86_64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 's390x' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'x86_64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "lm-format-enforcer", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "mcp", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "mistral-common", extra = ["image"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "model-hosting-container-standards", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "msgspec", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "ninja", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numba", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-cudnn-frontend", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "nvidia-cutlass-dsl", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "openai", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "openai-harmony", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opencv-python-headless", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-api", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-exporter-otlp", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-sdk", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "opentelemetry-semantic-conventions-ai", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "outlines-core", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "partial-json-parser", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pillow", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "prometheus-client", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "prometheus-fastapi-instrumentator", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "protobuf", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "psutil", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "py-cpuinfo", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pybase64", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "python-json-logger", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pyzmq", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "quack-kernels", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "ray", extra = ["cgraph"], marker = "(sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-vllm') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "regex", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "sentencepiece", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "setproctitle", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "setuptools", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "six", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tiktoken", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tokenizers", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torchaudio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torchvision", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "transformers", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "watchfiles", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "xgrammar", marker = "(platform_machine == 'aarch64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'arm64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'arm64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'x86_64' and sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 's390x' and sys_platform == 'win32' and extra != 'extra-6-server-gpu') or (platform_machine == 'x86_64' and sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4c/7c/79ef306c71f3de2e73beb3c03c3f2966f966df61b8dd1f01dbdc65184050/vllm-0.17.1.tar.gz", hash = "sha256:d26a95dcb92e2ff78ed4b48bff247d845b0c768edf6c0acf2401376a56c57b61", size = 30547577, upload-time = "2026-03-11T11:03:58.693Z" }
 wheels = [
@@ -3266,7 +3233,7 @@ name = "watchfiles"
 version = "1.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio" },
+    { name = "anyio", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/c2/c9/8869df9b2a2d6c59d79220a4db37679e74f807c559ffe5265e08b227a210/watchfiles-1.1.1.tar.gz", hash = "sha256:a173cb5c16c4f40ab19cecf48a534c409f7ea983ab8fed0741304a1c0a31b3f2", size = 94440, upload-time = "2025-10-14T15:06:21.08Z" }
 wheels = [
@@ -3337,12 +3304,12 @@ version = "0.1.29"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "mlx-lm", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'" },
-    { name = "numpy" },
-    { name = "pydantic" },
-    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "transformers" },
+    { name = "numpy", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
+    { name = "transformers", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
     { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "typing-extensions" },
+    { name = "typing-extensions", marker = "(sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-6-server-gpu') or (sys_platform == 'win32' and extra != 'extra-6-server-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/02/a3/70dbe3ffd331a1e7e1ad5a95690a4086e6c7cdb8089f5c7eda712219ccec/xgrammar-0.1.29.tar.gz", hash = "sha256:cf195afa81b489eebf35d4c6f37f27136d05420739ab4a6f7f065c938d7e4baa", size = 2321317, upload-time = "2025-12-19T08:23:54.53Z" }
 wheels = [
