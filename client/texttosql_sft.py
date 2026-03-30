@@ -1,9 +1,10 @@
 import asyncio
-import json
 import logging
 import os
 import random
 import re
+import sqlite3
+import time
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, cast
@@ -12,11 +13,12 @@ import chz
 import tinker
 from datasets import load_dataset
 from tinker import types
+from tinker_cookbook.utils import ml_log
 
 BASE_MODEL = "google/gemma-3-1b-pt"
 BASE_URL = "http://127.0.0.1:9003"
 DATASET = "philschmid/gretel-synthetic-text-to-sql"
-METRICS_PATH = Path(__file__).resolve().parent / "artifacts" / "texttosql_{preset}_metrics.jsonl"
+LOG_DIR = Path(__file__).resolve().parent / "artifacts" / "texttosql_{preset}"
 MAX_SEQ_LENGTH = 512
 
 USER_PROMPT = """Given the <USER_QUERY> and the <SCHEMA>, generate the corresponding SQL command to retrieve the desired data, considering the query's syntax, semantics, and schema constraints.
@@ -29,8 +31,6 @@ USER_PROMPT = """Given the <USER_QUERY> and the <SCHEMA>, generate the correspon
 {question}
 </USER_QUERY>
 """
-
-logger = logging.getLogger(__name__)
 
 os.environ.setdefault("TINKER_API_KEY", "tml-dummy-key")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
@@ -48,56 +48,51 @@ class Config:
     train_limit: int = 2_048
     eval_limit: int = 128
     seed: int = 30
-    metrics_path: str = str(METRICS_PATH)
+    log_dir: str = str(LOG_DIR)
     eval_max_tokens: int = 256
 
 
 PRESETS = {
     "gemma": chz.Blueprint(Config).apply(
-        {"steps": 400, "batch_size": 32, "rank": 16, "learning_rate": 2e-4, "train_limit": 10_000, "eval_limit": 100, "eval_every": 50},
+        {"steps": 30, "batch_size": 8, "rank": 16, "learning_rate": 2e-4, "train_limit": 10_000, "eval_limit": 5, "eval_every": 15},
         layer_name="gemma preset",
-    ),
-    "notebook": chz.Blueprint(Config).apply(
-        {"steps": 375, "batch_size": 8, "rank": 16, "learning_rate": 2e-4, "train_limit": 10_000, "eval_limit": 2_500, "eval_every": 125},
-        layer_name="notebook preset",
     ),
 }
 
 
 async def run_training(config: Config, preset: str) -> dict[str, float | str]:
+    log_dir = Path(config.log_dir.replace("{preset}", preset))
+    ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
+    metrics_path = log_dir / "metrics.jsonl"
     client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
     server_model = await require_server(client, config.base_url)
-    logger.info("Server ready at %s | model=%s", config.base_url, server_model or "unset")
+    logging.info("Server ready at %s | model=%s", config.base_url, server_model or "unset")
 
     trainer = await client.create_lora_training_client_async(
         base_model=BASE_MODEL,
         rank=config.rank,
+        seed=config.seed,
         train_mlp=True,
         train_attn=True,
         train_unembed=False,
     )
     from transformers import AutoTokenizer
+
     tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-1b-it")
 
     dataset = load_dataset(DATASET, split="train").shuffle(seed=config.seed)
     dataset = dataset.select(range(min(12_500, len(dataset))))
     split = dataset.train_test_split(test_size=2_500, shuffle=False)
 
-    train_examples = [ex for row in list(split["train"])[:config.train_limit] if (ex := build_example(tokenizer, row)) is not None]
-    eval_examples = [ex for row in list(split["test"])[:config.eval_limit] if (ex := build_example(tokenizer, row)) is not None]
+    train_examples = build_examples(tokenizer, split["train"], config.train_limit)
+    eval_examples = build_examples(tokenizer, split["test"], config.eval_limit, require_seed_data=True, require_target_rows=True)
     if not train_examples:
         raise RuntimeError("No training examples fit within max_seq_length.")
+    if not eval_examples:
+        raise RuntimeError("No evaluation examples with executable seed data were found.")
 
     batch_size = min(config.batch_size, len(train_examples))
-    metrics_path = Path(config.metrics_path.replace("{preset}", preset))
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_path.write_text("", encoding="utf-8")
-
-    def append_metric(row: dict[str, Any]) -> None:
-        with metrics_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(row) + "\n")
-
-    logger.info(
+    logging.info(
         "Data: %s train, %s eval | batch=%s rank=%s lr=%g",
         len(train_examples),
         len(eval_examples),
@@ -106,12 +101,13 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
         config.learning_rate,
     )
 
-    before_exact, before_sim = evaluate(client, trainer, tokenizer, "texttosql_before", eval_examples, max_tokens=config.eval_max_tokens)
-    append_metric({"step": 0, "phase": "eval", "exact_match": before_exact, "similarity": before_sim})
-    logger.info("[before] exact=%.1f%% similarity=%.1f%%", before_exact * 100, before_sim * 100)
+    before_sampler_path = trainer.save_weights_for_sampler(name="texttosql_before").result().path
+    before_sampler = client.create_sampling_client(before_sampler_path)
+    before_exec, before_sim = await evaluate(before_sampler, tokenizer, "texttosql_before", eval_examples, config)
+    ml_logger.log_metrics({"phase": "eval", "execution_match": before_exec, "similarity": before_sim}, step=0)
 
     losses: list[float] = []
-    eval_exact = [before_exact]
+    eval_exec = [before_exec]
     eval_sim = [before_sim]
     rng = random.Random(config.seed)
     order = list(range(len(train_examples)))
@@ -125,44 +121,42 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
         batch = [train_examples[order[i]] for i in range(pos, pos + batch_size)]
         pos += batch_size
 
-        datums = [row["datum"] for row in batch]
-        active_tokens = sum(row["active_tokens"] for row in batch)
+        datums = [example["datum"] for example in batch]
+        active_tokens = sum(example["active_tokens"] for example in batch)
 
-        # Match Tinker-style dispatch: submit both requests first, then await each future.
         fwdbwd_future = await trainer.forward_backward_async(datums, "cross_entropy")
-        optim_future = await trainer.optim_step_async(
-            types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm)
-        )
-
+        optim_future = await trainer.optim_step_async(types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm))
         fwdbwd = await fwdbwd_future
         await optim_future
 
         loss = float(fwdbwd.metrics.get("loss:sum", 0.0)) / max(1, active_tokens)
         losses.append(loss)
-        append_metric({"step": step, "phase": "train", "loss": loss})
-        logger.info("[train] step=%04d/%04d loss=%.4f", step, config.steps, loss)
+        ml_logger.log_metrics({"phase": "train", "loss": loss}, step=step)
 
         if step % config.eval_every == 0 or step == config.steps:
-            exact, sim = evaluate(client, trainer, tokenizer, f"texttosql_s{step}", eval_examples, max_tokens=config.eval_max_tokens)
-            eval_exact.append(exact)
+            alias = f"texttosql_s{step}"
+            sampler_path = trainer.save_weights_for_sampler(name=alias).result().path
+            sampler = client.create_sampling_client(sampler_path)
+            execution_match, sim = await evaluate(sampler, tokenizer, alias, eval_examples, config)
+            eval_exec.append(execution_match)
             eval_sim.append(sim)
-            append_metric({"step": step, "phase": "eval", "exact_match": exact, "similarity": sim})
-            logger.info("[eval]  step=%04d exact=%.1f%% similarity=%.1f%%", step, exact * 100, sim * 100)
+            ml_logger.log_metrics({"phase": "eval", "execution_match": execution_match, "similarity": sim}, step=step)
 
-    loss_drop = (losses[0] - losses[-1]) / (abs(losses[0]) or 1.0)
-    logger.info("Saved metrics to %s", metrics_path)
-    logger.info(
-        "[summary] exact=%.1f%%->%.1f%% similarity=%.1f%%->%.1f%% loss_drop=%.1f%%",
-        before_exact * 100,
-        eval_exact[-1] * 100,
+    loss_drop = (losses[0] - losses[-1]) / (abs(losses[0]) or 1.0) if losses else 0.0
+    logging.info("Saved metrics to %s", metrics_path)
+    logging.info(
+        "[summary] execution=%.1f%%->%.1f%% similarity=%.1f%%->%.1f%% loss_drop=%.1f%%",
+        before_exec * 100,
+        eval_exec[-1] * 100,
         before_sim * 100,
         eval_sim[-1] * 100,
         loss_drop * 100,
     )
+    ml_logger.close()
 
     return {
-        "before_exact": before_exact,
-        "after_exact": eval_exact[-1],
+        "before_execution_match": before_exec,
+        "after_execution_match": eval_exec[-1],
         "before_similarity": before_sim,
         "after_similarity": eval_sim[-1],
         "loss_drop": loss_drop,
@@ -179,7 +173,17 @@ async def require_server(service_client: tinker.ServiceClient, base_url: str) ->
     model_names = [model.model_name for model in capabilities.supported_models if getattr(model, "model_name", None)]
     return model_names[0] if model_names else None
 
+
 def normalize_sql(text: str) -> str:
+    text = clean_sql_for_execution(text)
+    text = " ".join(text.split()).lower()
+    text = re.sub(r";+\s*$", "", text)
+    text = re.sub(r"\s+([,;()])", r"\1", text)
+    text = re.sub(r"([,(])\s+", r"\1", text)
+    return text
+
+
+def clean_sql_for_execution(text: str) -> str:
     text = re.sub(r"<think>.*?</think>", " ", text, flags=re.DOTALL)
     text = text.replace("<|im_start|>", " ").replace("<|im_end|>", " ")
     text = text.strip()
@@ -187,10 +191,44 @@ def normalize_sql(text: str) -> str:
     text = re.sub(r"^sql\s*[:\-]?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"^```(?:sql)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
-    text = " ".join(text.split()).lower()
-    text = re.sub(r"\s+([,;()])", r"\1", text)
-    text = re.sub(r"([,(])\s+", r"\1", text)
-    return text
+    sql_start = re.search(r"\b(with|select|insert|update|delete)\b", text, flags=re.IGNORECASE)
+    if sql_start:
+        text = text[sql_start.start() :]
+        statement = re.search(r".*?(?:;|$)", text, flags=re.DOTALL)
+        if statement: text = statement.group(0)
+    return text.strip()
+
+
+def run_sql(context: str, query: str) -> tuple[list[tuple[Any, ...]] | None, str | None]:
+    connection = sqlite3.connect(":memory:")
+    try:
+        deadline = time.monotonic() + 0.25
+        connection.set_progress_handler(lambda: 1 if time.monotonic() > deadline else 0, 10_000)
+        connection.executescript(context)
+        rows = connection.execute(query).fetchall()
+        normalized_rows = [tuple(round(value, 8) if isinstance(value, float) else value for value in row) for row in rows]
+        return normalized_rows, None
+    except sqlite3.Error as exc:
+        return None, str(exc)
+    finally:
+        connection.close()
+
+
+def sql_results_match(context: str, predicted_sql: str, target_sql: str, target_rows: list[tuple[Any, ...]] | None = None) -> tuple[bool, str | None]:
+    predicted_rows, error = run_sql(context, predicted_sql)
+    if error is not None:
+        return False, f"predicted query error: {error}"
+
+    if target_rows is None:
+        target_rows, error = run_sql(context, target_sql)
+        if error is not None:
+            return False, f"target query error: {error}"
+
+    order_sensitive = any(token in f" {normalize_sql(predicted_sql)} {normalize_sql(target_sql)} " for token in (" order by ", " limit ", " offset "))
+    if not order_sensitive:
+        predicted_rows = sorted(predicted_rows, key=repr)
+        target_rows = sorted(target_rows, key=repr)
+    return predicted_rows == target_rows, None
 
 
 def make_datum(full_tokens: list[int], weights: list[int]) -> types.Datum:
@@ -200,68 +238,96 @@ def make_datum(full_tokens: list[int], weights: list[int]) -> types.Datum:
     )
 
 
-def build_example(tokenizer: Any, sample: dict[str, Any]) -> dict[str, Any] | None:
+def render_training_texts(tokenizer, question, context, target_sql):
     messages = [
-        {"role": "user", "content": USER_PROMPT.format(question=sample["sql_prompt"], context=sample["sql_context"])},
-        {"role": "assistant", "content": sample["sql"]},
+        {"role": "user", "content": USER_PROMPT.format(question=question, context=context)},
+        {"role": "assistant", "content": target_sql},
     ]
     prompt_text = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True)
     full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    return prompt_text, full_text
+
+
+def build_example(tokenizer, row):
+    target_sql = clean_sql_for_execution(row["sql"])
+    prompt_text, full_text = render_training_texts(tokenizer, row["sql_prompt"], row["sql_context"], target_sql)
     prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
     full_tokens = tokenizer.encode(full_text, add_special_tokens=False)
     if len(full_tokens) <= len(prompt_tokens) or len(full_tokens) > MAX_SEQ_LENGTH:
         return None
-    weights = [0] * len(prompt_tokens) + [1] * (len(full_tokens) - len(prompt_tokens))
+
     return {
-        "question": sample["sql_prompt"],
-        "target": sample["sql"],
+        "question": row["sql_prompt"],
+        "context": row["sql_context"],
+        "target": target_sql,
         "prompt_tokens": prompt_tokens,
         "active_tokens": len(full_tokens) - len(prompt_tokens),
-        "datum": make_datum(full_tokens, weights),
+        "datum": make_datum(full_tokens, [0] * len(prompt_tokens) + [1] * (len(full_tokens) - len(prompt_tokens))),
     }
 
 
-def evaluate(client: tinker.ServiceClient, trainer: tinker.TrainingClient, tokenizer: Any, alias: str, examples: list[dict[str, Any]], max_tokens: int = 256) -> tuple[float, float]:
-    sampler = client.create_sampling_client(trainer.save_weights_for_sampler(name=alias).result().path)
-    # Fire all requests concurrently without blocking
-    futures = []
-    for example in examples:
-        future = sampler.sample(
+def build_examples(tokenizer, dataset_split, limit, require_seed_data=False, require_target_rows=False):
+    examples = []
+    for row in dataset_split:
+        if require_seed_data and "insert into" not in row["sql_context"].lower(): continue
+
+        example = build_example(tokenizer, row)
+        if example is None: continue
+
+        if require_target_rows:
+            target_rows, error = run_sql(example["context"], example["target"])
+            if error is not None: continue
+            example["target_rows"] = target_rows
+
+        examples.append(example)
+        if len(examples) >= limit: break
+
+    return examples
+
+
+async def evaluate(sampler, tokenizer, alias, examples, config):
+    execution_match, similarity = 0.0, 0.0
+    futures = [
+        sampler.sample_async(
             prompt=types.ModelInput.from_ints(tokens=example["prompt_tokens"]),
             num_samples=1,
-            sampling_params=types.SamplingParams(max_tokens=max_tokens, temperature=0.0),
+            sampling_params=types.SamplingParams(max_tokens=config.eval_max_tokens, seed=config.seed + idx, temperature=0.0),
         )
-        futures.append((example, future))
+        for idx, example in enumerate(examples)
+    ]
+    responses = await asyncio.gather(*futures)
 
-    exact, similarity = 0.0, 0.0
-    for idx, (example, future) in enumerate(futures):
-        result = future.result()
-        predicted = normalize_sql(tokenizer.decode(result.sequences[0].tokens if result.sequences else [], skip_special_tokens=True))
-        target = normalize_sql(example["target"])
+    for idx, (example, response) in enumerate(zip(examples, responses)):
+        predicted_sql = clean_sql_for_execution(tokenizer.decode(response.sequences[0].tokens if response.sequences else [], skip_special_tokens=True))
+        target_sql = example["target"]
+        predicted = normalize_sql(predicted_sql)
+        target = normalize_sql(target_sql)
+        matches_execution, execution_error = sql_results_match(example["context"], predicted_sql, target_sql, target_rows=example["target_rows"])
 
-        # Print visual check for all evaluation items
-        logger.info("\n--- [Visual Check %s Item %d] ---", alias, idx + 1)
-        logger.info("Question: %s", example["question"])
-        logger.info("Predicted: %s", predicted)
-        logger.info("Target:    %s", target)
+        log_level = logging.INFO if matches_execution else logging.WARNING
+        sqlite_line = f"\nSQLite:    {execution_error}" if execution_error else ""
+        logging.log(
+            log_level,
+            "\n--- [Visual Check %s Item %d] ---\nQuestion: %s\nPredicted: %s\nTarget:    %s%s\nExecution: %s\n",
+            alias,
+            idx + 1,
+            example["question"],
+            predicted,
+            target,
+            sqlite_line,
+            "MATCH" if matches_execution else "NO MATCH",
+        )
 
-        if predicted == target:
-            match_str = "\033[92mMATCH\033[0m" # Green
-        else:
-            match_str = "\033[91mNO MATCH\033[0m" # Red
-        logger.info("Match:     %s\n", match_str)
-
-        exact += float(predicted == target)
+        execution_match += float(matches_execution)
         similarity += SequenceMatcher(None, predicted, target).ratio()
     count = max(1, len(examples))
-    return exact / count, similarity / count
+    return execution_match / count, similarity / count
 
 
 @chz.blueprint._entrypoint.exit_on_entrypoint_error
 def cli() -> None:
     import sys
 
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
     logging.getLogger("tinker").setLevel(logging.WARNING)
 
     preset = sys.argv[1]
