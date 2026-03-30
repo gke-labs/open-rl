@@ -94,7 +94,7 @@ class TrainerEngine:
             peft_config = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
                 r=rank,
-                lora_alpha=config.get("lora_alpha", rank * 2),
+                lora_alpha=config.get("lora_alpha", 16),
                 lora_dropout=config.get("lora_dropout", 0.05),
                 bias="none",
                 target_modules=target_modules,

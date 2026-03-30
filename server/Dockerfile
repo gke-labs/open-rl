@@ -35,7 +35,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 # --frozen ensures it uses the uv.lock exactly
 # --all-extras ensures the optional train/gpu stacks are installed for the worker image
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --all-extras
+    uv sync --frozen --no-install-project --extra gpu --extra vllm
 
 # Copy source code
 COPY src ./src

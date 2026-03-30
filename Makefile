@@ -158,7 +158,7 @@ push-server-images:
 
 deploy-server:
 	@echo "-- Deploy OpenRL Stack to Kubernetes Cluster ---"
-	kubectl apply -f server/kubernetes/distributed-lustre
+	kubectl apply -k server/kubernetes/distributed-lustre/
 
 rollout:
 	@echo "--- Rolling out latest server deployments ---"

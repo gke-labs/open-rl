@@ -5,6 +5,9 @@ The open-rl server is designed to run on a Kubernetes cluster with NVIDIA GPUs.
 ### 1. Build and Push the Image
 The image is built using Docker BuildKit and pushed to Google Container Registry (GCR).
 
+> [!TIP]
+> You can change your GCP Project by editing the `GCP_PROJECT` variable in the `Makefile` (defaults to `cdrollouts-sunilarora`), or pass it via CLI: `make build-server-images GCP_PROJECT=my-project-id`.
+
 ```bash
 make build-server-images
 make push-server-images
@@ -26,8 +29,8 @@ gcloud services enable file.googleapis.com
 You must also enable the GCP Filestore CSI driver addon on your GKE cluster:
 
 ```bash
-gcloud container clusters update au-rl-1 \
-    --location=us-central1 \
+gcloud container clusters update your-cluster-name \
+    --location=your-compute-region \
     --update-addons=GcpFilestoreCsiDriver=ENABLED
 ```
 
@@ -64,8 +67,8 @@ gcloud services vpc-peerings connect \
 Enable the Managed Lustre CSI driver addon on GKE:
 
 ```bash
-gcloud container clusters update au-rl-1 \
-    --location=us-central1 \
+gcloud container clusters update your-cluster-name \
+    --location=your-compute-region \
     --update-addons=LustreCsiDriver=ENABLED
 ```
 
@@ -88,14 +91,14 @@ Apply the Kubernetes manifests. The deployment spins up a fully distributed, mul
 3. **`redis-broker`**: The Async Workload State Broker Deployment
 4. **`open-rl-(shared|lustre)-pvc`**: A 1.2TB network file system mapped universally to the pods.
 
-Depending on which storage option you chose above, apply the corresponding manifests directory:
+Depending on which storage option you chose above, **edit the `kustomization.yaml` within that directory to specify your GCP Project ID** (by default it uses `cdrollouts-sunilarora`), and then apply via `-k` (Kustomize):
 
 ```bash
 # If using Option A (Filestore NFS):
-kubectl apply -f server/kubernetes/distributed-shared/
+kubectl apply -k server/kubernetes/distributed-shared/
 
 # OR if using Option B (Managed Lustre):
-kubectl apply -f server/kubernetes/distributed-lustre/
+kubectl apply -k server/kubernetes/distributed-lustre/
 
 # Watch the distinct pods transition to Running status
 kubectl get pods -l 'app in (open-rl-gateway, vllm, redis)' -w
