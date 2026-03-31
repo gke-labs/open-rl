@@ -1,0 +1,269 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" class="h-auto w-full">
+  <defs>
+    <linearGradient id="bgDash" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="500" rx="20" fill="url(#bgDash)" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Title -->
+  <text x="600" y="38" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700" fill="#334155" letter-spacing="0.06em">TEXT-TO-SQL FINE-TUNING: GEMMA 3 1B ON A MACBOOK</text>
+  <text x="600" y="58" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11" font-weight="500" fill="#94a3b8">25 training steps • LoRA rank 32 • batch size 8 • Apple MPS</text>
+
+  <!-- ======= LEFT PANEL: Loss Curve ======= -->
+  <rect x="40" y="78" width="550" height="330" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2"/>
+
+  <!-- Panel header -->
+  <text x="60" y="105" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1e40af" letter-spacing="0.04em">TRAINING LOSS</text>
+
+  <!-- Start/End badges -->
+  <rect x="380" y="88" width="90" height="24" rx="10" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.8"/>
+  <text x="425" y="104" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" font-weight="600" fill="#dc2626">start: 1.36</text>
+
+  <rect x="480" y="88" width="90" height="24" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="0.8"/>
+  <text x="525" y="104" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" font-weight="600" fill="#2563eb">end: 0.40</text>
+
+  <!-- Y-axis labels -->
+  <text x="72" y="128" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">1.4</text>
+  <text x="72" y="178" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">1.1</text>
+  <text x="72" y="228" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0.8</text>
+  <text x="72" y="278" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0.5</text>
+  <text x="72" y="328" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0.2</text>
+
+  <!-- Grid lines -->
+  <line x1="80" y1="125" x2="570" y2="125" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="80" y1="175" x2="570" y2="175" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="80" y1="225" x2="570" y2="225" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="80" y1="275" x2="570" y2="275" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="80" y1="325" x2="570" y2="325" stroke="#f1f5f9" stroke-width="1"/>
+
+  <!-- X-axis -->
+  <line x1="80" y1="375" x2="570" y2="375" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="80" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0</text>
+  <text x="178" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">5</text>
+  <text x="276" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">10</text>
+  <text x="374" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">15</text>
+  <text x="472" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">20</text>
+  <text x="570" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">25</text>
+  <text x="325" y="408" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="500" fill="#94a3b8">Training Step</text>
+
+  <!-- Loss curve area fill
+       Y mapping: loss 0.0 = y375, loss 1.4 = y125 → y = 375 - (loss/1.4)*250
+       Step mapping: step 1-25 = x99.6 to x570, spacing = 19.6 per step
+  -->
+  <polygon
+    fill="#2563eb"
+    opacity="0.06"
+    points="
+      99.6,375
+      99.6,132.7
+      119.2,127.2
+      138.8,182.1
+      158.4,206.3
+      178.0,237.7
+      197.6,268.6
+      217.2,277.6
+      236.8,235.8
+      256.4,307.4
+      276.0,302.3
+      295.6,318.4
+      315.2,277.5
+      334.8,329.2
+      354.4,319.8
+      374.0,261.2
+      393.6,306.2
+      413.2,286.5
+      432.8,310.7
+      452.4,297.5
+      472.0,327.3
+      491.6,311.5
+      511.2,294.7
+      530.8,290.0
+      550.4,286.1
+      570.0,303.8
+      570.0,375
+    "
+  />
+
+  <!-- Loss curve line -->
+  <polyline
+    fill="none"
+    stroke="#2563eb"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    points="
+      99.6,132.7
+      119.2,127.2
+      138.8,182.1
+      158.4,206.3
+      178.0,237.7
+      197.6,268.6
+      217.2,277.6
+      236.8,235.8
+      256.4,307.4
+      276.0,302.3
+      295.6,318.4
+      315.2,277.5
+      334.8,329.2
+      354.4,319.8
+      374.0,261.2
+      393.6,306.2
+      413.2,286.5
+      432.8,310.7
+      452.4,297.5
+      472.0,327.3
+      491.6,311.5
+      511.2,294.7
+      530.8,290.0
+      550.4,286.1
+      570.0,303.8
+    "
+  />
+
+  <!-- Start and end dots -->
+  <circle cx="99.6" cy="132.7" r="4.5" fill="#dc2626" opacity="0.8"/>
+  <circle cx="570.0" cy="303.8" r="4.5" fill="#2563eb" opacity="0.8"/>
+
+  <!-- Trend line (dashed) -->
+  <line x1="99.6" y1="160" x2="570" y2="305" stroke="#2563eb" stroke-width="1.2" stroke-dasharray="6 4" opacity="0.3"/>
+
+  <!-- Drop annotation -->
+  <rect x="430" y="330" width="130" height="24" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="0.8"/>
+  <text x="495" y="346" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">-70% loss reduction</text>
+
+  <!-- ======= RIGHT PANEL: Eval Metrics ======= -->
+  <rect x="620" y="78" width="550" height="330" rx="14" fill="#ffffff" stroke="#e2e8f0" stroke-width="1.2"/>
+
+  <!-- Panel header -->
+  <text x="640" y="105" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#166534" letter-spacing="0.04em">EVALUATION METRICS</text>
+
+  <!-- Legend -->
+  <circle cx="960" cy="98" r="5" fill="#22c55e"/>
+  <text x="970" y="102" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="500" fill="#64748b">Similarity</text>
+  <circle cx="1060" cy="98" r="5" fill="#8b5cf6"/>
+  <text x="1070" y="102" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="500" fill="#64748b">Exact Match</text>
+
+  <!-- Y-axis labels -->
+  <text x="652" y="128" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">100%</text>
+  <text x="652" y="188" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">75%</text>
+  <text x="652" y="248" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">50%</text>
+  <text x="652" y="308" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">25%</text>
+  <text x="652" y="375" text-anchor="end" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0%</text>
+
+  <!-- Grid lines -->
+  <line x1="660" y1="125" x2="1150" y2="125" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="660" y1="185" x2="1150" y2="185" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="660" y1="245" x2="1150" y2="245" stroke="#f1f5f9" stroke-width="1"/>
+  <line x1="660" y1="305" x2="1150" y2="305" stroke="#f1f5f9" stroke-width="1"/>
+
+  <!-- X-axis -->
+  <line x1="660" y1="375" x2="1150" y2="375" stroke="#cbd5e1" stroke-width="1"/>
+  <text x="660" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">0</text>
+  <text x="905" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">12</text>
+  <text x="1125.6" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">24</text>
+  <text x="1150" y="393" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="8" fill="#94a3b8">25</text>
+  <text x="905" y="408" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="500" fill="#94a3b8">Eval Checkpoint</text>
+
+  <!-- Similarity area fill -->
+  <polygon
+    fill="#22c55e"
+    opacity="0.08"
+    points="
+      660,375
+      660,341.4
+      905,160.0
+      1125.6,157.0
+      1150,157.0
+      1150,375
+    "
+  />
+
+  <!-- Similarity line: step 0→13.4%, step 12→86.0%, step 24→87.2%, step 25→87.2% -->
+  <polyline
+    fill="none"
+    stroke="#22c55e"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    points="660,341.4 905,160.0 1125.6,157.0 1150,157.0"
+  />
+
+  <!-- Exact match area fill -->
+  <polygon
+    fill="#8b5cf6"
+    opacity="0.06"
+    points="
+      660,375
+      660,375
+      905,250.0
+      1125.6,250.0
+      1150,250.0
+      1150,375
+    "
+  />
+
+  <!-- Exact match line: step 0→0%, step 12→50%, step 24→50%, step 25→50% -->
+  <polyline
+    fill="none"
+    stroke="#8b5cf6"
+    stroke-width="2.5"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    points="660,375 905,250.0 1125.6,250.0 1150,250.0"
+  />
+
+  <!-- Similarity data points -->
+  <circle cx="660" cy="341.4" r="5" fill="#ffffff" stroke="#22c55e" stroke-width="2"/>
+  <text x="660" y="333" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#16a34a">13.4%</text>
+
+  <circle cx="905" cy="160.0" r="5" fill="#ffffff" stroke="#22c55e" stroke-width="2"/>
+  <text x="930" y="152" text-anchor="start" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#16a34a">86.0%</text>
+
+  <circle cx="1150" cy="157.0" r="5" fill="#ffffff" stroke="#22c55e" stroke-width="2"/>
+  <text x="1130" y="145" text-anchor="end" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#16a34a">87.2%</text>
+
+  <!-- Exact match data points -->
+  <circle cx="660" cy="375" r="5" fill="#ffffff" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="680" y="370" text-anchor="start" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#7c3aed">0%</text>
+
+  <circle cx="905" cy="250.0" r="5" fill="#ffffff" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="930" y="265" text-anchor="start" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#7c3aed">50%</text>
+
+  <circle cx="1150" cy="250.0" r="5" fill="#ffffff" stroke="#8b5cf6" stroke-width="2"/>
+  <text x="1130" y="265" text-anchor="end" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#7c3aed">50%</text>
+
+  <!-- Improvement annotation -->
+  <rect x="820" y="195" width="170" height="38" rx="12" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="905" y="212" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="600" fill="#166534">+73.8% similarity</text>
+  <text x="905" y="226" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="500" fill="#15803d">in just 12 steps</text>
+
+  <!-- ======= BOTTOM: Summary Bar ======= -->
+  <rect x="40" y="425" width="1120" height="58" rx="14" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.2"/>
+
+  <!-- Model info -->
+  <rect x="60" y="438" width="180" height="32" rx="10" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="150" y="454" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9.5" font-weight="600" fill="#334155">google/gemma-3-1b-pt</text>
+  <text x="150" y="466" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="500" fill="#94a3b8">base model</text>
+
+  <!-- Config -->
+  <rect x="260" y="438" width="200" height="32" rx="10" fill="#ffffff" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="360" y="454" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" font-weight="600" fill="#334155">LoRA r=32 • lr=1e-4 • clip=0.3</text>
+  <text x="360" y="466" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="500" fill="#94a3b8">training config</text>
+
+  <!-- Results -->
+  <rect x="480" y="438" width="220" height="32" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="1"/>
+  <text x="590" y="454" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" font-weight="600" fill="#2563eb">Loss: 1.36 → 0.40 (-70%)</text>
+  <text x="590" y="466" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="500" fill="#64748b">per-token cross entropy</text>
+
+  <rect x="720" y="438" width="220" height="32" rx="10" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="830" y="454" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" font-weight="600" fill="#16a34a">Similarity: 13% → 87%</text>
+  <text x="830" y="466" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="500" fill="#64748b">sequence match rate</text>
+
+  <rect x="960" y="438" width="180" height="32" rx="10" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1"/>
+  <text x="1050" y="454" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9.5" font-weight="600" fill="#7c3aed">Exact Match: 0% → 50%</text>
+  <text x="1050" y="466" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="500" fill="#64748b">SQL correctness</text>
+</svg>

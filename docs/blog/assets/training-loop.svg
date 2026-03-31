@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 500" class="h-auto w-full">
+  <defs>
+    <linearGradient id="bg3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#f8fafc"/>
+      <stop offset="100%" stop-color="#ffffff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="500" rx="20" fill="url(#bg3)" stroke="#e2e8f0" stroke-width="1.5"/>
+
+  <!-- Title -->
+  <text x="600" y="42" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="15" font-weight="700" fill="#334155" letter-spacing="0.06em">THE TINKER TRAINING LOOP: 4 PRIMITIVES</text>
+
+  <!-- === Step 1: Create LoRA Client === -->
+  <rect x="60" y="80" width="240" height="110" rx="14" fill="#ffffff" stroke="#93c5fd" stroke-width="1.8"/>
+  <rect x="68" y="88" width="30" height="30" rx="15" fill="#2563eb"/>
+  <text x="83" y="108" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#ffffff">1</text>
+  <text x="115" y="106" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#1e40af">Create Client</text>
+  <text x="78" y="132" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">create_lora_training</text>
+  <text x="78" y="146" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">  _client_async(</text>
+  <text x="78" y="160" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#2563eb">  base_model, rank</text>
+  <text x="78" y="174" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">)</text>
+
+  <!-- Arrow 1→2 -->
+  <path d="M 300 135 L 370 135" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 12" opacity="0.8">
+    <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.5s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- === Step 2: Forward Backward === -->
+  <rect x="380" y="80" width="240" height="110" rx="14" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.8"/>
+  <rect x="388" y="88" width="30" height="30" rx="15" fill="#7c3aed"/>
+  <text x="403" y="108" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#ffffff">2</text>
+  <text x="435" y="106" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#6d28d9">Forward / Backward</text>
+  <text x="398" y="132" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">forward_backward_async(</text>
+  <text x="398" y="146" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#7c3aed">  datums,</text>
+  <text x="398" y="160" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#7c3aed">  "cross_entropy"</text>
+  <text x="398" y="174" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">)</text>
+
+  <!-- Arrow 2→3 -->
+  <path d="M 620 135 L 690 135" fill="none" stroke="#7c3aed" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 12" opacity="0.8">
+    <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.5s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- === Step 3: Optimizer Step === -->
+  <rect x="700" y="80" width="240" height="110" rx="14" fill="#ffffff" stroke="#86efac" stroke-width="1.8"/>
+  <rect x="708" y="88" width="30" height="30" rx="15" fill="#16a34a"/>
+  <text x="723" y="108" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#ffffff">3</text>
+  <text x="755" y="106" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#166534">Optimize</text>
+  <text x="718" y="132" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">optim_step_async(</text>
+  <text x="718" y="146" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#16a34a">  AdamParams(</text>
+  <text x="718" y="160" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#16a34a">    lr=1e-4</text>
+  <text x="718" y="174" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">))</text>
+
+  <!-- Arrow 3→4 -->
+  <path d="M 940 135 L 1010 135" fill="none" stroke="#16a34a" stroke-width="3" stroke-linecap="round" stroke-dasharray="1 12" opacity="0.8">
+    <animate attributeName="stroke-dashoffset" from="0" to="-26" dur="1.5s" repeatCount="indefinite"/>
+  </path>
+
+  <!-- === Step 4: Sample === -->
+  <rect x="1020" y="80" width="150" height="110" rx="14" fill="#ffffff" stroke="#fcd34d" stroke-width="1.8"/>
+  <rect x="1028" y="88" width="30" height="30" rx="15" fill="#ca8a04"/>
+  <text x="1043" y="108" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="14" font-weight="700" fill="#ffffff">4</text>
+  <text x="1070" y="106" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#a16207">Evaluate</text>
+  <text x="1038" y="132" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">save_weights</text>
+  <text x="1038" y="146" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#475569">  _for_sampler()</text>
+  <text x="1038" y="164" font-family="ui-monospace, SFMono-Regular, monospace" font-size="9" fill="#ca8a04">sampler.sample()</text>
+
+  <!-- Loop-back arrow from Step 4 back to Step 2 -->
+  <path d="M 1095 190 C 1095 250, 1095 260, 900 270 C 700 280, 500 270, 500 195" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="1 14" opacity="0.6">
+    <animate attributeName="stroke-dashoffset" from="0" to="-30" dur="3s" repeatCount="indefinite"/>
+  </path>
+  <rect x="720" y="258" width="120" height="22" rx="11" fill="#f1f5f9" stroke="#e2e8f0" stroke-width="1"/>
+  <text x="780" y="273" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="9" font-weight="600" fill="#64748b">repeat N steps</text>
+
+  <!-- === Bottom: What happens under the hood === -->
+  <rect x="60" y="310" width="1080" height="165" rx="16" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1.2"/>
+  <text x="600" y="338" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="12" font-weight="700" fill="#334155" letter-spacing="0.05em">WHAT HAPPENS ON THE SERVER</text>
+
+  <!-- Gateway -->
+  <rect x="100" y="360" width="160" height="55" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="180" y="383" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="650" fill="#1e40af">Gateway</text>
+  <text x="180" y="398" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Receives request</text>
+  <text x="180" y="410" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Returns future ID</text>
+
+  <path d="M 260 388 L 320 388" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round" marker-end="url(#arrowGray)"/>
+  <text x="290" y="382" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="7.5" fill="#94a3b8">async</text>
+
+  <!-- Queue -->
+  <rect x="325" y="360" width="160" height="55" rx="10" fill="#ffffff" stroke="#fca5a5" stroke-width="1.2"/>
+  <text x="405" y="383" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="650" fill="#dc2626">Queue</text>
+  <text x="405" y="398" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Redis (GKE) or</text>
+  <text x="405" y="410" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">asyncio.Queue (local)</text>
+
+  <path d="M 485 388 L 545 388" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
+  <text x="515" y="382" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="7.5" fill="#94a3b8">drain</text>
+
+  <!-- Engine -->
+  <rect x="550" y="360" width="200" height="55" rx="10" fill="#ffffff" stroke="#c4b5fd" stroke-width="1.2"/>
+  <text x="650" y="383" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="650" fill="#7c3aed">Clock Cycle Engine</text>
+  <text x="650" y="398" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Batch by model_id</text>
+  <text x="650" y="410" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Execute atomically</text>
+
+  <path d="M 750 388 L 810 388" fill="none" stroke="#94a3b8" stroke-width="2" stroke-linecap="round"/>
+  <text x="780" y="382" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="7.5" fill="#94a3b8">compute</text>
+
+  <!-- GPU -->
+  <rect x="815" y="360" width="160" height="55" rx="10" fill="#ffffff" stroke="#86efac" stroke-width="1.2"/>
+  <text x="895" y="383" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="10" font-weight="650" fill="#166534">PyTorch + PEFT</text>
+  <text x="895" y="398" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">LoRA forward/backward</text>
+  <text x="895" y="410" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8.5" fill="#64748b">Adam optimizer step</text>
+
+  <!-- Long-poll return -->
+  <path d="M 975 388 C 1020 388, 1040 430, 1040 445 C 1040 460, 200 460, 180 445 C 180 430, 180 420, 180 418" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-dasharray="1 10" opacity="0.6">
+    <animate attributeName="stroke-dashoffset" from="0" to="-22" dur="2.5s" repeatCount="indefinite"/>
+  </path>
+  <rect x="530" y="440" width="140" height="20" rx="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="0.8"/>
+  <text x="600" y="454" text-anchor="middle" font-family="ui-sans-serif, system-ui, sans-serif" font-size="8" font-weight="600" fill="#2563eb">long-poll response</text>
+</svg>
