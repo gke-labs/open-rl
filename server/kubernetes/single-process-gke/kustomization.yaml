@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - 01-pvc.yaml
+  - 02-serviceaccount.yaml
+  - 03-service.yaml
+  - 04-deployment.yaml
+
+images:
+  - name: gcr.io/cdrollouts-sunilarora/open-rl-server
+    newName: gcr.io/kk-diffs/open-rl-server

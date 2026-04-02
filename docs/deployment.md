@@ -13,6 +13,14 @@ make build-server-images
 make push-server-images
 ```
 
+### Configure Hugging Face Access
+
+If you are using a base model that requires authentication or a private wheel, create a Kubernetes secret with your Hugging Face token:
+
+```bash
+kubectl create secret generic hf-token --from-literal=token=YOUR_HF_TOKEN
+```
+
 ### 2. Deploy to the Cluster
 
 The architecture requires a `ReadWriteMany` network file system for model adapter synchronization. You have two options below:

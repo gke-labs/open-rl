@@ -15,7 +15,6 @@ from datasets import load_dataset
 from tinker import types
 from tinker_cookbook.utils import ml_log
 
-BASE_MODEL = "google/gemma-3-1b-pt"
 BASE_URL = "http://127.0.0.1:9003"
 DATASET = "philschmid/gretel-synthetic-text-to-sql"
 LOG_DIR = Path(__file__).resolve().parent / "artifacts" / "texttosql_{preset}"
@@ -32,16 +31,30 @@ USER_PROMPT = """Given the <USER_QUERY> and the <SCHEMA>, generate the correspon
 </USER_QUERY>
 """
 
+PLAIN_SQL_PROMPT = """Return only one SQLite query.
+
+Schema:
+{context}
+
+Question:
+{question}
+
+SQL:
+"""
+
 os.environ.setdefault("TINKER_API_KEY", "tml-dummy-key")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 
 
 @chz.chz
 class Config:
+    base_model: str
+    tokenizer_name: str
     steps: int
     batch_size: int
     rank: int
     learning_rate: float
+    prompt_format: str = "chat_template"
     base_url: str = os.getenv("TINKER_BASE_URL") or os.getenv("OPEN_RL_BASE_URL") or BASE_URL
     grad_clip_norm: float = 0.3
     eval_every: int = 50
@@ -54,10 +67,51 @@ class Config:
 
 PRESETS = {
     "gemma": chz.Blueprint(Config).apply(
-        {"steps": 30, "batch_size": 8, "rank": 16, "learning_rate": 2e-4, "train_limit": 10_000, "eval_limit": 5, "eval_every": 15},
-        layer_name="gemma preset",
+        {
+            "base_model": "google/gemma-3-1b-pt",
+            "tokenizer_name": "google/gemma-3-1b-it",
+            "steps": 30,
+            "batch_size": 8,
+            "rank": 16,
+            "learning_rate": 2e-4,
+            "train_limit": 10_000,
+            "eval_limit": 5,
+            "eval_every": 15,
+        },
+        layer_name="gemma",
+    ),
+    "gemma4_e2b": chz.Blueprint(Config).apply(
+        {
+            "base_model": "google/gemma-4-e2b",
+            "tokenizer_name": "google/gemma-4-e2b",
+            "prompt_format": "plain_sql_completion",
+            "steps": 100,
+            "batch_size": 1,
+            "rank": 32,
+            "learning_rate": 5e-5,
+            "train_limit": 100,
+            "eval_limit": 25,
+            "eval_every": 100,
+            "eval_max_tokens": 64,
+        },
+        layer_name="gemma4_e2b",
     ),
 }
+
+def render_training_texts(tokenizer, prompt_format: str, question: str, context: str, target_sql: str) -> tuple[str, str]:
+    if prompt_format == "plain_sql_completion":
+        prompt_text = PLAIN_SQL_PROMPT.format(question=question, context=context)
+        return prompt_text, prompt_text + target_sql
+    if prompt_format != "chat_template":
+        raise ValueError(f"Unsupported prompt_format={prompt_format!r}")
+
+    messages = [
+        {"role": "user", "content": USER_PROMPT.format(question=question, context=context)},
+        {"role": "assistant", "content": target_sql},
+    ]
+    prompt_text = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True)
+    full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
+    return prompt_text, full_text
 
 
 async def run_training(config: Config, preset: str) -> dict[str, float | str]:
@@ -69,7 +123,7 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
     logging.info("Server ready at %s | model=%s", config.base_url, server_model or "unset")
 
     trainer = await client.create_lora_training_client_async(
-        base_model=BASE_MODEL,
+        base_model=config.base_model,
         rank=config.rank,
         seed=config.seed,
         train_mlp=True,
@@ -78,14 +132,21 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
     )
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-1b-it")
+    tokenizer = AutoTokenizer.from_pretrained(config.tokenizer_name)
 
     dataset = load_dataset(DATASET, split="train").shuffle(seed=config.seed)
     dataset = dataset.select(range(min(12_500, len(dataset))))
     split = dataset.train_test_split(test_size=2_500, shuffle=False)
 
-    train_examples = build_examples(tokenizer, split["train"], config.train_limit)
-    eval_examples = build_examples(tokenizer, split["test"], config.eval_limit, require_seed_data=True, require_target_rows=True)
+    train_examples = build_examples(tokenizer, config.prompt_format, split["train"], config.train_limit)
+    eval_examples = build_examples(
+        tokenizer,
+        config.prompt_format,
+        split["test"],
+        config.eval_limit,
+        require_seed_data=True,
+        require_target_rows=True,
+    )
     if not train_examples:
         raise RuntimeError("No training examples fit within max_seq_length.")
     if not eval_examples:
@@ -125,7 +186,9 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
         active_tokens = sum(example["active_tokens"] for example in batch)
 
         fwdbwd_future = await trainer.forward_backward_async(datums, "cross_entropy")
-        optim_future = await trainer.optim_step_async(types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm))
+        optim_future = await trainer.optim_step_async(
+            types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm)
+        )
         fwdbwd = await fwdbwd_future
         await optim_future
 
@@ -238,19 +301,9 @@ def make_datum(full_tokens: list[int], weights: list[int]) -> types.Datum:
     )
 
 
-def render_training_texts(tokenizer, question, context, target_sql):
-    messages = [
-        {"role": "user", "content": USER_PROMPT.format(question=question, context=context)},
-        {"role": "assistant", "content": target_sql},
-    ]
-    prompt_text = tokenizer.apply_chat_template(messages[:1], tokenize=False, add_generation_prompt=True)
-    full_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=False)
-    return prompt_text, full_text
-
-
-def build_example(tokenizer, row):
+def build_example(tokenizer, prompt_format: str, row):
     target_sql = clean_sql_for_execution(row["sql"])
-    prompt_text, full_text = render_training_texts(tokenizer, row["sql_prompt"], row["sql_context"], target_sql)
+    prompt_text, full_text = render_training_texts(tokenizer, prompt_format, row["sql_prompt"], row["sql_context"], target_sql)
     prompt_tokens = tokenizer.encode(prompt_text, add_special_tokens=False)
     full_tokens = tokenizer.encode(full_text, add_special_tokens=False)
     if len(full_tokens) <= len(prompt_tokens) or len(full_tokens) > MAX_SEQ_LENGTH:
@@ -266,12 +319,12 @@ def build_example(tokenizer, row):
     }
 
 
-def build_examples(tokenizer, dataset_split, limit, require_seed_data=False, require_target_rows=False):
+def build_examples(tokenizer, prompt_format: str, dataset_split, limit, require_seed_data=False, require_target_rows=False):
     examples = []
     for row in dataset_split:
         if require_seed_data and "insert into" not in row["sql_context"].lower(): continue
 
-        example = build_example(tokenizer, row)
+        example = build_example(tokenizer, prompt_format, row)
         if example is None: continue
 
         if require_target_rows:

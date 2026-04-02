@@ -22,6 +22,9 @@ store = get_store()
 
 import math
 
+ATTN_TARGET_SUFFIXES = ["q_proj", "k_proj", "v_proj", "o_proj"]
+MLP_TARGET_SUFFIXES = ["gate_proj", "up_proj", "down_proj"]
+
 class TrainerEngine:
     def __init__(self):
         self.model = None
@@ -81,15 +84,33 @@ class TrainerEngine:
                 raise ValueError("At least one LoRA training target must be enabled.")
 
             # Tinker's LoRA config is intentionally coarse; PEFT still expects concrete target names here.
+            # Keep the historical broad behavior by default, but constrain Gemma4 to the language tower.
+            explicit_target_modules = os.getenv("OPEN_RL_TARGET_MODULES")
+            use_text_tower_lora = getattr(self.model_obj.config, "model_type", None) == "gemma4"
             target_modules: str | list[str]
-            if train_attn and train_mlp and train_unembed:
+            layers_to_transform = None
+            layers_pattern = None
+            target_suffixes: list[str] = []
+            if train_attn:
+                target_suffixes.extend(ATTN_TARGET_SUFFIXES)
+            if train_mlp:
+                target_suffixes.extend(MLP_TARGET_SUFFIXES)
+            if explicit_target_modules == "all-linear":
+                target_modules = "all-linear"
+                print("[engine] Forcing PEFT target_modules=all-linear via OPEN_RL_TARGET_MODULES")
+            elif use_text_tower_lora:
+                if target_suffixes:
+                    target_modules = target_suffixes
+                    model_config = getattr(self.model_obj.config, "text_config", self.model_obj.config)
+                    num_hidden_layers = model_config.num_hidden_layers
+                    layers_to_transform = list(range(num_hidden_layers))
+                    layers_pattern = "language_model.layers"
+                else:
+                    target_modules = []
+            elif train_attn and train_mlp and train_unembed:
                 target_modules = "all-linear"
             else:
-                target_modules = []
-                if train_attn:
-                    target_modules.extend(["q_proj", "k_proj", "v_proj", "o_proj"])
-                if train_mlp:
-                    target_modules.extend(["gate_proj", "up_proj", "down_proj"])
+                target_modules = target_suffixes
 
             peft_config = LoraConfig(
                 task_type=TaskType.CAUSAL_LM,
@@ -98,6 +119,8 @@ class TrainerEngine:
                 lora_dropout=config.get("lora_dropout", 0.05),
                 bias="none",
                 target_modules=target_modules,
+                layers_to_transform=layers_to_transform,
+                layers_pattern=layers_pattern,
                 modules_to_save=["lm_head", "embed_tokens"] if train_unembed else None,
             )
                 
@@ -182,7 +205,6 @@ class TrainerEngine:
             targets_data = loss_inputs.get("target_tokens", {}).get("data", [])
             targets_tensor = torch.tensor(targets_data, dtype=torch.long, device=self.device)
             
-            # Forward pass
             outputs = self.model(inputs_tensor, use_cache=False)
             logits = outputs.logits[0] # Shape: (SeqLen, VocabSize)
             
@@ -362,18 +384,18 @@ class TrainerEngine:
             with torch.no_grad():
                 attention_mask = torch.ones_like(input_tensor)
                 outputs = self.model.generate(
-                input_tensor, 
-                attention_mask=attention_mask,
-                max_new_tokens=max_tokens,
-                pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
-                do_sample=do_sample,
-                temperature=temperature if do_sample else None,
-                top_p=None,
-                top_k=None,
-                num_return_sequences=num_samples,
-                output_scores=True,
-                return_dict_in_generate=True
-            )
+                    input_tensor,
+                    attention_mask=attention_mask,
+                    max_new_tokens=max_tokens,
+                    pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
+                    do_sample=do_sample,
+                    temperature=temperature if do_sample else None,
+                    top_p=None,
+                    top_k=None,
+                    num_return_sequences=num_samples,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
             
         sequences_out = []
         for seq_idx in range(num_samples):

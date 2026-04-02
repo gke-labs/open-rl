@@ -25,7 +25,7 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 # Install ONLY core dependencies using uv (ignoring massive ML extras)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project
+    uv sync --no-install-project
 
 # Copy source code
 COPY src ./src

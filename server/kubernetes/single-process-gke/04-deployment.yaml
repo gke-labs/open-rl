@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-single
+  labels:
+    app: open-rl-single
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-rl-single
+  template:
+    metadata:
+      labels:
+        app: open-rl-single
+    spec:
+      serviceAccountName: open-rl-single-sa
+      containers:
+        - name: open-rl-single
+          image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
+          imagePullPolicy: Always
+          command:
+            - "/bin/sh"
+            - "-c"
+            - |
+              if [ -n "$HF_TOKEN" ]; then
+                echo "Downloading private transformers wheel..."
+                curl -L -H "Authorization: Bearer $HF_TOKEN" -o /tmp/transformers-5.5.0.dev0-py3-none-any.whl https://huggingface.co/datasets/gg-hf-gg/gemma-4-eap-extras/resolve/main/transformers-5.5.0.dev0-py3-none-any.whl
+                uv pip install /tmp/transformers-5.5.0.dev0-py3-none-any.whl
+              fi
+              uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+          ports:
+            - containerPort: 8000
+          env:
+            - name: OPEN_RL_SINGLE_PROCESS
+              value: "1"
+            - name: SAMPLER_BACKEND
+              value: "engine"
+            - name: OPEN_RL_BASE_MODEL
+              value: "google/gemma-4-e2b"
+            - name: VLLM_MODEL
+              value: "google/gemma-4-e2b"
+            - name: CUDA_VISIBLE_DEVICES
+              value: "0"
+            - name: OPEN_RL_TMP_DIR
+              value: "/mnt/shared/open-rl"
+            - name: HF_HOME
+              value: "/mnt/shared/open-rl/huggingface"
+            - name: ENABLE_GCP_TRACE
+              value: "1"
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: hf-token
+                  key: token
+          startupProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 180
+          readinessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /api/v1/healthz
+              port: 8000
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 4
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "32Gi"
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "32Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /mnt/shared
+      volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: open-rl-single-pvc
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4
+      tolerations:
+        - key: "nvidia.com/gpu"
+          operator: "Exists"
+          effect: "NoSchedule"

@@ -15,8 +15,7 @@ You can fine-tune Gemma 3 1B on a Text-to-SQL task locally — no cloud, no GPUs
 Start the server:
 
 ```bash
-OPEN_RL_SINGLE_PROCESS=1 SAMPLER_BACKEND=engine \
-  OPEN_RL_BASE_MODEL="google/gemma-3-1b-pt" \
+OPEN_RL_BASE_MODEL="google/gemma-3-1b-pt" \
   uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -29,10 +28,7 @@ from tinker import types
 client = tinker.ServiceClient(base_url="http://localhost:8000")
 
 # 1. Create a LoRA adapter on the base model
-trainer = await client.create_lora_training_client_async(
-    base_model="google/gemma-3-1b-pt",
-    rank=32, train_mlp=True, train_attn=True,
-)
+trainer = await client.create_lora_training_client_async(base_model="google/gemma-3-1b-pt", rank=32)
 
 # 2-3. Train: forward/backward pass, then optimizer step
 for step in range(25):
@@ -43,11 +39,13 @@ for step in range(25):
     opt = await trainer.optim_step_async(
         types.AdamParams(learning_rate=1e-4, grad_clip_norm=0.3)
     )
-    await asyncio.gather(fwd, opt)
+
+    await fwd 
+    await opt
 
 # 4. Snapshot weights and evaluate
 sampler = client.create_sampling_client(
-    trainer.save_weights_for_sampler(name="step_25").result().path
+  trainer.save_weights_for_sampler(name="step_25").result().path
 )
 result = sampler.sample(prompt_tokens, num_samples=1,
     sampling_params=types.SamplingParams(max_tokens=256, temperature=0.0))
@@ -73,13 +71,19 @@ Here's the key insight: **your client code doesn't change.** The Tinker API abst
 
 ```bash
 # Deploy to GKE
-kubectl apply -f server/kubernetes/distributed-shared/
+kubectl apply -k server/kubernetes/single-process-gke/
 
 # Port-forward to your local machine
-kubectl port-forward svc/open-rl-gateway-service 8000:8000
+kubectl port-forward svc/open-rl-single-service 8000:8000
 ```
 
-Your training script still points at `localhost:8000` — but now the requests flow through a distributed system: a FastAPI gateway, a Redis queue, dedicated trainer and vLLM inference workers, and shared storage (Filestore or Lustre) for adapter persistence.
+Your training script still points at `localhost:8000` — but now the requests flow to a dedicated GPU node running OpenRL as a single process (the easiest way to scale up from your Mac!).
+
+To run the Text-to-SQL client against GKE, use the `gemma4_e2b` preset and point it to your port-forwarded URL:
+
+```bash
+uv run client/texttosql_sft.py gemma4_e2b --base_url http://localhost:8000
+```
 
 <p align="center">
   <img src="assets/local-to-cloud.svg" alt="Local to Cloud Architecture" width="100%">
@@ -91,23 +95,7 @@ This is what the Tinker API buys you. The same 4 primitives — `create_lora_tra
 
 ## Why This Architecture Works
 
-### Multi-Tenant LoRA
-
-The traditional approach to running multiple fine-tuning jobs is to load a full model copy for each one. Three concurrent jobs on Gemma 3 1B means 3x the VRAM — ~30GB for three copies of a 10B parameter model.
-
-Open-RL loads the base model into VRAM **once**. Each fine-tuning job gets a LoRA adapter — a small set of low-rank matrices (typically 10-50MB) that modify the model's behavior. Switching between tenants is a pointer flip via `peft.set_active_adapter()`, not a PCIe transfer. Three concurrent fine-tunes cost the base model + ~90MB of adapters instead of 3x the full model.
-
-### Scheduling & Lifecycle Management
-
-On GKE, these are solved problems. Kubernetes handles pod scheduling, restarts crashed workers, and scales resources. The Open-RL Clock Cycle Engine batches incoming requests by tenant, so multiple training jobs interleave efficiently on shared hardware without manual coordination.
-
-No more "who's using the GPU?" Slack messages. No more SSH-ing into machines to restart crashed training runs. No more idle GPUs sitting between jobs.
-
-### Shared Resources, Limitless Possibilities
-
-Because the base model is shared and adapters are tiny, the marginal cost of adding another fine-tuning experiment is negligible. Instead of carefully planning one training run, you can run dozens of experiments in parallel — different hyperparameters, datasets, or reward functions.
-
-The same infrastructure supports both supervised fine-tuning (SFT) and reinforcement learning with verifiable rewards (RLVR). Swap `"cross_entropy"` for `"importance_sampling"`, add a reward function, and you have an RL training loop.
+Check out the [Architecture Deep Dive](../architecture.md) for a detailed explanation of how the Gateway, Queue, and Clock Cycle Engine work together.
 
 ---
 

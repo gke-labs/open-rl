@@ -49,8 +49,20 @@ class FilterNoisyEndpoints(logging.Filter):
 
 logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
+def is_single_process_mode() -> bool:
+    explicit = os.getenv("OPEN_RL_SINGLE_PROCESS")
+    if explicit is not None:
+        return explicit == "1"
+    return bool(os.getenv("OPEN_RL_BASE_MODEL")) and not bool(os.getenv("REDIS_URL"))
+
+def get_sampler_backend() -> str:
+    explicit = os.getenv("SAMPLER_BACKEND")
+    if explicit:
+        return explicit.lower()
+    return "engine" if is_single_process_mode() else "vllm"
+
 def get_default_model_name() -> str | None:
-    if os.getenv("OPEN_RL_SINGLE_PROCESS", "0") == "1":
+    if is_single_process_mode():
         from . import engine as trainer_engine
 
         if trainer_engine.engine.base_model_name:
@@ -60,7 +72,7 @@ def get_default_model_name() -> str | None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     task = None
-    if os.getenv("OPEN_RL_SINGLE_PROCESS", "0") == "1":
+    if is_single_process_mode():
         from . import engine as trainer_engine
 
         base_model = os.getenv("OPEN_RL_BASE_MODEL")
@@ -92,7 +104,7 @@ async def get_server_capabilities():
     return {
         "supported_models": [{"model_name": model_name}] if model_name else [],
         "default_model": model_name,
-        "single_process": os.getenv("OPEN_RL_SINGLE_PROCESS", "0") == "1",
+        "single_process": is_single_process_mode(),
     }
 
 @app.post("/api/v1/create_session")
@@ -363,7 +375,7 @@ async def asample(req: dict):
     # Strip the sequence tag to find the base directory where PyTorch actually wrote the checkpoint
     base_model_id = lora_id.split("-samp-")[0] if lora_id else None
 
-    sampler_backend = os.getenv("SAMPLER_BACKEND", "vllm").lower()
+    sampler_backend = get_sampler_backend()
     if sampler_backend == "engine":
         await enqueue_traced_request(store, {
             "req_id": req_id,
