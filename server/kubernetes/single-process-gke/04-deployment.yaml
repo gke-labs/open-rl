@@ -25,11 +25,6 @@ spec:
             - "/bin/sh"
             - "-c"
             - |
-              if [ -n "$HF_TOKEN" ]; then
-                echo "Downloading private transformers wheel..."
-                curl -L -H "Authorization: Bearer $HF_TOKEN" -o /tmp/transformers-5.5.0.dev0-py3-none-any.whl https://huggingface.co/datasets/gg-hf-gg/gemma-4-eap-extras/resolve/main/transformers-5.5.0.dev0-py3-none-any.whl
-                uv pip install /tmp/transformers-5.5.0.dev0-py3-none-any.whl
-              fi
               uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
