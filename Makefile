@@ -1,4 +1,4 @@
-.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma-sft run-pig-latin-server run-pig-latin-sft run-text-to-sql-server run-text-to-sql-server-gpu run-text-to-sql-vllm run-text-to-sql-sft run-sft run-sft-parallel run-rlvr run-rlvr-parallel test
+.PHONY: run-server run-server-engine-sampler run-function-gemma-server run-function-gemma-sft run-pig-latin-server run-pig-latin-sft run-text-to-sql-server run-text-to-sql-server-gpu run-text-to-sql-vllm run-text-to-sql-sft run-sft run-sft-parallel run-rlvr run-rlvr-parallel test lint fmt
 
 # Default VLLM model for inference, can be overridden via `make run-vllm VLLM_MODEL=...`
 #VLLM_MODEL ?= Qwen/Qwen2.5-0.5B
@@ -68,6 +68,14 @@ run-text-to-sql-sft:
 
 test:
 	cd client && uv run python -m unittest discover tests
+
+lint:
+	uvx ruff check .
+	uvx ruff format --check .
+
+fmt:
+	uvx ruff check --fix .
+	uvx ruff format .
 
 # Client test targets
 run-sft:
