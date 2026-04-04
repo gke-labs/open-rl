@@ -22,7 +22,7 @@ cd server
 OPEN_RL_SINGLE_PROCESS=1 \
 SAMPLER_BACKEND=engine \
 OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" \
-uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9000
+uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9000
 ```
 
 This starts a local server on port 9000, preloads `google/functiongemma-270m-it`, and runs the gateway plus engine loop in one process.

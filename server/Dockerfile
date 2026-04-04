@@ -45,4 +45,4 @@ EXPOSE 8000
 EXPOSE 8001
 
 # Start the Gateway using uv run to ensure the venv is active
-CMD ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -38,7 +38,7 @@ class TestPigLatinGemma(unittest.TestCase):
     env["SAMPLER_BACKEND"] = "engine"
     env["VLLM_MODEL"] = "google/gemma-3-1b-it"
 
-    cmd = ["uv", "run", "--extra", "cpu", "uvicorn", "src.main:app", "--host", "127.0.0.1", "--port", "9002"]
+    cmd = ["uv", "run", "--extra", "cpu", "uvicorn", "src.gateway:app", "--host", "127.0.0.1", "--port", "9002"]
 
     cls.server_process = subprocess.Popen(
       cmd, cwd=str(server_dir), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid

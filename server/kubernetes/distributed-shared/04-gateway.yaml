@@ -40,7 +40,7 @@ spec:
       - name: gateway
         image: gcr.io/cdrollouts-sunilarora/open-rl-gateway:latest
         imagePullPolicy: Always
-        command: ["uv", "run", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+        command: ["uv", "run", "uvicorn", "src.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
         ports:
         - containerPort: 8000
         env:

@@ -80,7 +80,7 @@ Start the gateway directly:
 
 ```bash
 cd server
-uv run uvicorn src.main:app --host 127.0.0.1 --port 8000
+uv run uvicorn src.gateway:app --host 127.0.0.1 --port 8000
 ```
 
 Start the local single-process Pig Latin server:
@@ -90,7 +90,7 @@ cd server
 OPEN_RL_SINGLE_PROCESS=1 \
 OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" \
 SAMPLER_BACKEND=engine \
-uv run --extra cpu uvicorn src.main:app --host 127.0.0.1 --port 9001
+uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9001
 ```
 
 Start the Linux GPU/vLLM worker:
