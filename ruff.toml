@@ -1,0 +1,18 @@
+line-length = 150
+indent-width = 2
+extend-exclude = ["*.ipynb"]
+
+[lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+ignore = [
+    "SIM108",  # ternary operator — often less readable
+    "SIM105",  # contextlib.suppress — less explicit
+    "SIM115",  # context manager for open — not always practical
+    "B905",    # zip() strict= — not needed everywhere
+    "E402",    # import order — sometimes intentional
+    "E741",    # ambiguous variable name — too strict
+]
+
+[format]
+indent-style = "space"
+quote-style = "double"
