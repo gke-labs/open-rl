@@ -21,7 +21,7 @@ spec:
       - name: trainer-worker
         image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
         imagePullPolicy: Always
-        command: ["uv", "run", "python", "-m", "src.engine"]
+        command: ["uv", "run", "python", "-m", "src.trainer"]
         env:
         - name: ENABLE_GCP_TRACE
           value: "1"

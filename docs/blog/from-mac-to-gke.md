@@ -16,7 +16,7 @@ Start the server:
 
 ```bash
 OPEN_RL_BASE_MODEL="google/gemma-3-1b-pt" \
-  uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+  uv run uvicorn src.gateway:app --host 0.0.0.0 --port 8000
 ```
 
 Then write your training loop with the Tinker SDK — 4 API primitives are all you need:

@@ -35,10 +35,10 @@ class TestPigLatinGemma(unittest.TestCase):
     env["UV_INDEX_URL"] = "https://pypi.org/simple"
     env["OPEN_RL_SINGLE_PROCESS"] = "1"
     env["OPEN_RL_BASE_MODEL"] = "google/gemma-3-1b-it"
-    env["SAMPLER_BACKEND"] = "engine"
+    env["SAMPLER_BACKEND"] = "torch"
     env["VLLM_MODEL"] = "google/gemma-3-1b-it"
 
-    cmd = ["uv", "run", "--extra", "cpu", "uvicorn", "src.main:app", "--host", "127.0.0.1", "--port", "9002"]
+    cmd = ["uv", "run", "--extra", "cpu", "uvicorn", "src.gateway:app", "--host", "127.0.0.1", "--port", "9002"]
 
     cls.server_process = subprocess.Popen(
       cmd, cwd=str(server_dir), env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, preexec_fn=os.setsid

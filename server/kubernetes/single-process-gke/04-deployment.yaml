@@ -25,14 +25,14 @@ spec:
             - "/bin/sh"
             - "-c"
             - |
-              uv run uvicorn src.main:app --host 0.0.0.0 --port 8000
+              uv run uvicorn src.gateway:app --host 0.0.0.0 --port 8000
           ports:
             - containerPort: 8000
           env:
             - name: OPEN_RL_SINGLE_PROCESS
               value: "1"
             - name: SAMPLER_BACKEND
-              value: "engine"
+              value: "torch"
             - name: OPEN_RL_BASE_MODEL
               value: "google/gemma-4-e2b"
             - name: VLLM_MODEL

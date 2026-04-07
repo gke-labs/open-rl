@@ -16,7 +16,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 tracer = trace.get_tracer(__name__)
 
-from .state import get_store
+from .store import get_store
 
 store = get_store()
 
@@ -506,11 +506,11 @@ async def clock_cycle_loop():
       import redis
 
       if isinstance(e, redis.exceptions.ConnectionError):
-        print("[engine] Destroying StateStore singleton to force Redis reconnection...")
-        from . import state
+        print("[engine] Destroying RequestStore singleton to force Redis reconnection...")
+        from . import store as store_mod
 
-        state._store_instance = None
-        store = state.get_store()
+        store_mod._store_instance = None
+        store = store_mod.get_store()
 
       await asyncio.sleep(1)
 

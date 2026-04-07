@@ -7,7 +7,7 @@ from typing import Any
 import redis.asyncio as redis
 
 
-class StateStore(ABC):
+class RequestStore(ABC):
   @abstractmethod
   async def put_request(self, req_data: dict[str, Any]) -> None:
     """Push a request into the global queue."""
@@ -29,7 +29,7 @@ class StateStore(ABC):
     pass
 
 
-class InMemoryStore(StateStore):
+class InMemoryStore(RequestStore):
   def __init__(self):
     # tenant_id -> queue of requests
     self.queues: dict[str, asyncio.Queue] = {}
@@ -99,7 +99,7 @@ class InMemoryStore(StateStore):
       self.futures_events.pop(req_id, None)
 
 
-class RedisStore(StateStore):
+class RedisStore(RequestStore):
   def __init__(self, redis_url: str):
     self.redis = redis.from_url(redis_url, decode_responses=True, health_check_interval=2)
     self.active_list = "open_rl:active_tenants"
@@ -179,14 +179,14 @@ class RedisStore(StateStore):
 _store_instance = None
 
 
-def get_store() -> StateStore:
+def get_store() -> RequestStore:
   global _store_instance
   if _store_instance is None:
     redis_url = os.environ.get("REDIS_URL")
     if redis_url:
-      print(f"[StateStore] Initializing Redis backend at {redis_url} with RR Tenant Queues")
+      print(f"[RequestStore] Initializing Redis backend at {redis_url} with RR Tenant Queues")
       _store_instance = RedisStore(redis_url)
     else:
-      print("[StateStore] Initializing In-Memory backend with RR Tenant Queues")
+      print("[RequestStore] Initializing In-Memory backend with RR Tenant Queues")
       _store_instance = InMemoryStore()
   return _store_instance

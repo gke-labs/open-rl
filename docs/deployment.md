@@ -96,7 +96,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \
 Apply the Kubernetes manifests. The deployment spins up a fully distributed, multi-node architecture utilizing your chosen shared file system for adapter synchronization:
 1. **`open-rl-gateway`**: The PyTorch Training Gateway Deployment (Allocated to its dedicated L4 GPU node)
 2. **`vllm-worker`**: The vLLM Inference Worker Deployment (Allocated to its dedicated L4 GPU node, horizontally scalable)
-3. **`redis-broker`**: The Async Workload State Broker Deployment
+3. **`redis-store`**: The Async Workload State Store Deployment
 4. **`open-rl-(shared|lustre)-pvc`**: A 1.2TB network file system mapped universally to the pods.
 
 Depending on which storage option you chose above, **edit the `kustomization.yaml` within that directory to specify your GCP Project ID** (by default it uses `cdrollouts-sunilarora`), and then apply via `-k` (Kustomize):
