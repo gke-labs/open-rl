@@ -7,7 +7,7 @@ from typing import Any
 import redis.asyncio as redis
 
 
-class RequestBroker(ABC):
+class RequestStore(ABC):
   @abstractmethod
   async def put_request(self, req_data: dict[str, Any]) -> None:
     """Push a request into the global queue."""
@@ -29,7 +29,7 @@ class RequestBroker(ABC):
     pass
 
 
-class InMemoryBroker(RequestBroker):
+class InMemoryStore(RequestStore):
   def __init__(self):
     # tenant_id -> queue of requests
     self.queues: dict[str, asyncio.Queue] = {}
@@ -99,7 +99,7 @@ class InMemoryBroker(RequestBroker):
       self.futures_events.pop(req_id, None)
 
 
-class RedisBroker(RequestBroker):
+class RedisStore(RequestStore):
   def __init__(self, redis_url: str):
     self.redis = redis.from_url(redis_url, decode_responses=True, health_check_interval=2)
     self.active_list = "open_rl:active_tenants"
@@ -176,17 +176,17 @@ class RedisBroker(RequestBroker):
 
 
 # Global singleton factory
-_broker_instance = None
+_store_instance = None
 
 
-def get_broker() -> RequestBroker:
-  global _broker_instance
-  if _broker_instance is None:
+def get_store() -> RequestStore:
+  global _store_instance
+  if _store_instance is None:
     redis_url = os.environ.get("REDIS_URL")
     if redis_url:
-      print(f"[RequestBroker] Initializing Redis backend at {redis_url} with RR Tenant Queues")
-      _broker_instance = RedisBroker(redis_url)
+      print(f"[RequestStore] Initializing Redis backend at {redis_url} with RR Tenant Queues")
+      _store_instance = RedisStore(redis_url)
     else:
-      print("[RequestBroker] Initializing In-Memory backend with RR Tenant Queues")
-      _broker_instance = InMemoryBroker()
-  return _broker_instance
+      print("[RequestStore] Initializing In-Memory backend with RR Tenant Queues")
+      _store_instance = InMemoryStore()
+  return _store_instance

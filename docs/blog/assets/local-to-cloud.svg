@@ -80,7 +80,7 @@
   <rect x="250" y="316" width="165" height="22" rx="12" fill="#fef2f2"/>
   <rect x="250" y="326" width="165" height="12" fill="#fef2f2"/>
   <text x="264" y="332" font-family="ui-sans-serif, system-ui, sans-serif" font-size="7" font-weight="700" fill="#dc2626" letter-spacing="0.03em">POD</text>
-  <text x="290" y="332" font-family="ui-monospace, SFMono-Regular, monospace" font-size="7" fill="#dc2626">redis-broker</text>
+  <text x="290" y="332" font-family="ui-monospace, SFMono-Regular, monospace" font-size="7" fill="#dc2626">redis-store</text>
 
   <rect x="264" y="346" width="135" height="14" rx="4" fill="#fef2f2" stroke="#fca5a5" stroke-width="0.6"/>
   <text x="332" y="356" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, monospace" font-size="6" fill="#dc2626">queue:fwd_bwd [tenant_1]</text>

@@ -20,7 +20,7 @@ This guide shows how to run the local FunctionGemma SFT demo.
 ```bash
 cd server
 OPEN_RL_SINGLE_PROCESS=1 \
-SAMPLER_BACKEND=engine \
+SAMPLER_BACKEND=torch \
 OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" \
 uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9000
 ```

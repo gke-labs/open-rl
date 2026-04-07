@@ -19,8 +19,8 @@ flowchart TD
         %% Gateway
         gw["OpenRL API Gateway<br/>(open-rl-gateway)"]:::gateway
         
-        %% Redis Message Broker
-        subgraph Redis["Redis Broker (StateStore)"]
+        %% Redis Message Store
+        subgraph Redis["Redis Store (StateStore)"]
             queue1[("Queue: Job 1<br/>(Tenant f137...)")]:::cache
             queue2[("Queue: Job 2<br/>(Tenant db04...)")]:::cache
         end

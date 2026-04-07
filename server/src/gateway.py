@@ -7,9 +7,9 @@ from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
 # Removed direct PyTorch engine import to keep Gateway stateless
-from .broker import get_broker
+from .store import get_store
 
-broker = get_broker()
+store = get_store()
 import json
 import logging
 import time
@@ -38,13 +38,13 @@ else:
   print("OpenTelemetry: No exporter configured (ENABLE_GCP_TRACE=0)")
 
 
-async def enqueue_traced_request(broker, payload: dict) -> None:
+async def enqueue_traced_request(store, payload: dict) -> None:
   carrier = {}
   from opentelemetry import propagate
 
   propagate.inject(carrier)
   payload["trace_context"] = carrier
-  await broker.put_request(payload)
+  await store.put_request(payload)
 
 
 class FilterNoisyEndpoints(logging.Filter):
@@ -67,7 +67,7 @@ def get_sampler_backend() -> str:
   explicit = os.getenv("SAMPLER_BACKEND")
   if explicit:
     return explicit.lower()
-  return "engine" if is_single_process_mode() else "vllm"
+  return "torch" if is_single_process_mode() else "vllm"
 
 
 def get_default_model_name() -> str | None:
@@ -133,7 +133,7 @@ async def session_heartbeat(req: dict):
 @app.post("/api/v1/create_model")
 async def create_model(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
 
   base_model = req.get("base_model")
   if not base_model:
@@ -146,7 +146,7 @@ async def create_model(req: dict):
   # Push the creation task globally to the Redis Queue for the decoupled Trainer Engine
   # Note: We must route this specifically so the Engine instance can pick it up.
   # Since it's a global operation (not tenant specific yet), we use "default" or model_id
-  await broker.put_request(
+  await store.put_request(
     {
       "req_id": req_id,
       "model_id": model_id,  # Tenant specific queue
@@ -182,7 +182,7 @@ background_tasks = set()
 @app.post("/api/v1/forward_backward")
 async def forward_backward(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
 
   fwd_input = req.get("forward_backward_input", {})
   data = fwd_input.get("data", [])
@@ -191,7 +191,7 @@ async def forward_backward(req: dict):
   model_id = req.get("model_id")
 
   await enqueue_traced_request(
-    broker,
+    store,
     {
       "req_id": req_id,
       "model_id": model_id,
@@ -208,13 +208,13 @@ async def forward_backward(req: dict):
 @app.post("/api/v1/optim_step")
 async def optim_step(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
 
   adam_params = req.get("adam_params", {})
   model_id = req.get("model_id")
 
   await enqueue_traced_request(
-    broker,
+    store,
     {
       "req_id": req_id,
       "model_id": model_id,
@@ -229,7 +229,7 @@ async def optim_step(req: dict):
 @app.post("/api/v1/save_weights_for_sampler")
 async def save_weights_for_sampler(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
   model_id = req.get("model_id")  # Client passes the TrainingClient's model_id
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
@@ -257,14 +257,14 @@ async def save_weights_for_sampler(req: dict):
   result = {"path": result_path, "sampling_session_id": session_id, "type": "save_weights_for_sampler"}
 
   # Instantly resolve the future, bypassing the Redis queue!
-  await broker.set_future(req_id, result)
+  await store.set_future(req_id, result)
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/save_weights")
 async def save_weights(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
@@ -292,7 +292,7 @@ async def save_weights(req: dict):
   result = {"path": result_path, "sampling_session_id": session_id, "type": "save_weights"}
 
   # Instantly resolve the future, bypassing the Redis queue!
-  await broker.set_future(req_id, result)
+  await store.set_future(req_id, result)
   return {"request_id": req_id}
 
 
@@ -366,7 +366,7 @@ async def create_sampling_session(req: dict):
 @app.post("/api/v1/asample")
 async def asample(req: dict):
   req_id = str(uuid.uuid4())
-  await broker.set_future(req_id, {"status": "pending"})
+  await store.set_future(req_id, {"status": "pending"})
 
   prompt = req.get("prompt", {}).get("chunks", [])[0].get("tokens", [])
   params = req.get("sampling_params", {})
@@ -386,9 +386,9 @@ async def asample(req: dict):
   base_model_id = lora_id.split("-samp-")[0] if lora_id else None
 
   sampler_backend = get_sampler_backend()
-  if sampler_backend == "engine":
+  if sampler_backend == "torch":
     await enqueue_traced_request(
-      broker,
+      store,
       {
         "req_id": req_id,
         "model_id": base_model_id or model_id,
@@ -442,10 +442,10 @@ async def asample(req: dict):
         data = resp.json()
       if data.get("type") != "RequestFailedResponse":
         data["type"] = "sample"
-      await broker.set_future(req_id, data)
+      await store.set_future(req_id, data)
     except Exception as e:
       traceback.print_exc()
-      await broker.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e), "category": "server_error"})
+      await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e), "category": "server_error"})
 
   task = asyncio.create_task(_route_to_vllm())
   background_tasks.add(task)
@@ -460,7 +460,7 @@ async def retrieve_future(req: dict):
   if not request_id:
     return JSONResponse(status_code=400, content={"error": "request_id is required"})
 
-  result = await broker.get_future(request_id, timeout=60.0)
+  result = await store.get_future(request_id, timeout=60.0)
   if result is None:
     return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
 

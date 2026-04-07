@@ -16,9 +16,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 tracer = trace.get_tracer(__name__)
 
-from .broker import get_broker
+from .store import get_store
 
-broker = get_broker()
+store = get_store()
 
 import math
 
@@ -412,12 +412,12 @@ async def lifespan(app: FastAPI):
 
 
 async def clock_cycle_loop():
-  global broker
+  global store
   while True:
     try:
       # Block until requests are available and drain the queue
       # With the new RR Queue logic, this batch is guaranteed to belong to ONE tenant
-      batch = await broker.get_requests()
+      batch = await store.get_requests()
       if not batch:
         await asyncio.sleep(0.1)
         continue
@@ -444,7 +444,7 @@ async def clock_cycle_loop():
             except Exception as e:
               print(f"Failed to set adapter {m_id}: {e}")
               for r in batch:
-                await broker.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
+                await store.set_future(r["req_id"], {"type": "RequestFailedResponse", "error_message": str(e)})
               continue
 
           print(f"     Executing {len(batch)} operations for {m_id}...")
@@ -468,12 +468,12 @@ async def clock_cycle_loop():
                 loss_config = r["loss_config"]
                 result = await asyncio.to_thread(engine.forward_backward, data, loss_fn, loss_config, m_id)
                 result["type"] = "forward_backward"
-                await broker.set_future(req_id, result)
+                await store.set_future(req_id, result)
               elif req_type == "optim_step":
                 adam_params = r["adam_params"]
                 result = await asyncio.to_thread(engine.optim_step, adam_params, m_id)
                 result["type"] = "optim_step"
-                await broker.set_future(req_id, result)
+                await store.set_future(req_id, result)
               elif req_type == "sample":
                 prompt_tokens = r["prompt_tokens"]
                 max_tokens = r["max_tokens"]
@@ -481,16 +481,16 @@ async def clock_cycle_loop():
                 temperature = r.get("temperature", 0.0)
                 result = await asyncio.to_thread(engine.generate, prompt_tokens, max_tokens, num_samples, temperature, m_id)
                 result["type"] = "sample"
-                await broker.set_future(req_id, result)
+                await store.set_future(req_id, result)
               elif req_type == "create_model":
                 base_model = r["base_model"]
                 lora_config = r.get("lora_config") or {}
                 rank = lora_config.get("rank", 16)
                 await asyncio.to_thread(engine.load_model, base_model, m_id, lora_config)
-                await broker.set_future(req_id, {"model_id": m_id, "is_lora": True, "lora_rank": rank, "type": "create_model"})
+                await store.set_future(req_id, {"model_id": m_id, "is_lora": True, "lora_rank": rank, "type": "create_model"})
             except Exception as e:
               traceback.print_exc()
-              await broker.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+              await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
             finally:
               if token:
                 otel_context.detach(token)
@@ -506,11 +506,11 @@ async def clock_cycle_loop():
       import redis
 
       if isinstance(e, redis.exceptions.ConnectionError):
-        print("[engine] Destroying RequestBroker singleton to force Redis reconnection...")
-        from . import broker as broker_mod
+        print("[engine] Destroying RequestStore singleton to force Redis reconnection...")
+        from . import store as store_mod
 
-        broker_mod._broker_instance = None
-        broker = broker_mod.get_broker()
+        store_mod._store_instance = None
+        store = store_mod.get_store()
 
       await asyncio.sleep(1)
 
