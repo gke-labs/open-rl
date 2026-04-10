@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
     print(f"-> Base model: {base_model or 'unset'}")
     print("-> Backend   : gateway + worker loop in one process\n")
     if base_model:
-      await asyncio.to_thread(clock_cycle.engine.preload_base_model, base_model)
+      await asyncio.to_thread(clock_cycle.engine.load_base_model, base_model)
     task = asyncio.create_task(clock_cycle.clock_cycle_loop())
   try:
     yield
