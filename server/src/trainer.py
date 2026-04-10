@@ -12,7 +12,6 @@ from peft import PeftModelForCausalLM, get_peft_model
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
-# ── Wire types ────────────────────────────────────────
 
 class TensorData(BaseModel):
   data: list[int] | list[float]
@@ -30,6 +29,7 @@ class LoraConfig(BaseModel):
 class Datum(BaseModel):
   loss_fn_inputs: dict[str, TensorData]
   model_input: list[int]
+
 
 class TrainerEngine:
   def __init__(self):
@@ -144,11 +144,7 @@ class TrainerEngine:
       self.peft_model.save_pretrained(save_path, selected_adapters=[adapter_id])
 
       # Save minimal metadata
-      metadata = {
-        "model_id": adapter_id,
-        "created_at": datetime.now().isoformat(),
-        "timestamp": time.time()
-      }
+      metadata = {"model_id": adapter_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
       with open(os.path.join(save_path, "metadata.json"), "w") as f:
         json.dump(metadata, f)
 
@@ -211,21 +207,12 @@ class TrainerEngine:
       logprobs_list = target_logprobs.detach().cpu().tolist()
       logprobs_list = [max(l, -9999.0) if not math.isinf(l) else (-9999.0 if l < 0 else 9999.0) for l in logprobs_list]
 
-      loss_fn_outputs.append({
-        "logprobs": {
-          "data": logprobs_list,
-          "dtype": "float32",
-          "shape": [len(logprobs_list)]
-        }
-      })
+      loss_fn_outputs.append({"logprobs": {"data": logprobs_list, "dtype": "float32", "shape": [len(logprobs_list)]}})
 
     mean_loss = total_loss / max(1, len(data))
 
     return {
-      "metrics": {
-        "loss:mean": self._sanitize_float(mean_loss),
-        "loss:sum": self._sanitize_float(total_loss)
-      },
+      "metrics": {"loss:mean": self._sanitize_float(mean_loss), "loss:sum": self._sanitize_float(total_loss)},
       "loss_fn_outputs": loss_fn_outputs,
       "loss_fn_output_type": "ArrayRecord",
     }
@@ -417,7 +404,7 @@ class TrainerEngine:
     sequences_out = []
     for seq_idx in range(num_samples):
       gen_sequences = outputs.sequences[seq_idx]
-      generated_tokens = gen_sequences[len(prompt_tokens):].cpu().tolist()
+      generated_tokens = gen_sequences[len(prompt_tokens) :].cpu().tolist()
 
       logprobs = []
       for token_step_idx in range(len(generated_tokens)):

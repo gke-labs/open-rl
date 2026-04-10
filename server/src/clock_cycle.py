@@ -75,12 +75,15 @@ async def clock_cycle_loop() -> None:
                 await asyncio.to_thread(engine.load_base_model, base_model)
                 await asyncio.to_thread(engine.create_adapter, m_id, lora_config)
 
-                await store.set_future(req_id, {
-                  "model_id": m_id,
-                  "is_lora": True,
-                  "lora_rank": lora_config.rank,
-                  "type": "create_model",
-                })
+                await store.set_future(
+                  req_id,
+                  {
+                    "model_id": m_id,
+                    "is_lora": True,
+                    "lora_rank": lora_config.rank,
+                    "type": "create_model",
+                  },
+                )
 
               case "forward_backward":
                 raw_data = r["data"]
@@ -106,7 +109,12 @@ async def clock_cycle_loop() -> None:
                 temperature = r.get("temperature", 0.0)
 
                 result = await asyncio.to_thread(
-                  engine.generate, prompt_tokens, max_tokens, num_samples, temperature, m_id,
+                  engine.generate,
+                  prompt_tokens,
+                  max_tokens,
+                  num_samples,
+                  temperature,
+                  m_id,
                 )
                 result["type"] = "sample"
                 await store.set_future(req_id, result)

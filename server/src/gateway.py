@@ -144,13 +144,15 @@ async def create_model(req: dict):
   if not base_model:
     return JSONResponse(status_code=400, content={"error": "base_model is required"})
   model_id = str(uuid.uuid4())
-  req_id = await _enqueue({
-    "req_id": model_id,
-    "model_id": model_id,
-    "type": "create_model",
-    "base_model": base_model,
-    "lora_config": req.get("lora_config") or {},
-  })
+  req_id = await _enqueue(
+    {
+      "req_id": model_id,
+      "model_id": model_id,
+      "type": "create_model",
+      "base_model": base_model,
+      "lora_config": req.get("lora_config") or {},
+    }
+  )
   return {"request_id": req_id}
 
 
@@ -190,24 +192,28 @@ async def retrieve_future(req: dict):
 async def forward_backward(req: dict):
   """TrainingClient.forward_backward_async()"""
   fwd_input = req.get("forward_backward_input", {})
-  req_id = await _enqueue({
-    "model_id": req.get("model_id"),
-    "type": "forward_backward",
-    "data": fwd_input.get("data", []),
-    "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
-    "loss_config": fwd_input.get("loss_fn_config", {}),
-  })
+  req_id = await _enqueue(
+    {
+      "model_id": req.get("model_id"),
+      "type": "forward_backward",
+      "data": fwd_input.get("data", []),
+      "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
+      "loss_config": fwd_input.get("loss_fn_config", {}),
+    }
+  )
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/optim_step")
 async def optim_step(req: dict):
   """TrainingClient.optim_step_async()"""
-  req_id = await _enqueue({
-    "model_id": req.get("model_id"),
-    "type": "optim_step",
-    "adam_params": req.get("adam_params", {}),
-  })
+  req_id = await _enqueue(
+    {
+      "model_id": req.get("model_id"),
+      "type": "optim_step",
+      "adam_params": req.get("adam_params", {}),
+    }
+  )
   return {"request_id": req_id}
 
 
@@ -233,11 +239,14 @@ async def save_weights_for_sampler(req: dict):
     print(f"Failed to update alias metadata: {e}")
 
   session_id = f"{model_id}-samp-{seq_id}"
-  await store.set_future(req_id, {
-    "path": f"tinker://{session_id}" if alias else None,
-    "sampling_session_id": session_id,
-    "type": "save_weights_for_sampler",
-  })
+  await store.set_future(
+    req_id,
+    {
+      "path": f"tinker://{session_id}" if alias else None,
+      "sampling_session_id": session_id,
+      "type": "save_weights_for_sampler",
+    },
+  )
   return {"request_id": req_id}
 
 
@@ -263,11 +272,14 @@ async def save_weights(req: dict):
     print(f"Failed to update alias metadata: {e}")
 
   session_id = f"{model_id}-samp-{seq_id}"
-  await store.set_future(req_id, {
-    "path": f"tinker://{session_id}",
-    "sampling_session_id": session_id,
-    "type": "save_weights",
-  })
+  await store.set_future(
+    req_id,
+    {
+      "path": f"tinker://{session_id}",
+      "sampling_session_id": session_id,
+      "type": "save_weights",
+    },
+  )
   return {"request_id": req_id}
 
 
@@ -279,7 +291,7 @@ async def create_sampling_session(req: dict):
   model_id = req.get("model_id")
 
   if model_path and model_path.startswith("tinker://"):
-    sess_id = model_path[len("tinker://"):]
+    sess_id = model_path[len("tinker://") :]
   else:
     sess_id = model_id or "samp-session-live-123"
 
@@ -297,18 +309,20 @@ async def asample(req: dict):
 
   model_id = req.get("model_id") or req.get("sampling_session_id")
   if model_id and model_id.startswith("tinker://"):
-    model_id = model_id[len("tinker://"):]
+    model_id = model_id[len("tinker://") :]
   base_model_id = model_id.split("-samp-")[0] if model_id else None
 
   if get_sampler_backend() == "torch":
-    req_id = await _enqueue({
-      "model_id": base_model_id or model_id,
-      "type": "sample",
-      "prompt_tokens": prompt,
-      "max_tokens": max_tokens,
-      "temperature": temperature,
-      "num_samples": num_samples,
-    })
+    req_id = await _enqueue(
+      {
+        "model_id": base_model_id or model_id,
+        "type": "sample",
+        "prompt_tokens": prompt,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "num_samples": num_samples,
+      }
+    )
     return {"request_id": req_id}
 
   # vLLM backend
