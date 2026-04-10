@@ -72,10 +72,10 @@ def get_sampler_backend() -> str:
 
 def get_default_model_name() -> str | None:
   if is_single_process_mode():
-    from . import trainer as trainer_engine
+    from . import clock_cycle
 
-    if trainer_engine.engine.base_model_name:
-      return trainer_engine.engine.base_model_name
+    if clock_cycle.engine.base_model_name:
+      return clock_cycle.engine.base_model_name
   return os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("VLLM_MODEL")
 
 
@@ -83,17 +83,17 @@ def get_default_model_name() -> str | None:
 async def lifespan(app: FastAPI):
   task = None
   if is_single_process_mode():
-    from . import trainer as trainer_engine
+    from . import clock_cycle
 
     base_model = os.getenv("OPEN_RL_BASE_MODEL")
     print("\n" + "=" * 50)
     print(" Open-RL Single-Process Mode")
     print("=" * 50)
     print(f"-> Base model: {base_model or 'unset'}")
-    print("-> Backend   : gateway + engine loop in one process\n")
+    print("-> Backend   : gateway + worker loop in one process\n")
     if base_model:
-      await asyncio.to_thread(trainer_engine.engine.preload_base_model, base_model)
-    task = asyncio.create_task(trainer_engine.clock_cycle_loop())
+      await asyncio.to_thread(clock_cycle.engine.preload_base_model, base_model)
+    task = asyncio.create_task(clock_cycle.clock_cycle_loop())
   try:
     yield
   finally:
