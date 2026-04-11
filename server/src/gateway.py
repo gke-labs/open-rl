@@ -1,31 +1,28 @@
 import asyncio
-import os
-import uuid
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-
-# Removed direct PyTorch engine import to keep Gateway stateless
-from .store import get_store
-
-store = get_store()
-import json
 import logging
+import os
 import time
 import traceback
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime
 
-from opentelemetry import trace
+import httpx
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-# Initialize OpenTelemetry TracerProvider
+from .store import get_store
+
+store = get_store()
+
 provider = TracerProvider()
 trace.set_tracer_provider(provider)
 
-if os.environ.get("ENABLE_GCP_TRACE", "0") == "1":
+if os.getenv("ENABLE_GCP_TRACE", "0") == "1":
   try:
     from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
 
@@ -38,22 +35,19 @@ else:
   print("OpenTelemetry: No exporter configured (ENABLE_GCP_TRACE=0)")
 
 
-async def enqueue_traced_request(store, payload: dict) -> None:
-  carrier = {}
-  from opentelemetry import propagate
-
-  propagate.inject(carrier)
-  payload["trace_context"] = carrier
-  await store.put_request(payload)
-
-
-class FilterNoisyEndpoints(logging.Filter):
+class _FilterNoisyEndpoints(logging.Filter):
   def filter(self, record: logging.LogRecord) -> bool:
     msg = record.getMessage()
     return "retrieve_future" not in msg and "session_heartbeat" not in msg
 
 
-logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
+logging.getLogger("uvicorn.access").addFilter(_FilterNoisyEndpoints())
+
+TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
+
+
+# *** Helpers ***
 
 
 def is_single_process_mode() -> bool:
@@ -72,28 +66,40 @@ def get_sampler_backend() -> str:
 
 def get_default_model_name() -> str | None:
   if is_single_process_mode():
-    from . import trainer as trainer_engine
+    from . import clock_cycle
 
-    if trainer_engine.engine.base_model_name:
-      return trainer_engine.engine.base_model_name
+    if clock_cycle.engine.base_model_name:
+      return clock_cycle.engine.base_model_name
   return os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("VLLM_MODEL")
+
+
+async def _enqueue(payload: dict) -> str:
+  """Create a pending future, inject trace context, push to store. Returns req_id."""
+  req_id = payload.get("req_id") or str(uuid.uuid4())
+  payload["req_id"] = req_id
+  carrier: dict = {}
+  propagate.inject(carrier)
+  payload["trace_context"] = carrier
+  await store.set_future(req_id, {"status": "pending"})
+  await store.put_request(payload)
+  return req_id
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
   task = None
   if is_single_process_mode():
-    from . import trainer as trainer_engine
+    from . import clock_cycle
 
     base_model = os.getenv("OPEN_RL_BASE_MODEL")
     print("\n" + "=" * 50)
     print(" Open-RL Single-Process Mode")
     print("=" * 50)
     print(f"-> Base model: {base_model or 'unset'}")
-    print("-> Backend   : gateway + engine loop in one process\n")
+    print("-> Backend   : gateway + worker loop in one process\n")
     if base_model:
-      await asyncio.to_thread(trainer_engine.engine.preload_base_model, base_model)
-    task = asyncio.create_task(trainer_engine.clock_cycle_loop())
+      await asyncio.to_thread(clock_cycle.engine.load_base_model, base_model)
+    task = asyncio.create_task(clock_cycle.clock_cycle_loop())
   try:
     yield
   finally:
@@ -105,6 +111,7 @@ app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 
+# *** ServiceClient endpoints ***
 @app.get("/api/v1/healthz")
 async def health_check():
   return {"status": "ok"}
@@ -132,42 +139,32 @@ async def session_heartbeat(req: dict):
 
 @app.post("/api/v1/create_model")
 async def create_model(req: dict):
-  req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
-
+  """ServiceClient.create_lora_training_client_async()"""
   base_model = req.get("base_model")
   if not base_model:
     return JSONResponse(status_code=400, content={"error": "base_model is required"})
-
-  lora_config = req.get("lora_config") or {}
-
-  model_id = req_id
-
-  # Push the creation task globally to the Redis Queue for the decoupled Trainer Engine
-  # Note: We must route this specifically so the Engine instance can pick it up.
-  # Since it's a global operation (not tenant specific yet), we use "default" or model_id
-  await store.put_request(
+  model_id = str(uuid.uuid4())
+  req_id = await _enqueue(
     {
-      "req_id": req_id,
-      "model_id": model_id,  # Tenant specific queue
+      "req_id": model_id,
+      "model_id": model_id,
       "type": "create_model",
       "base_model": base_model,
-      "lora_config": lora_config,
+      "lora_config": req.get("lora_config") or {},
     }
   )
-
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/get_info")
 async def get_info(req: dict):
+  """ServiceClient — model metadata for the training client."""
   model_name = get_default_model_name()
   if not model_name:
-    return JSONResponse(status_code=404, content={"error": "No base model is configured for the current server session"})
-
+    return JSONResponse(status_code=404, content={"error": "No base model is configured"})
   return {
     "model_data": {"arch": "unknown", "model_name": model_name, "tokenizer_id": model_name},
-    "model_id": req.get("model_id", "model-live-123"),  # Will be whatever client passed
+    "model_id": req.get("model_id", "model-live-123"),
     "is_lora": True,
     "lora_rank": 16,
     "model_name": model_name,
@@ -175,183 +172,121 @@ async def get_info(req: dict):
   }
 
 
-# Global set to hold strong references to background tasks to prevent GC
-background_tasks = set()
+@app.post("/api/v1/retrieve_future")
+async def retrieve_future(req: dict):
+  """ServiceClient — poll for async request results."""
+  request_id = req.get("request_id")
+  if not request_id:
+    return JSONResponse(status_code=400, content={"error": "request_id is required"})
+
+  result = await store.get_future(request_id, timeout=60.0)
+  if result is None:
+    return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
+  if isinstance(result, dict) and result.get("type") == "RequestFailedResponse":
+    return JSONResponse(status_code=400, content=result)
+  return result
 
 
+# *** TrainingClient endpoints ***
 @app.post("/api/v1/forward_backward")
 async def forward_backward(req: dict):
-  req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
-
+  """TrainingClient.forward_backward_async()"""
   fwd_input = req.get("forward_backward_input", {})
-  data = fwd_input.get("data", [])
-  loss_fn = fwd_input.get("loss_fn", "cross_entropy")
-  loss_config = fwd_input.get("loss_fn_config", {})
-  model_id = req.get("model_id")
-
-  await enqueue_traced_request(
-    store,
+  req_id = await _enqueue(
     {
-      "req_id": req_id,
-      "model_id": model_id,
+      "model_id": req.get("model_id"),
       "type": "forward_backward",
-      "data": data,
-      "loss_fn": loss_fn,
-      "loss_config": loss_config,
-    },
+      "data": fwd_input.get("data", []),
+      "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
+      "loss_config": fwd_input.get("loss_fn_config", {}),
+    }
   )
-
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/optim_step")
 async def optim_step(req: dict):
-  req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
-
-  adam_params = req.get("adam_params", {})
-  model_id = req.get("model_id")
-
-  await enqueue_traced_request(
-    store,
+  """TrainingClient.optim_step_async()"""
+  req_id = await _enqueue(
     {
-      "req_id": req_id,
-      "model_id": model_id,
+      "model_id": req.get("model_id"),
       "type": "optim_step",
-      "adam_params": adam_params,
-    },
+      "adam_params": req.get("adam_params", {}),
+    }
   )
-
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/save_weights_for_sampler")
 async def save_weights_for_sampler(req: dict):
+  """TrainingClient.save_weights_for_sampler() — instant resolve, trainer auto-saves after optim_step."""
   req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
-  model_id = req.get("model_id")  # Client passes the TrainingClient's model_id
+  model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  seq_id = req.get("sampling_session_seq_id", 0)
-  if not seq_id:
-    seq_id = int(time.time() * 1000)
-  # Tinker SDK might send 'name' or 'alias', or 'path' (if using save_weights_for_sampler)
+
+  seq_id = req.get("sampling_session_seq_id") or int(time.time() * 1000)
   alias = req.get("name") or req.get("alias") or req.get("path")
 
-  # 1. Update the metadata.json instantly
-  tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-  ram_path = os.path.join(tmp_dir, "peft", model_id)
+  ram_path = os.path.join(TMP_DIR, "peft", model_id)
   os.makedirs(ram_path, exist_ok=True)
-
-  metadata = {"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
   try:
+    import json
+
     with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-      json.dump(metadata, f)
+      json.dump({"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}, f)
   except Exception as e:
     print(f"Failed to update alias metadata: {e}")
 
   session_id = f"{model_id}-samp-{seq_id}"
-  result_path = f"tinker://{session_id}" if alias else None
-
-  result = {"path": result_path, "sampling_session_id": session_id, "type": "save_weights_for_sampler"}
-
-  # Instantly resolve the future, bypassing the Redis queue!
-  await store.set_future(req_id, result)
+  await store.set_future(
+    req_id,
+    {
+      "path": f"tinker://{session_id}" if alias else None,
+      "sampling_session_id": session_id,
+      "type": "save_weights_for_sampler",
+    },
+  )
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/save_weights")
 async def save_weights(req: dict):
+  """TrainingClient.save_weights()"""
   req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  seq_id = req.get("seq_id", 0)
-  if not seq_id:
-    seq_id = int(time.time() * 1000)
-  # in .save(path="..."), the path is the identifier
+
+  seq_id = req.get("seq_id") or int(time.time() * 1000)
   alias = req.get("path")
 
-  # 1. Update the metadata.json instantly
-  tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-  ram_path = os.path.join(tmp_dir, "peft", model_id)
+  ram_path = os.path.join(TMP_DIR, "peft", model_id)
   os.makedirs(ram_path, exist_ok=True)
-
-  metadata = {"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
   try:
+    import json
+
     with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-      json.dump(metadata, f)
+      json.dump({"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}, f)
   except Exception as e:
     print(f"Failed to update alias metadata: {e}")
 
   session_id = f"{model_id}-samp-{seq_id}"
-  result_path = f"tinker://{session_id}"
-
-  result = {"path": result_path, "sampling_session_id": session_id, "type": "save_weights"}
-
-  # Instantly resolve the future, bypassing the Redis queue!
-  await store.set_future(req_id, result)
+  await store.set_future(
+    req_id,
+    {
+      "path": f"tinker://{session_id}",
+      "sampling_session_id": session_id,
+      "type": "save_weights",
+    },
+  )
   return {"request_id": req_id}
 
 
-@app.get("/api/v1/list_adapters")
-async def list_adapters():
-  """
-  Scans the local temporary directory (used for RAM-disk sync) for available PEFT adapters.
-  Returns a list of adapters with metadata (creation time, alias) if available.
-  """
-  tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-  peft_dir = os.path.join(tmp_dir, "peft")
-
-  adapters = []
-
-  if os.path.exists(peft_dir):
-    # Scan all directories in peft_dir
-    with os.scandir(peft_dir) as entries:
-      for entry in entries:
-        if entry.is_dir():
-          model_id = entry.name
-          metadata_path = os.path.join(entry.path, "metadata.json")
-
-          adapter_info = {
-            "model_id": model_id,
-            "created_at": entry.stat().st_ctime,  # Fallback to filesystem time
-            "timestamp": entry.stat().st_ctime,
-            "alias": None,
-          }
-
-          # Try to read metadata.json
-          if os.path.exists(metadata_path):
-            try:
-              with open(metadata_path) as f:
-                meta = json.load(f)
-                adapter_info.update(meta)
-            except Exception:
-              pass
-
-          adapters.append(adapter_info)
-
-  # Sort by creation time descending (newest first)
-  # Prefer 'timestamp' (float) if available, otherwise 'created_at' if it's a number
-  def get_sort_key(x):
-    ts = x.get("timestamp")
-    if isinstance(ts, (int, float)):
-      return ts
-    ca = x.get("created_at")
-    if isinstance(ca, (int, float)):
-      return ca
-    return 0
-
-  adapters.sort(key=get_sort_key, reverse=True)
-
-  return {"adapters": adapters}
-
-
+# *** SamplingClient endpoints ***
 @app.post("/api/v1/create_sampling_session")
 async def create_sampling_session(req: dict):
-  # Support 'model_path' from SDK (e.g. "tinker://uuid-samp-seq")
+  """ServiceClient.create_sampling_client()"""
   model_path = req.get("model_path")
   model_id = req.get("model_id")
 
@@ -365,9 +300,7 @@ async def create_sampling_session(req: dict):
 
 @app.post("/api/v1/asample")
 async def asample(req: dict):
-  req_id = str(uuid.uuid4())
-  await store.set_future(req_id, {"status": "pending"})
-
+  """SamplingClient.sample_async()"""
   prompt = req.get("prompt", {}).get("chunks", [])[0].get("tokens", [])
   params = req.get("sampling_params", {})
   max_tokens = params.get("max_tokens", 20)
@@ -375,99 +308,87 @@ async def asample(req: dict):
   num_samples = req.get("num_samples", 1)
 
   model_id = req.get("model_id") or req.get("sampling_session_id")
-  # Strip potential tinker:// prefix explicitly
   if model_id and model_id.startswith("tinker://"):
     model_id = model_id[len("tinker://") :]
+  base_model_id = model_id.split("-samp-")[0] if model_id else None
 
-  # vLLM caches adapters natively based on the `lora_id` key.
-  # To force vLLM to reload weights after PyTorch trains them, we pass a unique sequential `lora_id`.
-  lora_id = model_id
-  # Strip the sequence tag to find the base directory where PyTorch actually wrote the checkpoint
-  base_model_id = lora_id.split("-samp-")[0] if lora_id else None
-
-  sampler_backend = get_sampler_backend()
-  if sampler_backend == "torch":
-    await enqueue_traced_request(
-      store,
+  if get_sampler_backend() == "torch":
+    req_id = await _enqueue(
       {
-        "req_id": req_id,
         "model_id": base_model_id or model_id,
         "type": "sample",
         "prompt_tokens": prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
         "num_samples": num_samples,
-      },
+      }
     )
     return {"request_id": req_id}
 
-  # IPC Bridge: Route to vLLM worker on Port 8001 instead of PyTorch Queue
-  async def _route_to_vllm():
-    try:
-      import os
+  # vLLM backend
+  req_id = str(uuid.uuid4())
+  await store.set_future(req_id, {"status": "pending"})
 
-      tmp_dir = os.environ.get("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-      # PEFT natively saves adapters into subdirectories named after their adapter ID
-      # Engine saves to: tmp_dir/peft/m_id (because adapter_name=m_id)
-      lora_path = os.path.join(tmp_dir, "peft", base_model_id, base_model_id) if base_model_id else None
+  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if base_model_id else None
+  headers: dict[str, str] = {"Content-Type": "application/json"}
+  propagate.inject(headers)
 
-      print(f"[Gateway DEBUG] Routing sample to vLLM. model_id_received={model_id} -> lora_id={lora_id}, lora_path={lora_path}")
-
-      payload = {
-        "request_id": req_id,
-        "prompt_token_ids": prompt,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        "num_samples": num_samples,
-        "lora_id": lora_id,
-        "lora_path": lora_path,
-      }
-
-      # Use VLLM_URL env var instead of hardcoded 127.0.0.1:8001
-      vllm_url = os.environ.get("VLLM_URL", "http://127.0.0.1:8001")
-      vllm_generate_endpoint = f"{vllm_url.rstrip('/')}/generate"
-
-      headers = {"Content-Type": "application/json"}
-      from opentelemetry import propagate
-
-      propagate.inject(headers)
-
-      import httpx
-
-      # Use AsyncClient natively to prevent ThreadPool exhaustion from concurrent RL jobs!
-      # Increase timeout significantly since large RL batches will queue up in vLLM for > 60s
-      async with httpx.AsyncClient(timeout=60.0) as client:
-        resp = await client.post(vllm_generate_endpoint, json=payload, headers=headers)
-        resp.raise_for_status()
-        data = resp.json()
-      if data.get("type") != "RequestFailedResponse":
-        data["type"] = "sample"
-      await store.set_future(req_id, data)
-    except Exception as e:
-      traceback.print_exc()
-      await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e), "category": "server_error"})
-
-  task = asyncio.create_task(_route_to_vllm())
-  background_tasks.add(task)
-  task.add_done_callback(background_tasks.discard)
+  try:
+    async with httpx.AsyncClient(timeout=60.0) as client:
+      resp = await client.post(
+        f"{VLLM_URL.rstrip('/')}/generate",
+        json={
+          "request_id": req_id,
+          "prompt_token_ids": prompt,
+          "max_tokens": max_tokens,
+          "temperature": temperature,
+          "num_samples": num_samples,
+          "lora_id": model_id,
+          "lora_path": lora_path,
+        },
+        headers=headers,
+      )
+      resp.raise_for_status()
+      data = resp.json()
+    if data.get("type") != "RequestFailedResponse":
+      data["type"] = "sample"
+    await store.set_future(req_id, data)
+  except Exception as e:
+    traceback.print_exc()
+    await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
 
   return {"request_id": req_id}
 
 
-@app.post("/api/v1/retrieve_future")
-async def retrieve_future(req: dict):
-  request_id = req.get("request_id")
-  if not request_id:
-    return JSONResponse(status_code=400, content={"error": "request_id is required"})
+# *** CLI endpoints ***
 
-  result = await store.get_future(request_id, timeout=60.0)
-  if result is None:
-    return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
 
-  if isinstance(result, dict) and result.get("type") == "RequestFailedResponse":
-    return JSONResponse(status_code=400, content=result)
+@app.get("/api/v1/list_adapters")
+async def list_adapters():
+  """CLI `list` — scan the peft directory for saved adapters."""
+  import json
 
-  return result
+  peft_dir = os.path.join(TMP_DIR, "peft")
+  adapters = []
+
+  if os.path.exists(peft_dir):
+    for entry in sorted(os.scandir(peft_dir), key=lambda e: e.stat().st_ctime, reverse=True):
+      if not entry.is_dir():
+        continue
+      info = {"model_id": entry.name, "created_at": entry.stat().st_ctime, "timestamp": entry.stat().st_ctime, "alias": None}
+      metadata_path = os.path.join(entry.path, "metadata.json")
+      if os.path.exists(metadata_path):
+        try:
+          with open(metadata_path) as f:
+            info.update(json.load(f))
+        except Exception:
+          pass
+      adapters.append(info)
+
+  return {"adapters": adapters}
+
+
+# *** Internal ***
 
 
 @app.post("/api/v1/telemetry")

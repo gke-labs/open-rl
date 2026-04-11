@@ -47,6 +47,10 @@ conflicts = [
         { extra = "cpu" },
         { extra = "vllm" },
     ],
+    [
+        { extra = "gpu" },
+        { extra = "vllm" },
+    ],
 ]
 
 [[tool.uv.index]]
