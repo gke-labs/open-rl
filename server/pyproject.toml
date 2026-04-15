@@ -38,6 +38,11 @@ vllm = [
 ]
 
 [tool.uv]
+override-dependencies = [
+    # vLLM still carries an older transformers constraint; keep the project on
+    # the newer transformers line declared in our extras.
+    "transformers>=5.5.0",
+]
 conflicts = [
     [
         { extra = "cpu" },
@@ -45,10 +50,6 @@ conflicts = [
     ],
     [
         { extra = "cpu" },
-        { extra = "vllm" },
-    ],
-    [
-        { extra = "gpu" },
         { extra = "vllm" },
     ],
 ]

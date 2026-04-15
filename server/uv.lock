@@ -2,6 +2,9 @@ version = 1
 revision = 3
 requires-python = "==3.12.*"
 resolution-markers = [
+    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
     "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
@@ -18,24 +21,24 @@ conflicts = [[
 ], [
     { package = "server", extra = "cpu" },
     { package = "server", extra = "vllm" },
-], [
-    { package = "server", extra = "gpu" },
-    { package = "server", extra = "vllm" },
 ]]
+
+[manifest]
+overrides = [{ name = "transformers", specifier = ">=5.5.0" }]
 
 [[package]]
 name = "accelerate"
 version = "1.12.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "1.9.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/4a/8e/ac2a9566747a93f8be36ee08532eb0160558b07630a081a6056a9f89bf1d/accelerate-1.12.0.tar.gz", hash = "sha256:70988c352feb481887077d2ab845125024b2a137a5090d6d7a32b57d03a45df6", size = 398399, upload-time = "2025-11-21T11:27:46.973Z" }
@@ -252,7 +255,7 @@ name = "cffi"
 version = "2.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "pycparser", marker = "implementation_name != 'PyPy' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/56/b1ba7935a17738ae8453301356628e8147c79dbb825bcbc73dc7401f9846/cffi-2.0.0.tar.gz", hash = "sha256:44d1b5909021139fe36001ae048dbdde8214afa20200eda0f64c068cac5d5529", size = 523588, upload-time = "2025-09-08T23:24:04.541Z" }
 wheels = [
@@ -300,7 +303,7 @@ name = "click"
 version = "8.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "colorama", marker = "sys_platform == 'win32' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3d/fa/656b739db8587d7b5dfa22e22ed02566950fbfbcdc20311993483657a5c0/click-8.3.1.tar.gz", hash = "sha256:12ff4785d337a1bb490bb7e9c2b1ee5da3112e94a8622f26a6c77f5d2fc6842a", size = 295065, upload-time = "2025-11-15T20:45:42.706Z" }
 wheels = [
@@ -333,7 +336,7 @@ dependencies = [
     { name = "loguru" },
     { name = "pydantic" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/eb/f1/4c9b01ceaf82ad58ad00919223e09b8e74d4073a2ba8e3ab2f97521ef65c/compressed_tensors-0.14.0.1.tar.gz", hash = "sha256:5ad3841184b6f5020e06059b2463191c5c57a144bb97cab9159978d8118839b1", size = 226393, upload-time = "2026-03-11T17:04:35.57Z" }
 wheels = [
@@ -345,7 +348,7 @@ name = "cryptography"
 version = "46.0.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/a4/ba/04b1bd4218cbc58dc90ce967106d51582371b898690f3ae0402876cc4f34/cryptography-46.0.6.tar.gz", hash = "sha256:27550628a518c5c6c903d84f637fbecf287f6cb9ced3804838a1295dc1fd0759", size = 750542, upload-time = "2026-03-25T23:34:53.396Z" }
 wheels = [
@@ -420,7 +423,7 @@ dependencies = [
     { name = "filelock" },
     { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, extra = ["http"], marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
     { name = "httpx" },
-    { name = "huggingface-hub", version = "1.9.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub" },
     { name = "multiprocess" },
     { name = "numpy" },
     { name = "packaging" },
@@ -677,6 +680,9 @@ name = "fsspec"
 version = "2025.10.0"
 source = { registry = "https://pypi.org/simple" }
 resolution-markers = [
+    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
     "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
@@ -896,46 +902,19 @@ wheels = [
 
 [[package]]
 name = "huggingface-hub"
-version = "0.36.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "filelock", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "hf-xet", marker = "(platform_machine == 'aarch64' and extra == 'extra-6-server-vllm') or (platform_machine == 'amd64' and extra == 'extra-6-server-vllm') or (platform_machine == 'arm64' and extra == 'extra-6-server-vllm') or (platform_machine == 'x86_64' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "packaging", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "pyyaml", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "requests", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "tqdm", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "typing-extensions", marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/b7/8cb61d2eece5fb05a83271da168186721c450eb74e3c31f7ef3169fa475b/huggingface_hub-0.36.2.tar.gz", hash = "sha256:1934304d2fb224f8afa3b87007d58501acfda9215b334eed53072dd5e815ff7a", size = 649782, upload-time = "2026-02-06T09:24:13.098Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a8/af/48ac8483240de756d2438c380746e7130d1c6f75802ef22f3c6d49982787/huggingface_hub-0.36.2-py3-none-any.whl", hash = "sha256:48f0c8eac16145dfce371e9d2d7772854a4f591bcb56c9cf548accf531d54270", size = 566395, upload-time = "2026-02-06T09:24:11.133Z" },
-]
-
-[[package]]
-name = "huggingface-hub"
 version = "1.9.2"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'darwin' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-]
 dependencies = [
-    { name = "filelock", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
+    { name = "filelock" },
     { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "hf-xet", marker = "(platform_machine == 'AMD64' and extra == 'extra-6-server-cpu') or (platform_machine == 'AMD64' and extra == 'extra-6-server-gpu') or (platform_machine == 'aarch64' and extra == 'extra-6-server-cpu') or (platform_machine == 'aarch64' and extra == 'extra-6-server-gpu') or (platform_machine == 'amd64' and extra == 'extra-6-server-cpu') or (platform_machine == 'amd64' and extra == 'extra-6-server-gpu') or (platform_machine == 'arm64' and extra == 'extra-6-server-cpu') or (platform_machine == 'arm64' and extra == 'extra-6-server-gpu') or (platform_machine == 'x86_64' and extra == 'extra-6-server-cpu') or (platform_machine == 'x86_64' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "httpx", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "packaging", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "pyyaml", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "tqdm", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "typer", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
-    { name = "typing-extensions", marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
+    { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "hf-xet", marker = "platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64'" },
+    { name = "httpx" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "tqdm" },
+    { name = "typer" },
+    { name = "typing-extensions" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/cf/65/fb800d327bf25bf31b798dd08935d326d064ecb9b359059fecd91b3a98e8/huggingface_hub-1.9.2.tar.gz", hash = "sha256:8d09d080a186bd950a361bfc04b862dfb04d6a2b41d48e9ba1b37507cfd3f1e1", size = 750284, upload-time = "2026-04-08T08:43:11.127Z" }
 wheels = [
@@ -1912,17 +1891,17 @@ version = "0.18.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "accelerate" },
-    { name = "huggingface-hub", version = "1.9.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "tqdm" },
-    { name = "transformers", version = "5.5.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "transformers" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/d8/48/147b3ea999560b40a34fd78724c7777aa9d18409c2250bdcaf9c4f2db7fc/peft-0.18.1.tar.gz", hash = "sha256:2dd0d6bfce936d1850e48aaddbd250941c5c02fc8ef3237cd8fd5aac35e0bae2", size = 635030, upload-time = "2026-01-09T13:08:01.136Z" }
 wheels = [
@@ -2558,16 +2537,16 @@ cpu = [
     { name = "datasets" },
     { name = "numpy" },
     { name = "peft" },
-    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "transformers", version = "5.5.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "torch", version = "2.10.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "torch", version = "2.10.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "transformers" },
 ]
 gpu = [
     { name = "datasets" },
     { name = "numpy" },
     { name = "peft" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
-    { name = "transformers", version = "5.5.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "transformers" },
 ]
 vllm = [
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" }, marker = "sys_platform == 'linux'" },
@@ -2736,8 +2715,7 @@ name = "tokenizers"
 version = "0.22.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "huggingface-hub", version = "1.9.2", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-server-cpu' or extra == 'extra-6-server-gpu'" },
+    { name = "huggingface-hub" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/73/6f/f80cfef4a312e1fb34baf7d85c72d4411afde10978d4657f8cdd811d3ccc/tokenizers-0.22.2.tar.gz", hash = "sha256:473b83b915e547aa366d1eee11806deaf419e17be16310ac0a14077f1e28f917", size = 372115, upload-time = "2026-01-05T10:45:15.988Z" }
 wheels = [
@@ -2766,13 +2744,13 @@ resolution-markers = [
     "sys_platform == 'darwin'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.10.0-1-cp312-none-macosx_11_0_arm64.whl", hash = "sha256:7fbbf409143a4fe0812a40c0b46a436030a7e1d14fe8c5234dfbe44df47f617e" },
@@ -2790,13 +2768,13 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-6-server-cpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cpu/torch-2.10.0%2Bcpu-cp312-cp312-linux_aarch64.whl", hash = "sha256:8de5a36371b775e2d4881ed12cc7f2de400b1ad3d728aa74a281f649f87c9b8c" },
@@ -2812,36 +2790,39 @@ name = "torch"
 version = "2.10.0+cu128"
 source = { registry = "https://download.pytorch.org/whl/cu128" }
 resolution-markers = [
+    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
     "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
     "extra != 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm'",
 ]
 dependencies = [
-    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "filelock", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
     { name = "fsspec", version = "2025.10.0", source = { registry = "https://pypi.org/simple" }, marker = "extra == 'extra-6-server-gpu' or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
-    { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm') or (extra != 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "fsspec", version = "2026.2.0", source = { registry = "https://pypi.org/simple" }, marker = "(extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra != 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
     { name = "jinja2", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
     { name = "networkx", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cufft-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cufile-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-curand-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cusolver-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cusparse-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-nccl-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
-    { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cuda-cupti-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cufft-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cufile-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-curand-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cusolver-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cusparse-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-nccl-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
+    { name = "nvidia-nvtx-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "setuptools", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
     { name = "sympy", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
-    { name = "triton", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-gpu' and extra == 'extra-6-server-vllm')" },
+    { name = "triton", marker = "(sys_platform == 'linux' and extra == 'extra-6-server-gpu') or (sys_platform == 'linux' and extra == 'extra-6-server-vllm') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-gpu') or (extra == 'extra-6-server-cpu' and extra == 'extra-6-server-vllm')" },
     { name = "typing-extensions", marker = "extra == 'extra-6-server-gpu' or extra == 'extra-6-server-vllm'" },
 ]
 wheels = [
@@ -2909,40 +2890,10 @@ wheels = [
 
 [[package]]
 name = "transformers"
-version = "4.57.6"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "filelock" },
-    { name = "huggingface-hub", version = "0.36.2", source = { registry = "https://pypi.org/simple" } },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pyyaml" },
-    { name = "regex" },
-    { name = "requests" },
-    { name = "safetensors" },
-    { name = "tokenizers" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/c4/35/67252acc1b929dc88b6602e8c4a982e64f31e733b804c14bc24b47da35e6/transformers-4.57.6.tar.gz", hash = "sha256:55e44126ece9dc0a291521b7e5492b572e6ef2766338a610b9ab5afbb70689d3", size = 10134912, upload-time = "2026-01-16T10:38:39.284Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/03/b8/e484ef633af3887baeeb4b6ad12743363af7cce68ae51e938e00aaa0529d/transformers-4.57.6-py3-none-any.whl", hash = "sha256:4c9e9de11333ddfe5114bc872c9f370509198acf0b87a832a0ab9458e2bd0550", size = 11993498, upload-time = "2026-01-16T10:38:31.289Z" },
-]
-
-[[package]]
-name = "transformers"
 version = "5.5.0"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "sys_platform == 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-6-server-cpu' and extra == 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'emscripten' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-    "sys_platform == 'darwin' and extra == 'extra-6-server-cpu' and extra != 'extra-6-server-gpu' and extra != 'extra-6-server-vllm'",
-]
 dependencies = [
-    { name = "huggingface-hub", version = "1.9.2", source = { registry = "https://pypi.org/simple" } },
+    { name = "huggingface-hub" },
     { name = "numpy" },
     { name = "packaging" },
     { name = "pyyaml" },
@@ -3124,7 +3075,7 @@ dependencies = [
     { name = "torchaudio" },
     { name = "torchvision" },
     { name = "tqdm" },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "transformers" },
     { name = "typing-extensions" },
     { name = "watchfiles" },
     { name = "xgrammar", marker = "platform_machine == 'aarch64' or platform_machine == 'arm64' or platform_machine == 'ppc64le' or platform_machine == 's390x' or platform_machine == 'x86_64'" },
@@ -3213,7 +3164,7 @@ dependencies = [
     { name = "numpy" },
     { name = "pydantic" },
     { name = "torch", version = "2.10.0+cu128", source = { registry = "https://download.pytorch.org/whl/cu128" } },
-    { name = "transformers", version = "4.57.6", source = { registry = "https://pypi.org/simple" } },
+    { name = "transformers" },
     { name = "triton", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "typing-extensions" },
 ]
