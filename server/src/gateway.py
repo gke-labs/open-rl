@@ -51,7 +51,7 @@ VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
 
 
 def is_single_process_mode() -> bool:
-  explicit = os.getenv("OPEN_RL_SINGLE_PROCESS")
+  explicit = os.getenv("SINGLE_PROCESS")
   if explicit is not None:
     return explicit == "1"
   return bool(os.getenv("BASE_MODEL")) and not bool(os.getenv("REDIS_URL"))

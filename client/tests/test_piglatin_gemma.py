@@ -32,7 +32,7 @@ class TestPigLatinGemma(unittest.TestCase):
 
     # Mimic `make server BASE_MODEL=google/gemma-3-1b-it`
     env["ENABLE_GCP_TRACE"] = env.get("ENABLE_GCP_TRACE", "0")
-    env["OPEN_RL_SINGLE_PROCESS"] = "1"
+    env["SINGLE_PROCESS"] = "1"
     env["BASE_MODEL"] = "google/gemma-3-1b-it"
     env["SAMPLER"] = "torch"
 

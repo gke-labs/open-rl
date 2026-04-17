@@ -25,7 +25,7 @@ Or manually:
 
 ```bash
 cd server
-OPEN_RL_SINGLE_PROCESS=1 \
+SINGLE_PROCESS=1 \
 SAMPLER=torch \
 BASE_MODEL="google/functiongemma-270m-it" \
 uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9003

@@ -18,7 +18,7 @@ help:
 # ---------------------------------------------------------------------------
 server:
 	@-kill -9 $$(lsof -ti:$(PORT)) 2>/dev/null || true
-	cd server && OPEN_RL_SINGLE_PROCESS=1 BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
+	cd server && SINGLE_PROCESS=1 BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
 	  uv run --extra $(if $(filter vllm,$(SAMPLER)),gpu,cpu) \
 	  uvicorn src.gateway:app --host 127.0.0.1 --port $(PORT)
 

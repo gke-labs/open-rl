@@ -80,7 +80,7 @@ Start the server (or use `make server`):
 
 ```bash
 cd server
-OPEN_RL_SINGLE_PROCESS=1 \
+SINGLE_PROCESS=1 \
 BASE_MODEL="Qwen/Qwen3-0.6B" \
 SAMPLER=torch \
 uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9003

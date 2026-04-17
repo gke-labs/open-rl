@@ -29,7 +29,7 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            - name: OPEN_RL_SINGLE_PROCESS
+            - name: SINGLE_PROCESS
               value: "1"
             - name: SAMPLER
               value: "torch"
