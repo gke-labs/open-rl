@@ -76,29 +76,21 @@ cd ..
 
 ### 4. Run common workflows with `uv`
 
-Start the gateway directly:
-
-```bash
-cd server
-uv run uvicorn src.gateway:app --host 127.0.0.1 --port 8000
-```
-
-Start the local single-process Pig Latin server:
+Start the server (or use `make server`):
 
 ```bash
 cd server
 OPEN_RL_SINGLE_PROCESS=1 \
-OPEN_RL_BASE_MODEL="Qwen/Qwen3-0.6B" \
-SAMPLER_BACKEND=torch \
-uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9001
+BASE_MODEL="Qwen/Qwen3-0.6B" \
+SAMPLER=torch \
+uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9003
 ```
 
-Start the Linux GPU/vLLM worker:
+Start a standalone vLLM worker (or use `make vllm`):
 
 ```bash
 cd server
-CUDA_VISIBLE_DEVICES=0 \
-VLLM_MODEL="Qwen/Qwen3-4B-Instruct-2507" \
+BASE_MODEL="Qwen/Qwen3-4B-Instruct-2507" \
 uv run --extra gpu --extra vllm python -m src.vllm_sampler
 ```
 

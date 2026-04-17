@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "client"
+name = "open-rl-client"
 version = "0.1.0"
-description = "Add your description here"
+description = "Open-RL client: CLI and shared utilities for talking to an Open-RL server."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -21,11 +21,12 @@ dependencies = [
     "opentelemetry-exporter-gcp-trace>=1.11.0",
     "opentelemetry-sdk>=1.40.0",
     "transformers>=5.5.0",
+    "ipykernel",
 ]
 
 [project.scripts]
-functiongemma-demo = "functiongemma_sft:cli"
+open-rl = "cli:main"
 
 [tool.setuptools]
 packages = []
-py-modules = ["cli", "sft", "rlvr", "functiongemma_sft", "piglatin_sft", "texttosql_sft", "verify_ppo", "plot_metrics", "plot_logs"]
+py-modules = ["cli"]
