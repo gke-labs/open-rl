@@ -22,6 +22,7 @@ dependencies = [
     "opentelemetry-sdk>=1.40.0",
     "transformers>=5.5.0",
     "ipykernel",
+    "torch",
 ]
 
 [project.scripts]
@@ -30,3 +31,14 @@ open-rl = "cli:main"
 [tool.setuptools]
 packages = []
 py-modules = ["cli"]
+
+# Use the CPU torch wheel — the client only needs torch transitively (via
+# transformers' AutoTokenizer) and never runs model code, so the ~2 GB CUDA
+# build is wasted download time.
+[[tool.uv.index]]
+name = "torch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "torch-cpu" }
