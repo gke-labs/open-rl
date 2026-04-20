@@ -8,7 +8,73 @@ The API backend consists of two primary layers:
 1. **The Asynchronous Gateway (FastAPI)**: Handles incoming HTTP requests from the Tinker SDK client, issues immediate future tracking IDs, and pushes workloads to a central asynchronous queue.
 2. **The Clock Cycle Engine (PyTorch/PEFT)**: A continuous background engine that drains the global request queue, batches operations by model tenant (`model_id`), manages PyTorch hardware resources lock-step, and executes actual tensor math.
 
-![API Backend Architecture](../assets/architecture.png)
+```mermaid
+flowchart TD
+    %% Define component colors (matching distributed_arch.mmd)
+    classDef client fill:#888,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef gateway fill:#326ce5,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef cache fill:#d82c20,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef compute_gpu fill:#326ce5,stroke:#fff,stroke-width:2px,color:#fff;
+    classDef compute_pod fill:#fff,stroke:#326ce5,stroke-width:2px,color:#326ce5;
+    classDef storage fill:#19a45b,stroke:#fff,stroke-width:2px,color:#fff;
+
+    %% Clients (Outside Cluster)
+    subgraph Clients["RL Client Jobs (User Space or K8s)"]
+        job1["RL Job 1"]:::client
+        job2["RL Job 2"]:::client
+    end
+
+    %% Kubernetes Cluster Scope
+    subgraph K8s["google kubernetes engine (GKE) Cluster"]
+        
+        %% Gateway
+        gw["OpenRL API Gateway<br/>(open-rl-gateway)"]:::gateway
+        
+        %% Redis Message Store
+        subgraph Redis["Redis Store (StateStore)"]
+            queue1[("Queue: Job 1<br/>(Tenant f137...)")]:::cache
+            queue2[("Queue: Job 2<br/>(Tenant db04...)")]:::cache
+        end
+
+        %% Compute Backend
+        subgraph Compute["GPU Backend Workers"]
+            trainer["PyTorch Trainer Node<br/>(open-rl-trainer-worker)<br/>[1 Replica]"]:::compute_gpu
+            
+            subgraph VLLM["vLLM Inference Subsystem"]
+                vllm_svc["vLLM Kubernetes Service<br/>(vllm-service)"]:::gateway
+                vllm_w1["vllm-worker-1"]:::compute_pod
+                vllm_w2["vllm-worker-2"]:::compute_pod
+                vllm_w3["vllm-worker-3"]:::compute_pod
+                vllm_svc --> vllm_w1
+                vllm_svc --> vllm_w2
+                vllm_svc --> vllm_w3
+            end
+        end
+
+        %% Shared Storage
+        lustre[("Distributed Lustre Storage PVC<br/>(/mnt/lustre/open-rl)")]:::storage
+
+        %% HTTP Interactions
+        job1 -- "HTTP POST<br/>/train_batch, /generate" --> gw
+        job2 -- "HTTP POST<br/>/train_batch, /generate" --> gw
+
+        %% Gateway Routing
+        gw -- "1. Enqueue compute tasks" --> queue1
+        gw -- "1. Enqueue compute tasks" --> queue2
+        gw -- "HTTP POST<br/>/generate" --> vllm_svc
+        
+        %% Single Trainer pulling from queues
+        queue1 -. "2. Dequeue loop" .-> trainer
+        queue2 -. "2. Dequeue loop" .-> trainer
+
+        %% Tensor saving & loading
+        trainer -- "3. Save LoRA Adapters" --> lustre
+        lustre -. "4. Inject LoRA on-the-fly" .-> vllm_w1
+        lustre -. "4. Inject LoRA on-the-fly" .-> vllm_w2
+        lustre -. "4. Inject LoRA on-the-fly" .-> vllm_w3
+        
+    end
+```
 
 ## Key Components
 
