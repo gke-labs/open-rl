@@ -168,13 +168,13 @@ def main() -> None:
   cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
   print(f"-> Hardware : CUDA_VISIBLE_DEVICES={cuda_devs}\n")
 
-  preload_target = os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("VLLM_MODEL")
+  preload_target = os.getenv("BASE_MODEL")
   is_ready = False
   if preload_target:
     engine.load_base_model(preload_target)
     is_ready = True
   else:
-    print("[WARNING] OPEN_RL_BASE_MODEL / VLLM_MODEL not provided. Cold-start penalty will apply on first request.")
+    print("[WARNING] BASE_MODEL not provided. Cold-start penalty will apply on first request.")
     is_ready = True
 
   probe_app = FastAPI()

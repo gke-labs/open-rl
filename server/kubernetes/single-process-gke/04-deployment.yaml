@@ -29,13 +29,11 @@ spec:
           ports:
             - containerPort: 8000
           env:
-            - name: OPEN_RL_SINGLE_PROCESS
+            - name: SINGLE_PROCESS
               value: "1"
-            - name: SAMPLER_BACKEND
+            - name: SAMPLER
               value: "torch"
-            - name: OPEN_RL_BASE_MODEL
-              value: "google/gemma-4-e2b"
-            - name: VLLM_MODEL
+            - name: BASE_MODEL
               value: "google/gemma-4-e2b"
             - name: CUDA_VISIBLE_DEVICES
               value: "0"

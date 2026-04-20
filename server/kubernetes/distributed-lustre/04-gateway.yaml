@@ -50,7 +50,7 @@ spec:
           value: "redis://redis-service:6379"
         - name: VLLM_URL
           value: "http://vllm-service:8001"
-        - name: VLLM_MODEL
+        - name: BASE_MODEL
           value: "Qwen/Qwen3-4B-Instruct-2507"
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/lustre/open-rl"

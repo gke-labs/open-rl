@@ -1,5 +1,6 @@
 import os
 import sys
+from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Request
@@ -31,46 +32,47 @@ if os.environ.get("ENABLE_GCP_TRACE", "0") == "1":
     print("OpenTelemetry: opentelemetry-exporter-gcp-trace is not installed")
 
 tracer = trace.get_tracer("vllm.inference.worker")
-app = FastAPI(title="Open-RL vLLM Subprocess")
-FastAPIInstrumentor.instrument_app(app, excluded_urls="/healthz")
 
 engine = None
 
 
-@app.on_event("startup")
-async def startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
   global engine
 
   print("\n" + "=" * 50)
   print("        Open-RL vLLM Inference Engine")
   print("=" * 50)
   cuda_devs = os.environ.get("CUDA_VISIBLE_DEVICES", "ALL")
-  model_name = os.environ.get("VLLM_MODEL", "Not Set")
+  model_name = os.environ.get("BASE_MODEL")
   print(f"-> Hardware     : CUDA_VISIBLE_DEVICES={cuda_devs}")
-  print(f"-> Memory Matrix: {model_name}\n")
+  print(f"-> Model        : {model_name or 'Not Set'}\n")
 
   mock_vllm = os.environ.get("MOCK_VLLM", "0") == "1"
   if mock_vllm or AsyncLLMEngine is None:
     print("[vLLM Subprocess] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
-    return
-
-  # Use arguments suitable for the v2 architecture
-  if not os.environ.get("VLLM_MODEL"):
-    print("[vLLM Subprocess] Error: VLLM_MODEL environment variable is required.")
+  elif not model_name:
+    print("[vLLM Subprocess] Error: BASE_MODEL environment variable is required.")
     sys.exit(1)
+  else:
+    engine_args = AsyncEngineArgs(
+      model=model_name,
+      enable_lora=True,
+      max_loras=8,
+      max_lora_rank=64,
+      max_model_len=8192,
+      gpu_memory_utilization=0.60,
+      enable_prefix_caching=False,
+      enforce_eager=True,
+    )
+    engine = AsyncLLMEngine.from_engine_args(engine_args)
+    print("[vLLM Subprocess] Engine initialized and ready to serve IPC requests.")
 
-  engine_args = AsyncEngineArgs(
-    model=os.environ.get("VLLM_MODEL"),
-    enable_lora=True,
-    max_loras=8,
-    max_lora_rank=64,
-    max_model_len=8192,  # Prevent KV cache OOM on massive context windows
-    gpu_memory_utilization=0.60,  # Leave room for other things if needed
-    enable_prefix_caching=False,  # Disable prefix caching to test concurrent throughput
-    enforce_eager=True,  # Useful for small setups
-  )
-  engine = AsyncLLMEngine.from_engine_args(engine_args)
-  print("[vLLM Subprocess] Engine initialized and ready to serve IPC requests.")
+  yield
+
+
+app = FastAPI(title="Open-RL vLLM Subprocess", lifespan=lifespan)
+FastAPIInstrumentor.instrument_app(app, excluded_urls="/healthz")
 
 
 @app.get("/healthz")

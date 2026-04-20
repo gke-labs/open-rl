@@ -18,16 +18,18 @@ This guide shows how to run the local FunctionGemma SFT demo.
 ## Running the Training Server
 
 ```bash
-cd server
-OPEN_RL_SINGLE_PROCESS=1 \
-SAMPLER_BACKEND=torch \
-OPEN_RL_BASE_MODEL="google/functiongemma-270m-it" \
-uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9000
+make server BASE_MODEL=google/functiongemma-270m-it
 ```
 
-This starts a local server on port 9000, preloads `google/functiongemma-270m-it`, and runs the gateway plus engine loop in one process.
+Or manually:
 
-You can use `make run-function-gemma-server` as a wrapper around the same `uv run --extra cpu ...` flow.
+```bash
+cd server
+SINGLE_PROCESS=1 \
+SAMPLER=torch \
+BASE_MODEL="google/functiongemma-270m-it" \
+uv run --extra cpu uvicorn src.gateway:app --host 127.0.0.1 --port 9003
+```
 
 ## Running the SFT Script
 
@@ -35,7 +37,7 @@ In a second terminal, run:
 
 ```bash
 cd client
-uv run --python 3.12 functiongemma-demo
+uv run --python 3.12 python -u functiongemma_sft.py base_url="http://127.0.0.1:9003"
 ```
 
 This runs `client/functiongemma_sft.py`. The script:
@@ -48,17 +50,18 @@ This runs `client/functiongemma_sft.py`. The script:
 
 ## Common arguments
 
-Pass arguments through the Make target with `ARGS="..."`. `chz` expects `key=value` arguments:
+Pass `chz` arguments as `key=value`:
 
 ```bash
-make run-function-gemma ARGS="epochs=5 assert_loss_drop=true"
+cd client
+uv run --python 3.12 python -u functiongemma_sft.py epochs=5 assert_loss_drop=true
 ```
 
 Supported arguments in `functiongemma_sft.py`:
 - `epochs=<int>`: Number of training epochs (default 10).
 - `eval_limit=<int>`: Max number of evaluation examples (default 20).
 - `base_model=<str>`: The model repository (default `google/functiongemma-270m-it`).
-- `base_url=<str>`: The training server URL (default `http://127.0.0.1:9000`).
+- `base_url=<str>`: The training server URL (default `http://127.0.0.1:9003`).
 - `dataset=<str>`: The dataset to train on (default `bebechien/SimpleToolCalling`).
 - `rank=<int>`: The LoRA rank to use (default 16).
 - `plot_path=<str>`: Output path for the metrics chart.

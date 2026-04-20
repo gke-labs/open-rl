@@ -121,7 +121,7 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
   ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
   metrics_path = log_dir / "metrics.jsonl"
   client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
-  server_model = await require_server(client, config.base_url)
+  server_model = await require_server(client, config.base_url, expected_model=config.base_model)
   logging.info("Server ready at %s | model=%s", config.base_url, server_model or "unset")
 
   trainer = await client.create_lora_training_client_async(
@@ -227,14 +227,24 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
   }
 
 
-async def require_server(service_client: tinker.ServiceClient, base_url: str) -> str | None:
+async def require_server(service_client: tinker.ServiceClient, base_url: str, expected_model: str | None = None) -> str | None:
   try:
     capabilities = await service_client.get_server_capabilities_async()
   except Exception as exc:
-    raise RuntimeError(f"Open-RL server at {base_url} is not reachable. Start it with `make run-text-to-sql-server`.") from exc
+    raise RuntimeError(
+      f"Open-RL server at {base_url} is not reachable.\nStart it with:  make server BASE_MODEL={expected_model or '<model-id>'}"
+    ) from exc
 
   model_names = [model.model_name for model in capabilities.supported_models if getattr(model, "model_name", None)]
-  return model_names[0] if model_names else None
+  server_model = model_names[0] if model_names else None
+
+  if expected_model and server_model and server_model != expected_model:
+    raise RuntimeError(
+      f"Open-RL server at {base_url} is running {server_model!r}, "
+      f"but this recipe expects {expected_model!r}.\n"
+      f"Restart the server with:  make server BASE_MODEL={expected_model}"
+    )
+  return server_model
 
 
 def normalize_sql(text: str) -> str:

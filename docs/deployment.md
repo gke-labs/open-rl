@@ -6,11 +6,11 @@ The open-rl server is designed to run on a Kubernetes cluster with NVIDIA GPUs.
 The image is built using Docker BuildKit and pushed to Google Container Registry (GCR).
 
 > [!TIP]
-> You can change your GCP Project by editing the `GCP_PROJECT` variable in the `Makefile` (defaults to `cdrollouts-sunilarora`), or pass it via CLI: `make build-server-images GCP_PROJECT=my-project-id`.
+> You can change your GCP Project by editing the `GCP_PROJECT` variable in the `Makefile` (defaults to `cdrollouts-sunilarora`), or pass it via CLI: `make build-images GCP_PROJECT=my-project-id`.
 
 ```bash
-make build-server-images
-make push-server-images
+make build-images
+make push-images
 ```
 
 ### Configure Hugging Face Access
@@ -121,4 +121,4 @@ kubectl port-forward svc/open-rl-gateway-service 8000:8000
 Your SDK clients (e.g. `ServiceClient(base_url="http://localhost:8000")`) will now route traffic directly to the distributed GKE cluster.
 
 > [!TIP]
-> If a local process gets stuck on port 8000 from an old port-forward or server run, you can instantly terminate it with `make kill-server`.
+> If a local process gets stuck on a port from an old port-forward or server run, kill it with `kill -9 $(lsof -ti:<port>)`.

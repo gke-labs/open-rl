@@ -6,7 +6,7 @@ The project includes a CLI tool for inspecting and interacting with trained adap
 View all fine-tuned sessions, including their aliases and creation timestamps.
 
 ```bash
-make run-cli-list
+make cli list
 ```
 
 **Output Example:**
@@ -21,18 +21,19 @@ ID                                       | ALIAS                          | CREA
 Interactively test a specific adapter model.
 
 ```bash
-make run-cli-chat MODEL=<model_id>
+make cli chat --model <model_id>
 ```
 
-**Optional: System Prompt Override**
+### 3. Other Commands
+For other arguments:
+
 ```bash
-make run-cli-chat MODEL=<model_id> PROMPT="You are a pirate."
+make cli chat --model <id> --temperature 0.9 --system-prompt "You are a pirate."
 ```
 
-### 3. Generic Usage
-For other commands or arguments not covered by shortcuts:
+Or run directly (after `uv sync`):
 
 ```bash
-make run-cli list
-make run-cli chat --model <id> --temperature 0.9
+open-rl list
+open-rl chat --model <id>
 ```

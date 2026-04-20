@@ -122,13 +122,24 @@ def plot_metrics(losses: list[float], before: float, after: float, plot_path: Pa
   plt.close(fig)
 
 
-def require_server(base_url: str) -> dict[str, Any]:
+def require_server(base_url: str, expected_model: str | None = None) -> dict[str, Any]:
   try:
     response = requests.get(f"{base_url.rstrip('/')}/api/v1/get_server_capabilities", timeout=5.0)
     response.raise_for_status()
-    return response.json()
+    capabilities = response.json()
   except Exception as exc:
-    raise RuntimeError(f"Open-RL server at {base_url} is not reachable. Start it with `make run-function-gemma-server`.") from exc
+    raise RuntimeError(
+      f"Open-RL server at {base_url} is not reachable.\nStart it with:  make server BASE_MODEL={expected_model or '<model-id>'}"
+    ) from exc
+
+  server_model = capabilities.get("default_model")
+  if expected_model and server_model and server_model != expected_model:
+    raise RuntimeError(
+      f"Open-RL server at {base_url} is running {server_model!r}, "
+      f"but this recipe expects {expected_model!r}.\n"
+      f"Restart the server with:  make server BASE_MODEL={expected_model}"
+    )
+  return capabilities
 
 
 async def run_training(config: Config) -> None:
@@ -136,7 +147,7 @@ async def run_training(config: Config) -> None:
   if config.ci and not os.getenv("HF_TOKEN"):
     raise RuntimeError("CI mode requires HF_TOKEN")
 
-  capabilities = require_server(config.base_url)
+  capabilities = require_server(config.base_url, expected_model=config.base_model)
   print(f"Server ready at {config.base_url} | model={capabilities.get('default_model') or 'unset'}")
 
   # 2. Data

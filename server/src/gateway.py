@@ -51,16 +51,15 @@ VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
 
 
 def is_single_process_mode() -> bool:
-  explicit = os.getenv("OPEN_RL_SINGLE_PROCESS")
+  explicit = os.getenv("SINGLE_PROCESS")
   if explicit is not None:
     return explicit == "1"
-  return bool(os.getenv("OPEN_RL_BASE_MODEL")) and not bool(os.getenv("REDIS_URL"))
+  return bool(os.getenv("BASE_MODEL")) and not bool(os.getenv("REDIS_URL"))
 
 
 def get_sampler_backend() -> str:
-  explicit = os.getenv("SAMPLER_BACKEND")
-  if explicit:
-    return explicit.lower()
+  if sampler := os.getenv("SAMPLER"):
+    return sampler.lower()
   return "torch" if is_single_process_mode() else "vllm"
 
 
@@ -70,7 +69,7 @@ def get_default_model_name() -> str | None:
 
     if clock_cycle.engine.base_model_name:
       return clock_cycle.engine.base_model_name
-  return os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("VLLM_MODEL")
+  return os.getenv("BASE_MODEL")
 
 
 async def _enqueue(payload: dict) -> str:
@@ -85,18 +84,40 @@ async def _enqueue(payload: dict) -> str:
   return req_id
 
 
+async def _preflight_vllm() -> None:
+  """If SAMPLER=vllm, verify the vLLM worker is reachable at VLLM_URL.
+
+  Prints a clear, actionable error instead of letting the first asample
+  request fall through with a raw httpx connection refused.
+  """
+  if get_sampler_backend() != "vllm":
+    return
+  healthz = f"{VLLM_URL.rstrip('/')}/healthz"
+  try:
+    async with httpx.AsyncClient(timeout=3.0) as client:
+      resp = await client.get(healthz)
+      resp.raise_for_status()
+  except Exception as exc:
+    raise RuntimeError(
+      f"SAMPLER=vllm but no vLLM worker is reachable at {VLLM_URL}.\n"
+      f"Start it first with:  make vllm BASE_MODEL={os.getenv('BASE_MODEL') or '<model-id>'}"
+    ) from exc
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
   task = None
   if is_single_process_mode():
     from . import clock_cycle
 
-    base_model = os.getenv("OPEN_RL_BASE_MODEL")
+    base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
     print(" Open-RL Single-Process Mode")
     print("=" * 50)
     print(f"-> Base model: {base_model or 'unset'}")
+    print(f"-> Sampler   : {get_sampler_backend()}")
     print("-> Backend   : gateway + worker loop in one process\n")
+    await _preflight_vllm()
     if base_model:
       await asyncio.to_thread(clock_cycle.engine.load_base_model, base_model)
     task = asyncio.create_task(clock_cycle.clock_cycle_loop())

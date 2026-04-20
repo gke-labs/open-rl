@@ -30,13 +30,11 @@ class TestPigLatinGemma(unittest.TestCase):
     # We start the server directly using uv run to ensure we can kill it easily
     server_dir = client_dir.parent / "server"
 
-    # Mimic `make run-pig-latin-gemma-server`
+    # Mimic `make server BASE_MODEL=google/gemma-3-1b-it`
     env["ENABLE_GCP_TRACE"] = env.get("ENABLE_GCP_TRACE", "0")
-    env["UV_INDEX_URL"] = "https://pypi.org/simple"
-    env["OPEN_RL_SINGLE_PROCESS"] = "1"
-    env["OPEN_RL_BASE_MODEL"] = "google/gemma-3-1b-it"
-    env["SAMPLER_BACKEND"] = "torch"
-    env["VLLM_MODEL"] = "google/gemma-3-1b-it"
+    env["SINGLE_PROCESS"] = "1"
+    env["BASE_MODEL"] = "google/gemma-3-1b-it"
+    env["SAMPLER"] = "torch"
 
     cmd = ["uv", "run", "--extra", "cpu", "uvicorn", "src.gateway:app", "--host", "127.0.0.1", "--port", "9002"]
 

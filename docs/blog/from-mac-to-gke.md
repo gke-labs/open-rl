@@ -15,8 +15,8 @@ You can fine-tune Gemma 3 1B on a Text-to-SQL task locally — no cloud, no GPUs
 Start the server:
 
 ```bash
-OPEN_RL_BASE_MODEL="google/gemma-3-1b-pt" \
-  uv run uvicorn src.gateway:app --host 0.0.0.0 --port 8000
+BASE_MODEL="google/gemma-3-1b-pt" \
+  uv run uvicorn src.gateway:app --host 0.0.0.0 --port 9003
 ```
 
 Then write your training loop with the Tinker SDK — 4 API primitives are all you need:

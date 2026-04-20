@@ -4,21 +4,21 @@ This script demonstrates fine-tuning a model to translate English into Pig Latin
 
 ### Option 1: Qwen (Default)
 
-Start the local single-process Open-RL server for Qwen:
+Start the local single-process Open-RL server for Qwen (`BASE_MODEL` defaults to `Qwen/Qwen3-0.6B`):
 
 ```bash
-make run-pig-latin-server
+make server
 ```
 
 Then run the training demo in a second terminal:
 
 ```bash
-make run-pig-latin-sft
+cd client && uv run --python 3.12 python -u piglatin_sft.py qwen
 ```
 
 What it does:
 
-- starts a local Open-RL server on `http://127.0.0.1:9001`
+- starts a local Open-RL server on `http://127.0.0.1:9003`
 - loads `Qwen/Qwen3-0.6B`
 - trains a LoRA adapter on word-level Pig Latin pairs
 - runs pre/post translation evaluation and saves plots into `artifacts/`
@@ -27,21 +27,21 @@ What it does:
 
 ### Option 2: Gemma
 
-Start the local single-process Open-RL server for Gemma:
+Start the local single-process Open-RL server for Gemma (set `BASE_MODEL`):
 
 ```bash
-make run-pig-latin-gemma-server
+make server BASE_MODEL=google/gemma-3-1b-it
 ```
 
 Then run the training demo in a second terminal:
 
 ```bash
-make run-pig-latin-gemma-sft
+cd client && uv run --python 3.12 python -u piglatin_sft.py gemma
 ```
 
 What it does:
 
-- starts a local Open-RL server on `http://127.0.0.1:9002`
+- starts a local Open-RL server on `http://127.0.0.1:9003`
 - loads `google/gemma-3-1b-it`
 - trains a LoRA adapter on word-level Pig Latin pairs
 - runs pre/post translation evaluation and saves plots into `artifacts/`

@@ -38,7 +38,7 @@ spec:
         ports:
         - containerPort: 8001
         env:
-        - name: VLLM_MODEL
+        - name: BASE_MODEL
           value: "Qwen/Qwen3-4B-Instruct-2507"
         - name: CUDA_VISIBLE_DEVICES
           value: "0"
