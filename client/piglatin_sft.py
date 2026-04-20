@@ -54,6 +54,7 @@ class Config:
   min_loss_drop: float = 0.8
   min_similarity_gain: float = 0.15
   custom_examples: list[tuple[str, str]] = chz.field(default_factory=lambda: EXAMPLES.copy())
+  skip_before_eval: bool = False
 
 
 PRESETS = {
@@ -194,8 +195,12 @@ def run_training(config: Config) -> dict[str, float]:
   batch_size = max(1, min(config.batch_size, len(train_exs)))
   print(f"Loaded piglatin_pairs.json | train={len(train_exs)} eval={len(eval_exs)} batch={batch_size} steps={config.steps}")
 
-  before_exact, before_sim, before_rows = evaluate(client, trainer, tokenizer, "piglatin_before", eval_exs, config.eval_max_tokens)
-  print(f"[before] exact={before_exact:.1%} similarity={before_sim:.1%}")
+  if config.skip_before_eval:
+    before_exact, before_sim, before_rows = 0.0, 0.0, [("", "")] * len(eval_exs)
+    print("[before] skipped")
+  else:
+    before_exact, before_sim, before_rows = evaluate(client, trainer, tokenizer, "piglatin_before", eval_exs, config.eval_max_tokens)
+    print(f"[before] exact={before_exact:.1%} similarity={before_sim:.1%}")
 
   eval_steps = [0]
   eval_exact = [before_exact]

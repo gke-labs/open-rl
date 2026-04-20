@@ -1,0 +1,52 @@
+name: Pig-latin E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Cancel in-flight runs on the same PR when a new commit lands.
+concurrency:
+  group: piglatin-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  piglatin-qwen-cpu:
+    name: Qwen3-0.6B pig-latin SFT (CPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Cache Hugging Face hub
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface/hub
+          key: hf-hub-${{ runner.os }}-qwen3-0.6b
+          restore-keys: |
+            hf-hub-${{ runner.os }}-
+
+      - name: Install server deps (CPU extra)
+        working-directory: server
+        run: uv sync --extra cpu
+
+      - name: Install client deps
+        working-directory: client
+        run: uv sync
+
+      - name: Run pig-latin SFT end-to-end
+        working-directory: client
+        run: uv run python -m unittest tests.test_piglatin_qwen -v
+        env:
+          TINKER_API_KEY: tml-dummy-key
+          TRANSFORMERS_VERBOSITY: error
+          HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
