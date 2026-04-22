@@ -3,9 +3,18 @@
 # ---------------------------------------------------------------------------
 # Knobs (override on the command line: make server BASE_MODEL=... SAMPLER=...)
 # ---------------------------------------------------------------------------
-BASE_MODEL ?= Qwen/Qwen3-0.6B
-SAMPLER    ?= torch
-PORT       ?= 9003
+# The HuggingFace base model checkpoint loaded by the server and training workers
+BASE_MODEL     ?= Qwen/Qwen3-0.6B
+# The backend used for sampling ("torch" for local inference, or "vllm" for optimized remote inference)
+SAMPLER        ?= torch
+# Whether to run the API gateway and training worker loop together in a single process (1=yes, 0=no)
+SINGLE_PROCESS ?= 1
+# The network interface to bind the API server
+HOST           ?= 127.0.0.1
+# The local port number for the API server
+PORT           ?= 9003
+# The fully qualified base URL used by local CLI tools and clients
+BASE_URL       ?= http://$(HOST):$(PORT)
 
 help:
 	@echo "make server                              # $(BASE_MODEL), SAMPLER=$(SAMPLER), port $(PORT)"
@@ -18,13 +27,13 @@ help:
 # ---------------------------------------------------------------------------
 server:
 	@-kill -9 $$(lsof -ti:$(PORT)) 2>/dev/null || true
-	cd server && SINGLE_PROCESS=1 BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
+	cd src/server && SINGLE_PROCESS="$(SINGLE_PROCESS)" BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
 	  uv run --extra $(if $(filter vllm,$(SAMPLER)),gpu,cpu) \
-	  python -m uvicorn src.gateway:app --host 127.0.0.1 --port $(PORT)
+	  python -m uvicorn gateway:app --host $(HOST) --port $(PORT)
 
 vllm:
-	cd server && BASE_MODEL="$(BASE_MODEL)" \
-	  uv run --extra vllm python -m src.vllm_sampler
+	cd src/server && BASE_MODEL="$(BASE_MODEL)" \
+	  uv run --extra vllm python -m vllm_sampler
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -35,13 +44,13 @@ ifeq (cli,$(firstword $(MAKECMDGOALS)))
 endif
 
 cli:
-	@cd client && uv run python cli.py $(CLI_ARGS)
+	@cd dev/tools && BASE_URL="$(BASE_URL)" uv run python cli.py $(CLI_ARGS)
 
 # ---------------------------------------------------------------------------
 # Dev
 # ---------------------------------------------------------------------------
 test:
-	cd client && uv run python -m unittest discover tests
+	cd examples && uv run python -m unittest discover -s sft/pig-latin/tests
 
 lint:
 	uvx ruff check .
@@ -58,15 +67,15 @@ GCP_PROJECT ?= cdrollouts-sunilarora
 IMAGE_TAG   ?= latest
 
 build-images:
-	cd server && DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) -f Dockerfile .
-	cd server && DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) -f Dockerfile.gateway .
+	cd src/server && DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) -f Dockerfile .
+	cd src/server && DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) -f Dockerfile.gateway .
 
 push-images:
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG)
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG)
 
 deploy:
-	kubectl apply -k server/kubernetes/distributed-lustre/
+	kubectl apply -k k8s/deploy/distributed-lustre/
 
 rollout:
 	kubectl rollout restart deployment redis-store open-rl-gateway open-rl-trainer-worker vllm-worker
@@ -77,22 +86,18 @@ rollout:
 #   sudo service redis-server stop
 
 # GKE client jobs — run directly:
-#   kubectl apply -f client/kubernetes/rlvr-job.yaml
-#   kubectl apply -f client/kubernetes/tinker-rl-basic-job.yaml   (or -2, -3)
+#   kubectl apply -f examples/rl/rlvr/rlvr-job.yaml
+#   kubectl apply -f examples/rl/tinker-rl-basic/tinker-rl-basic-job.yaml
 #   kubectl logs -f job/<job-name>
 #   kubectl delete job <job-name>
 
 dashboard-apply:
-	@scripts/apply_dashboard.sh $(GCP_PROJECT)
+	@dev/monitoring/apply_dashboard.sh $(GCP_PROJECT)
 
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
-HOST ?= mars
+REMOTE_HOST ?= mars
 
 server-sync:
-	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ $(HOST):~/work/open-rl
-
-diagrams:
-	zsh -ic "mmdc -i assets/architecture.mmd -o assets/architecture.svg -b transparent"
-	zsh -ic "mmdc -i assets/architecture.mmd -o assets/architecture.png -s 3 -b transparent"
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ $(REMOTE_HOST):~/work/open-rl
