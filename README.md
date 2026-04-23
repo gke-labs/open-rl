@@ -1,7 +1,5 @@
 # Open-RL: self-hosted API for your RL Infrastructure
 
-![Architecture](docs/blog/assets/arch.svg)
-
 Open-RL implements [Tinker](https://tinker-docs.thinkingmachines.ai/) compatible API for fine-tuning language models that you can run on your own infrastructure (machine or a kubernetes cluster). You can use the Tinker SDK to orchestrate RL training loops by writing imperative Python code directly from your local machine.
 
 # Why Tinker
