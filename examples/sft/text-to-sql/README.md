@@ -1,14 +1,16 @@
-# Text-to-SQL Supervised Fine-Tuning
+# Gemma 3 Text-to-SQL SFT
 
-This directory contains examples for Supervised Fine-Tuning (SFT) on Text-to-SQL tasks using Open-RL.
+This directory contains the Gemma 3 supervised fine-tuning example for
+Text-to-SQL tasks using Open-RL. The Gemma 4 SFT+RL recipe lives under
+[`../../rl/text-to-sql`](../../rl/text-to-sql).
 
 ## Prerequisites
 
 1. **Install dependencies**:
    Set up the server and client environments:
    ```bash
-   cd src && uv sync --extra cpu
-   cd ../examples && uv sync
+   cd src/server && uv sync --extra cpu
+   cd ../../examples && uv sync
    ```
 
 ## Running the Training Server
@@ -28,7 +30,6 @@ uv run python texttosql_sft.py gemma
 
 ## Contents
 
-* `texttosql_sft.py`: Script to run the SFT training.
-* `texttosql_sft_notebook.ipynb`: Jupyter notebook demonstrating the SFT process.
-* `texttosql_gemma4_plain_notebook.ipynb`: Jupyter notebook demonstrating SFT with Gemma 4.
+* `texttosql_sft.py`: Gemma 3 SFT script and shared Text-to-SQL data/eval helpers.
+* `texttosql_sft_notebook.ipynb`: Jupyter notebook demonstrating the Gemma 3 SFT process.
 * `README.md`: This documentation file.

@@ -47,3 +47,6 @@ Thumbs.db
 
 !client/artifacts/*.png
 !assets/*.png
+!examples/rl/text-to-sql/*.png
+!examples/rl/text-to-sql/results/
+!examples/rl/text-to-sql/results/*.png
