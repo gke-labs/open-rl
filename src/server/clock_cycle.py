@@ -86,6 +86,13 @@ async def clock_cycle_loop() -> None:
                   },
                 )
 
+              case "create_model_from_state":
+                state_path = r["state_path"]
+                restore_optimizer = bool(r.get("restore_optimizer", False))
+                result = await asyncio.to_thread(engine.load_from_state, m_id, state_path, restore_optimizer)
+                result["type"] = "create_model_from_state"
+                await store.set_future(req_id, result)
+
               case "forward_backward":
                 raw_data = r["data"]
                 loss_fn = r["loss_fn"]
@@ -126,11 +133,29 @@ async def clock_cycle_loop() -> None:
                 kind = r.get("kind", "state")
 
                 result = await asyncio.to_thread(engine.save_state, m_id, state_path, include_optimizer, kind)
-                result["type"] = "save_state"
+                # SDK's save_state() returns SaveWeightsResponse which requires type="save_weights".
+                result["type"] = "save_weights"
                 await store.set_future(req_id, result)
 
-              case "save_weights_for_sampler" | "save_weights":
-                await asyncio.to_thread(engine.save_adapter, m_id)
+              case "load_weights":
+                state_path = r["state_path"]
+                restore_optimizer = bool(r.get("restore_optimizer", False))
+                await asyncio.to_thread(engine.load_from_state, m_id, state_path, restore_optimizer)
+                await store.set_future(req_id, {"path": state_path, "type": "load_weights"})
+
+              case "save_weights_for_sampler":
+                await asyncio.to_thread(engine.save_adapter, m_id, r.get("alias"))
+                await store.set_future(
+                  req_id,
+                  {
+                    "path": r.get("path"),
+                    "sampling_session_id": r.get("sampling_session_id"),
+                    "type": "save_weights_for_sampler",
+                  },
+                )
+
+              case "save_weights":
+                await asyncio.to_thread(engine.save_adapter, m_id, r.get("alias"))
                 await store.set_future(req_id, {"status": "ok", "type": req_type})
 
               case _:

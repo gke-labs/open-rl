@@ -7,7 +7,6 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
 
 import httpx
 from fastapi import FastAPI
@@ -106,7 +105,7 @@ async def _preflight_vllm() -> None:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
   task = None
   if is_single_process_mode():
     import clock_cycle
@@ -149,13 +148,23 @@ async def get_server_capabilities():
   }
 
 
+@app.post("/api/v1/client/config")
+async def client_config(_: dict):
+  return {
+    "pjwt_auth_enabled": False,
+    "credential_default_source": "api_key",
+    "sample_dispatch_bytes_semaphore_size": 10 * 1024 * 1024,
+    "inflight_response_bytes_semaphore_size": 50 * 1024 * 1024,
+  }
+
+
 @app.post("/api/v1/create_session")
-async def create_session(req: dict):
+async def create_session(_: dict):
   return {"session_id": "sess-real-123", "type": "create_session"}
 
 
 @app.post("/api/v1/session_heartbeat")
-async def session_heartbeat(req: dict):
+async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
 
 
@@ -173,6 +182,27 @@ async def create_model(req: dict):
       "type": "create_model",
       "base_model": base_model,
       "lora_config": req.get("lora_config") or {},
+    }
+  )
+  return {"request_id": req_id}
+
+
+@app.post("/api/v1/create_model_from_state")
+async def create_model_from_state(req: dict):
+  """ServiceClient.create_training_client_from_state_async()"""
+  state_path = req.get("state_path")
+  if not state_path:
+    return JSONResponse(status_code=400, content={"error": "state_path is required"})
+  # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
+  resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
+  model_id = str(uuid.uuid4())
+  req_id = await _enqueue(
+    {
+      "req_id": model_id,
+      "model_id": model_id,
+      "type": "create_model_from_state",
+      "state_path": resolved_path,
+      "restore_optimizer": bool(req.get("restore_optimizer", False)),
     }
   )
   return {"request_id": req_id}
@@ -241,8 +271,12 @@ async def optim_step(req: dict):
 
 @app.post("/api/v1/save_weights_for_sampler")
 async def save_weights_for_sampler(req: dict):
-  """TrainingClient.save_weights_for_sampler() — instant resolve, trainer auto-saves after optim_step."""
-  req_id = str(uuid.uuid4())
+  """TrainingClient.save_weights_for_sampler().
+
+  The SDK uses this for both named sampler checkpoints and ephemeral
+  save_weights_and_get_sampling_client() snapshots. Route it through the trainer
+  queue so the sampler always sees weights saved after prior training requests.
+  """
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
@@ -250,57 +284,68 @@ async def save_weights_for_sampler(req: dict):
   seq_id = req.get("sampling_session_seq_id") or int(time.time() * 1000)
   alias = req.get("name") or req.get("alias") or req.get("path")
 
-  ram_path = os.path.join(TMP_DIR, "peft", model_id)
-  os.makedirs(ram_path, exist_ok=True)
-  try:
-    import json
-
-    with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-      json.dump({"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}, f)
-  except Exception as e:
-    print(f"Failed to update alias metadata: {e}")
-
   session_id = f"{model_id}-samp-{seq_id}"
-  await store.set_future(
-    req_id,
+  req_id = await _enqueue(
     {
+      "model_id": model_id,
+      "type": "save_weights_for_sampler",
+      "alias": alias,
       "path": f"tinker://{session_id}" if alias else None,
       "sampling_session_id": session_id,
-      "type": "save_weights_for_sampler",
-    },
+    }
   )
   return {"request_id": req_id}
 
 
 @app.post("/api/v1/save_weights")
 async def save_weights(req: dict):
-  """TrainingClient.save_weights()"""
-  req_id = str(uuid.uuid4())
+  """TrainingClient.save_weights() / save_state() — persists adapter to TMP_DIR/checkpoints/<alias>.
+
+  This is the endpoint the tinker SDK hits for both save_weights() and save_state().
+  When `path` is provided we treat it as a named checkpoint alias and resolve to
+  TMP_DIR/checkpoints/<alias> (or leave absolute paths alone), so subsequent
+  `create_training_client_from_state(alias)` calls can find the adapter.
+  """
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
 
   seq_id = req.get("seq_id") or int(time.time() * 1000)
-  alias = req.get("path")
+  alias = req.get("path") or f"{model_id}-samp-{seq_id}"
+  state_path = alias if os.path.isabs(alias) else os.path.join(TMP_DIR, "checkpoints", alias)
 
-  ram_path = os.path.join(TMP_DIR, "peft", model_id)
-  os.makedirs(ram_path, exist_ok=True)
-  try:
-    import json
-
-    with open(os.path.join(ram_path, "metadata.json"), "w") as f:
-      json.dump({"model_id": model_id, "alias": alias, "created_at": datetime.now().isoformat(), "timestamp": time.time()}, f)
-  except Exception as e:
-    print(f"Failed to update alias metadata: {e}")
-
-  session_id = f"{model_id}-samp-{seq_id}"
-  await store.set_future(
-    req_id,
+  req_id = str(uuid.uuid4())
+  await _enqueue(
     {
-      "path": f"tinker://{session_id}",
-      "sampling_session_id": session_id,
-      "type": "save_weights",
-    },
+      "req_id": req_id,
+      "model_id": model_id,
+      "type": "save_state",
+      "state_path": state_path,
+      "include_optimizer": bool(req.get("include_optimizer", False)),
+      "kind": "weights",
+    }
+  )
+  return {"request_id": req_id}
+
+
+@app.post("/api/v1/load_weights")
+async def load_weights(req: dict):
+  """TrainingClient.load_state() / load_state_with_optimizer()."""
+  model_id = req.get("model_id")
+  state_path = req.get("path")
+  if not model_id:
+    return JSONResponse(status_code=400, content={"error": "model_id is required"})
+  if not state_path:
+    return JSONResponse(status_code=400, content={"error": "path is required"})
+
+  resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
+  req_id = await _enqueue(
+    {
+      "model_id": model_id,
+      "type": "load_weights",
+      "state_path": resolved_path,
+      "restore_optimizer": bool(req.get("optimizer", False)),
+    }
   )
   return {"request_id": req_id}
 
@@ -327,6 +372,9 @@ async def asample(req: dict):
   params = req.get("sampling_params", {})
   max_tokens = params.get("max_tokens", 20)
   temperature = params.get("temperature", 1.0)
+  stop = params.get("stop")
+  top_p = params.get("top_p", 1.0)
+  top_k = params.get("top_k", -1)
   num_samples = req.get("num_samples", 1)
 
   model_id = req.get("model_id") or req.get("sampling_session_id")
@@ -342,6 +390,9 @@ async def asample(req: dict):
         "prompt_tokens": prompt,
         "max_tokens": max_tokens,
         "temperature": temperature,
+        "stop": stop,
+        "top_p": top_p,
+        "top_k": top_k,
         "num_samples": num_samples,
       }
     )
@@ -364,6 +415,9 @@ async def asample(req: dict):
           "prompt_token_ids": prompt,
           "max_tokens": max_tokens,
           "temperature": temperature,
+          "stop": stop,
+          "top_p": top_p,
+          "top_k": top_k,
           "num_samples": num_samples,
           "lora_id": model_id,
           "lora_path": lora_path,
@@ -414,5 +468,5 @@ async def list_adapters():
 
 
 @app.post("/api/v1/telemetry")
-async def telemetry(req: dict):
+async def telemetry(_: dict):
   return {"status": "accepted"}

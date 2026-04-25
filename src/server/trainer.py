@@ -21,6 +21,7 @@ class TensorData(BaseModel):
 
 class LoraConfig(BaseModel):
   rank: int = 16
+  seed: int | None = None
   lora_alpha: int = 16
   lora_dropout: float = 0.05
   train_attn: bool = True
@@ -69,7 +70,7 @@ class TrainerEngine:
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
-    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, torch_dtype=dtype, device_map=self.device)
+    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
 
   def create_adapter(self, adapter_id: str, config: LoraConfig) -> None:
@@ -125,17 +126,21 @@ class TrainerEngine:
       modules_to_save=["lm_head", "embed_tokens"] if config.train_unembed else None,
     )
 
+    if config.seed is not None:
+      torch.manual_seed(config.seed)
     if self.peft_model is None:
       self.peft_model = get_peft_model(self.base_model, peft_config, adapter_name=adapter_id)
     else:
       self.peft_model.add_adapter(adapter_id, peft_config)
+
+    self.peft_model.set_adapter(adapter_id)
 
     self.peft_model.train()
     print(f"LoRA adapter '{adapter_id}' created and set to active.")
 
     self.save_adapter(adapter_id)
 
-  def save_adapter(self, adapter_id: str) -> None:
+  def save_adapter(self, adapter_id: str, alias: str | None = None) -> None:
     """Save adapter weights to disk for reliability and sharing."""
     try:
       tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
@@ -147,6 +152,8 @@ class TrainerEngine:
 
       # Save minimal metadata
       metadata = {"model_id": adapter_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
+      if alias is not None:
+        metadata["alias"] = alias
       with open(os.path.join(save_path, "metadata.json"), "w") as f:
         json.dump(metadata, f)
 
@@ -163,10 +170,15 @@ class TrainerEngine:
     os.makedirs(state_path, exist_ok=True)
     self.peft_model.save_pretrained(state_path, selected_adapters=[model_id])
 
+    optimizer = self.optimizers.get(model_id)
+    if include_optimizer and optimizer is not None:
+      torch.save(optimizer.state_dict(), os.path.join(state_path, "optimizer.pt"))
+
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
       "kind": kind,
+      "has_optimizer": include_optimizer and optimizer is not None,
       "model_id": model_id,
       "timestamp": time.time(),
     }
@@ -175,6 +187,55 @@ class TrainerEngine:
 
     print(f"Saved state for '{model_id}' to {state_path}")
     return {"path": state_path}
+
+  def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
+    """Create an adapter from a saved state directory.
+
+    Expects the directory to contain a metadata.json describing base_model
+    and (optionally) an adapter subdirectory with the saved LoRA weights.
+    """
+    metadata_path = os.path.join(state_path, "metadata.json")
+    if not os.path.exists(metadata_path):
+      raise FileNotFoundError(f"No metadata.json found at {state_path}")
+
+    with open(metadata_path) as f:
+      metadata = json.load(f)
+
+    base_model = metadata.get("base_model")
+    if not base_model:
+      raise ValueError(f"metadata.json at {state_path} missing base_model")
+
+    src_adapter_id = metadata.get("model_id")
+    adapter_dir = state_path
+    if src_adapter_id and os.path.exists(os.path.join(state_path, src_adapter_id)):
+      adapter_dir = os.path.join(state_path, src_adapter_id)
+
+    self.load_base_model(base_model)
+    assert self.base_model is not None
+
+    if self.peft_model is None:
+      self.peft_model = PeftModelForCausalLM.from_pretrained(self.base_model, adapter_dir, adapter_name=model_id, is_trainable=True)
+    else:
+      if model_id in getattr(self.peft_model, "peft_config", {}):
+        self.peft_model.delete_adapter(model_id)
+        self.optimizers.pop(model_id, None)
+      self.peft_model.load_adapter(adapter_dir, adapter_name=model_id, is_trainable=True)
+
+    self.peft_model.set_adapter(model_id)
+    self.peft_model.train()
+
+    if restore_optimizer and metadata.get("has_optimizer"):
+      optimizer_path = os.path.join(state_path, "optimizer.pt")
+      if os.path.exists(optimizer_path):
+        lr = 1e-4
+        params = [p for p in self.peft_model.parameters() if p.requires_grad]
+        optimizer = torch.optim.AdamW(params, lr=lr)
+        optimizer.load_state_dict(torch.load(optimizer_path, map_location=self.device))
+        self.optimizers[model_id] = optimizer
+        print(f"Restored optimizer state for '{model_id}' from {optimizer_path}")
+
+    print(f"Loaded state for '{model_id}' from {state_path}")
+    return {"model_id": model_id, "is_lora": True, "base_model": base_model}
 
   def forward_backward(self, data: list[Datum], loss_fn: str, loss_config: dict | None = None, model_id: str | None = None) -> dict[str, Any]:
     """Core training step: forward pass, loss computation, and backward pass."""
@@ -197,7 +258,7 @@ class TrainerEngine:
         case "importance_sampling":
           loss = self._compute_importance_sampling_loss(target_logprobs, weights_tensor, datum)
         case "ppo":
-          loss = self._compute_ppo_loss(target_logprobs, targets_tensor, datum, loss_config)
+          loss = self._compute_ppo_loss(target_logprobs, weights_tensor, datum, loss_config)
         case _:
           raise NotImplementedError(f"Loss {loss_fn} not supported")
 
@@ -279,7 +340,7 @@ class TrainerEngine:
     elementwise_loss = torch.nan_to_num(elementwise_loss, nan=0.0, posinf=0.0, neginf=0.0)
     return elementwise_loss.sum()
 
-  def _compute_ppo_loss(self, target_logprobs: torch.Tensor, targets_tensor: torch.Tensor, datum: Datum, loss_config: dict | None) -> torch.Tensor:
+  def _compute_ppo_loss(self, target_logprobs: torch.Tensor, weights_tensor: torch.Tensor, datum: Datum, loss_config: dict | None) -> torch.Tensor:
     """PPO loss for RL."""
     if "logprobs" not in datum.loss_fn_inputs or "advantages" not in datum.loss_fn_inputs:
       raise ValueError("ppo requires 'logprobs' and 'advantages' in loss_fn_inputs")
@@ -290,10 +351,11 @@ class TrainerEngine:
     ref_tensor = torch.tensor(ref_logprobs, dtype=target_logprobs.dtype, device=self.device)
     advantages_tensor = torch.tensor(advantages, dtype=target_logprobs.dtype, device=self.device)
 
-    seq_len = min(target_logprobs.size(0), ref_tensor.size(0), advantages_tensor.size(0))
+    seq_len = min(target_logprobs.size(0), ref_tensor.size(0), advantages_tensor.size(0), weights_tensor.size(0))
     target_logprobs = target_logprobs[:seq_len]
     ref_tensor = ref_tensor[:seq_len]
     advantages_tensor = advantages_tensor[:seq_len]
+    weights_tensor = weights_tensor[:seq_len]
 
     diff = target_logprobs - ref_tensor
     diff = torch.clamp(diff, min=-20.0, max=20.0)
@@ -305,7 +367,16 @@ class TrainerEngine:
     surr2 = torch.clamp(ratio, 1.0 - epsilon, 1.0 + epsilon) * advantages_tensor
 
     elementwise_objective = torch.min(surr1, surr2)
-    return -elementwise_objective.sum()
+
+    # Optional KL penalty against the reference policy.
+    # Uses the unbiased estimator (ratio - 1) - log(ratio), which is
+    # non-negative and zero when the policy matches the reference.
+    kl_coeff = loss_config.get("kl_coeff", 0.0) if loss_config else 0.0
+    if kl_coeff > 0:
+      kl = (ratio - 1) - diff
+      elementwise_objective = elementwise_objective - kl_coeff * kl
+
+    return -(elementwise_objective * weights_tensor).sum()
 
   def _sanitize_float(self, val: float) -> float:
     if math.isinf(val):
