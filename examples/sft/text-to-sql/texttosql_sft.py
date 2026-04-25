@@ -83,22 +83,6 @@ PRESETS = {
     },
     layer_name="gemma",
   ),
-  "gemma4_e2b": chz.Blueprint(Config).apply(
-    {
-      "base_model": "google/gemma-4-e2b",
-      "tokenizer_name": "google/gemma-4-e2b",
-      "prompt_format": "plain_sql_completion",
-      "steps": 100,
-      "batch_size": 1,
-      "rank": 32,
-      "learning_rate": 5e-5,
-      "train_limit": 100,
-      "eval_limit": 25,
-      "eval_every": 100,
-      "eval_max_tokens": 64,
-    },
-    layer_name="gemma4_e2b",
-  ),
 }
 
 
@@ -168,7 +152,14 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
 
   before_sampler_path = trainer.save_weights_for_sampler(name="texttosql_before").result().path
   before_sampler = client.create_sampling_client(before_sampler_path)
-  before_exec, before_sim = await evaluate(before_sampler, tokenizer, "texttosql_before", eval_examples, config)
+  before_exec, before_sim = await evaluate(
+    before_sampler,
+    tokenizer,
+    "texttosql_before",
+    eval_examples,
+    max_tokens=config.eval_max_tokens,
+    seed=config.seed,
+  )
   ml_logger.log_metrics({"phase": "eval", "execution_match": before_exec, "similarity": before_sim}, step=0)
 
   losses: list[float] = []
@@ -202,7 +193,7 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
       alias = f"texttosql_s{step}"
       sampler_path = trainer.save_weights_for_sampler(name=alias).result().path
       sampler = client.create_sampling_client(sampler_path)
-      execution_match, sim = await evaluate(sampler, tokenizer, alias, eval_examples, config)
+      execution_match, sim = await evaluate(sampler, tokenizer, alias, eval_examples, max_tokens=config.eval_max_tokens, seed=config.seed)
       eval_exec.append(execution_match)
       eval_sim.append(sim)
       ml_logger.log_metrics({"phase": "eval", "execution_match": execution_match, "similarity": sim}, step=step)
@@ -300,6 +291,10 @@ def sql_results_match(context: str, predicted_sql: str, target_sql: str, target_
     if error is not None:
       return False, f"target query error: {error}"
 
+  # Reject vacuous match: two empty row sets are not evidence of correctness.
+  if not predicted_rows and not target_rows:
+    return False, "both queries returned no rows"
+
   order_sensitive = any(token in f" {normalize_sql(predicted_sql)} {normalize_sql(target_sql)} " for token in (" order by ", " limit ", " offset "))
   if not order_sensitive:
     predicted_rows = sorted(predicted_rows, key=repr)
@@ -344,7 +339,10 @@ def build_examples(tokenizer, prompt_format: str, dataset_split, limit, require_
 
     if require_target_rows:
       target_rows, error = run_sql(example["context"], example["target"])
-      if error is not None:
+      if error is not None or not target_rows:
+        # Skip empty-result targets; otherwise any prediction that also
+        # returns [] (including INSERT/UPDATE/DELETE and misfiltered SELECTs)
+        # scores a vacuous MATCH.
         continue
       example["target_rows"] = target_rows
 
@@ -355,13 +353,13 @@ def build_examples(tokenizer, prompt_format: str, dataset_split, limit, require_
   return examples
 
 
-async def evaluate(sampler, tokenizer, alias, examples, config):
-  execution_match, similarity = 0.0, 0.0
+async def evaluate_metrics(sampler, tokenizer, alias, examples, max_tokens: int, seed: int) -> dict[str, float]:
+  execution_match, exact_match, execution_match_not_exact, similarity = 0.0, 0.0, 0.0, 0.0
   futures = [
     sampler.sample_async(
       prompt=types.ModelInput.from_ints(tokens=example["prompt_tokens"]),
       num_samples=1,
-      sampling_params=types.SamplingParams(max_tokens=config.eval_max_tokens, seed=config.seed + idx, temperature=0.0),
+      sampling_params=types.SamplingParams(max_tokens=max_tokens, seed=seed + idx, temperature=0.0),
     )
     for idx, example in enumerate(examples)
   ]
@@ -372,6 +370,7 @@ async def evaluate(sampler, tokenizer, alias, examples, config):
     target_sql = example["target"]
     predicted = normalize_sql(predicted_sql)
     target = normalize_sql(target_sql)
+    matches_exact = predicted == target
     matches_execution, execution_error = sql_results_match(example["context"], predicted_sql, target_sql, target_rows=example["target_rows"])
 
     log_level = logging.INFO if matches_execution else logging.WARNING
@@ -389,9 +388,21 @@ async def evaluate(sampler, tokenizer, alias, examples, config):
     )
 
     execution_match += float(matches_execution)
+    exact_match += float(matches_exact)
+    execution_match_not_exact += float(matches_execution and not matches_exact)
     similarity += SequenceMatcher(None, predicted, target).ratio()
   count = max(1, len(examples))
-  return execution_match / count, similarity / count
+  return {
+    "execution_match": execution_match / count,
+    "exact_match": exact_match / count,
+    "execution_match_not_exact": execution_match_not_exact / count,
+    "similarity": similarity / count,
+  }
+
+
+async def evaluate(sampler, tokenizer, alias, examples, max_tokens: int, seed: int):
+  metrics = await evaluate_metrics(sampler, tokenizer, alias, examples, max_tokens=max_tokens, seed=seed)
+  return metrics["execution_match"], metrics["similarity"]
 
 
 @chz.blueprint._entrypoint.exit_on_entrypoint_error
