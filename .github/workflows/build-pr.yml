@@ -1,0 +1,32 @@
+name: build images on PR
+
+on:
+  pull_request:
+
+jobs:
+  build-only:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image_name: gateway
+            dockerfile: src/server/Dockerfile.gateway
+          - image_name: server
+            dockerfile: src/server/Dockerfile
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build
+        uses: docker/build-push-action@v5
+        with:
+          context: src/server
+          file: ${{ matrix.dockerfile }}
+          build-args: |
+            VERSION=${{ github.sha }}
+          push: false
