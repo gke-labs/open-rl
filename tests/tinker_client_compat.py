@@ -10,13 +10,9 @@ import io
 import os
 import pkgutil
 import signal
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
-
-EXAMPLES_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(EXAMPLES_ROOT))  # TODO: this is a hack
 
 import tinker
 from tinker import types
@@ -26,7 +22,7 @@ from tinker.lib.public_interfaces.sampling_client import QueueState
 
 from tests._server_fixture import openrl_server
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[1]
 REPORT_PATH = REPO_ROOT / "docs" / "tinker-client-compatibility.md"
 
 MODEL_ID = "compat-training-client"
@@ -249,7 +245,7 @@ def render_report(statuses: dict[str, str]) -> str:
     "# Tinker Client Compatibility",
     "",
     f"Generated from `tinker=={importlib.metadata.version('tinker')}` by",
-    "`examples/tests/tinker_client_compat.py`.",
+    "`tests/tinker_client_compat.py`.",
     "",
     "The test discovers public Tinker client methods with `dir()` and `inspect`,",
     "starts the real Open-RL FastAPI gateway in single-process mode with a tiny",

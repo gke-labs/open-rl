@@ -6,14 +6,12 @@ preset's threshold, and the final exact-match clears a 20% floor.
 """
 
 import unittest
-from pathlib import Path
 
 from piglatin_sft import PRESETS, run_training
-from test_piglatin_qwen import PIGLATIN_EVAL_EXAMPLES
 
-from tests._server_fixture import OpenRlServerCase
+from tests._server_fixture import REPO_ROOT, OpenRlServerCase
+from tests.test_piglatin_qwen import PIGLATIN_EVAL_EXAMPLES
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIENT_DIR = REPO_ROOT / "examples" / "sft" / "pig-latin"
 
 

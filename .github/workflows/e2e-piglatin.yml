@@ -43,8 +43,7 @@ jobs:
         run: uv sync
 
       - name: Run pig-latin SFT end-to-end
-        working-directory: examples
-        run: PYTHONPATH=.:sft/pig-latin uv run python -m unittest tests.test_piglatin_qwen -v
+        run: PYTHONPATH=examples/sft/pig-latin uv --project examples run python -m unittest tests.test_piglatin_qwen -v
         env:
           TINKER_API_KEY: tml-dummy-key
           TRANSFORMERS_VERBOSITY: error

@@ -5,13 +5,11 @@ Non-gated model kept small for CI speed. Skips the baseline eval and runs
 """
 
 import unittest
-from pathlib import Path
 
 from piglatin_sft import PRESETS, run_training
 
-from tests._server_fixture import OpenRlServerCase
+from tests._server_fixture import REPO_ROOT, OpenRlServerCase
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 CLIENT_DIR = REPO_ROOT / "examples" / "sft" / "pig-latin"
 
 PIGLATIN_EVAL_EXAMPLES = [

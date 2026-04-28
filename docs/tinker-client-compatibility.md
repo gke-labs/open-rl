@@ -1,7 +1,7 @@
 # Tinker Client Compatibility
 
 Generated from `tinker==0.18.1` by
-`examples/tests/tinker_client_compat.py`.
+`tests/tinker_client_compat.py`.
 
 The test discovers public Tinker client methods with `dir()` and `inspect`,
 starts the real Open-RL FastAPI gateway in single-process mode with a tiny
