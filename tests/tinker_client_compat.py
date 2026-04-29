@@ -199,7 +199,7 @@ def probe_server(methods: list[str]) -> dict[str, str]:
     contextlib.redirect_stderr(io.StringIO()),
     openrl_server(
       compat_model_path(),
-      single_process=True,
+      sampling_backend="torch",
       startup_timeout=STARTUP_TIMEOUT,
       extra_env={"OPEN_RL_TARGET_MODULES": "all-linear"},
     ) as base_url,

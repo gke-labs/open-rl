@@ -29,8 +29,7 @@ def unused_tcp_port() -> int:
 def openrl_server(
   base_model: str,
   port: int | None = None,
-  single_process: bool = False,
-  sampler: str = "torch",
+  sampling_backend: str = "torch",
   startup_timeout: float = 60.0,
   health_path: str = "/api/v1/healthz",
   uv_run_args: Sequence[str] = ("--frozen",),
@@ -47,15 +46,13 @@ def openrl_server(
     "PYTHONUNBUFFERED": "1",
     "ENABLE_GCP_TRACE": "0",
     "OPEN_RL_TMP_DIR": tmp_dir.name,
-    "SAMPLER": sampler,
-    "SINGLE_PROCESS": "1" if single_process else "0",
+    "SAMPLING_BACKEND": sampling_backend,
     "TINKER_API_KEY": "tml-dummy-key",
     "UV_CACHE_DIR": os.environ.get("UV_CACHE_DIR", "/tmp/uv-cache"),
   }
   if extra_env:
     env.update(extra_env)
-  if not single_process:
-    env.pop("REDIS_URL", None)
+  env.pop("REDIS_URL", None)
 
   command = [
     "uv",
@@ -134,7 +131,7 @@ class OpenRlServerCase(unittest.TestCase):
   PORT: int = 9010
   REQUIRE_HF_TOKEN: bool = False
   STARTUP_TIMEOUT: int = 300
-  SINGLE_PROCESS: bool = True
+  SAMPLING_BACKEND: str = "torch"
   UV_RUN_ARGS: Sequence[str] = ("--extra", "cpu")
   HEALTH_PATH: str = "/api/v1/get_server_capabilities"
 
@@ -151,7 +148,7 @@ class OpenRlServerCase(unittest.TestCase):
     cls._server_context = openrl_server(
       base_model,
       port=port,
-      single_process=cls.SINGLE_PROCESS,
+      sampling_backend=cls.SAMPLING_BACKEND,
       startup_timeout=cls.STARTUP_TIMEOUT,
       health_path=cls.HEALTH_PATH,
       uv_run_args=cls.UV_RUN_ARGS,

@@ -2,6 +2,8 @@
 
 This document summarizes the final architecture of the Open-RL API backend after refactoring it to a multi-tenant, batched "Clock Cycle" engine. The server is designed to emulate the behavior of high-throughput RL infrastructure while minimizing VRAM footprint via LoRA hot-swapping.
 
+![Architecture](blog/assets/arch.svg)
+
 ## High-Level Architecture
 
 The API backend consists of two primary layers:

@@ -81,7 +81,7 @@ CUDA_VISIBLE_DEVICES=0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BA
 Start the Open-RL gateway and trainer on GPU 1:
 
 ```bash
-CUDA_VISIBLE_DEVICES=1 make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm
+CUDA_VISIBLE_DEVICES=1 make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 ```
 
 ## Run

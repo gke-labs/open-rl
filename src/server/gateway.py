@@ -51,15 +51,12 @@ VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
 
 
 def is_single_process_mode() -> bool:
-  explicit = os.getenv("SINGLE_PROCESS")
-  if explicit is not None:
-    return explicit == "1"
   return bool(os.getenv("BASE_MODEL")) and not bool(os.getenv("REDIS_URL"))
 
 
 def get_sampler_backend() -> str:
-  if sampler := os.getenv("SAMPLER"):
-    return sampler.lower()
+  if sampling_backend := os.getenv("SAMPLING_BACKEND"):
+    return sampling_backend.lower()
   return "torch" if is_single_process_mode() else "vllm"
 
 
@@ -85,7 +82,7 @@ async def _enqueue(payload: dict) -> str:
 
 
 async def _preflight_vllm() -> None:
-  """If SAMPLER=vllm, verify the vLLM worker is reachable at VLLM_URL.
+  """If SAMPLING_BACKEND=vllm, verify the vLLM worker is reachable at VLLM_URL.
 
   Prints a clear, actionable error instead of letting the first asample
   request fall through with a raw httpx connection refused.
@@ -99,7 +96,7 @@ async def _preflight_vllm() -> None:
       resp.raise_for_status()
   except Exception as exc:
     raise RuntimeError(
-      f"SAMPLER=vllm but no vLLM worker is reachable at {VLLM_URL}.\n"
+      f"SAMPLING_BACKEND=vllm but no vLLM worker is reachable at {VLLM_URL}.\n"
       f"Start it first with:  make vllm BASE_MODEL={os.getenv('BASE_MODEL') or '<model-id>'}"
     ) from exc
 
@@ -115,8 +112,8 @@ async def lifespan(_: FastAPI):
     print(" Open-RL Single-Process Mode")
     print("=" * 50)
     print(f"-> Base model: {base_model or 'unset'}")
-    print(f"-> Sampler   : {get_sampler_backend()}")
-    print("-> Backend   : gateway + worker loop in one process\n")
+    print(f"-> Sampling backend: {get_sampler_backend()}")
+    print("-> Server mode     : API server + worker loop in one process\n")
     await _preflight_vllm()
     if base_model:
       await asyncio.to_thread(clock_cycle.engine.load_base_model, base_model)
