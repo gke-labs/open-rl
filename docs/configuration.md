@@ -4,7 +4,7 @@ Open-RL is configured with environment variables. The examples below use plain
 shell commands so they work even if `make` is not installed. The root
 `Makefile` wraps the same commands for convenience.
 
-## Run locally
+## Run outside Kubernetes
 
 Install `uv` if needed:
 
@@ -12,17 +12,17 @@ Install `uv` if needed:
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Start the gateway and trainer with the default torch sampler:
+Start the API server and trainer with the default torch sampling backend:
 
 ```bash
 cd src/server
 BASE_MODEL=google/gemma-4-e2b \
-SAMPLER=torch \
+SAMPLING_BACKEND=torch \
 uv run --extra cpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
 ```
 
-Local mode is auto-detected when `BASE_MODEL` is set and `REDIS_URL` is unset.
-No separate single-process setting is required.
+Because `REDIS_URL` is unset, this starts the API server and trainer loop in one
+process on the same workstation or VM.
 
 For a separate vLLM sampler, use two terminals:
 
@@ -36,10 +36,10 @@ uv run --extra vllm python -m vllm_sampler
 ```
 
 ```bash
-# Terminal 2: gateway and trainer
+# Terminal 2: API server and trainer
 cd src/server
 BASE_MODEL=google/gemma-4-e2b \
-SAMPLER=vllm \
+SAMPLING_BACKEND=vllm \
 CUDA_VISIBLE_DEVICES=1 \
 uv run --extra gpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
 ```
@@ -49,7 +49,7 @@ The equivalent Makefile shortcuts are:
 ```bash
 make server BASE_MODEL=google/gemma-4-e2b
 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BASE_MODEL=google/gemma-4-e2b
-make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm
+make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 ```
 
 ## Core variables
@@ -57,9 +57,9 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `BASE_MODEL` | unset | Hugging Face model id loaded by the trainer and, when using vLLM, by the sampler. |
-| `SAMPLER` | `torch` locally, `vllm` when distributed | Sampling backend. `torch` samples in the training process. `vllm` forwards sampling requests to a vLLM worker. |
-| `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for local mode. |
-| `VLLM_URL` | `http://127.0.0.1:8001` | Gateway URL for the vLLM worker when `SAMPLER=vllm`. |
+| `SAMPLING_BACKEND` | `torch` locally, `vllm` when distributed | Sampling backend selector. `torch` samples in the training process. `vllm` forwards sampling requests to a vLLM worker. |
+| `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
+| `VLLM_URL` | `http://127.0.0.1:8001` | API server URL for the vLLM worker when `SAMPLING_BACKEND=vllm`. |
 
 ## Server paths
 
@@ -85,12 +85,12 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
 | `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
 
-## Distributed deploys
+## Distributed deployment
 
-Kubernetes deploys set these variables in pod specs. The important split is:
+Kubernetes deployment manifests set these variables in pod specs. The important split is:
 
 ```bash
-# Gateway pod
+# API server pod
 REDIS_URL=redis://redis-service:6379 \
 VLLM_URL=http://vllm-service:8001 \
 BASE_MODEL=google/gemma-4-e2b \
