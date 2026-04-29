@@ -44,7 +44,7 @@ class Config:
   batch_size: int
   rank: int
   learning_rate: float
-  base_url: str = os.getenv("TINKER_BASE_URL") or BASE_URL
+  base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
   steps: int = 150
   train_limit: int = 320
   eval_limit: int = 64

@@ -1,50 +1,111 @@
 # Configuration
 
-All knobs that control Open-RL at runtime. Read from environment variables.
-The Makefile wraps the common ones; k8s manifests set them in pod specs.
+Open-RL is configured with environment variables. The examples below use plain
+shell commands so they work even if `make` is not installed. The root
+`Makefile` wraps the same commands for convenience.
 
-## Core
+## Run outside Kubernetes
+
+Install `uv` if needed:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Start the API server and trainer with the default torch sampling backend:
+
+```bash
+cd src/server
+BASE_MODEL=google/gemma-4-e2b \
+SAMPLING_BACKEND=torch \
+uv run --extra cpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
+```
+
+Because `REDIS_URL` is unset, this starts the API server and trainer loop in one
+process on the same workstation or VM.
+
+For a separate vLLM sampler, use two terminals:
+
+```bash
+# Terminal 1: vLLM sampler
+cd src/server
+BASE_MODEL=google/gemma-4-e2b \
+VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM \
+CUDA_VISIBLE_DEVICES=0 \
+uv run --extra vllm python -m vllm_sampler
+```
+
+```bash
+# Terminal 2: API server and trainer
+cd src/server
+BASE_MODEL=google/gemma-4-e2b \
+SAMPLING_BACKEND=vllm \
+CUDA_VISIBLE_DEVICES=1 \
+uv run --extra gpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
+```
+
+The equivalent Makefile shortcuts are:
+
+```bash
+make server BASE_MODEL=google/gemma-4-e2b
+VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BASE_MODEL=google/gemma-4-e2b
+make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
+```
+
+## Core variables
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `BASE_MODEL` | *(required in single-process mode)* | The Hugging Face model id to load in the trainer **and** the vLLM sampler. Example: `google/gemma-4-e2b`. |
-| `SAMPLER` | `torch` when single-process, `vllm` otherwise | Which sampling backend to use. `torch` runs in the gateway process (CPU-friendly). `vllm` forwards sampling requests to a separate `python -m src.vllm_sampler` worker. |
-| `SINGLE_PROCESS` | auto-detected | `1` forces gateway + trainer into one process (the sampler is separate iff `SAMPLER=vllm`). Unset falls back to auto-detect: if `BASE_MODEL` is set and `REDIS_URL` is not, assume single-process. Distributed deployments shouldn't set this. |
-| `REDIS_URL` | unset | When set, the request store switches to Redis and the system runs in distributed mode (gateway, vLLM worker, and trainer worker as separate pods coordinating via Redis). Used by the k8s manifests in `server/kubernetes/distributed-{shared,lustre}/`. |
-| `VLLM_URL` | `http://127.0.0.1:8001` | Where the gateway looks for the vLLM worker when `SAMPLER=vllm`. The `make vllm` target starts the worker on this port. |
+| `BASE_MODEL` | unset | Hugging Face model id loaded by the trainer and, when using vLLM, by the sampler. |
+| `SAMPLING_BACKEND` | `torch` locally, `vllm` when distributed | Sampling backend selector. `torch` samples in the training process. `vllm` forwards sampling requests to a vLLM worker. |
+| `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
+| `VLLM_URL` | `http://127.0.0.1:8001` | API server URL for the vLLM worker when `SAMPLING_BACKEND=vllm`. |
 
 ## Server paths
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root dir for adapter snapshots (`peft/`) and saved state checkpoints (`checkpoints/`). |
-| `CUDA_VISIBLE_DEVICES` | unset | Standard PyTorch GPU selector. Pinned per-deployment in the k8s manifests. |
+| `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. |
+| `CUDA_VISIBLE_DEVICES` | unset | Standard PyTorch GPU selector. Use different devices when the vLLM worker and trainer run on separate GPUs. |
 
-## vLLM worker tuning
-
-| Env var | Default | What it does |
-| --- | --- | --- |
-| `MOCK_VLLM` | `0` | `1` stubs out vLLM so the worker returns dummy tokens. Useful on a Mac where vLLM isn't installable. |
-
-## Client
+## vLLM variables
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `TINKER_BASE_URL` / `OPEN_RL_BASE_URL` | `http://127.0.0.1:9003` | Where the client scripts point the tinker SDK. |
-| `TINKER_API_KEY` | `tml-dummy-key` | Passed through to the SDK. No real auth on the local server; any value works. |
-| `HF_TOKEN` | unset | Required for gated models (Gemma 3, FunctionGemma). `uv run hf auth login` is the easiest way to set it. |
+| `MOCK_VLLM` | `0` | `1` starts the vLLM worker without a real vLLM engine, useful for local API debugging. |
+| `VLLM_ARCHITECTURE_OVERRIDE` | unset | Optional architecture override passed to the in-repo vLLM worker. Gemma 4 examples use `Gemma4ForCausalLM`. |
+
+## Client variables
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `TINKER_BASE_URL` | `http://127.0.0.1:9003` | Base URL used by example clients and scripts. |
+| `TINKER_API_KEY` | `tml-dummy-key` | Passed through to the Tinker SDK. Local Open-RL does not enforce auth. |
+| `HF_TOKEN` | unset | Required for gated Hugging Face models. `uv run hf auth login` is the easiest setup path. |
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
-| `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout (debugging). |
+| `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
 
-## Quick reference
+## Distributed deployment
+
+Kubernetes deployment manifests set these variables in pod specs. The important split is:
 
 ```bash
-# Local single-process, torch sampler (default):
-make server BASE_MODEL=Qwen/Qwen3-0.6B
+# API server pod
+REDIS_URL=redis://redis-service:6379 \
+VLLM_URL=http://vllm-service:8001 \
+BASE_MODEL=google/gemma-4-e2b \
+uv run uvicorn src.gateway:app --host 0.0.0.0 --port 8000
+```
 
-# Local single-process, vLLM sampler (GPU):
-make vllm   BASE_MODEL=google/gemma-4-e2b   # terminal 1
-make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm   # terminal 2
+```bash
+# Trainer worker pod
+REDIS_URL=redis://redis-service:6379 \
+BASE_MODEL=google/gemma-4-e2b \
+uv run python -m src.clock_cycle
+```
 
-# Distributed (GKE): configured via k8s manifests, no local command.
+```bash
+# vLLM worker pod
+BASE_MODEL=google/gemma-4-e2b \
+uv run uvicorn src.vllm_sampler:app --host 0.0.0.0 --port 8001
 ```

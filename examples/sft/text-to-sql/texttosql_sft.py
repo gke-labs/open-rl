@@ -58,7 +58,7 @@ class Config:
   rank: int
   learning_rate: float
   prompt_format: str = "chat_template"
-  base_url: str = os.getenv("TINKER_BASE_URL") or os.getenv("OPEN_RL_BASE_URL") or BASE_URL
+  base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
   grad_clip_norm: float = 0.3
   eval_every: int = 50
   train_limit: int = 2_048

@@ -69,8 +69,7 @@ class OpenRlServerCase(unittest.TestCase):
     print(f"\nStarting Open-RL server with BASE_MODEL={base_model} on port {port}...")
     env = {
       **os.environ,
-      "SINGLE_PROCESS": "1",
-      "SAMPLER": "torch",
+      "SAMPLING_BACKEND": "torch",
       "BASE_MODEL": base_model,
     }
     cls._server = subprocess.Popen(
