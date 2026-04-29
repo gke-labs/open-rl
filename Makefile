@@ -7,8 +7,6 @@
 BASE_MODEL     ?= Qwen/Qwen3-0.6B
 # The backend used for sampling ("torch" for local inference, or "vllm" for optimized remote inference)
 SAMPLER        ?= torch
-# Whether to run the API gateway and training worker loop together in a single process (1=yes, 0=no)
-SINGLE_PROCESS ?= 1
 # The network interface to bind the API server
 HOST           ?= 127.0.0.1
 # The local port number for the API server
@@ -19,7 +17,7 @@ BASE_URL       ?= http://$(HOST):$(PORT)
 help:
 	@echo "make server                              # $(BASE_MODEL), SAMPLER=$(SAMPLER), port $(PORT)"
 	@echo "make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm"
-	@echo "make vllm   BASE_MODEL=google/gemma-4-e2b  # standalone vLLM worker"
+	@echo "VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BASE_MODEL=google/gemma-4-e2b"
 	@echo "make test | lint | fmt"
 
 # ---------------------------------------------------------------------------
@@ -27,7 +25,7 @@ help:
 # ---------------------------------------------------------------------------
 server:
 	@-kill -9 $$(lsof -ti:$(PORT)) 2>/dev/null || true
-	cd src/server && SINGLE_PROCESS="$(SINGLE_PROCESS)" BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
+	cd src/server && BASE_MODEL="$(BASE_MODEL)" SAMPLER="$(SAMPLER)" \
 	  uv run --extra $(if $(filter vllm,$(SAMPLER)),gpu,cpu) \
 	  python -m uvicorn gateway:app --host $(HOST) --port $(PORT)
 

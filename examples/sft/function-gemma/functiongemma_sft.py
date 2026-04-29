@@ -27,7 +27,7 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 @chz.chz
 class Config:
   base_model: str = BASE_MODEL
-  base_url: str = os.getenv("TINKER_BASE_URL") or os.getenv("OPEN_RL_BASE_URL") or BASE_URL
+  base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
   dataset: str = DATASET
   epochs: int = 10
   rank: int = 16
