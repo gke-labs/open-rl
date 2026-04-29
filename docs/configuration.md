@@ -16,7 +16,7 @@ Start the gateway and trainer with the default torch sampler:
 
 ```bash
 cd src/server
-BASE_MODEL=Qwen/Qwen3-0.6B \
+BASE_MODEL=google/gemma-4-e2b \
 SAMPLER=torch \
 uv run --extra cpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
 ```
@@ -47,7 +47,7 @@ uv run --extra gpu python -m uvicorn gateway:app --host 127.0.0.1 --port 9003
 The equivalent Makefile shortcuts are:
 
 ```bash
-make server BASE_MODEL=Qwen/Qwen3-0.6B
+make server BASE_MODEL=google/gemma-4-e2b
 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BASE_MODEL=google/gemma-4-e2b
 make server BASE_MODEL=google/gemma-4-e2b SAMPLER=vllm
 ```
@@ -93,19 +93,19 @@ Kubernetes deploys set these variables in pod specs. The important split is:
 # Gateway pod
 REDIS_URL=redis://redis-service:6379 \
 VLLM_URL=http://vllm-service:8001 \
-BASE_MODEL=Qwen/Qwen3-4B-Instruct-2507 \
+BASE_MODEL=google/gemma-4-e2b \
 uv run uvicorn src.gateway:app --host 0.0.0.0 --port 8000
 ```
 
 ```bash
 # Trainer worker pod
 REDIS_URL=redis://redis-service:6379 \
-BASE_MODEL=Qwen/Qwen3-4B-Instruct-2507 \
+BASE_MODEL=google/gemma-4-e2b \
 uv run python -m src.clock_cycle
 ```
 
 ```bash
 # vLLM worker pod
-BASE_MODEL=Qwen/Qwen3-4B-Instruct-2507 \
+BASE_MODEL=google/gemma-4-e2b \
 uv run uvicorn src.vllm_sampler:app --host 0.0.0.0 --port 8001
 ```

@@ -4,7 +4,7 @@
 # Knobs (override on the command line: make server BASE_MODEL=... SAMPLER=...)
 # ---------------------------------------------------------------------------
 # The HuggingFace base model checkpoint loaded by the server and training workers
-BASE_MODEL     ?= Qwen/Qwen3-0.6B
+BASE_MODEL     ?= google/gemma-4-e2b
 # The backend used for sampling ("torch" for local inference, or "vllm" for optimized remote inference)
 SAMPLER        ?= torch
 # The network interface to bind the API server
