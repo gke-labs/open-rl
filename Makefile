@@ -13,6 +13,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
+TEST_PYTHONPATH ?= examples/sft/pig-latin
 
 help:
 	@echo "make server                              # $(BASE_MODEL), SAMPLING_BACKEND=$(SAMPLING_BACKEND), port $(PORT)"
@@ -48,7 +49,7 @@ cli:
 # Dev
 # ---------------------------------------------------------------------------
 test:
-	cd examples && uv run python -m unittest discover -s sft/pig-latin/tests
+	PYTHONPATH="$(TEST_PYTHONPATH)" uv --project examples run python -m unittest discover -s tests
 
 lint:
 	uvx ruff check .

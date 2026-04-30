@@ -45,4 +45,4 @@ uv run python piglatin_sft.py gemma
 * `piglatin_sft_notebook.ipynb`: Jupyter notebook version.
 * `piglatin_data.json`: Dataset for training.
 * `README.md`: This documentation file.
-* `tests/`: Unit tests for the example.
+* `../../../tests/`: Unit tests for the example.
