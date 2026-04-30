@@ -1,4 +1,4 @@
-.PHONY: server vllm test lint fmt help
+.PHONY: server vllm test lint fmt help push-vm pull-vm
 
 # ---------------------------------------------------------------------------
 # Knobs (override on the command line: make server BASE_MODEL=... SAMPLING_BACKEND=...)
@@ -96,7 +96,14 @@ dashboard-apply:
 # ---------------------------------------------------------------------------
 # Misc
 # ---------------------------------------------------------------------------
-REMOTE_HOST ?= mars
+# Remote host address for VM synchronization. Override on command line: make push-vm REMOTE_HOST=...
+REMOTE_HOST ?= <PLACE_HOLDER_FOR_REMOTE_HOST_ADDRESS>
 
-server-sync:
-	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ $(REMOTE_HOST):~/work/open-rl
+# Push local workspace changes to the remote VM
+push-vm:
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ $(REMOTE_HOST):~/open-rl
+
+# Pull changes from the remote VM back to the local workspace
+pull-vm:
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' $(REMOTE_HOST):~/open-rl/ ./
+
