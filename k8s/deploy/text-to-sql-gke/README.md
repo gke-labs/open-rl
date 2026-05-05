@@ -39,8 +39,7 @@ Optional quota/capacity sanity check:
 
 ```bash
 gcloud compute accelerator-types list \
-  --zones="${ZONE}" \
-  --filter="name=nvidia-l4"
+  --filter="zone:(${ZONE}) AND name:nvidia-l4"
 ```
 
 ## 2. Create the Cluster
