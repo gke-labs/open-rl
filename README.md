@@ -10,7 +10,8 @@ We love Tinker. Tinker simplifies LLM post-training for developers and researche
 
 ## Quick Start
 
-Follow the [Pig Latin notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) or [Text-to-SQL notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb) to see supervised fine-tuning in action. Follow the [RLVR example](examples/rl/rlvr/README.md) or [Text-to-SQL RL recipe](examples/rl/text-to-sql/README.md) to see reinforcement learning in action.
+ - Follow the [Pig Latin notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) or [Text-to-SQL notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb) to see supervised fine-tuning in action.
+ - Follow the [Text-to-SQL RL recipe](examples/rl/text-to-sql/README.md) to see reinforcement learning in action.
 
 Snippet below shows a sample Reinforcement Learning loop like GRPO, where the 4 API primitives are used to create a generate-and-reward-train loop:
 
@@ -75,19 +76,25 @@ asyncio.run(rlvr_loop())
 
 Detailed guides and runnable examples are structured under `docs/` and `examples/`:
 
-- 🎓 **Guides:**
-  - [Pig Latin SFT Notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) | [script guide](docs/guides/supervised/pig-latin.md)
-  - [Text-to-SQL SFT Notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb) | [Text-to-SQL RL Recipe](examples/rl/text-to-sql/README.md)
+- **Guides:**
+  - Supervised finetuning:
+    - [Pig Latin SFT Notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) & [script guide](docs/guides/supervised/pig-latin.md)
+    - [Text-to-SQL SFT Notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb)
+  - Reinforcement Learning:
+    - [Text-to-SQL RL Recipe](examples/rl/text-to-sql/README.md)
+- **Technical Documentation**:
+  - [Architecture](docs/architecture.md)
   - [Tinker Client Compatibility](docs/tinker-client-compatibility.md)
-  - [RLVR (Verifiable Rewards) Demo](examples/rl/rlvr/README.md)
-- 📖 **[Architecture](docs/architecture.md)**
-- 🚀 **[Kubernetes Deployment Guide (GKE)](docs/deployment.md)**
+- **Deployment**:
+  - [Kubernetes Deployment Guide (GKE)](docs/deployment.md)
 
 ## Roadmap
 
-- [ ] Full Finetuning support
-- [ ] Model Checkpoints API
-- [ ] Use advance k8s primitives such as gang scheduling, kueue for capacity/quota management
+- [ ] Blog posts + Demo videos
+- [ ] Full parameter finetuning
+- [ ] Multi model support
+- [ ] Model checkpoints API
+- [ ] Autoresearch integration
 
 ## Contributing
 

@@ -5,6 +5,5 @@ The RLVR (Reinforcement Learning with Verifiable Rewards) demo showcases trainin
 ## Contents
 
 * `rlvr.py`: The main training script.
-* `rlvr-job.yaml`: Kubernetes Job manifest for single job.
-* `rlvr-job-parallel.yaml`: Kubernetes Job manifest for parallel array job.
+
 * `README.md`: This documentation file.
