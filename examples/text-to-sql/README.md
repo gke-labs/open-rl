@@ -49,99 +49,15 @@ sequenceDiagram
 
 
 
-## Prerequisites
+## Setup
 
-### 1. Provision GPU VM
+Before running the training, you need to set up the environment and deploy Open-RL. You can choose to run it locally on a VM with multiple GPUs or on a GKE cluster.
 
-First, you need a machine with GPUs. These requirements are based on the ~10.5 GB model size, running both the sampler and trainer in parallel, and the overhead from Torch Inductor autotuning (where PyTorch compiles and optimizes GPU kernels at runtime for your specific hardware, requiring additional memory).
+*   For **Local Setup** (recommended for baseline), follow the [Local Setup Guide](../../docs/setup/local-setup.md).
+*   For **GKE Setup** (recommended for scaling), follow the [GKE Setup Guide](../../docs/setup/gke-setup.md).
 
-*   **GPUs**: At least 2 GPUs are recommended (one for the vLLM sampler, one for the trainer). We run them on separate GPUs because both are memory-intensive and sharing a single GPU will likely cause Out-of-Memory errors.
-*   **VRAM**: At least 23 GB of VRAM per GPU (e.g., NVIDIA L4 is sufficient).
-*   **System RAM**: At least 32 GB of system RAM (for Gemma 4 E2B; larger models may require more).
+After completing the setup and ensuring the gateway and vLLM sampler are running, proceed to the training section below.
 
-<details>
-<summary><b>`gcloud` command to provision GCE VM in GCP</b></summary>
-
-If you are using Google Cloud Platform (GCP), you can create a suitable GCE VM using the following command. For more details, see [GCE GPU VM G-Series docs](https://docs.cloud.google.com/compute/docs/gpus/create-gpu-vm-g-series).
-
-```bash
-gcloud compute instances create openrl-vm \
-    --machine-type=g2-standard-24 \
-    --accelerator=type=nvidia-l4-vws,count=2 \
-    --zone=us-central1-a \
-    --boot-disk-size=50GB \
-    --image-project=ubuntu-os-accelerator-images \
-    --image-family=ubuntu-accelerator-2404-amd64-with-nvidia-580 \
-    --maintenance-policy=TERMINATE \
-    --metadata=enable-osconfig=TRUE,enable-oslogin=true \
-    --restart-on-failure
-```
-</details>
-
-### 2. Access VM and Clone the Repository
-
-Once you have accessed your VM, clone the repository and stay in the repository root for the following steps:
-
-```bash
-git clone https://github.com/gke-labs/open-rl.git
-cd open-rl
-```
-
-### 3. System Packages
-
-Ensure you have the required build tools, Python headers, and `uv` installed on the machine:
-
-```bash
-sudo apt update && sudo apt install -y build-essential python3.12-dev make
-# Install uv
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-### 4. Sanity Check
-
-Run the sanity check script to ensure your environment meets the requirements:
-
-```bash
-python3 examples/rl/text-to-sql/utils/sanity_check.py
-```
-
-## Deploying OpenRL
-
-All commands below assume you are in the **repository root** directory.
-
-### 1. Patch vLLM
-
-Patch vLLM `0.20.0` for Gemma 4 LoRA support. This is a temporary local patch for duplicate LoRA module registration, related to [vllm-project/vllm#39246](https://github.com/vllm-project/vllm/issues/39246).
-
-```bash
-(cd src/server && \
- uv run --extra vllm python scripts/patch_vllm_lora_dedup.py)
-```
-
-### 2. Start the vLLM Sampler
-
-In your **first terminal session**, start the vLLM sampler on GPU 0. We set the required environment variables locally for this terminal.
-
-```bash
-export CUDA_VISIBLE_DEVICES=0
-export BASE_MODEL=google/gemma-4-e2b
-export VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM
-
-# Recommended to avoid Hugging Face rate limits
-# export HF_TOKEN="your_huggingface_token"
-make vllm
-```
-
-### 3. Start the Open-RL Server
-
-In a **second terminal session**, start the Open-RL gateway and trainer on GPU 1:
-
-```bash
-export CUDA_VISIBLE_DEVICES=1
-export BASE_MODEL=google/gemma-4-e2b
-export SAMPLING_BACKEND=vllm
-make server
-```
 
 ## Running the Training
 
@@ -178,7 +94,7 @@ export MODE="full"
 # export MODE="rl_only"
 
 # Run training
-(cd examples/rl/text-to-sql && \
+(cd examples/text-to-sql && \
  uv run python texttosql_sft_grpo.py gemma4_e2b_rl_recipe phase=$MODE)
 ```
 
@@ -187,7 +103,7 @@ export MODE="full"
 After training, you can plot the metrics. Run this from the repository root. We use the `$MODE` variable to point to the correct artifact directory.
 
 ```bash
-(cd examples/rl/text-to-sql && \
+(cd examples/text-to-sql && \
  uv run python -m utils.plot \
    artifacts/texttosql_sft_grpo_gemma4_e2b_rl_recipe_$MODE/metrics.jsonl)
 ```
@@ -227,7 +143,7 @@ Here are the actual plots from known-good runs for each mode. Expand the section
 If you want to experiment further, you can override default configurations by appending them to the command line:
 
 ```bash
-(cd examples/rl/text-to-sql && \
+(cd examples/text-to-sql && \
  uv run python texttosql_sft_grpo.py gemma4_e2b_rl_recipe sft.steps=10 rl.steps=100)
 ```
 

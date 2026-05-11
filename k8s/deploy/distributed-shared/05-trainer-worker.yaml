@@ -19,7 +19,7 @@ spec:
       serviceAccountName: open-rl-sa
       containers:
       - name: trainer-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
+        image: ghcr.io/gke-labs/open-rl/server:latest
         imagePullPolicy: Always
         command: ["uv", "run", "python", "-m", "src.clock_cycle"]
         env:

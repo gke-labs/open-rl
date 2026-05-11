@@ -16,10 +16,4 @@ configMapGenerator:
       - VLLM_ARCHITECTURE_OVERRIDE=""
       - ENABLE_GCP_TRACE="1"
 
-images:
-  - name: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newName: ghcr.io/gke-labs/open-rl/gateway
-    newTag: latest
-  - name: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newName: ghcr.io/gke-labs/open-rl/server
-    newTag: latest
+

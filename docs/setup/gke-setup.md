@@ -1,12 +1,8 @@
-# Text-to-SQL GKE Guide
+# GKE Setup Guide
 
-This guide creates a minimal GKE Standard cluster that can run the Gemma 4
-Text-to-SQL SFT+RL recipe with the Open-RL gateway, one vLLM worker, one trainer
-worker, Redis, and a shared Filestore PVC.
+This guide describes how to create a minimal GKE Standard cluster to run Open-RL workloads. It sets up the Open-RL gateway, one vLLM worker, one trainer worker, Redis, and a shared Filestore PVC.
 
-The cluster runs the backend only. You run the recipe client from your laptop or
-Cloud Shell through a `kubectl port-forward`, which keeps the training script
-exactly the same as local development.
+This guide is based on the [Text-to-SQL recipe](../../examples/text-to-sql/README.md) requirements.
 
 ## Shape
 
@@ -14,7 +10,7 @@ exactly the same as local development.
 | --- | --- | --- |
 | CPU node pool | `1 x e2-standard-4` | Gateway, Redis, system pods. |
 | GPU node pool | `1 x g2-standard-24` | Two NVIDIA L4 GPUs, one for vLLM and one for the trainer. |
-| GPU VRAM | `2 x 24 GB` | The Text-to-SQL recipe expects separate 24 GB-class GPUs. |
+| GPU VRAM | `2 x 24 GB` | Expected separate 24 GB-class GPUs. |
 | Shared storage | `100Gi standard-rwx` Filestore PVC | Shared adapter snapshots, checkpoints, and Hugging Face cache. |
 | Server images | one gateway image, one worker image | vLLM and trainer share the worker image. |
 
@@ -76,13 +72,10 @@ gcloud container clusters update "${CLUSTER}" \
 > [!TIP]
 > **Custom VPC Networks:** If your GCP project does not have a `default` VPC network, GKE's pre-provisioned Filestore StorageClasses will fail to provision. You will need to create a custom `StorageClass` that explicitly specifies your network (e.g., `network: your-vpc-name`) and update the PVC manifest to reference it.
 
-Add one two-GPU L4 node pool named `ttsql-l4`. The overlay selects this node
-pool by name. GKE exposes each GPU to a pod as
-`nvidia.com/gpu: 1`, so the vLLM and trainer pods can land on the same node but
-use separate GPUs.
+Add a GPU node pool. You should name it something that identifies it (e.g., `open-rl-l4`), and ensure your recipe's Kustomize overlay selects this node pool by name. GKE exposes each GPU to a pod as `nvidia.com/gpu: 1`, so the vLLM and trainer pods can land on the same node but use separate GPUs.
 
 ```bash
-gcloud container node-pools create ttsql-l4 \
+gcloud container node-pools create open-rl-l4 \
   --cluster="${CLUSTER}" \
   --location="${REGION}" \
   --node-locations="${ZONE}" \
@@ -102,9 +95,18 @@ gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 
 ## 3. Deploy Open-RL
 
-```bash
-kubectl apply -k k8s/deploy/text-to-sql-gke
-```
+Deploy the manifests using the Kustomize overlay. You should apply **only one** of the following, depending on your needs:
+
+*   **Option A: Generic Base Setup** (without recipe-specific configurations):
+    ```bash
+    kubectl apply -k k8s/deploy/distributed-shared
+    ```
+
+*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL):
+    The recipe overlay automatically includes the base setup and applies specific customizations. You do not need to apply the base setup separately.
+    ```bash
+    kubectl apply -k examples/text-to-sql
+    ```
 
 Wait for the shared storage (PVC) to be bound:
 
@@ -131,7 +133,7 @@ kubectl logs deploy/open-rl-gateway -f
 
 ## 4. Port-Forward the Gateway
 
-In a separate terminal:
+To access the gateway from your local machine:
 
 ```bash
 kubectl port-forward svc/open-rl-gateway-service 9003:8000
@@ -144,38 +146,9 @@ curl http://127.0.0.1:9003/api/v1/healthz
 curl http://127.0.0.1:9003/api/v1/get_server_capabilities
 ```
 
-## 5. Run the Text-to-SQL Recipe
+The Open-RL server is now available at `http://127.0.0.1:9003`.
 
-From your local checkout:
-
-```bash
-cd examples/rl/text-to-sql
-TINKER_BASE_URL=http://127.0.0.1:9003 \
-TINKER_API_KEY=tml-dummy \
-uv run python texttosql_sft_grpo.py gemma4_e2b_rl_recipe
-```
-
-## 6. Visualizing Metrics
-
-The training script logs metrics locally into the
-`examples/rl/text-to-sql/artifacts/` directory.
-
-Use the Text-to-SQL plotting utility to render the standard 4-panel recipe
-figure:
-
-```bash
-cd examples/rl/text-to-sql
-uv run python -m utils.plot \
-  artifacts/texttosql_sft_grpo_gemma4_e2b_rl_recipe_full/metrics.jsonl
-```
-
-## 7. Clean Up
-
-Delete the Open-RL Kubernetes resources:
-
-```bash
-kubectl delete -k k8s/deploy/text-to-sql-gke
-```
+## 5. Clean Up
 
 Delete the cluster:
 
