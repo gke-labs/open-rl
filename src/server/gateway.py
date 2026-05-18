@@ -424,7 +424,14 @@ async def asample(req: dict):
   req_id = str(uuid.uuid4())
   await store.set_future(req_id, {"status": "pending"})
 
-  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if base_model_id else None
+  # A request is for LoRA if the ID is not the base model or the default session fallback
+  default_model = get_default_model_name()
+  is_lora = (
+    base_model_id is not None
+    and base_model_id != default_model
+    and base_model_id != "samp-session-live-123"
+  )
+  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_lora else None
   headers: dict[str, str] = {"Content-Type": "application/json"}
   propagate.inject(headers)
 
