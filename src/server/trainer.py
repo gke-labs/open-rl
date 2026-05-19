@@ -14,6 +14,8 @@ from peft import PeftModelForCausalLM, get_peft_model
 from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerBase
 
+ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") == "1"
+
 
 class TensorData(BaseModel):
   data: list[int] | list[float]
@@ -139,6 +141,14 @@ class TrainerEngine:
     self.peft_model.set_adapter(adapter_id)
     self.adapter_states[adapter_id] = {"trainable_params": active_adapter_parameters(self.peft_model, adapter_id), "optimizer": None}
 
+    if ENABLE_GRADIENT_CHECKPOINTING:
+      try:
+        self.peft_model.gradient_checkpointing_enable()
+        self.peft_model.enable_input_require_grads()
+        print("Gradient checkpointing and input require grads enabled on PEFT model.")
+      except Exception as e:
+        print(f"Failed to enable gradient checkpointing: {e}")
+
     self.peft_model.train()
     print(f"LoRA adapter '{adapter_id}' created and set to active.")
 
@@ -231,6 +241,15 @@ class TrainerEngine:
     params = active_adapter_parameters(self.peft_model, model_id)
     adapter_state = {"trainable_params": params, "optimizer": None}
     self.adapter_states[model_id] = adapter_state
+
+    if ENABLE_GRADIENT_CHECKPOINTING:
+      try:
+        self.peft_model.gradient_checkpointing_enable()
+        self.peft_model.enable_input_require_grads()
+        print("Gradient checkpointing and input require grads enabled on PEFT model.")
+      except Exception as e:
+        print(f"Failed to enable gradient checkpointing: {e}")
+
     self.peft_model.train()
 
     if restore_optimizer and metadata.get("has_optimizer"):
