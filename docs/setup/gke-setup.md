@@ -1,6 +1,6 @@
 # GKE Setup Guide
 
-This guide describes how to create a minimal GKE Standard cluster to run Open-RL workloads. It sets up the Open-RL gateway, one vLLM worker, one trainer worker, Redis, and a shared Filestore PVC.
+This guide describes how to create a minimal GKE Standard cluster to run OpenRL workloads. It sets up the OpenRL gateway, one vLLM worker, one trainer worker, Redis, and a shared Filestore PVC.
 
 This guide is based on the [Text-to-SQL recipe](../../examples/text-to-sql/README.md) requirements.
 
@@ -93,7 +93,7 @@ Connect `kubectl`:
 gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 ```
 
-## 3. Deploy Open-RL
+## 3. Deploy OpenRL
 
 Deploy the manifests using the Kustomize overlay. You should apply **only one** of the following, depending on your needs:
 
@@ -146,7 +146,7 @@ curl http://127.0.0.1:9003/api/v1/healthz
 curl http://127.0.0.1:9003/api/v1/get_server_capabilities
 ```
 
-The Open-RL server is now available at `http://127.0.0.1:9003`.
+The OpenRL server is now available at `http://127.0.0.1:9003`.
 
 ## 5. Clean Up
 

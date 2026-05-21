@@ -7,10 +7,10 @@ This recipe provides a complete guide to fine-tuning a base LLM model to generat
 - **Base Model**: [google/gemma-4-E2B](https://huggingface.co/google/gemma-4-E2B)
 - **Dataset**: [philschmid/gretel-synthetic-text-to-sql](https://huggingface.co/datasets/philschmid/gretel-synthetic-text-to-sql)
 
-The **goal** is to demonstrate how to use the Open-RL infrastructure to run training locally on a single machine with multiple GPUs. This provides a baseline and understanding before scaling to a distributed Kubernetes (K8s) cluster in later guides.
+The **goal** is to demonstrate how to use the OpenRL infrastructure to run training locally on a single machine with multiple GPUs. This provides a baseline and understanding before scaling to a distributed Kubernetes (K8s) cluster in later guides.
 
 **What the core script does**: The core training script [texttosql_sft_grpo.py](texttosql_sft_grpo.py) orchestrates the training loop. It performs the following actions:
-*   Calls our Open-RL server (gateway) to request samples from vLLM.
+*   Calls our OpenRL server (gateway) to request samples from vLLM.
 *   Executes the generated SQL queries in a local SQLite database to compute rewards.
 *   Sends these rewards back to the server to update the LoRA adapter weights via the trainer.
 
@@ -51,7 +51,7 @@ sequenceDiagram
 
 ## Setup
 
-Before running the training, you need to set up the environment and deploy Open-RL. You can choose to run it locally on a VM with multiple GPUs or on a GKE cluster.
+Before running the training, you need to set up the environment and deploy OpenRL. You can choose to run it locally on a VM with multiple GPUs or on a GKE cluster.
 
 *   For **Local Setup** (recommended for baseline), follow the [Local Setup Guide](../../docs/setup/local-setup.md).
 *   For **GKE Setup** (recommended for scaling), follow the [GKE Setup Guide](../../docs/setup/gke-setup.md).
@@ -68,7 +68,7 @@ Open a **third terminal session** to run the training script.
 You can copy and paste these into your training terminal before proceeding.
 
 ```bash
-# Open-RL Gateway URL
+# OpenRL Gateway URL
 export TINKER_BASE_URL=http://127.0.0.1:9003
 
 # Dummy API key for local gateway

@@ -1,11 +1,11 @@
-# Open-RL Autoresearch Demo
+# OpenRL Autoresearch Demo
 
 This adapts [Karpathy's autoresearch](https://github.com/karpathy/autoresearch)
-to Open-RL: an agent repeatedly edits one allowed target, runs a bounded
+to OpenRL: an agent repeatedly edits one allowed target, runs a bounded
 measured attempt, keeps commits that improve the configured metric, and resets
 the rest. The same recipe contract works locally or in Kubernetes; in a cluster,
 each run can live in its own pod and act as a researcher while sharing the same
-storage and Open-RL backend.
+storage and OpenRL backend.
 
 ## Minimal Recipe Shape
 
@@ -64,10 +64,10 @@ recipe-specific settings.
 
 ## Architecture
 
-Autoresearch runs as a small Kubernetes add-on around the shared Open-RL
+Autoresearch runs as a small Kubernetes add-on around the shared OpenRL
 infrastructure. A recipe overlay starts the UI plus one researcher Sandbox per
 researcher. Each Sandbox runs Gemini CLI, edits the recipe, launches attempts,
-and calls the shared Open-RL/Tinker services.
+and calls the shared OpenRL/Tinker services.
 
 ![Autoresearch architecture](arch.png)
 
@@ -86,11 +86,11 @@ Choose one recipe overlay:
 # Fast text-SQL, no model server.
 kubectl apply -k examples/autoresearch/recipes/text_sql
 
-# Math-RL add-on. First deploy Open-RL with docs/setup/gke-setup.md,
+# Math-RL add-on. First deploy OpenRL with docs/setup/gke-setup.md,
 # or reuse an existing backend at http://open-rl-gateway-service:8000.
 kubectl apply -k examples/autoresearch/recipes/math_rl
 
-# Convenience one-shot Math-RL stack: Open-RL backend + autoresearch add-on.
+# Convenience one-shot Math-RL stack: OpenRL backend + autoresearch add-on.
 kubectl apply -k examples/autoresearch/recipes/math_rl/gke
 ```
 
@@ -110,7 +110,7 @@ http://localhost:8080/experiments.html
 ```
 
 Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
-GPU, storage, and the Open-RL backend. These overlays add researcher sandboxes and
+GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
 the UI on top of that shared backend.
 
 Researcher pods wait for comma-separated `READY_URLS` before the agent starts, so

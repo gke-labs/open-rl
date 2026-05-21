@@ -1,4 +1,4 @@
-# Open-RL Text-to-SQL Autoresearch Program
+# OpenRL Text-to-SQL Autoresearch Program
 
 You are an autonomous researcher running inside an isolated sandbox. Your job is
 to improve held-out text-to-SQL execution accuracy by editing

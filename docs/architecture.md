@@ -1,12 +1,12 @@
-# Open-RL
+# OpenRL
 
-Open-RL implements post-training APIs to fine-tune language models on
+OpenRL implements post-training APIs to fine-tune language models on
 self-hosted infrastructure. These APIs cover common post-training techniques
 such as supervised fine-tuning, reinforcement learning, and related workflows.
 
-Conceptually, Open-RL decouples the researcher-facing training loop from the
+Conceptually, OpenRL decouples the researcher-facing training loop from the
 infrastructure that runs it. Researchers own datasets, environments, rewards,
-losses, and optimization logic; Open-RL owns the serving, scheduling, sampling,
+losses, and optimization logic; OpenRL owns the serving, scheduling, sampling,
 and storage needed to run that loop. This separation lets training methods and
 backend capacity evolve independently.
 
@@ -137,7 +137,7 @@ The sampler produces rollouts and token logprobs for the training loop. On one
 machine this can run through the same model state as training; in a cluster it
 can be a separate inference service that loads adapter snapshots.
 
-Keeping sampling as a separate concept lets Open-RL use the same API contract
+Keeping sampling as a separate concept lets OpenRL use the same API contract
 for single-machine iteration and cluster-backed inference. The client only sees
 sample results, not the backend routing choice.
 

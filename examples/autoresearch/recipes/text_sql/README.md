@@ -10,7 +10,7 @@ editable = ["recipes/text_sql/train.py"]
 metric = "accuracy"
 ```
 
-This recipe samples the configured base model through the shared Open-RL gateway
+This recipe samples the configured base model through the shared OpenRL gateway
 for both the unmodified default-config attempt and later agent-edited attempts. `prepare.py` owns the fixed
 dataset and scoring helpers; `train.py` is the editable runnable attempt.
 

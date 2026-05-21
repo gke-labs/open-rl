@@ -1,6 +1,6 @@
 # Local Setup Guide
 
-This guide describes how to set up a local environment (or a single VM) to run Open-RL workloads.
+This guide describes how to set up a local environment (or a single VM) to run OpenRL workloads.
 
 ## Prerequisites
 
@@ -85,9 +85,9 @@ export VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM
 make vllm
 ```
 
-### 3. Start the Open-RL Server
+### 3. Start the OpenRL Server
 
-In a **second terminal session**, start the Open-RL gateway and trainer on GPU 1:
+In a **second terminal session**, start the OpenRL gateway and trainer on GPU 1:
 
 ```bash
 export CUDA_VISIBLE_DEVICES=1
@@ -96,4 +96,4 @@ export SAMPLING_BACKEND=vllm
 make server
 ```
 
-The Open-RL server is now available at `http://127.0.0.1:9003`.
+The OpenRL server is now available at `http://127.0.0.1:9003`.

@@ -1,8 +1,8 @@
 # Tinker Cookbook Recipes
 
-Since Open-RL implements Tinker-compatible APIs, you can use
+Since OpenRL implements Tinker-compatible APIs, you can use
 [`tinker-cookbook`](https://github.com/thinking-machines-lab/tinker-cookbook)
-recipes with Open-RL endpoints.
+recipes with OpenRL endpoints.
 
 ## Setup
 
@@ -17,7 +17,7 @@ If you want to try other recipes, you may need to install other extras or depend
 
 ## Start the Server
 
-From the repository root, start one vLLM sampler and one Open-RL gateway on
+From the repository root, start one vLLM sampler and one OpenRL gateway on
 separate GPUs. These examples are written for two L4 GPUs or better.
 
 ```bash
@@ -42,7 +42,7 @@ use GPU/vLLM.
 
 ## Checkpointing Limitation
 
-Open-RL does not yet implement full Tinker-compatible durable checkpoint management. For recipes that expose periodic checkpoint saves, set `save_every=0`; See [gke-labs/open-rl#83](https://github.com/gke-labs/open-rl/issues/83) for more details.
+OpenRL does not yet implement full Tinker-compatible durable checkpoint management. For recipes that expose periodic checkpoint saves, set `save_every=0`; See [gke-labs/open-rl#83](https://github.com/gke-labs/open-rl/issues/83) for more details.
 
 ## Supervised Learning Loop
 

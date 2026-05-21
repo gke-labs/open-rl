@@ -1,10 +1,10 @@
 # Math-RL Autoresearch Recipe
 
-This recipe is the Open-RL/Tinker analogue of
+This recipe is the OpenRL/Tinker analogue of
 [vivekvkashyap/autoresearch-rl](https://github.com/vivekvkashyap/autoresearch-rl).
 This recipe uses the same minimal recipe contract as text-SQL, with a different
 TOML command. The agent edits one file, `config.toml`; `autoresearch.toml`
-declares this recipe's fixed Open-RL/Tinker command.
+declares this recipe's fixed OpenRL/Tinker command.
 
 ```toml
 command = "python -m recipes.math_rl.train config=recipes/math_rl/config.toml run_dir={run_dir} run_name={run_name} base_url=$TINKER_BASE_URL attempt_timeout_minutes={attempt_timeout_minutes}"
@@ -17,7 +17,7 @@ command declared in TOML as long as it writes the configured metric to
 `metrics.jsonl`.
 
 Unlike the original prime-rl setup, this recipe does not allocate two GPUs per
-researcher. Researcher pods call a shared Open-RL gateway via `TINKER_BASE_URL`;
+researcher. Researcher pods call a shared OpenRL gateway via `TINKER_BASE_URL`;
 the cluster-side model/trainer stack owns GPU placement. The composed GKE stack
 sets the shared `BASE_MODEL` to `Qwen/Qwen2.5-0.5B-Instruct`, matching the
 `autoresearch-rl` base model.
@@ -35,7 +35,7 @@ flow.
 
 ## Local Attempt Run
 
-From `examples`, with an Open-RL gateway reachable on a port:
+From `examples`, with an OpenRL gateway reachable on a port:
 
 ```bash
 export TINKER_BASE_URL=http://127.0.0.1:9003
@@ -67,7 +67,7 @@ uv run python -m run_attempt \
 ## Kubernetes Run
 
 Use the normal [GKE setup guide](../../../../docs/setup/gke-setup.md) to deploy
-Open-RL, or reuse an existing backend. Then add the autoresearch researchers and
+OpenRL, or reuse an existing backend. Then add the autoresearch researchers and
 UI:
 
 ```bash
@@ -76,7 +76,7 @@ kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
 For a single-command demo, use the convenience overlay that composes the normal
-Open-RL backend with the autoresearch add-on:
+OpenRL backend with the autoresearch add-on:
 
 ```bash
 kubectl apply -k examples/autoresearch/recipes/math_rl/gke

@@ -4,7 +4,7 @@ Generated from `tinker==0.18.1` by
 `tests/tinker_client_compat.py`.
 
 The test discovers public Tinker client methods with `dir()` and `inspect`,
-starts the real Open-RL FastAPI gateway in single-process mode with a tiny
+starts the real OpenRL FastAPI gateway in single-process mode with a tiny
 local model fixture, lets the SDK fetch server bootstrap config, calls each
 discovered method
 with small fixture arguments, and records whether the call succeeds before

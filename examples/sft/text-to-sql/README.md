@@ -1,7 +1,7 @@
 # Gemma 3 Text-to-SQL SFT
 
 This directory contains the Gemma 3 supervised fine-tuning example for
-Text-to-SQL tasks using Open-RL. The Gemma 4 SFT+RL recipe lives under
+Text-to-SQL tasks using OpenRL. The Gemma 4 SFT+RL recipe lives under
 [`../../rl/text-to-sql`](../../rl/text-to-sql).
 
 ## Prerequisites
@@ -15,7 +15,7 @@ Text-to-SQL tasks using Open-RL. The Gemma 4 SFT+RL recipe lives under
 
 ## Running the Training Server
 
-Start the local single-process Open-RL server:
+Start the local single-process OpenRL server:
 ```bash
 make server BASE_MODEL=google/gemma-3-1b-pt
 ```

@@ -1,14 +1,14 @@
-# Open-RL Math-RL Autoresearch Program
+# OpenRL Math-RL Autoresearch Program
 
 You are an autonomous researcher running inside an isolated sandbox. Your job is
-to improve an Open-RL/Tinker RL run by editing only
+to improve an OpenRL/Tinker RL run by editing only
 `recipes/math_rl/config.toml`.
 
 This mirrors the `vivekvkashyap/autoresearch-rl` loop: the human owns these
 instructions, and the agent iterates on one training configuration until its
 agent timeout expires.
 
-You do not manage GPUs directly. Run against the shared Open-RL gateway exposed
+You do not manage GPUs directly. Run against the shared OpenRL gateway exposed
 by `TINKER_BASE_URL`; the model/trainer service handles GPU placement.
 
 ## Setup

@@ -14,13 +14,13 @@ This script demonstrates fine-tuning a model to translate English into Pig Latin
 ## Running the Training Server
 
 ### Option 1: Qwen (Default)
-Start the local single-process Open-RL server for Qwen (`BASE_MODEL` defaults to `Qwen/Qwen3-0.6B`):
+Start the local single-process OpenRL server for Qwen (`BASE_MODEL` defaults to `Qwen/Qwen3-0.6B`):
 ```bash
 make server
 ```
 
 ### Option 2: Gemma
-Start the local single-process Open-RL server for Gemma (set `BASE_MODEL`):
+Start the local single-process OpenRL server for Gemma (set `BASE_MODEL`):
 ```bash
 make server BASE_MODEL=google/gemma-3-1b-it
 ```

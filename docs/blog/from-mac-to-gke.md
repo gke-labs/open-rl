@@ -1,8 +1,8 @@
-# From Your Mac to GKE: Fine-Tuning Gemma with Open-RL
+# From Your Mac to GKE: Fine-Tuning Gemma with OpenRL
 
 RL fine-tuning is one of the most powerful ways to specialize language models — but the infrastructure behind it has traditionally been a nightmare. You're either wrestling with GPU allocation, rewriting training scripts for different backends, or managing job lifecycles by hand.
 
-[Open-RL](https://github.com/google/open-rl) is a self-hosted, open-source API that makes this simple. Write your training loop once using the Tinker SDK, run it on your Mac to iterate fast, then point it at a GKE cluster when you're ready to scale. Same code, any backend.
+[OpenRL](https://github.com/google/open-rl) is a self-hosted, open-source API that makes this simple. Write your training loop once using the Tinker SDK, run it on your Mac to iterate fast, then point it at a GKE cluster when you're ready to scale. Same code, any backend.
 
 Let's walk through it.
 
@@ -106,4 +106,4 @@ Check out the [Architecture Deep Dive](../architecture.md) for a detailed explan
 - **[GKE Deployment Guide](../deployment.md)** — Set up the distributed backend on Kubernetes
 - **[Architecture Deep Dive](../architecture.md)** — How the Gateway, Queue, and Clock Cycle Engine work together
 
-Open-RL is Apache 2.0 licensed. Contributions welcome.
+OpenRL is Apache 2.0 licensed. Contributions welcome.

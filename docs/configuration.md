@@ -1,6 +1,6 @@
 # Configuration
 
-Open-RL is configured with environment variables. The examples below use plain
+OpenRL is configured with environment variables. The examples below use plain
 shell commands so they work even if `make` is not installed. The root
 `Makefile` wraps the same commands for convenience.
 
@@ -81,7 +81,7 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `TINKER_BASE_URL` | `http://127.0.0.1:9003` | Base URL used by example clients and scripts. |
-| `TINKER_API_KEY` | `tml-dummy-key` | Passed through to the Tinker SDK. Local Open-RL does not enforce auth. |
+| `TINKER_API_KEY` | `tml-dummy-key` | Passed through to the Tinker SDK. Local OpenRL does not enforce auth. |
 | `HF_TOKEN` | unset | Required for gated Hugging Face models. `uv run hf auth login` is the easiest setup path. |
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
 | `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
