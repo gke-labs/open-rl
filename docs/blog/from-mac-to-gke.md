@@ -101,9 +101,9 @@ Check out the [Architecture Deep Dive](../architecture.md) for a detailed explan
 
 ## Get Started
 
-- **[Text-to-SQL Notebook](../../client/texttosql_sft_notebook.ipynb)** — Fine-tune Gemma 3 1B locally, start to finish
-- **[Pig Latin Notebook](../../client/piglatin_sft_notebook.ipynb)** — Simpler example to learn the API
-- **[GKE Deployment Guide](../deployment.md)** — Set up the distributed backend on Kubernetes
+- **[Text-to-SQL Notebook](../../examples/sft/text-to-sql/texttosql_sft_notebook.ipynb)** — Fine-tune Gemma 3 1B locally, start to finish
+- **[Pig Latin Notebook](../../examples/sft/pig-latin/piglatin_sft_notebook.ipynb)** — Simpler example to learn the API
+- **[GKE Deployment Guide](../setup/gke-setup.md)** — Set up the distributed backend on Kubernetes
 - **[Architecture Deep Dive](../architecture.md)** — How the Gateway, Queue, and Clock Cycle Engine work together
 
 OpenRL is Apache 2.0 licensed. Contributions welcome.
