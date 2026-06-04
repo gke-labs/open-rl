@@ -1,20 +1,12 @@
 # OpenRL Text-to-SQL Autoresearch Program
 
-You are an autonomous researcher running inside an isolated sandbox. Your job is
+You are an autonomous agent running inside an isolated sandbox. Your job is
 to improve held-out text-to-SQL execution accuracy by editing
 `recipes/text_sql/train.py`.
 
-## Setup
-
-Before starting:
-
-1. Read `recipes/text_sql/autoresearch.toml`, `recipes/text_sql/prepare.py`, and `recipes/text_sql/train.py`.
-2. Use `${LOG_ROOT:-artifacts/autoresearch/runs}` as the artifact root.
-3. Use `${RESEARCHER_ID}` as your researcher id.
-4. Keep concise notes in `${WORK_DIR}/notes.md`.
-5. Use a local git branch named `autoresearch/${RESEARCHER_ID}`.
-6. Run all commands from the repository root.
-7. Stop when the `AGENT_TIMEOUT_MINUTES` agent timeout expires.
+Before editing, read `recipes/text_sql/autoresearch.toml`,
+`recipes/text_sql/prepare.py`, and `recipes/text_sql/train.py`. Keep concise
+notes in `${WORK_DIR}/notes.md`.
 
 ## Objective
 
@@ -34,10 +26,9 @@ keep/discard decisions.
 
 ## Run Command
 
-First, run the unmodified default config with `eval "${DEFAULT_CONFIG_COMMAND}"`.
-This records where the recipe starts as a normal table row. After that, edit
+The launcher records the unmodified default config before Gemini starts. Edit
 `train.py`, commit that change, then run attempts with `eval "${RUN_ATTEMPT_COMMAND}"`.
-The launcher provides these commands so logs, diffs, metrics, and UI events are
+The launcher provides this command so logs, diffs, metrics, and UI artifacts are
 captured consistently.
 
 Run attempts only in the foreground. Do not append `&`, use `nohup`, use
@@ -54,13 +45,13 @@ change before committing, use concise commands such as `git diff --stat`,
 
 Repeat until the agent timeout expires:
 
-1. Read your notes, recent run logs, and the UI.
+1. Read your notes and recent run logs.
 2. Pick one concrete experiment description.
 3. Record the current commit as `start_commit`.
 4. Edit `train.py`.
 5. Commit the attempt before running it.
 6. Run the attempt command with `eval "${RUN_ATTEMPT_COMMAND}"`.
-7. Inspect `accuracy`, `logs.log`, and the UI Diff tab.
+7. Inspect `accuracy`, `attempt.log`, and the UI Diff tab.
 8. Append a short note with commit, accuracy, status, and what to try next.
 9. If accuracy improved, keep the commit and continue from it.
 10. If accuracy is equal or worse, run `git reset --hard "${start_commit}"` after recording the note.

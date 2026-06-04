@@ -1,0 +1,65 @@
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: autoresearch-agent-1
+  labels:
+    app.kubernetes.io/name: autoresearch
+    app.kubernetes.io/component: agent
+    open-rl/agent: "1"
+spec:
+  podTemplate:
+    spec:
+      serviceAccountName: open-rl-sa
+      restartPolicy: Never
+      activeDeadlineSeconds: 21600
+      initContainers:
+      - name: wait-for-dependencies
+        image: curlimages/curl:8.10.1
+        command: ["sh", "-c"]
+        args:
+        - |
+          for url in \
+            http://vllm-service:8001/healthz \
+            http://open-rl-trainer-worker-service:8000/healthz \
+            http://open-rl-gateway-service:8000/api/v1/healthz
+          do
+            echo "waiting for ${url}"
+            until curl -fsS --max-time 5 "${url}" >/dev/null; do
+              sleep 5
+            done
+          done
+      containers:
+      - name: agent
+        image: ghcr.io/gke-labs/open-rl/client:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            ephemeral-storage: "10Gi"
+            memory: "4Gi"
+            cpu: "1"
+          limits:
+            ephemeral-storage: "10Gi"
+            memory: "8Gi"
+            cpu: "2"
+        command: ["sh", "-c"]
+        args:
+        - |
+          exec uv run --project /app --no-sync python -m harness.agent
+        envFrom:
+        - configMapRef:
+            name: autoresearch-settings
+        - secretRef:
+            name: autoresearch-agent-secrets
+            optional: true
+        env:
+        - name: AGENT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc

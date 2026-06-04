@@ -5,13 +5,13 @@ uses the minimal recipe contract: `program.md` tells the agent to edit
 `train.py`, and `autoresearch.toml` declares this recipe's command and metric.
 
 ```toml
-command = "python -m recipes.text_sql.train run_dir={run_dir} data_dir={log_root} attempt_timeout_minutes={attempt_timeout_minutes}"
+command = "python -m recipes.text_sql.train run_dir={run_dir} data_dir={run_root} attempt_timeout_minutes={attempt_timeout_minutes}"
 editable = ["recipes/text_sql/train.py"]
 metric = "accuracy"
 ```
 
 This recipe samples the configured base model through the shared OpenRL gateway
-for both the unmodified default-config attempt and later agent-edited attempts. `prepare.py` owns the fixed
+for both the unmodified baseline attempt and later agent-edited attempts. `prepare.py` owns the fixed
 dataset and scoring helpers; `train.py` is the editable runnable attempt.
 
 Use the parent [autoresearch README](../../README.md) for the common cluster run
@@ -27,24 +27,25 @@ returned rows.
 
 ## Local Run
 
-From `examples`:
+From `examples/autoresearch`:
 
 ```bash
 export TINKER_BASE_URL=http://127.0.0.1:9003
-export BASE_MODEL=google/gemma-4-e2b
 
-uv run python -m run_attempt \
+uv run python -m harness.attempt \
   recipe=recipes/text_sql/autoresearch.toml \
-  researcher=local-text-sql \
-  name=default-config \
-  log_root=artifacts/autoresearch/text_sql
+  agent_id=local-text-sql \
+  baseline=True \
+  log_root=artifacts/autoresearch \
+  run_name=text-sql
 ```
 
 Serve the UI for local artifacts:
 
 ```bash
-uv run python -m ui.observer \
-  log_root=artifacts/autoresearch/text_sql \
+uv run python -m harness.serve \
+  log_root=artifacts/autoresearch \
+  run_name=text-sql \
   port=8080 \
   serve=True
 ```
@@ -52,41 +53,44 @@ uv run python -m ui.observer \
 Open:
 
 ```text
-http://localhost:8080/experiments.html
+http://localhost:8080/
 ```
 
 Clear local text-SQL artifacts:
 
 ```bash
-uv run python -m run_attempt \
-  clean=True \
-  log_root=artifacts/autoresearch/text_sql
+rm -rf artifacts/autoresearch/text-sql
 ```
 
 ## Kubernetes Run
 
-This assumes your cluster and shared storage already exist. From the repo root:
+This assumes you followed the parent GKE setup path for the cluster, shared
+storage, vLLM worker, trainer worker, and OpenRL gateway. From the repo root:
+
+The parent autoresearch manifests require the Agent Sandbox CRD:
+`agents.x-k8s.io/v1alpha1/Sandbox`.
 
 ```bash
-kubectl apply -k examples/autoresearch/recipes/text_sql
+cd examples/autoresearch
+uv run python -m harness.cli recipes/text_sql session_name=alpha
 kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
-The recipe directory customizes the shared `k8s/base` resources through
-Kustomize. There is no separate hand-written Kubernetes YAML for this recipe.
+The CLI copies this recipe into a generated overlay under `.runs/` and runs
+`kubectl apply -k` for you. The recipe directory can still keep a checked-in
+Kustomize overlay for defaults, but normal launches should use the CLI.
 
 ## Overlay Settings
 
 The text-SQL overlay sets:
 
 - `RECIPE=recipes/text_sql/autoresearch.toml`
-- `LOG_ROOT=/mnt/shared/open-rl/autoresearch/text_sql`
+- `LOG_ROOT=/mnt/shared/open-rl/autoresearch`
+- `RUN_NAME=text-sql-alpha`
 - `TINKER_BASE_URL=http://open-rl-gateway-service:8000`
-- `BASE_MODEL=google/gemma-4-e2b`
-- `READY_URLS=http://open-rl-gateway-service:8000/api/v1/get_server_capabilities`
 - `ATTEMPT_TIMEOUT_MINUTES=30`
 - `AGENT_TIMEOUT_MINUTES=10`
 
-The recipe `program.md` tells each researcher sandbox to edit `train.py`, run
+The recipe `program.md` tells each agent sandbox to edit `train.py`, run
 `RUN_ATTEMPT_COMMAND`, keep concise notes, and keep only improved commits using
 `accuracy`.

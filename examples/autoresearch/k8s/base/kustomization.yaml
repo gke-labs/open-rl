@@ -1,5 +1,7 @@
 resources:
-- resources.yaml
+- settings.yaml
+- ui.yaml
+- agent.yaml
 
 configurations:
 - kustomizeconfig.yaml

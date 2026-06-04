@@ -1,5 +1,5 @@
 task = "math_rl"
-command = "python -m recipes.math_rl.train config=recipes/math_rl/config.toml run_dir={run_dir} run_name={run_name} base_url=$TINKER_BASE_URL attempt_timeout_minutes={attempt_timeout_minutes}"
+command = "python -m recipes.math_rl.train config=recipes/math_rl/config.toml run_dir={run_dir} attempt_name={attempt_name} base_url=$TINKER_BASE_URL attempt_timeout_minutes={attempt_timeout_minutes}"
 editable = ["recipes/math_rl/config.toml"]
 metric = "accuracy"
 metric_label = "accuracy"

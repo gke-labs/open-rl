@@ -5,16 +5,22 @@
   --xs:12px;--base:13px;--lg:16px;--xl:18px;
 }
 *{box-sizing:border-box}
+*{scrollbar-color:#3a3a3a #080808;scrollbar-width:thin}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:#080808}
+*::-webkit-scrollbar-thumb{background:#3a3a3a;border:2px solid #080808;border-radius:8px}
+*::-webkit-scrollbar-thumb:hover{background:#555}
 body{margin:0;background:var(--bg);color:var(--text);font:var(--base)/1.45 var(--sans);overflow-x:hidden}
 .page{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
 aside{position:sticky;top:0;height:100vh;background:var(--rail);border-right:1px solid var(--line)}
 .brand{padding:18px 18px 19px;border-bottom:1px solid #202020}
 .brand strong{display:block;font-size:var(--lg);line-height:1.2}
+.brand span{display:block;margin-top:10px;color:#8f8f8f;font:var(--xs) var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav{padding:8px 8px 0}
 .nav button{display:grid;grid-template-columns:4px minmax(0,1fr);align-items:center;column-gap:12px;width:100%;min-height:48px;padding:8px 12px;border:0;border-left:3px solid transparent;border-radius:3px;background:transparent;color:#b8b8b8;font:var(--base) var(--mono);text-align:left;cursor:pointer}
 .nav button.active{border-left-color:var(--accent);background:#222;color:var(--text)}
-.research-status{width:4px;height:30px;border-radius:2px;background:#4a4a4a}
-.research-status.running{background:#7ee787;box-shadow:0 0 0 1px rgba(126,231,135,.16)}
+.agent-status{width:4px;height:30px;border-radius:2px;background:#4a4a4a}
+.agent-status.running{background:#7ee787;box-shadow:0 0 0 1px rgba(126,231,135,.16)}
 .nav-copy{display:grid;gap:3px;min-width:0}
 .nav-copy strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--base);line-height:1.1}
 .nav-copy .muted{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--xs);line-height:1.2;color:#8f8f8f}
@@ -27,7 +33,7 @@ main{min-width:0;padding:28px 32px 44px}
 .panel-head{display:flex;align-items:center;justify-content:space-between;gap:24px;margin-bottom:12px}
 .panel-head h2{margin:0;font-size:var(--xl);line-height:1.2}
 .chart{width:100%;overflow-x:auto}
-.chart svg{display:block;width:min(100%,1180px);height:auto;max-height:260px;margin:0 auto}
+.chart svg{display:block;width:100%;height:230px}
 .grid-line{stroke:#383838;stroke-width:1;stroke-dasharray:3 6;opacity:.75}
 .axis-line{stroke:#252525;stroke-width:1}
 .axis-tick{fill:#a8a8a8;font:var(--xs) var(--mono)}
@@ -73,6 +79,7 @@ tbody tr.selected td:first-child{color:var(--text)}
 .viewer{min-width:0}
 pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;overflow:auto;border:0;border-radius:0;padding:18px;font:var(--base)/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere}
 .markdown-panel{margin:0;background:#050505;color:#d6d6d6;min-height:410px;max-height:560px;overflow:auto;border:0;border-radius:0;padding:18px;font:var(--base)/1.5 var(--mono)}
+pre.log,.markdown-panel{height:clamp(410px,60vh,560px);min-height:0;max-height:none}
 .markdown-panel h2,.markdown-panel h3,.markdown-panel h4{margin:0 0 10px;color:#f3f3f3;font-size:15px;line-height:1.3}
 .markdown-panel p{margin:0 0 12px}
 .markdown-panel ul{margin:0 0 14px 18px;padding:0}
@@ -80,9 +87,10 @@ pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;
 .markdown-panel code{border:1px solid #272727;background:#111;color:#f3f3f3;border-radius:3px;padding:1px 4px;font:var(--base) var(--mono)}
 .markdown-panel a{color:var(--text);text-decoration:underline}
 .markdown-panel a:hover{text-decoration:underline}
-.markdown-panel pre{min-height:0;max-height:none;margin:12px 0;padding:14px;border:1px solid #222}
+.markdown-panel pre{height:auto;min-height:0;max-height:none;margin:12px 0;padding:14px;border:1px solid #222}
 .log-panel{background:#050505}
 .waiting-panel{min-height:220px;background:#050505;padding:18px;color:#d6d6d6;font:var(--base)/1.5 var(--mono)}
+.diff-panel .waiting-panel{min-height:410px}
 .waiting-row{display:grid;grid-template-columns:12px minmax(0,1fr);align-items:start;column-gap:12px}
 .waiting-row .live-dot{margin-top:5px}
 .waiting-panel strong{display:block;margin-bottom:4px;color:#f3f3f3}
@@ -105,7 +113,6 @@ pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;
 .log .error{color:var(--error)}
 .log .debug{color:#8f8f8f}
 .raw-diff{white-space:pre;overflow-wrap:normal}
-.raw-diff .add,.raw-diff .del,.raw-diff .hunk{display:block}
 .raw-diff .add{color:#d9d9d9;background:#151515}
 .raw-diff .del{color:#9f9f9f;background:#0f0f0f}
 .raw-diff .hunk{color:var(--text);background:#171717}
@@ -114,7 +121,6 @@ pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;
 .diff-file:last-child{border-bottom:0}
 .diff-file-toolbar{display:flex;align-items:center;gap:16px;background:#050505;border-bottom:1px solid #222;color:#cfcfcf;padding:12px 16px;font:var(--base) var(--mono)}
 .diff-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.diff-name[title]{cursor:pointer;color:#e6e6e6}
 .diff-counts{margin-left:auto;white-space:nowrap}
 .diff-counts .del{color:#ff7b72}
 .diff-counts .add{color:#7ee787}
@@ -126,7 +132,7 @@ pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;
 .diff-file.collapsed .diff-file-body{display:none}
 .panel-meta{border-top:1px solid #222;color:#9f9f9f;background:#0c0c0c;padding:10px 18px;font:var(--xs) var(--mono)}
 .muted{color:var(--muted)}
-.diffbox{margin:0;background:#050505;color:#bdbdbd;max-height:620px;overflow:auto;border:0;border-radius:0;padding:0;font:var(--base)/1.45 var(--mono)}
+.diffbox{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:620px;overflow:auto;border:0;border-radius:0;padding:0;font:var(--base)/1.45 var(--mono)}
 .diffbox:empty{display:none}
 .split-diff{width:100%;min-width:0;background:#050505}
 .diff-hunk{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);background:#242424;color:#8f8f8f;border-bottom:1px solid #121212}
@@ -145,38 +151,39 @@ pre{margin:0;background:#050505;color:#bdbdbd;min-height:410px;max-height:560px;
   .nav{display:flex;gap:8px;padding:8px;overflow-x:auto}
   .nav button{flex:0 0 min(280px,78vw);min-height:46px;border-left:0;border-top:3px solid transparent}
   .nav button.active{border-left-color:transparent;border-top-color:var(--accent)}
-  .research-status{height:28px}
+  .agent-status{height:28px}
   main{padding:16px 16px 36px}
   .view-bar{margin-bottom:12px}
   .chart-panel,.experiment-index,.experiment-panel{margin-bottom:18px}
   .chart-panel{padding:10px}
-  .chart svg{width:100%;max-height:220px}
+  .chart svg{width:100%;height:220px}
   table{min-width:640px}
   .description-cell{min-width:220px;max-width:420px}
-  pre,.markdown-panel{min-height:320px;max-height:60vh;padding:14px}
+  pre.log,.markdown-panel{height:clamp(320px,60vh,560px);min-height:0;max-height:none;padding:14px}
+  .diffbox{max-height:60vh}
+  .split-diff,.diff-hunk{min-width:720px}
+  .diff-row{grid-template-columns:40px minmax(260px,1fr) 40px minmax(260px,1fr)}
   .panel-head{display:block}
 }
 @media(max-width:640px){
   aside{max-height:54px}
   .nav{gap:6px;padding:7px 8px}
   .nav button{flex:0 0 118px;grid-template-columns:3px minmax(0,1fr);min-height:38px;padding:6px 8px;column-gap:8px}
-  .research-status{width:3px;height:22px}
+  .agent-status{width:3px;height:22px}
   .nav-copy{gap:0}
   .nav-copy strong{font-size:12px;line-height:1.1}
   .nav-copy .muted{display:none}
   main{padding:12px 10px 28px}
   .view-toggle{width:100%;min-width:0}
   .chart-panel{padding:8px}
-  .chart svg{width:560px;max-width:none;max-height:none}
+  .chart svg{width:560px;height:220px;max-width:none}
   table{min-width:500px}
   th:first-child,td:first-child{width:42px}
   th,td{padding:8px 10px}
   .tabs{overflow-x:auto}
   .tabs button{flex:0 0 auto;padding:0 16px}
   .panel-meta{padding:8px 12px}
-  .diffbox{max-height:60vh}
-  .split-diff,.diff-hunk{min-width:720px}
-  .diff-row{grid-template-columns:40px minmax(260px,1fr) 40px minmax(260px,1fr)}
+  .diffbox,.diff-panel .waiting-panel{min-height:320px;max-height:60vh}
   .event-kind{width:58px}
   .event-detail{margin-left:58px}
 }

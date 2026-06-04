@@ -4,7 +4,7 @@ This adapts [Karpathy's autoresearch](https://github.com/karpathy/autoresearch)
 to OpenRL: an agent repeatedly edits one allowed target, runs a bounded
 measured attempt, keeps commits that improve the configured metric, and resets
 the rest. The same recipe contract works locally or in Kubernetes; in a cluster,
-each run can live in its own pod and act as a researcher while sharing the same
+each run can live in its own pod and act as an agent while sharing the same
 storage and OpenRL backend.
 
 ## Minimal Recipe Shape
@@ -41,6 +41,10 @@ The command can be any runnable benchmark or training loop. It just needs to:
 - exit nonzero on failure
 - log the configured metric to `run_dir/metrics.jsonl`
 
+Useful command placeholders are `{run_dir}` for the attempt artifact directory,
+`{attempt_name}` for numeric attempt ids like `001`, and `{run_root}` for the
+assembled `LOG_ROOT/RUN_NAME` directory.
+
 ```python
 ml_logger.log_metrics({"accuracy": 0.73}, step=1)
 ```
@@ -62,42 +66,104 @@ Both recipes use the same `program.md` + `autoresearch.toml` contract:
 Use the recipe guides for local one-attempt runs, local UI serving, and
 recipe-specific settings.
 
+## Run A Recipe
+
+After the OpenRL backend and Agent Sandbox CRD exist, launch a named session
+with the small CLI. From `examples/autoresearch`:
+
+```bash
+uv run python -m harness.cli recipes/text_sql session_name=alpha
+```
+
+That command creates an ignored generated overlay under `.runs/text-sql-alpha`,
+copies the flat recipe directory into a ConfigMap, mounts it into the stable
+agent image, sets the run config (`RECIPE`, `LOG_ROOT`, `RUN_NAME`, the
+timeouts, and `TINKER_BASE_URL`), and runs `kubectl apply -k` for you.
+`session_name` is required. The run directory is `<recipe>-<session>`, so this
+example writes `RUN_NAME=text-sql-alpha`.
+
+Launch another independent session from the same recipe by changing only
+`session_name`:
+
+```bash
+uv run python -m harness.cli recipes/text_sql session_name=beta
+```
+
+The identity is `recipe directory + session_name`. Running the same recipe with
+the same session name again is not a second job; it targets the same generated
+overlay, Sandbox, and log directory. Running the same recipe with a different
+session name creates a separate run directory such as `text-sql-beta`.
+
+Preview without applying:
+
+```bash
+uv run python -m harness.cli recipes/text_sql \
+  session_name=alpha \
+  apply=False
+```
+
+Pass common recipe env directly:
+
+```bash
+uv run python -m harness.cli recipes/my_recipe \
+  session_name=alpha \
+  tinker_base_url=http://open-rl-gateway-service:8000
+```
+
+The recipe directory name becomes the package path under `recipes/`, so keep
+`autoresearch.toml` consistent with that path. For example, a directory named
+`my_recipe` should use paths like `recipes/my_recipe/train.py`. The CLI does
+not configure model placement; vLLM and the trainer worker are configured by
+the OpenRL backend deployment.
+
 ## Architecture
 
 Autoresearch runs as a small Kubernetes add-on around the shared OpenRL
-infrastructure. A recipe overlay starts the UI plus one researcher Sandbox per
-researcher. Each Sandbox runs Gemini CLI, edits the recipe, launches attempts,
-and calls the shared OpenRL/Tinker services.
+infrastructure. A recipe overlay starts the UI plus one agent Sandbox per
+session. Each agent Sandbox runs Gemini CLI, edits the recipe, launches
+attempts, and calls the shared OpenRL/Tinker services.
 
 ![Autoresearch architecture](arch.png)
 
 ## Cluster Run
 
-Create the API secret for agent-backed researcher pods:
+Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) to create the
+cluster, shared storage, vLLM worker, trainer worker, and OpenRL gateway, or
+reuse an existing backend at `http://open-rl-gateway-service:8000`.
+
+These manifests also require the official Agent Sandbox CRD:
+`agents.x-k8s.io/v1alpha1/Sandbox`. Verify the CRD before applying a recipe:
 
 ```bash
-kubectl create secret generic researcher-agent-secrets \
+kubectl api-resources | grep -i sandbox
+```
+
+Create the API secret for agent-backed pods:
+
+```bash
+kubectl create secret generic autoresearch-agent-secrets \
   --from-literal=GEMINI_API_KEY="${GEMINI_API_KEY}"
 ```
 
-Choose one recipe overlay:
+Start sessions with the CLI:
 
 ```bash
-# Fast text-SQL, no model server.
-kubectl apply -k examples/autoresearch/recipes/text_sql
-
-# Math-RL add-on. First deploy OpenRL with docs/setup/gke-setup.md,
-# or reuse an existing backend at http://open-rl-gateway-service:8000.
-kubectl apply -k examples/autoresearch/recipes/math_rl
-
-# Convenience one-shot Math-RL stack: OpenRL backend + autoresearch add-on.
-kubectl apply -k examples/autoresearch/recipes/math_rl/gke
+cd examples/autoresearch
+uv run python -m harness.cli recipes/text_sql session_name=alpha
+uv run python -m harness.cli recipes/text_sql session_name=beta
 ```
 
-Each overlay starts one Sandbox that runs one Gemini CLI researcher. If that
-process exits nonzero or the pod crashes, the run stops; Kubernetes does not
-retry it. The intended recovery is to inspect the UI/logs and start a new run
-explicitly.
+For Math-RL:
+
+```bash
+uv run python -m harness.cli recipes/math_rl session_name=alpha
+```
+
+The CLI-generated overlay starts one Sandbox that runs one Gemini CLI
+agent. Underneath, the CLI writes `.runs/<recipe>-<session>/` and runs
+`kubectl apply -k` against that generated overlay. If the agent process exits
+nonzero or the pod crashes, the run stops; Kubernetes does not retry it. The
+intended recovery is to inspect the UI/logs and start a new run explicitly.
 
 Open the UI:
 
@@ -105,35 +171,48 @@ Open the UI:
 kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
+The UI service is shared. It scans every run directory under `LOG_ROOT`, so the
+same browser can show `text-sql-alpha`, `text-sql-beta`, and `math-rl-alpha`
+together.
+
 ```text
-http://localhost:8080/experiments.html
+http://localhost:8080/
 ```
 
-Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
-GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
-the UI on top of that shared backend.
-
-Researcher pods wait for comma-separated `READY_URLS` before the agent starts, so
-early pod startup does not race vLLM, the trainer worker, or the gateway. The
-convenience Math-RL stack sets those URLs for vLLM, trainer, and gateway health.
+Agent pods use a shared init container to wait for vLLM, the trainer
+worker, and the gateway before the agent starts.
 
 ## Shared Pieces
 
 ```text
-run_research_agent.sh  # launches one timeout-bounded agent
-run_attempt.py         # runs one measured attempt and records UI events
-ui/observer.py         # read-only UI server over recorded events
+harness/cli.py         # creates/applies a generated overlay for a recipe dir
+harness/agent.py       # prepares git, records baseline, launches Gemini
+harness/attempt.py     # runs one measured attempt and writes metadata.json
+harness/serve.py       # read-only UI server over agent/attempt manifests
+harness/utils.py       # shared JSON, git, hashing, process helpers
 k8s/base/              # reusable Sandbox/UI resources
 ```
 
-`run_attempt.py` runs recipe code and writes artifacts. The UI reads only
-`LOG_ROOT/*/ui_events.jsonl`; clearing `LOG_ROOT` resets attempts, live rows,
-and per-attempt agent-log cursors.
+Each agent creates a fresh git workspace under its work dir before
+launching the agent. The image is self-describing: the harness and Python
+dependencies live at `/app`, the built-in recipes at `/app/autoresearch`, and
+`PYTHONPATH` is baked in, so the run config carries only run-specific values.
+Recipe code comes from `RECIPE_DIR` on shared storage when set, otherwise from
+the built-in image recipe. The selected recipe directory is copied into the
+workspace at `RECIPE`'s parent and committed as the run baseline. That lets the
+image stay stable while recipe files come from shared storage.
 
-The launcher passes the recipe-adjacent `program.md` to Gemini as the prompt.
-That program tells the agent to edit only the declared target, commit the
-attempt, run `eval "${RUN_ATTEMPT_COMMAND}"`, record the metric, and reset if
-the metric did not improve.
+`harness.attempt` runs recipe code and writes artifacts under
+`LOG_ROOT/RUN_NAME`. The UI scans each child run directory under `LOG_ROOT` and
+reads agent manifests and attempt manifests from the run artifact tree. The
+on-disk directory is still named `researchers/` for compatibility with existing
+runs. Clearing `LOG_ROOT/RUN_NAME` resets that run.
+
+The launcher records the unmodified default config as attempt `000`, then passes
+the recipe-adjacent `program.md` to Gemini as the prompt. That program tells the
+agent to edit only the declared target, commit the attempt, run
+`eval "${RUN_ATTEMPT_COMMAND}"`, record the metric, and reset if the metric did
+not improve.
 
 ## Adding A Recipe
 
@@ -143,16 +222,12 @@ Copy one existing recipe directory and update:
 - `autoresearch.toml`
 - the command target, if you keep one
 - the editable target
-- `kustomization.yaml` settings: `RECIPE`, `LOG_ROOT`, and
-  `ATTEMPT_TIMEOUT_MINUTES`
-- optionally `AGENT_TIMEOUT_MINUTES`, if the researcher pod should stop before
-  Kubernetes cleanup does
-- optionally `READY_URLS`, if attempts need external services to be healthy
-  before the agent starts
+- optionally `kustomization.yaml`, only if you want a checked-in static overlay
+  in addition to the CLI-generated overlay
 
-The shared wrapper handles logs, diffs, metrics, status, and UI events. Recipe
-code should focus on running the benchmark or training loop and emitting the
-metric.
+The shared wrapper handles logs, diffs, metrics, status, and UI manifests.
+Recipe code should focus on running the benchmark or training loop and emitting
+the metric.
 
 ## Timeouts And Cleanup
 
@@ -166,7 +241,7 @@ decide keep/reset, then repeat. Setup happens before this clock starts.
 Clean up a session:
 
 ```bash
-OVERLAY=examples/autoresearch/recipes/text_sql \
+OVERLAY=examples/autoresearch/.runs/text-sql-alpha \
   examples/autoresearch/cleanup_research_session.sh
 ```
 
@@ -174,7 +249,8 @@ To also clear shared run data:
 
 ```bash
 DELETE_ARTIFACTS=1 \
-LOG_ROOT=/mnt/shared/open-rl/autoresearch/text_sql \
-OVERLAY=examples/autoresearch/recipes/text_sql \
+LOG_ROOT=/mnt/shared/open-rl/autoresearch \
+RUN_NAME=text-sql-alpha \
+OVERLAY=examples/autoresearch/.runs/text-sql-alpha \
   examples/autoresearch/cleanup_research_session.sh
 ```

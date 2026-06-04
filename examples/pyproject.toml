@@ -1,11 +1,7 @@
-[build-system]
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
 [project]
-name = "open-rl-client"
+name = "open-rl-examples"
 version = "0.1.0"
-description = "Open-RL client: CLI and shared utilities for talking to an Open-RL server."
+description = "Dependencies for the Open-RL examples."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -28,9 +24,6 @@ dependencies = [
     "torch",
 ]
 
-# Use the CPU torch wheel — the client only needs torch transitively (via
-# transformers' AutoTokenizer) and never runs model code, so the ~2 GB CUDA
-# build is wasted download time.
 [[tool.uv.index]]
 name = "torch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
@@ -40,16 +33,11 @@ explicit = true
 torch = { index = "torch-cpu" }
 
 [tool.uv]
+package = false
 override-dependencies = [
     "transformers>=5.7.0",
 ]
 
-[tool.setuptools.package-dir]
-"" = "autoresearch"
-
-[tool.setuptools]
-py-modules = ["event_log", "run_attempt", "telemetry", "tinker_utils"]
-
-[tool.setuptools.packages.find]
-where = ["autoresearch"]
-include = ["recipes*", "ui*"]
+[[tool.uv.index]]
+url = "https://pypi.org/simple"
+default = true

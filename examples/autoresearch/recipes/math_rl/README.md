@@ -7,20 +7,19 @@ TOML command. The agent edits one file, `config.toml`; `autoresearch.toml`
 declares this recipe's fixed OpenRL/Tinker command.
 
 ```toml
-command = "python -m recipes.math_rl.train config=recipes/math_rl/config.toml run_dir={run_dir} run_name={run_name} base_url=$TINKER_BASE_URL attempt_timeout_minutes={attempt_timeout_minutes}"
+command = "python -m recipes.math_rl.train config=recipes/math_rl/config.toml run_dir={run_dir} attempt_name={attempt_name} base_url=$TINKER_BASE_URL attempt_timeout_minutes={attempt_timeout_minutes}"
 editable = ["recipes/math_rl/config.toml"]
 metric = "accuracy"
 ```
 
-`train.py` is this recipe's command target. A different recipe can use any
-command declared in TOML as long as it writes the configured metric to
-`metrics.jsonl`.
+`train.py` is this recipe's command target. It discovers the served model from
+the OpenRL/Tinker backend; `config.toml` intentionally contains only training
+knobs. A different recipe can use any command declared in TOML as long as it
+writes the configured metric to `metrics.jsonl`.
 
 Unlike the original prime-rl setup, this recipe does not allocate two GPUs per
-researcher. Researcher pods call a shared OpenRL gateway via `TINKER_BASE_URL`;
-the cluster-side model/trainer stack owns GPU placement. The composed GKE stack
-sets the shared `BASE_MODEL` to `Qwen/Qwen2.5-0.5B-Instruct`, matching the
-`autoresearch-rl` base model.
+agent. Agent pods call a shared OpenRL gateway via `TINKER_BASE_URL`;
+the cluster-side model/trainer stack owns the model and GPU placement.
 
 Mapping from `autoresearch-rl`:
 
@@ -35,23 +34,25 @@ flow.
 
 ## Local Attempt Run
 
-From `examples`, with an OpenRL gateway reachable on a port:
+From `examples/autoresearch`, with an OpenRL gateway reachable on a port:
 
 ```bash
 export TINKER_BASE_URL=http://127.0.0.1:9003
-uv run --no-sync --package open-rl-client python -m run_attempt \
+uv run python -m harness.attempt \
   recipe=recipes/math_rl/autoresearch.toml \
-  researcher=local-math \
+  agent_id=local-math \
   attempt_timeout_minutes=5 \
-  name=default-config \
-  log_root=artifacts/autoresearch/math_rl
+  baseline=True \
+  log_root=artifacts/autoresearch \
+  run_name=math-rl
 ```
 
 Serve the UI for local artifacts:
 
 ```bash
-uv run python -m ui.observer \
-  log_root=artifacts/autoresearch/math_rl \
+uv run python -m harness.serve \
+  log_root=artifacts/autoresearch \
+  run_name=math-rl \
   port=8080 \
   serve=True
 ```
@@ -59,21 +60,26 @@ uv run python -m ui.observer \
 Clear local artifacts:
 
 ```bash
-uv run python -m run_attempt \
-  clean=True \
-  log_root=artifacts/autoresearch/math_rl
+rm -rf artifacts/autoresearch/math-rl
 ```
 
 ## Kubernetes Run
 
-Use the normal [GKE setup guide](../../../../docs/setup/gke-setup.md) to deploy
-OpenRL, or reuse an existing backend. Then add the autoresearch researchers and
-UI:
+This assumes you followed the parent GKE setup path for the cluster, shared
+storage, vLLM worker, trainer worker, and OpenRL gateway. Then add the
+autoresearch agents and UI:
+
+The parent autoresearch manifests require the Agent Sandbox CRD:
+`agents.x-k8s.io/v1alpha1/Sandbox`.
 
 ```bash
-kubectl apply -k examples/autoresearch/recipes/math_rl
+cd examples/autoresearch
+uv run python -m harness.cli recipes/math_rl session_name=alpha
 kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
+
+The CLI copies this recipe into a generated overlay under `.runs/` and runs
+`kubectl apply -k` for you.
 
 For a single-command demo, use the convenience overlay that composes the normal
 OpenRL backend with the autoresearch add-on:
@@ -83,13 +89,15 @@ kubectl apply -k examples/autoresearch/recipes/math_rl/gke
 kubectl wait --for=condition=available deployment/vllm-worker --timeout=20m
 kubectl wait --for=condition=available deployment/open-rl-gateway --timeout=5m
 kubectl wait --for=condition=available deployment/open-rl-trainer-worker --timeout=20m
+cd examples/autoresearch
+uv run python -m harness.cli recipes/math_rl session_name=alpha
 kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
-The researcher pods also wait on `READY_URLS`, so attempts do not start until
-vLLM, the trainer worker, and the gateway health endpoints are reachable.
+The shared base init container waits until vLLM, the trainer worker, and the
+gateway health endpoints are reachable before the agent starts.
 
-The researcher pods use the in-cluster gateway URL:
+The agent pods use the in-cluster gateway URL:
 
 ```text
 TINKER_BASE_URL=http://open-rl-gateway-service:8000
@@ -100,12 +108,13 @@ TINKER_BASE_URL=http://open-rl-gateway-service:8000
 The math-RL overlay sets:
 
 - `RECIPE=recipes/math_rl/autoresearch.toml`
-- `LOG_ROOT=/mnt/shared/open-rl/autoresearch/math_rl`
+- `LOG_ROOT=/mnt/shared/open-rl/autoresearch`
+- `RUN_NAME=math-rl-alpha`
 - `ATTEMPT_TIMEOUT_MINUTES=5`
 - `AGENT_TIMEOUT_MINUTES=10`
-- `READY_URLS=http://open-rl-gateway-service:8000/api/v1/healthz`
 - `TINKER_BASE_URL=http://open-rl-gateway-service:8000`
-- `BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct` in the composed GKE stack
+- `BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct` in the composed GKE stack, owned by
+  the backend deployment rather than the recipe config
 
-The recipe `program.md` tells each researcher sandbox to tune `config.toml`, run
+The recipe `program.md` tells each agent sandbox to tune `config.toml`, run
 `RUN_ATTEMPT_COMMAND`, keep concise notes, and keep only improved commits.

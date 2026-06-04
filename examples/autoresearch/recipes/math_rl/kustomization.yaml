@@ -17,10 +17,10 @@ configMapGenerator:
   behavior: merge
   literals:
   - RECIPE=recipes/math_rl/autoresearch.toml
-  - LOG_ROOT=/mnt/shared/open-rl/autoresearch/math_rl
+  - LOG_ROOT=/mnt/shared/open-rl/autoresearch
+  - RUN_NAME=math-rl
   - ATTEMPT_TIMEOUT_MINUTES=5
   - AGENT_TIMEOUT_MINUTES=10
-  - READY_URLS=http://open-rl-gateway-service:8000/api/v1/healthz
   - TINKER_BASE_URL=http://open-rl-gateway-service:8000
   - TINKER_API_KEY=tml-dummy-key
   - SANDBOX_URL=http://sandbox-fusion-service:8080/run_code

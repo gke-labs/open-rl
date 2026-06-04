@@ -10,6 +10,7 @@ env/
 *.txt
 *.png
 *.log
+examples/autoresearch/.runs/
 
 # Python Cache
 __pycache__/

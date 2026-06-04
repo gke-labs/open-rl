@@ -116,6 +116,10 @@ class TrainerEngine:
     if adapter_id in self.adapter_states:
       del self.adapter_states[adapter_id]
 
+    if config.train_unembed:
+      print("[WARN] train_unembed=True is not supported with vLLM LoRA sampling; ignoring it and using train_unembed=False.")
+      config.train_unembed = False
+
     if not any([config.train_attn, config.train_mlp, config.train_unembed]):
       raise ValueError("At least one LoRA training target must be enabled.")
 

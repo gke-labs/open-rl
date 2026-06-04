@@ -1,103 +1,153 @@
+import { diffHtml } from "./diff.js";
+
 const S = {
-  data: { researchers: [] },
+  task: "",
+  agents: [],
+  rows: new Map(),
   active: sessionStorage.getItem("autoresearch-active"),
+  selected: JSON.parse(sessionStorage.getItem("autoresearch-selected") || "{}"),
   tabs: JSON.parse(sessionStorage.getItem("autoresearch-tabs") || "{}"),
   mode: sessionStorage.getItem("autoresearch-mode") || "all",
-  selected: JSON.parse(sessionStorage.getItem("autoresearch-selected") || "{}"),
-  logs: {},
-  logText: {},
-  logLoaded: {},
-  logFetches: {},
-  diffFetches: {},
+  texts: {},
   stream: null,
-  raw: "",
   events: null,
+  chartWidth: 1440,
 };
 
 const UI = {
-  researchers: document.querySelector("#researchers"),
+  session: document.querySelector("#session-name"),
+  agents: document.querySelector("#agents"),
   viewBar: document.querySelector("#view-bar"),
   empty: document.querySelector("#empty-state"),
   chart: document.querySelector("#chart-slot"),
   table: document.querySelector("#table-slot"),
   detail: document.querySelector("#detail-slot"),
 };
+
 const ansi = new Map([
   [30, "#8f8f8f"], [31, "#ff7b72"], [32, "#7ee787"], [33, "#f2cc60"], [34, "#58a6ff"], [35, "#d2a8ff"], [36, "#56d4dd"], [37, "#d6d6d6"],
   [90, "#6e7681"], [91, "#ffa198"], [92, "#7ee787"], [93, "#f2cc60"], [94, "#79c0ff"], [95, "#d2a8ff"], [96, "#56d4dd"], [97, "#f0f6fc"],
 ]);
+const LIVE_TAIL_BYTES = 256 * 1024;
+const MAX_ROW_TEXT = 512 * 1024;
+const APPEND_FIELDS = new Set(["agent"]);
 
 const H = (s = "") => String(s).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 const esc = (s = "") => String(s).replaceAll("\\u001b", "\x1b").replaceAll("\\x1b", "\x1b");
-const fmt = (v) => (v == null ? "" : Number.isFinite(v) ? Number(v.toPrecision(4)).toString() : String(v));
+const textState = (key) => S.texts[key] ||= { text: "", loaded: false, partial: false, offset: 0, pending: null, error: "", scroll: null };
 
 function saveUiSelection() {
   sessionStorage.setItem("autoresearch-active", S.active || "");
+  sessionStorage.setItem("autoresearch-selected", JSON.stringify(S.selected));
   sessionStorage.setItem("autoresearch-tabs", JSON.stringify(S.tabs));
   sessionStorage.setItem("autoresearch-mode", S.mode);
-  sessionStorage.setItem("autoresearch-selected", JSON.stringify(S.selected));
 }
 
 function updateUiSelection(patch = {}, options = {}) {
-  rememberLogScroll();
+  rememberScroll();
   Object.assign(S, patch);
-  keepSelectionInPayload();
+  keepSelection();
   saveUiSelection();
   render(options);
 }
 
-function keepSelectionInPayload() {
-  const researchers = S.data.researchers || [];
-  if (!researchers.some(r => r.id === S.active)) {
-    S.active = researchers[0]?.id;
+function mergeRow(patch) {
+  const row = S.rows.get(patch.id) || { id: patch.id };
+  for (const [key, value] of Object.entries(patch)) {
+    if (APPEND_FIELDS.has(key)) row[key] = ((row[key] || "") + value).slice(-MAX_ROW_TEXT);
+    else row[key] = value;
   }
-  const { row } = selectedPayloadView();
-  if (row) {
-    S.selected[S.active] = row.id;
-  } else if (S.active) {
-    delete S.selected[S.active];
-  }
+  S.rows.set(row.id, row);
+  return row;
 }
 
-function selectedPayloadView() {
-  const researchers = S.data.researchers || [];
-  const researcher = researchers.find(r => r.id === S.active);
-  const view = researcher?.views?.[S.mode] || researcher?.views?.all || { table_rows: [], chart_points: [], metric_label: "score", axis_label: "score" };
-  const rows = view.table_rows || [];
-  let row = rows.find(r => r.id === S.selected[S.active]);
-  if (!row) row = rows.find(r => r.kind === "live");
-  if (!row) row = rows.at(-1) || null;
-  return { researchers, researcher, view, rows, row };
+function applySnapshot(raw) {
+  rememberScroll();
+  const data = JSON.parse(raw);
+  S.task = data.task || "";
+  S.agents = data.agents || [];
+  S.rows.clear();
+  for (const row of data.rows || []) S.rows.set(row.id, row);
+  keepSelection();
+  saveUiSelection();
+  render();
+}
+
+function applyRow(raw) {
+  rememberScroll();
+  mergeRow(JSON.parse(raw));
+  keepSelection();
+  render();
+}
+
+function activeRows() {
+  const rows = [...S.rows.values()].filter(row => row.agent_id === S.active);
+  rows.sort((a, b) => (a.kind === "activity" ? -1 : b.kind === "activity" ? 1 : (a.number || 0) - (b.number || 0)));
+  if (S.mode !== "improvements") return rows;
+  const activity = rows.find(row => row.kind === "activity");
+  return [activity, ...improvedAttempts(rows.filter(row => row.kind === "attempt"))].filter(Boolean);
+}
+
+function keepSelection() {
+  if (!S.agents.some(agent => agent.id === S.active)) S.active = S.agents[0]?.id;
+  if (!S.active) return;
+  const rows = activeRows();
+  if (!rows.some(row => row.id === S.selected[S.active])) {
+    S.selected[S.active] = rows.find(row => row.kind === "activity")?.id || rows.at(-1)?.id || "";
+  }
+  if (S.active && !S.selected[S.active]) delete S.selected[S.active];
+}
+
+function selectedView() {
+  const agent = S.agents.find(row => row.id === S.active);
+  const rows = activeRows();
+  const row = rows.find(item => item.id === S.selected[S.active]) || rows.find(item => item.kind === "activity") || rows.at(-1) || null;
+  return { agent, rows, row, metric: metricView(rows) };
+}
+
+function metricView(rows) {
+  const attempt = rows.find(row => row.kind === "attempt" && row.metric_label);
+  return {
+    label: attempt?.metric_label || "Score",
+    axis: attempt?.axis_label || "score",
+    attempts: rows.filter(row => row.kind === "attempt"),
+  };
 }
 
 function render(options = {}) {
-  const st = selectedPayloadView();
-  UI.researchers.innerHTML = researcherNav(st.researchers);
-  if (!st.researchers.length) {
+  S.chartWidth = Math.max(760, Math.floor(UI.chart.clientWidth || S.chartWidth));
+  UI.session.textContent = S.task;
+  const st = selectedView();
+  UI.agents.innerHTML = agentNav(S.agents);
+
+  if (!S.agents.length) {
     UI.empty.hidden = false;
-    UI.empty.innerHTML = waiting("Waiting for a researcher", "Runs will appear here as soon as a researcher creates a log directory.");
+    UI.empty.innerHTML = waiting("Waiting for an agent", "Runs will appear here as soon as an agent creates a log directory.");
     UI.viewBar.hidden = true;
     UI.viewBar.innerHTML = UI.chart.innerHTML = UI.table.innerHTML = UI.detail.innerHTML = "";
     return stopStream();
   }
+
   UI.empty.hidden = true;
   UI.viewBar.hidden = false;
   UI.viewBar.innerHTML = modeToggle();
-  UI.chart.innerHTML = chart(st.researcher, st.view);
-  UI.table.innerHTML = table(st.view, st.rows, st.row);
+  UI.chart.innerHTML = chart(st.agent, st.rows, st.metric);
+  UI.table.innerHTML = table(st.rows, st.row, st.metric);
+
   if (st.row) {
-    const tabKey = selectedTab(st.row);
+    const tab = selectedTab(st.row);
     const current = UI.detail.querySelector("#experiment-detail");
-    if (current?.dataset.run !== st.row.id || current?.dataset.tab !== tabKey) {
-      UI.detail.innerHTML = detail(st.row, tabKey);
+    if (current?.dataset.row !== st.row.id || current?.dataset.tab !== tab) {
+      UI.detail.innerHTML = detail(st.row, tab);
     } else {
       current.querySelector(".panel-meta").textContent = st.row.meta || st.row.label || st.row.id;
     }
-    renderViewer(st.row);
+    renderViewer(st.row, tab);
   } else {
     UI.detail.innerHTML = "";
     stopStream();
   }
+
   if (options.scrollToDetail) {
     requestAnimationFrame(() => document.querySelector("#experiment-detail")?.scrollIntoView({ behavior: "smooth", block: "start" }));
   }
@@ -108,245 +158,216 @@ function modeToggle() {
   return `<button class="view-toggle" data-action="mode-toggle" title="Show ${H(label.toLowerCase())}">${label}</button>`;
 }
 
-function researcherNav(researchers) {
-  return researchers.map(r => `
-    <button class="${r.id === S.active ? "active" : ""}" data-action="active" data-id="${H(r.id)}">
-      <span class="research-status ${r.live ? "running" : ""}" aria-hidden="true"></span>
-      <span class="nav-copy"><strong>${H(r.label)}</strong><span class="muted">${H(r.meta)}</span></span>
+function agentNav(agents) {
+  return agents.map(agent => `
+    <button class="${agent.id === S.active ? "active" : ""}" data-action="active" data-id="${H(agent.id)}">
+      <span class="agent-status ${agent.live ? "running" : ""}" aria-hidden="true"></span>
+      <span class="nav-copy"><strong>${H(agent.label)}</strong><span class="muted">${H(agent.meta)}</span></span>
     </button>`).join("");
 }
 
-function chart(researcher, view) {
-  const pts = view.chart_points || [];
-  if (!pts.length) return `<section class="chart-panel waiting"><div class="panel-head"><h2>${H(researcher.label)} waiting</h2><span class="status-pill ${researcher.status === "running" ? "running" : ""}">${H(researcher.status)}</span></div><p class="muted">Waiting for the first metric.</p></section>`;
-  const w = 1040, h = 210, m = { l: 92, r: 16, t: 22, b: 54 }, pw = w - m.l - m.r, ph = h - m.t - m.b;
-  const attempts = Math.max(view.attempt_count || pts.length, ...pts.map(p => p.number || 1));
-  const x = (n) => m.l + pw * (attempts < 2 ? .5 : (n - 1) / (attempts - 1));
-  const scale = yScale(pts.map(p => p.score));
-  const xy = pts.map(p => [x(p.number || 1), m.t + ph - scale.norm(p.score) * ph, p]);
+function chart(agent, rows, metric) {
+  const attempts = metric.attempts;
+  const pts = attempts.filter(row => row.score != null);
+  if (!pts.length) return `<section class="chart-panel waiting"><div class="panel-head"><h2>${H(agent?.label || "Run")} waiting</h2><span class="status-pill ${agent?.status === "running" ? "running" : ""}">${H(agent?.status || "")}</span></div><p class="muted">Waiting for the first metric.</p></section>`;
+  const w = S.chartWidth, h = 230, m = { l: 92, r: 16, t: 22, b: 54 }, pw = w - m.l - m.r, ph = h - m.t - m.b;
+  const count = Math.max(attempts.length, ...pts.map(row => row.number || 1));
+  const attemptTicks = ticksForAttempts(count);
+  const x = (n) => m.l + pw * (count < 2 ? .5 : (n - 1) / (count - 1));
+  const scale = yScale(pts.map(row => row.score));
+  const xy = pts.map(row => [x(row.number || 1), m.t + ph - scale.norm(row.score) * ph, row]);
   const line = (x1, y1, x2, y2, c) => `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${c}"/>`;
   const text = (x, y, s, a = "middle", c = "axis-tick", extra = "") => `<text x="${x}" y="${y}" text-anchor="${a}" class="${c}" ${extra}>${H(s)}</text>`;
-  return `<section class="chart-panel"><div class="chart"><svg viewBox="0 0 ${w} ${h}">
+  return `<section class="chart-panel"><div class="chart"><svg width="${w}" height="${h}">
     ${scale.ticks.map(v => line(m.l, m.t + ph - scale.norm(v) * ph, m.l + pw, m.t + ph - scale.norm(v) * ph, "grid-line")).join("")}
-    ${Array.from({ length: attempts }, (_, i) => line(x(i + 1), m.t, x(i + 1), m.t + ph, "grid-line")).join("")}
+    ${attemptTicks.map(n => line(x(n), m.t, x(n), m.t + ph, "grid-line")).join("")}
     ${line(m.l, m.t, m.l, m.t + ph, "axis-line")}${line(m.l, m.t + ph, m.l + pw, m.t + ph, "axis-line")}
     ${scale.ticks.map(v => text(m.l - 16, m.t + ph - scale.norm(v) * ph + 4, fmtAxis(v, scale.step), "end")).join("")}
     <polyline points="${xy.map(([x, y]) => `${x},${y}`).join(" ")}" fill="none" stroke="var(--accent)" stroke-width="2"/>
-    ${Array.from({ length: attempts }, (_, i) => text(x(i + 1), m.t + ph + 24, `A${i + 1}`)).join("")}
-    ${xy.map(([x, y, p]) => `<circle class="chart-point" cx="${x}" cy="${y}" r="5" data-action="select" data-run="${H(p.id)}"><title>${H(p.title)}</title></circle>`).join("")}
-    ${text(12, m.t + ph / 2, view.axis_label || view.metric_label || "score", "middle", "axis-title", `transform="rotate(-90 12 ${m.t + ph / 2})"`)}
+    ${attemptTicks.map(n => text(x(n), m.t + ph + 24, `A${n}`)).join("")}
+    ${xy.map(([x, y, row]) => `<circle class="chart-point" cx="${x}" cy="${y}" r="5" data-action="select" data-run="${H(row.id)}"><title>${H(row.label)} · ${H(metric.label)} ${fmt(row.score)}</title></circle>`).join("")}
+    ${text(12, m.t + ph / 2, metric.axis, "middle", "axis-title", `transform="rotate(-90 12 ${m.t + ph / 2})"`)}
     ${text(m.l + pw / 2, h - 8, "attempt", "middle", "axis-title")}
   </svg></div></section>`;
 }
 
-function yScale(values) {
-  let lo = Math.min(...values), hi = Math.max(...values);
-  if (lo === hi) {
-    const pad = Math.max(Math.abs(lo) * .1, .01);
-    lo -= pad; hi += pad;
-  }
-  const pad = (hi - lo) * .08;
-  lo -= pad; hi += pad;
-  const step = niceStep(hi - lo);
-  const min = Math.floor(lo / step) * step;
-  const max = Math.ceil(hi / step) * step;
-  const ticks = [];
-  for (let v = min; v <= max + step / 2; v += step) ticks.push(Math.abs(v) < step / 1000 ? 0 : v);
-  return { ticks, step, norm: (v) => (v - min) / (max - min || 1) };
-}
-
-function niceStep(span) {
-  const raw = span / 4;
-  const pow = 10 ** Math.floor(Math.log10(raw || 1));
-  const unit = raw / pow;
-  return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 5 ? 5 : 10) * pow;
-}
-
-function fmtAxis(value, step) {
-  if (Math.abs(value) < step / 1000) value = 0;
-  const decimals = Math.max(0, Math.min(6, Math.ceil(-Math.log10(step)) + 1));
-  return Number(value.toFixed(decimals)).toString();
-}
-
-function table(view, rows, selected) {
-  let body = `<tr><td class="empty-row" colspan="3">No visible experiments. Toggle attempts to show more.</td></tr>`;
-  if (rows.length) {
-    body = rows.map(row => {
-      const selectedClass = selected?.id === row.id ? "selected" : "";
-      const number = row.kind === "live" ? `<span class="live-pulse" title="Live run"></span>` : H(row.number);
-      const score = row.kind === "live" ? "" : fmt(row.score);
-      return `<tr class="${selectedClass}" data-action="select" data-run="${H(row.id)}">
-        <td class="experiment-id attempt-number">${number}</td>
-        <td>${score}</td>
-        <td class="description-cell">${H(row.description || "")}</td>
-      </tr>`;
-    }).join("");
-  }
-  return `<section class="experiment-index"><div class="table-wrap"><table><thead><tr>${["#", view.metric_label, "What changed"].map(h => `<th>${H(h)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div></section>`;
+function table(rows, selected, metric) {
+  const body = rows.length ? rows.map(row => {
+    const selectedClass = selected?.id === row.id ? "selected" : "";
+    const number = row.kind === "activity"
+      ? (row.live ? `<span class="live-pulse" title="Live run"></span>` : "log")
+      : H(row.number);
+    return `<tr class="${selectedClass}" data-action="select" data-run="${H(row.id)}">
+      <td class="experiment-id attempt-number">${number}</td>
+      <td>${row.kind === "activity" ? "" : fmt(row.score)}</td>
+      <td class="description-cell">${H(row.description || "")}</td>
+    </tr>`;
+  }).join("") : `<tr><td class="empty-row" colspan="3">No visible experiments. Toggle attempts to show more.</td></tr>`;
+  return `<section class="experiment-index"><div class="table-wrap"><table><thead><tr>${["#", metric.label, "What changed"].map(h => `<th>${H(h)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div></section>`;
 }
 
 function detail(row, selected = selectedTab(row)) {
-  return `<section class="experiment-panel detail-panel" id="experiment-detail" data-run="${H(row.id)}" data-tab="${H(selected)}">
-    <div class="experiment-viewer"><div class="tabs">${row.tab_order.map(key => `<button class="${key === selected ? "active" : ""}" data-action="tab" data-tab="${key}">${H(row.tabs[key].label)}</button>`).join("")}</div><div class="viewer" id="viewer"></div></div>
+  return `<section class="experiment-panel detail-panel" id="experiment-detail" data-row="${H(row.id)}" data-tab="${H(selected)}">
+    <div class="experiment-viewer"><div class="tabs">${row.tab_order.map(key => `<button class="${key === selected ? "active" : ""}" data-action="tab" data-tab="${key}">${H(tabLabel(row, key))}</button>`).join("")}</div><div class="viewer" id="viewer"></div></div>
     <div class="panel-meta">${H(row.meta || row.label || row.id)}</div>
   </section>`;
 }
 
 function selectedTab(row) {
-  const tabs = row.tab_order;
-  const preferred = row.tabs.agent.path ? "agent" : "logs";
   const saved = S.tabs.__global;
-  if (tabs.includes(saved)) {
-    return saved;
-  }
-  if (tabs.includes(preferred)) {
-    return preferred;
-  }
-  return tabs[0];
+  if (row.tab_order.includes(saved)) return saved;
+  return row.tab_order.includes("agent") ? "agent" : row.tab_order[0];
 }
 
-function renderViewer(row) {
-  const tabKey = selectedTab(row);
-  const tab = row.tabs[tabKey];
+function tabLabel(row, tab) {
+  if (tab === "agent") return "Agent";
+  if (tab === "notes") return "Notes";
+  return row.artifacts?.[tab]?.label || tab;
+}
+
+function renderViewer(row, tab) {
   const v = document.querySelector("#viewer");
   if (!v) return stopStream();
-  if (tabKey === "diff") {
-    stopStream();
-    return v.replaceChildren(diffPanel(row));
-  }
-  if (tab.format === "markdown") {
-    const existing = v.querySelector(".markdown-panel");
-    if (existing?.dataset.path === tab.path) {
-      const status = v.querySelector(".log-status");
-      if (status) {
-        status.textContent = logStatus(tab);
-        status.className = `log-status ${tab.live ? "live" : ""}`;
-      }
-      hydrateLog(tab, status, existing);
-      return;
-    }
-    return v.replaceChildren(markdownPanel(tab));
-  }
-  const existing = v.querySelector("pre.log");
-  if (existing?.dataset.path === tab.path) {
-    const status = v.querySelector(".log-status");
-    if (status) {
-      status.textContent = logStatus(tab);
-      status.className = `log-status ${tab.live ? "live" : ""}`;
-    }
-    hydrateLog(tab, status, existing);
+  const key = `${row.id}:${tab}`;
+  const selector = tab === "notes" ? ".markdown-panel" : tab === "diff" ? ".diff-panel" : "pre.log";
+  const existing = v.querySelector(selector);
+  if (existing?.dataset.key === key) {
+    if (tab === "diff") fetchDiff(row, existing, key);
+    else updateViewerNode(existing, row, tab);
     return;
   }
-  v.replaceChildren(logPanel(tab));
-}
-
-function logStatus(tab) {
-  return tab.path ? `${tab.label.toLowerCase()}: ${tab.live ? "live" : "tail"}` : `${tab.label.toLowerCase()}: no stream`;
-}
-
-function logPanel(tab) {
-  const text = tab.path ? S.logText[tab.path] || tab.tail || "" : tab.tail || "";
-  const panel = document.createElement("div");
-  panel.className = "log-panel";
-  panel.innerHTML = `<div class="log-toolbar"><span class="log-status ${tab.live ? "live" : ""}">${H(logStatus(tab))}</span></div>`;
-  if (!tab.path && !text) {
-    panel.appendChild(fragment(`<div class="waiting-panel">${waiting(tab.label, `Waiting for ${tab.label.toLowerCase()} output.`)}</div>`));
-    return panel;
+  stopStream();
+  const panel = viewerPanel(row, tab, key);
+  v.replaceChildren(panel);
+  if (tab === "diff") {
+    fetchDiff(row, panel, key);
+    return;
   }
-  const node = document.createElement("pre");
-  node.className = "log";
-  if (tab.path) node.dataset.path = tab.path;
-  node.addEventListener("scroll", () => { if (tab.path) S.logs[tab.path] = logScroll(node); }, { passive: true });
-  panel.append(node);
-  colorize(node, esc(text));
-  restoreLogScroll(node, tab.path);
-  hydrateLog(tab, panel.querySelector(".log-status"), node);
-  return panel;
+  updateViewerNode(v.querySelector(selector), row, tab);
 }
 
-function markdownPanel(tab) {
-  const text = tab.path ? S.logText[tab.path] || tab.tail || "" : tab.tail || "";
+function viewerPanel(row, tab, key) {
+  if (tab === "diff") return diffPanel(row, key);
   const panel = document.createElement("div");
   panel.className = "log-panel";
-  panel.innerHTML = `<div class="log-toolbar"><span class="log-status ${tab.live ? "live" : ""}">${H(logStatus(tab))}</span></div>`;
-  const node = document.createElement("div");
-  node.className = "markdown-panel";
-  if (tab.path) node.dataset.path = tab.path;
-  node.addEventListener("scroll", () => { if (tab.path) S.logs[tab.path] = logScroll(node); }, { passive: true });
+  panel.innerHTML = `<div class="log-toolbar"><span class="log-status ${tabLive(row, tab) ? "live" : ""}">${H(statusText(row, tab))}</span></div>`;
+  const node = document.createElement(tab === "notes" ? "div" : "pre");
+  node.className = tab === "notes" ? "markdown-panel" : "log";
+  node.dataset.key = key;
+  bindScroll(node, key);
   panel.append(node);
-  renderText(node, tab, esc(text));
-  restoreLogScroll(node, tab.path);
-  hydrateLog(tab, panel.querySelector(".log-status"), node);
   return panel;
 }
 
-async function hydrateLog(tab, status, node) {
-  if (!tab.path) return stopStream();
-  if (!S.logLoaded[tab.path]) {
-    const hasText = Boolean(S.logText[tab.path] || tab.tail || node.textContent);
-    if (status && !hasText) status.textContent = `${tab.label.toLowerCase()}: loading full log`;
-    S.logFetches[tab.path] ||= fetch(`file?path=${encodeURIComponent(tab.path)}`)
-      .then(response => {
-        if (!response.ok) throw new Error(`log fetch failed: ${response.status}`);
-        return response.text();
-      })
-      .then(text => {
-        const full = esc(text);
-        S.logText[tab.path] = full;
-        S.logLoaded[tab.path] = true;
-        return full;
-      })
-      .finally(() => { delete S.logFetches[tab.path]; });
-    const full = await S.logFetches[tab.path].catch(err => {
-      if (status) {
-        status.textContent = err.message;
-        status.className = "log-status warn";
-      }
-      return null;
+function updateViewerNode(node, row, tab) {
+  if (!node) return;
+  const key = `${row.id}:${tab}`;
+  if (tab === "agent") {
+    if (row.artifacts?.agent) {
+      hydrateArtifact(row, tab, node);
+      return;
+    }
+    replaceText(node, key, "agent", esc(row.agent || ""));
+    updateStatus(node, row, tab);
+    return;
+  }
+  if (tab === "notes") {
+    replaceText(node, key, "markdown", row.notes || "");
+    updateStatus(node, row, tab);
+    return;
+  }
+  if (tab === "logs") {
+    hydrateArtifact(row, tab, node);
+  }
+}
+
+function statusText(row, tab) {
+  if (tab === "agent") {
+    const state = textState(`${row.id}:${tab}`);
+    if (state.error) return state.error;
+    return `agent: ${row.artifacts?.agent && !state.loaded ? "loading" : tabLive(row, tab) ? "live" : "full"}`;
+  }
+  if (tab === "notes") return "notes";
+  const state = textState(`${row.id}:${tab}`);
+  if (state.error) return state.error;
+  return `${tab}: ${state.loaded ? tabLive(row, tab) ? "live" : "full" : "loading"}`;
+}
+
+function tabLive(row, tab) {
+  return Boolean(row.artifacts?.[tab]?.live || (tab === "agent" && !row.artifacts?.agent && row.live));
+}
+
+function updateStatus(node, row, tab, extra = "") {
+  const status = node.closest(".log-panel")?.querySelector(".log-status");
+  if (!status) return;
+  status.textContent = extra || statusText(row, tab);
+  status.className = `log-status ${tabLive(row, tab) ? "live" : ""}`;
+}
+
+async function hydrateArtifact(row, tab, node) {
+  const key = `${row.id}:${tab}`;
+  const state = textState(key);
+  const artifact = row.artifacts?.[tab];
+  if (!artifact) return;
+  if (state.loaded && state.partial && !artifact.live) {
+    state.text = "";
+    state.offset = 0;
+    state.loaded = false;
+    state.partial = false;
+  }
+  if (!state.loaded && !state.pending) {
+    state.error = "";
+    const url = artifact.live ? `${artifact.url}&tail_bytes=${LIVE_TAIL_BYTES}` : artifact.url;
+    state.pending = fetch(url).then(async response => {
+      if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
+      state.offset = Number(response.headers.get("X-OpenRL-End") || 0);
+      state.text = esc(await response.text());
+      state.loaded = true;
+      state.partial = artifact.live;
+    }).catch(err => {
+      state.error = err.message;
+    }).finally(() => {
+      state.pending = null;
     });
-    if (full == null) return;
-    if (!node.isConnected) return;
-    S.logText[tab.path] = full;
-    replaceText(node, tab, full);
   }
-  if (tab.live) {
-    ensureStream(tab, status, node);
-  } else {
-    stopStream();
+  if (state.pending) await state.pending;
+  if (!node.isConnected) return;
+  if (state.error) {
+    updateStatus(node, row, tab);
+    return;
   }
+  replaceText(node, key, "logs", state.text);
+  updateStatus(node, row, tab);
+  if (row.artifacts?.[tab]?.live) ensureStream(row, tab, node);
 }
 
-function ensureStream(tab, status, node) {
-  const key = `${tab.format}:${tab.path}`;
+function ensureStream(row, tab, node) {
+  const artifact = row.artifacts?.[tab];
+  if (!artifact?.tail_url) return;
+  const key = `${row.id}:${tab}`;
   if (S.stream?.key === key) {
-    S.stream.status = status;
     S.stream.node = node;
     return;
   }
   stopStream();
-  const offset = byteLength(S.logText[tab.path] || "");
-  const mode = tab.format === "markdown" ? "&replace=1" : "";
-  const source = new EventSource(`stream?path=${encodeURIComponent(tab.path)}&offset=${offset}${mode}`);
-  S.stream = { key, source, status, node };
+  const state = textState(key);
+  const source = new EventSource(`${artifact.tail_url}&offset=${state.offset || 0}`);
+  S.stream = { key, source, node };
   source.onmessage = (event) => {
     const data = JSON.parse(event.data);
     const text = esc(data.text || "");
-    if (data.replace) {
-      S.logText[tab.path] = text;
-      replaceText(S.stream?.node, tab, text);
-    } else {
-      S.logText[tab.path] = (S.logText[tab.path] || "") + text;
-      appendText(S.stream?.node, tab, text);
-    }
-    if (S.stream?.status) {
-      S.stream.status.textContent = `${tab.label.toLowerCase()}: live`;
-      S.stream.status.className = "log-status live";
-    }
+    state.text += text;
+    state.offset = data.end;
+    appendText(S.stream?.node, key, "logs", text);
+    updateStatus(S.stream?.node, row, tab, `${tab}: live`);
   };
   source.onerror = () => {
-    if (!S.stream?.status) return;
-    S.stream.status.textContent = "reconnecting";
-    S.stream.status.className = "log-status warn";
+    if (S.stream?.source !== source) return;
+    updateStatus(S.stream?.node, row, tab, "reconnecting");
+    stopStream();
+    setTimeout(() => {
+      if (node.isConnected) ensureStream(row, tab, node);
+    }, 1000);
   };
 }
 
@@ -355,31 +376,90 @@ function stopStream() {
   S.stream = null;
 }
 
-function colorize(node, text) {
-  node.innerHTML = text.split("\n").map(logLine).join("\n");
+function diffPanel(row, key) {
+  const panel = document.createElement("div");
+  panel.className = "diff-panel";
+  panel.dataset.key = key;
+  const state = textState(key);
+  if (state.loaded) {
+    const box = document.createElement("div");
+    box.className = "diffbox";
+    box.innerHTML = diffHtml(state.text);
+    panel.append(box);
+    return panel;
+  }
+  panel.append(fragment(`<div class="waiting-panel">${waiting("Diff", row.artifacts?.diff ? "Loading captured code diff." : "No code diff.")}</div>`));
+  return panel;
 }
 
-function renderText(node, tab, text) {
-  if (tab.format === "markdown") node.innerHTML = markdown(text);
+async function fetchDiff(row, panel, key) {
+  const artifact = row.artifacts?.diff;
+  if (!artifact) return;
+  const state = textState(key);
+  if (state.loaded) return;
+  if (!state.pending) {
+    state.error = "";
+    state.pending = fetch(artifact.url).then(async response => {
+      if (!response.ok) throw new Error(`fetch failed: ${response.status}`);
+      state.text = await response.text();
+      state.loaded = true;
+    }).catch(err => {
+      state.error = err.message;
+    }).finally(() => {
+      state.pending = null;
+    });
+  }
+  await state.pending;
+  if (!panel.isConnected) return;
+  if (state.error) {
+    panel.replaceChildren(fragment(`<div class="waiting-panel">${waiting("Diff", state.error)}</div>`));
+    return;
+  }
+  if (!state.loaded) return;
+  const rendered = diffPanel(row, key);
+  panel.replaceChildren(...rendered.childNodes);
+}
+
+function renderText(node, format, text) {
+  if (format === "markdown") node.innerHTML = markdown(text);
   else colorize(node, text);
 }
 
-function replaceText(node, tab, text) {
-  const scroll = logScroll(node);
-  renderText(node, tab, text);
-  restoreLogScroll(node, tab.path, scroll);
+function replaceText(node, key, format, text) {
+  withScroll(node, key, () => renderText(node, format, text));
 }
 
-function appendText(node, tab, text) {
+function appendText(node, key, format, text) {
   if (!node?.isConnected) return;
-  const scroll = logScroll(node);
-  if (tab.format === "markdown") renderText(node, tab, S.logText[tab.path] || text);
-  else node.insertAdjacentHTML("beforeend", text.split("\n").map(logLine).join("\n"));
-  restoreLogScroll(node, tab.path, scroll);
+  withScroll(node, key, () => {
+    if (format === "markdown") renderText(node, format, text);
+    else if (needsRichLogRender(text)) node.insertAdjacentHTML("beforeend", text.split("\n").map(logLine).join("\n"));
+    else node.append(document.createTextNode(text));
+  });
 }
 
-function rememberLogScroll() {
-  document.querySelectorAll("pre.log[data-path],.markdown-panel[data-path]").forEach(node => { S.logs[node.dataset.path] = logScroll(node); });
+function withScroll(node, key, mutate) {
+  const scroll = savedOrCurrentScroll(node, key);
+  mutate();
+  restoreScroll(node, key, scroll);
+}
+
+function bindScroll(node, key) {
+  node.tabIndex = 0;
+  const unpin = () => { textState(key).scroll = { ...logScroll(node), pinned: false }; };
+  node.addEventListener("scroll", () => { textState(key).scroll = logScroll(node); }, { passive: true });
+  node.addEventListener("wheel", event => { if (event.deltaY < 0) unpin(); }, { passive: true });
+  node.addEventListener("touchstart", unpin, { passive: true });
+  node.addEventListener("keydown", event => { if (["ArrowUp", "PageUp", "Home"].includes(event.key)) unpin(); });
+}
+
+function savedOrCurrentScroll(node, key) {
+  const saved = textState(key).scroll;
+  return saved && !saved.pinned ? saved : logScroll(node);
+}
+
+function rememberScroll() {
+  document.querySelectorAll("pre.log[data-key],.markdown-panel[data-key]").forEach(node => { textState(node.dataset.key).scroll = logScroll(node); });
 }
 
 function logScroll(node) {
@@ -387,20 +467,22 @@ function logScroll(node) {
   return { top: node.scrollTop, pinned: bottomGap <= 8 };
 }
 
-function restoreLogScroll(node, path, scroll = S.logs[path]) {
-  const apply = () => {
-    if (!scroll || scroll.pinned) {
-      node.scrollTop = node.scrollHeight;
-    } else {
-      node.scrollTop = scroll.top;
-    }
-  };
+function restoreScroll(node, key, scroll = textState(key).scroll) {
+  const apply = () => { node.scrollTop = !scroll || scroll.pinned ? node.scrollHeight : scroll.top; };
   apply();
   requestAnimationFrame(apply);
 }
 
-function byteLength(text) {
-  return new TextEncoder().encode(text).length;
+function colorize(node, text) {
+  if (!needsRichLogRender(text)) {
+    node.textContent = text;
+    return;
+  }
+  node.innerHTML = text.split("\n").map(logLine).join("\n");
+}
+
+function needsRichLogRender(text) {
+  return /[\x1b{}┏┡└┗┣┠┯┷─━│┃]/.test(text);
 }
 
 function logLine(line) {
@@ -416,16 +498,21 @@ function logLine(line) {
   return `<span class="metric-border">${H(plain)}</span>`;
 }
 
+const EVENT_RENDERERS = {
+  init: (e) => eventHtml("init", e.model || "agent", e.session_id ? `session ${e.session_id}` : ""),
+  message: messageEvent,
+  tool_use: (e) => eventHtml("tool", e.tool_name || "tool", toolDetail(e.tool_name, e.parameters)),
+  tool_result: (e) => eventHtml("result", e.status || "done", compact(e.output || e.result || e.content || "")),
+};
+
 function agentEventLine(line) {
   const text = line.trim();
   if (!text.startsWith("{") || !text.endsWith("}")) return "";
   let event;
   try { event = JSON.parse(text); } catch { return ""; }
   if (!event?.type) return "";
-  if (event.type === "init") return eventHtml("init", event.model || "agent", event.session_id ? `session ${event.session_id}` : "");
-  if (event.type === "message") return messageEvent(event);
-  if (event.type === "tool_use") return eventHtml("tool", event.tool_name || "tool", toolDetail(event.tool_name, event.parameters));
-  if (event.type === "tool_result") return eventHtml("result", event.status || "done", compact(event.output || event.result || event.content || ""));
+  const render = EVENT_RENDERERS[event.type];
+  if (render) return render(event);
   return eventHtml(event.type.replaceAll("_", " "), event.status || event.role || "event", compact(event.content || event.message || ""));
 }
 
@@ -495,116 +582,62 @@ function markdown(text) {
   return out || `<p class="muted">No notes yet.</p>`;
 }
 
-function diffPanel(row) {
-  const diff = row.tabs.diff, compact = diff.compact || "";
-  const panel = document.createElement("div");
-  panel.className = "diff-panel";
-  if (!compact) {
-    panel.append(fragment(`<div class="waiting-panel">${waiting("Diff", diff.path ? "Loading captured code diff." : row.live ? "Waiting for the first captured code diff." : "No code diff.")}</div>`));
-    hydrateDiff(row, panel);
-    return panel;
-  }
-  const box = document.createElement("div");
-  box.className = "diffbox";
-  box.dataset.full = "0";
-  box.innerHTML = diffHtml(compact, hasFullDiff(row));
-  panel.append(box);
-  return panel;
-}
-
-async function hydrateDiff(row, panel) {
-  const diff = row.tabs.diff;
-  if (!diff?.path) return;
-  const key = `${row.id}:${diff.path}:${diff.full_path || ""}`;
-  S.diffFetches[key] ||= Promise.all([
-    fetch(`file?path=${encodeURIComponent(diff.path)}`).then(response => response.ok ? response.text() : ""),
-    diff.full_path ? fetch(`file?path=${encodeURIComponent(diff.full_path)}`).then(response => response.ok ? response.text() : "") : Promise.resolve(""),
-  ]).finally(() => { delete S.diffFetches[key]; });
-  const [compact, full] = await S.diffFetches[key];
-  if (!panel.isConnected || !compact) return;
-  row.tabs.diff.compact = compact;
-  row.tabs.diff.full = full || compact;
-  const rendered = diffPanel(row);
-  panel.replaceChildren(...rendered.childNodes);
-}
-
-const hasFullDiff = (row) => !!row.tabs.diff.full && row.tabs.diff.full !== row.tabs.diff.compact;
-const rawDiff = (text) => `<pre class="raw-diff">${H(text)}</pre>`;
-
-function diffHtml(text, toggle = false) {
-  if (!text.includes("diff --git ")) return rawDiff(text);
-  return parseDiff(text).map(file => diffFileHtml(file, toggle)).join("") || rawDiff(text);
-}
-
-function parseDiff(text) {
-  const files = [];
-  let file, hunk, oldLine = 0, newLine = 0;
-  for (const line of text.split(/\r?\n/)) {
-    if (line.startsWith("diff --git ")) {
-      const match = /^diff --git\s+(?:a\/)?(.+?)\s+(?:b\/)?(.+)$/.exec(line);
-      file = { old: cleanDiffPath(match?.[1] || "file"), new: cleanDiffPath(match?.[2] || "file"), hunks: [] };
-      files.push(file);
+function improvedAttempts(attempts) {
+  let best = -Infinity;
+  const kept = [];
+  for (const row of attempts) {
+    const rank = row.score == null ? -Infinity : row.score_mode === "min" ? -row.score : row.score;
+    if (rank === -Infinity) {
+      if (row.status === "running") kept.push(row);
       continue;
     }
-    if (!file) continue;
-    if (line.startsWith("--- ")) file.old = cleanDiffPath(line.slice(4));
-    else if (line.startsWith("+++ ")) file.new = cleanDiffPath(line.slice(4));
-    else if (line.startsWith("@@")) {
-      const match = /@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)?/.exec(line);
-      [oldLine, newLine] = match ? [Number(match[1]), Number(match[2])] : [0, 0];
-      file.hunks.push(hunk = { content: line, changes: [] });
-    } else if (hunk && [" ", "+", "-"].includes(line[0])) {
-      const mark = line[0], body = line.slice(1);
-      if (mark === " ") hunk.changes.push({ kind: "ctx", old: oldLine++, new: newLine++, text: body });
-      if (mark === "+") hunk.changes.push({ kind: "add", new: newLine++, text: body });
-      if (mark === "-") hunk.changes.push({ kind: "del", old: oldLine++, text: body });
+    if (rank > best) {
+      kept.push(row);
+      best = rank;
     }
   }
-  return files;
+  return kept;
 }
 
-function cleanDiffPath(path) {
-  const value = path.trim().split("\t")[0];
-  return value === "/dev/null" ? value : value.replace(/^[ab]\//, "");
+function ticksForAttempts(attempts) {
+  if (attempts <= 12) return Array.from({ length: attempts }, (_, i) => i + 1);
+  const step = Math.ceil(attempts / 12);
+  const ticks = Array.from({ length: Math.ceil(attempts / step) }, (_, i) => 1 + i * step);
+  if (ticks.at(-1) !== attempts) ticks.push(attempts);
+  return ticks;
 }
 
-function diffFileHtml(file, toggle) {
-  const changes = file.hunks.flatMap(h => h.changes);
-  const deleted = changes.filter(c => c.kind === "del").length, added = changes.filter(c => c.kind === "add").length;
-  const name = file.new !== "/dev/null" ? file.new : file.old;
-  const action = toggle ? ` data-action="diff-context" title="Toggle full diff context"` : "";
-  return `<div class="diff-file"><div class="diff-file-toolbar">
-    <button class="diff-toggle" data-action="collapse" aria-label="Collapse file" title="Collapse file"></button>
-    <span class="diff-name"${action}>${H(name)}</span>
-    <span class="diff-counts"><span class="del">-${deleted}</span> <span class="add">+${added}</span></span>
-  </div><div class="diff-file-body"><div class="split-diff">${file.hunks.map(diffHunkHtml).join("")}</div></div></div>`;
-}
-
-function diffHunkHtml(hunk) {
-  return `<div class="diff-hunk"><span>${H(hunk.content)}</span><span>${H(hunk.content)}</span></div>` + pairedChanges(hunk.changes).map(diffRowHtml).join("");
-}
-
-function pairedChanges(changes) {
-  const rows = [];
-  for (let i = 0; i < changes.length;) {
-    const change = changes[i];
-    if (change.kind === "ctx") {
-      rows.push([change.old, change.text, "ctx", change.new, change.text, "ctx"]);
-      i++;
-      continue;
-    }
-    const dels = [], adds = [];
-    while (i < changes.length && changes[i].kind !== "ctx") (changes[i].kind === "add" ? adds : dels).push(changes[i++]);
-    for (let j = 0; j < Math.max(dels.length, adds.length); j++) {
-      const left = dels[j], right = adds[j];
-      rows.push([left?.old || "", left?.text || "", left ? "del" : "empty", right?.new || "", right?.text || "", right ? "add" : "empty"]);
-    }
+function yScale(values) {
+  let lo = Math.min(...values), hi = Math.max(...values);
+  if (lo === hi) {
+    const pad = Math.max(Math.abs(lo) * .1, .01);
+    lo -= pad; hi += pad;
   }
-  return rows;
+  const pad = (hi - lo) * .08;
+  lo -= pad; hi += pad;
+  const step = niceStep(hi - lo);
+  const min = Math.floor(lo / step) * step;
+  const max = Math.ceil(hi / step) * step;
+  const ticks = [];
+  for (let v = min; v <= max + step / 2; v += step) ticks.push(Math.abs(v) < step / 1000 ? 0 : v);
+  return { ticks, step, norm: (v) => (v - min) / (max - min || 1) };
 }
 
-function diffRowHtml([leftNo, left, leftKind, rightNo, right, rightKind]) {
-  return `<div class="diff-row"><span class="diff-line-no ${leftKind}">${H(leftNo)}</span><span class="diff-code ${leftKind}">${H(left)}</span><span class="diff-line-no ${rightKind}">${H(rightNo)}</span><span class="diff-code ${rightKind}">${H(right)}</span></div>`;
+function niceStep(span) {
+  const raw = span / 4;
+  const pow = 10 ** Math.floor(Math.log10(raw || 1));
+  const unit = raw / pow;
+  return (unit <= 1 ? 1 : unit <= 2 ? 2 : unit <= 5 ? 5 : 10) * pow;
+}
+
+function fmtAxis(value, step) {
+  if (Math.abs(value) < step / 1000) value = 0;
+  const decimals = Math.max(0, Math.min(6, Math.ceil(-Math.log10(step)) + 1));
+  return Number(value.toFixed(decimals)).toString();
+}
+
+function fmt(v) {
+  return v == null ? "" : Number.isFinite(v) ? Number(v.toPrecision(4)).toString() : String(v);
 }
 
 function waiting(title, text) {
@@ -632,7 +665,7 @@ document.addEventListener("click", (event) => {
       updateUiSelection({ selected: { ...S.selected, [S.active]: target.dataset.run } }, { scrollToDetail: true });
       break;
     case "tab": {
-      const row = selectedPayloadView().row;
+      const row = selectedView().row;
       if (row) updateUiSelection({ tabs: { ...S.tabs, __global: target.dataset.tab } });
       break;
     }
@@ -643,45 +676,23 @@ document.addEventListener("click", (event) => {
       target.title = collapsed ? "Expand file" : "Collapse file";
       break;
     }
-    case "diff-context": {
-      const row = selectedPayloadView().row;
-      const diff = row?.tabs?.diff;
-      if (!diff) break;
-      const box = target.closest(".diffbox");
-      const full = box.dataset.full !== "1";
-      box.dataset.full = full ? "1" : "0";
-      box.innerHTML = diffHtml(full ? (diff.full || diff.compact) : diff.compact, hasFullDiff(row));
-      break;
-    }
   }
 });
-
-function applyData(raw) {
-  const data = JSON.parse(raw), key = JSON.stringify(data);
-  if (key === S.raw) return;
-  updateUiSelection({ raw: key, data });
-}
-
-async function refresh() {
-  try {
-    applyData(await (await fetch(`ui.json?${Date.now()}`)).text());
-  } catch (err) {
-    UI.empty.hidden = false;
-    UI.empty.innerHTML = waiting("UI error", err.message);
-  }
-}
 
 function connect() {
   S.events?.close();
   S.events = new EventSource("events");
-  S.events.onopen = () => refresh();
-  S.events.onmessage = (event) => applyData(event.data);
-  S.events.onerror = () => setTimeout(refresh, 1000);
+  S.events.addEventListener("snapshot", event => applySnapshot(event.data));
+  S.events.addEventListener("row", event => applyRow(event.data));
+  S.events.onerror = () => {
+    UI.empty.hidden = false;
+    UI.empty.innerHTML = waiting("UI error", "Lost connection to observer.");
+  };
 }
 
 addEventListener("beforeunload", () => {
   stopStream();
   S.events?.close();
 });
-refresh();
+addEventListener("resize", () => render());
 connect();

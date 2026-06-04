@@ -1,5 +1,5 @@
 task = "text_to_sql"
-command = "python -m recipes.text_sql.train run_dir={run_dir} data_dir={log_root} attempt_timeout_minutes={attempt_timeout_minutes}"
+command = "python -m recipes.text_sql.train run_dir={run_dir} data_dir={run_root} attempt_timeout_minutes={attempt_timeout_minutes}"
 editable = ["recipes/text_sql/train.py"]
 metric = "accuracy"
 metric_label = "accuracy"

@@ -15,7 +15,7 @@ DEFAULT_BASE_URL = "http://localhost:9003"
 
 
 def force_rich_log_colors() -> None:
-  """Keep Rich ANSI colors when cookbook console output is captured into logs.log."""
+  """Keep Rich ANSI colors when cookbook console output is captured into attempt.log."""
 
   def init(self: ml_log.PrettyPrintLogger) -> None:
     self.console = Console(

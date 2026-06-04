@@ -84,7 +84,9 @@ def score_sql(example: dict[str, Any], predicted: str) -> tuple[float, bool, str
 
 
 def build_rollout(tokenizer: Any, example: dict[str, Any], sequence: Any) -> dict[str, Any]:
-  predicted = prepare.clean_sql(tokenizer.decode(sequence.tokens, skip_special_tokens=True))
+  decoded = tokenizer.decode(sequence.tokens, skip_special_tokens=True)
+  decoded = decoded.split(";")[0].split("```")[0].split("Example:")[0].split("Question:")[0].split("Schema:")[0].strip()
+  predicted = prepare.clean_sql(decoded)
   reward, correct, execution_error = score_sql(example, predicted)
   return {
     "correct": correct,
@@ -131,7 +133,9 @@ def sample_sql(sampler: Any, tokenizer: Any, example: dict[str, Any], max_tokens
     sampling_params=types.SamplingParams(max_tokens=max_tokens, temperature=0.0, seed=seed),
   ).result()
   completion = response.sequences[0].tokens if response.sequences else []
-  return prepare.clean_sql(tokenizer.decode(completion, skip_special_tokens=True))
+  decoded = tokenizer.decode(completion, skip_special_tokens=True)
+  decoded = decoded.split(";")[0].split("```")[0].split("Example:")[0].split("Question:")[0].split("Schema:")[0].strip()
+  return prepare.clean_sql(decoded)
 
 
 def train(examples: list[dict[str, Any]], args: RunConfig, metrics_logger) -> tuple[Any, Any, dict[str, float]]:
@@ -153,8 +157,7 @@ def train(examples: list[dict[str, Any]], args: RunConfig, metrics_logger) -> tu
     if len(batch) < prompts_per_step:
       batch += train_rows[: prompts_per_step - len(batch)]
 
-    datums = []
-    rollouts = []
+    futures = []
     for prompt_index, example in enumerate(batch):
       prompt_tokens = tokenizer.encode(prompt_for(example), add_special_tokens=False)
       rollout_seed = args.seed + step * 1000 + prompt_index
@@ -163,16 +166,26 @@ def train(examples: list[dict[str, Any]], args: RunConfig, metrics_logger) -> tu
         temperature=args.temperature,
         seed=rollout_seed,
       )
-      response = sampler.sample(
+      future = sampler.sample(
         prompt=types.ModelInput.from_ints(tokens=prompt_tokens),
         num_samples=args.samples_per_prompt,
         sampling_params=sampling_params,
-      ).result()
+      )
+      futures.append(future)
 
+    responses = []
+    for future in futures:
+      response = future.result()
+      responses.append(response)
+
+    datums = []
+    rollouts = []
+    for example, response in zip(batch, responses, strict=True):
       group = [build_rollout(tokenizer, example, sequence) for sequence in response.sequences]
       group_rewards = [rollout["reward"] for rollout in group]
       reward_mean = statistics.fmean(group_rewards)
       reward_std = statistics.pstdev(group_rewards)
+
       if len(group_rewards) < 2 or reward_std < 1e-8:
         advantages = [0.0] * len(group_rewards)
       else:
@@ -183,6 +196,7 @@ def train(examples: list[dict[str, Any]], args: RunConfig, metrics_logger) -> tu
       for rollout, advantage in zip(group, advantages, strict=True):
         completion_tokens = rollout["completion_tokens"]
         completion_logprobs = rollout["completion_logprobs"]
+
         if abs(advantage) < 1e-8:
           continue
         if not completion_tokens or len(completion_tokens) != len(completion_logprobs):

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: autoresearch-settings
+data:
+  RECIPE: replace-me/autoresearch.toml
+  LOG_ROOT: /mnt/shared/open-rl/autoresearch
+  RUN_NAME: replace-me
+  TINKER_BASE_URL: http://open-rl-gateway-service:8000
+  ATTEMPT_TIMEOUT_MINUTES: "30"
+  AGENT_TIMEOUT_MINUTES: "10"
+  AGENT_FLAGS: "--include-directories /mnt/shared --yolo --output-format stream-json"
+  ENABLE_GCP_TRACE: "1"
