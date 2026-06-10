@@ -50,6 +50,12 @@ logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
 TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
 VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
+_background_tasks: set[asyncio.Task] = set()
+
+# Limit the maximum concurrent active outgoing HTTP requests to the vLLM sampler
+# to prevent socket/file-descriptor exhaustion and connection dropped errors under heavy surges.
+VLLM_CONCURRENCY_LIMIT = int(os.getenv("VLLM_CONCURRENCY_LIMIT", "512"))
+_vllm_semaphore = asyncio.Semaphore(VLLM_CONCURRENCY_LIMIT)
 
 
 # *** Helpers ***
@@ -537,33 +543,39 @@ async def asample(req: dict):
   headers: dict[str, str] = {"Content-Type": "application/json"}
   propagate.inject(headers)
 
-  try:
-    async with httpx.AsyncClient(timeout=120.0) as client:
-      resp = await client.post(
-        f"{VLLM_URL.rstrip('/')}/generate",
-        json={
-          "request_id": req_id,
-          "prompt_token_ids": prompt,
-          "max_tokens": max_tokens,
-          "temperature": temperature,
-          "stop": stop,
-          "top_p": top_p,
-          "top_k": top_k,
-          "num_samples": num_samples,
-          "lora_id": model_id,
-          "lora_path": lora_path,
-          "include_prompt_logprobs": include_prompt_logprobs,
-        },
-        headers=headers,
-      )
-      resp.raise_for_status()
-      data = resp.json()
-      if data.get("type") != "RequestFailedResponse":
-        data["type"] = "sample"
-      await store.set_future(req_id, data)
-  except Exception as e:
-    traceback.print_exc()
-    await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+  async def _dispatch_vllm_generate():
+    async with _vllm_semaphore:
+      try:
+        async with httpx.AsyncClient(timeout=120.0) as client:
+          resp = await client.post(
+            f"{VLLM_URL.rstrip('/')}/generate",
+            json={
+              "request_id": req_id,
+              "prompt_token_ids": prompt,
+              "max_tokens": max_tokens,
+              "temperature": temperature,
+              "stop": stop,
+              "top_p": top_p,
+              "top_k": top_k,
+              "num_samples": num_samples,
+              "lora_id": model_id,
+              "lora_path": lora_path,
+              "include_prompt_logprobs": include_prompt_logprobs,
+            },
+            headers=headers,
+          )
+          resp.raise_for_status()
+          data = resp.json()
+          if data.get("type") != "RequestFailedResponse":
+            data["type"] = "sample"
+          await store.set_future(req_id, data)
+      except Exception as e:
+        traceback.print_exc()
+        await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+
+  task = asyncio.create_task(_dispatch_vllm_generate())
+  _background_tasks.add(task)
+  task.add_done_callback(_background_tasks.discard)
 
   return {"request_id": req_id}
 
