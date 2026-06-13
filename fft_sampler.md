@@ -218,42 +218,60 @@ In Open-RL, the `sampling_session_id` acts as a versioned weight reference that 
 
 ---
 
-## 9. Sampler Worker Provisioning & Lifecycle Management
+## 9. Control Plane & Data Plane Decoupling (Lifecycle Management)
 
-The lifecycle of dynamic sampler workers (`vllm_sampler.py`) is decoupled and managed asynchronously using Redis queueing and process-level signaling.
+The framework segregates operations into **Control Plane** (infrastructure, worker lifecycles, configuration) and **Data Plane** (training metrics, token sampling) to enable asynchronous execution, fail-safe scaling, and zero-drop request drainage.
 
-### 1. Provisioning & Activation
-- **Trigger**: When a client initializes a new RL model via `/api/v1/create_model` (or `/api/v1/create_model_from_state`), the gateway generates a unique `model_id` (UUID) and pushes a launch task onto the Redis queue `open_rl:worker_launch_queue`.
-- **Worker Spawning**: The `WorkerLaunchProcessor` daemon drains this launch queue:
-  - It calls `FFTWorkerManager.launch(model_id)`, which spawns the dedicated trainer process (`training_requests_processor.py`) and sampler process (`vllm_sampler.py`).
-  - The sampler process is bound to the target sampler GPU (GPU 1) via the `CUDA_VISIBLE_DEVICES` environment variable mapping.
-- **Readiness Handshake**: The sampler worker starts up, compiles CUDA graphs, and writes the key `open_rl:sampler_ready:<model_id> = "1"` to Redis. 
-- **Session Resolution**: Concurrently, the client's call to `create_sampling_session` blocks on the gateway, polling the `sampler_ready` key in Redis, and only returns the `session_id` to the client once the sampler is fully initialized.
+```
+[Control Plane Operations]
+Gateway Control Queue (open_rl:worker_launch_queue) ---> WorkerLaunchProcessor (launches/gracefully stops PIDs)
 
-### 2. Lifespan & Resource Management (Idle State)
-- Spawned sampler processes run continuously for the duration of the gateway's lifecycle.
-- To prevent VRAM and compute resource exhaustion when a model is idle:
-  - If no requests are pending in `open_rl:sampler_queue:<model_id>`, the sampler worker yields GPU resources by executing a sleep Level 2 and releasing the Snapshot Agent preemption lock.
-  - The Snapshot Agent checkpoints the process, freeing all GPU resources. It remains suspended in host CPU memory, consuming no GPU resources.
+[Data Plane Operations]
+Gateway Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (runs steps/computes tokens)
+```
 
-### 3. De-provisioning & Teardown (IMPLEMENTED)
-- **Dynamic Session Cleanup (On-Demand)**:
-  - When a client training run completes or exits, the client-side python SDK context invokes a `POST` request to the Gateway's `/api/v1/delete_model` endpoint passing its `model_id`.
-  - The Gateway calls `fft_worker_manager.shutdown_workers(model_id)` to terminate (`SIGTERM`) the trainer and sampler processes for that specific job, yielding host resources immediately.
-- **Server Shutdown (Lifespan Cleanup)**:
-  - When the parent Gateway process receives a shutdown signal (e.g. `SIGTERM`/`SIGINT`), the gateway's FastAPI lifespan context invokes `fft_worker_manager.shutdown_all()` to terminate all spawned child processes.
-- **Graceful Worker Teardown**:
-  - Both trainer (`training_requests_processor.py`) and sampler (`vllm_sampler.py`) workers catch `SIGTERM` and `SIGINT` signals using loop signal handlers.
-  - Upon interruption, they cleanly call `unregister` and `close` on their Snapshot Agent clients, allowing the daemon to release their GPU locks immediately.
-- **Resilient Preemption Guards**:
-  - The Snapshot Agent (`serve.py`) checks PID liveness using `os.kill(pid, 0)` before and during checkpoint/restore tasks.
-  - If a worker is terminated (or dies mid-checkpoint), the agent skips the operation gracefully without crashing. If a worker's connection is closed, the daemon automatically cleans up its registered state.
+### 1. Queue Division & Protocols
 
-### 4. Proposed De-provisioning Strategies (Preventing Process Leaks)
-To protect against client crashes or network drops that bypass explicit cleanup:
+| Plane | Operation | Protocol / Redis Key | Consumer |
+| :--- | :--- | :--- | :--- |
+| **Control Plane** | `create_model` (Launch workers) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `delete_model` (Stop workers) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `create_sampling_session` | Registry Metadata Key (Redis) | Gateway |
+| **Data Plane** | `forward_backward`, `optim_step` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer |
+| **Data Plane** | `save_weights_for_sampler`, `save_state` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer |
+| **Data Plane** | `sample`, `asample` | `open_rl:sampler_queue:<model_id>` (Isolated) | vLLM Sampler |
 
-- **Server-Side Idle Timeout (Pull Cleanup)**:
-  - The `WorkerLaunchProcessor` daemon monitors the activity of each `model_id` queue in Redis.
-  - If a queue has been idle (no new requests enqueued or popped) for a configurable timeout (e.g. 10 minutes), the gateway automatically invokes `fft_worker_manager.shutdown_workers(model_id)` to clean up the inactive processes.
-  - If the client subsequently submits another request for that model, the launch processor detects that the processes are missing and dynamically re-provisions them transparently.
-  - This approach is highly resilient as it automatically handles client crashes and network timeouts without requiring client-side modifications.
+---
+
+### 2. Provisioning & Activation (Control Plane)
+- **Trigger**: When a client initializes a model via `/api/v1/create_model`, the gateway enqueues a `create_model` command to `open_rl:worker_launch_queue`.
+- **Worker Spawning**: The `WorkerLaunchProcessor` daemon pops the request and invokes `FFTWorkerManager.launch(model_id)` to spawn the dedicated trainer and sampler subprocesses for that `model_id`.
+- **Readiness**: The sampler worker compiles CUDA graphs and writes `open_rl:sampler_ready:<model_id> = "1"`. The gateway blocks and polls this key, returning the versioned `session_id` to the client only when ready.
+
+---
+
+### 3. Graceful Queue-Based Teardown (Implemented)
+To prevent dropping in-flight sampling or optimization steps, de-provisioning is fully queue-decoupled using the **Sentinel Pattern**:
+
+1. **Teardown Trigger**: When a client completes training, it sends a `POST` request to the Gateway's `/api/v1/delete_model` endpoint.
+2. **Sentinel Enqueueing**: Instead of hard-killing processes, the Gateway writes a `shutdown_workers` control command to `open_rl:worker_launch_queue`.
+3. **Control-to-Data Signaling**: The `WorkerLaunchProcessor` pops the command and enqueues a **Shutdown Sentinel (Poison Pill)** (`{"request_id": "SHUTDOWN_SENTINEL"}`) to the tails of both the trainer (`open_rl:queue:<model_id>`) and sampler (`open_rl:sampler_queue:<model_id>`) FIFO data queues.
+4. **FIFO Request Drainage**:
+   - The workers continue to pop and process all pending requests in their queues.
+   - When a worker pops the sentinel, it halts polling, awaits any active asyncio tasks (token generation or backward steps), unregisters its PID from the Snapshot Agent, and exits gracefully.
+5. **Background Process Reaping**:
+   - `FFTWorkerManager` runs a non-blocking background task to monitor the spawned PIDs.
+   - If they exit cleanly, it clears them from the registry. If they fail to exit within a grace period (e.g. 30 seconds), it falls back to a hard `terminate()` to reclaim resources.
+6. **Snapshot Resiliency**:
+   - The Snapshot Agent (`serve.py`) checks PID liveness before/during preemption tasks. Dead or zombie processes are skipped gracefully, and socket closure automatically cleans up daemon state.
+
+---
+
+### 4. Proposed De-provisioning (Idle Timeout)
+To clean up stale workers in the event of hard client VM crashes or unhandled script kills:
+
+- **Server-Side Idle Timeout**:
+  - The `WorkerLaunchProcessor` daemon monitors active tenant activity.
+  - If a tenant's data queue has been idle (no requests popped/enqueued) for a configurable timeout (e.g. 10 minutes), the processor automatically triggers the sentinel shutdown flow for that `model_id`.
+  - If the client subsequently resumes training, the processor detects the missing workers and dynamically re-provisions them transparently.
+  - This ensures maximum robustness against crash-induced leaks without requiring client-side handlers.
