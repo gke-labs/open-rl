@@ -17,24 +17,46 @@ class FFTWorkerManager:
       raise RuntimeError("OPEN_RL_ENABLE_FFT=true requires REDIS_URL so launched workers can share queues and futures")
 
     self.project_dir = project_dir
-    self.processes: dict[str, subprocess.Popen] = {}
+    self.processes: dict[str, list[subprocess.Popen]] = {}
 
   def launch(self, model_id: str) -> None:
-    proc = self.processes.get(model_id)
-    if proc is not None and proc.poll() is None:
+    procs = self.processes.get(model_id)
+    if procs is not None and all(p.poll() is None for p in procs):
       return
 
+    if procs is not None:
+      for p in procs:
+        if p.poll() is None:
+          p.terminate()
+
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    self.processes[model_id] = subprocess.Popen(
+    self.processes[model_id] = []
+
+    p_train = subprocess.Popen(
       [sys.executable, "-m", "server.training_requests_processor", "--model-id", model_id],
       cwd=self.project_dir,
       env=env,
     )
+    self.processes[model_id].append(p_train)
+
+    sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
+    if sampling_backend == "vllm":
+      sampler_env = env.copy()
+      sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
+      if sampler_gpu:
+        sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
+      p_sampler = subprocess.Popen(
+        [sys.executable, "-m", "server.vllm_sampler", "--model-id", model_id],
+        cwd=self.project_dir,
+        env=sampler_env,
+      )
+      self.processes[model_id].append(p_sampler)
 
   def shutdown_all(self) -> None:
-    for proc in self.processes.values():
-      if proc.poll() is None:
-        proc.terminate()
+    for procs in self.processes.values():
+      for proc in procs:
+        if proc.poll() is None:
+          proc.terminate()
 
 
 class WorkerLaunchProcessor:

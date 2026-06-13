@@ -50,6 +50,7 @@ logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
 
 TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
 VLLM_URL = os.getenv("VLLM_URL", "http://127.0.0.1:8001")
+CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
 
 
 # *** Helpers ***
@@ -146,24 +147,7 @@ async def enqueue_worker_launch(request: dict) -> str:
   return request_id
 
 
-async def preflight_vllm() -> None:
-  """If SAMPLING_BACKEND=vllm, verify the vLLM worker is reachable at VLLM_URL.
 
-  Prints a clear, actionable error instead of letting the first asample
-  request fall through with a raw httpx connection refused.
-  """
-  if get_sampler_backend() != "vllm":
-    return
-  healthz = f"{VLLM_URL.rstrip('/')}/healthz"
-  try:
-    async with httpx.AsyncClient(timeout=3.0) as client:
-      resp = await client.get(healthz)
-      resp.raise_for_status()
-  except Exception as exc:
-    raise RuntimeError(
-      f"SAMPLING_BACKEND=vllm but no vLLM worker is reachable at {VLLM_URL}.\n"
-      f"Start it first with:  make vllm BASE_MODEL={os.getenv('BASE_MODEL') or '<model-id>'}"
-    ) from exc
 
 
 def translate_future_result(result: dict) -> dict:
@@ -219,7 +203,6 @@ async def lifespan(_: FastAPI):
     print(f"-> Sampling backend: {get_sampler_backend()}")
     print(f"-> FFT enabled     : {is_fft_enabled()}")
     print("-> Server mode     : API server + worker loop in one process\n")
-    await preflight_vllm()
     if not is_fft_enabled():
       from server import training_requests_processor
 
@@ -486,10 +469,29 @@ async def create_sampling_session(req: dict):
 
   if model_path and model_path.startswith("tinker://"):
     sess_id = model_path
+    path = model_path[len("tinker://") :]
+    parts = path.split("/")
+    target_model_id = parts[0]
   elif base_model:
     sess_id = base_model
+    target_model_id = base_model
   else:
     sess_id = model_id or "samp-session-live-123"
+    target_model_id = sess_id
+
+  if is_fft_enabled() and get_sampler_backend() == "vllm" and target_model_id:
+    store = get_store()
+    if hasattr(store, "redis"):
+      print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")
+      start_time = time.monotonic()
+      while True:
+        is_ready = await store.redis.get(f"open_rl:sampler_ready:{target_model_id}")
+        if is_ready == "1":
+          print(f"[GATEWAY] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
+          break
+        if time.monotonic() - start_time > 300:
+          raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
+        await asyncio.sleep(1)
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
@@ -531,40 +533,39 @@ async def asample(req: dict):
 
   # vLLM backend
   req_id = str(uuid.uuid4())
+  carrier: dict = {}
+  propagate.inject(carrier)
   await store.set_future(req_id, {"status": "pending"})
 
-  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
-  headers: dict[str, str] = {"Content-Type": "application/json"}
-  propagate.inject(headers)
+  if is_fft_enabled():
+    rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
+    local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
+    weights_path = local_path
+    lora_id = None
+    lora_path = None
+  else:
+    weights_path = None
+    lora_id = model_id
+    lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
 
-  try:
-    async with httpx.AsyncClient(timeout=120.0) as client:
-      resp = await client.post(
-        f"{VLLM_URL.rstrip('/')}/generate",
-        json={
-          "request_id": req_id,
-          "prompt_token_ids": prompt,
-          "max_tokens": max_tokens,
-          "temperature": temperature,
-          "stop": stop,
-          "top_p": top_p,
-          "top_k": top_k,
-          "num_samples": num_samples,
-          "lora_id": model_id,
-          "lora_path": lora_path,
-          "include_prompt_logprobs": include_prompt_logprobs,
-        },
-        headers=headers,
-      )
-      resp.raise_for_status()
-      data = resp.json()
-      if data.get("type") != "RequestFailedResponse":
-        data["type"] = "sample"
-      await store.set_future(req_id, data)
-  except Exception as e:
-    traceback.print_exc()
-    await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+  sampling_req = {
+    "request_id": req_id,
+    "prompt_token_ids": prompt,
+    "max_tokens": max_tokens,
+    "temperature": temperature,
+    "stop": stop,
+    "top_p": top_p,
+    "top_k": top_k,
+    "num_samples": num_samples,
+    "lora_id": lora_id,
+    "lora_path": lora_path,
+    "weights_path": weights_path,
+    "include_prompt_logprobs": include_prompt_logprobs,
+    "model_id": base_model_id or model_id,
+    "trace_context": carrier,
+  }
 
+  await store.put_sampling_request(sampling_req)
   return {"request_id": req_id}
 
 

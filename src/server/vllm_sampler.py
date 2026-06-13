@@ -1,14 +1,12 @@
 # This file contains the vLLM worker implementation for high-throughput inference in Open-RL.
 
+import argparse
 import asyncio
 import hashlib
 import os
 import sys
-from contextlib import asynccontextmanager
+import traceback
 from typing import Any
-
-import uvicorn
-from fastapi import FastAPI, Request
 
 try:
   from vllm import SamplingParams
@@ -26,8 +24,7 @@ except ImportError:
   RequestOutputKind = None
   VLLM_AVAILABLE = False
 
-from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
@@ -47,14 +44,19 @@ if os.getenv("ENABLE_GCP_TRACE", "0") == "1":
 tracer = trace.get_tracer("vllm.inference.worker")
 
 engine: Any = None
+CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
+reload_lock = asyncio.Lock()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def is_fft_enabled() -> bool:
+  return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
+
+
+def init_engine():
   global engine
 
   print("\n" + "=" * 50)
-  print("        Open-RL vLLM Inference Engine")
+  print("        Open-RL vLLM Inference Engine (Queue Mode)")
   print("=" * 50)
   cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
@@ -63,9 +65,9 @@ async def lifespan(app: FastAPI):
 
   mock_vllm = os.getenv("MOCK_VLLM", "0") == "1"
   if mock_vllm or not VLLM_AVAILABLE:
-    print("[vLLM Subprocess] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
+    print("[vLLM Worker] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
   elif not model_name:
-    print("[vLLM Subprocess] Error: BASE_MODEL environment variable is required.")
+    print("[vLLM Worker] Error: BASE_MODEL environment variable is required.")
     sys.exit(1)
   else:
     hf_overrides: dict = {}
@@ -75,53 +77,40 @@ async def lifespan(app: FastAPI):
 
     engine_kwargs = {
       "model": model_name,
-      "enable_lora": True,
-      "max_loras": 8,
-      "max_lora_rank": 64,
+      "enable_sleep_mode": is_fft_enabled(),
+      "enable_lora": not is_fft_enabled(),
       "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
       "max_num_seqs": int(os.getenv("VLLM_MAX_NUM_SEQS", "64")),
       "gpu_memory_utilization": float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.90")),
       "enable_prefix_caching": False,
       "enforce_eager": os.getenv("VLLM_ENFORCE_EAGER", "0") == "1",
     }
+    if not is_fft_enabled():
+      engine_kwargs["max_loras"] = 8
+      engine_kwargs["max_lora_rank"] = 64
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
     engine_args = AsyncEngineArgs(**engine_kwargs)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-    print("[vLLM Subprocess] Engine initialized and ready to serve IPC requests.")
-
-  yield
+    print("[vLLM Worker] Engine initialized successfully.")
 
 
-app = FastAPI(title="Open-RL vLLM Subprocess", lifespan=lifespan)
-FastAPIInstrumentor.instrument_app(app, excluded_urls="/healthz")
-
-
-@app.get("/healthz")
-async def healthz():
-  return {"status": "ok", "mock": engine is None}
-
-
-@app.post("/generate")
-async def generate(req: Request):
+async def run_generation_backend(
+  request_id: str,
+  prompt_token_ids: list[int],
+  max_tokens: int,
+  temperature: float,
+  stop: list[int] | None,
+  top_p: float,
+  top_k: int,
+  num_samples: int,
+  lora_id: str | None,
+  lora_path: str | None,
+  include_prompt_logprobs: bool,
+) -> dict[str, Any]:
   try:
-    data = await req.json()
-
-    request_id = data.get("request_id")
-    prompt_token_ids = data.get("prompt_token_ids")
-    max_tokens = data.get("max_tokens", 20)
-    temperature = data.get("temperature", 1.0)
-    stop = data.get("stop", None)
-    top_p = data.get("top_p", 1.0)
-    top_k = data.get("top_k", -1)
-    num_samples = data.get("num_samples", 1)
-
-    lora_id = data.get("lora_id", None)
-    lora_path = data.get("lora_path", None)
-    include_prompt_logprobs = data.get("include_prompt_logprobs", False)
-
     current_engine = engine
     if current_engine is None:
       # Mocking for local Mac dev
@@ -191,14 +180,118 @@ async def generate(req: Request):
           else:
             prompt_logprobs_out.append(None)
 
-    return {"sequences": sequences_out, "prompt_logprobs": prompt_logprobs_out}
+    res = {"sequences": sequences_out}
+    if prompt_logprobs_out is not None:
+      res["prompt_logprobs"] = prompt_logprobs_out
+    return res
   except Exception as e:
-    import traceback
-
     traceback.print_exc()
-    # Return explicit 500 so upstream client logs it
     return {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(e)}"}
 
 
+async def process_sampling_request(req: dict, store: Any) -> None:
+  global engine
+  global CURRENT_LOADED_SAMPLER_WEIGHTS
+
+  request_id = req["request_id"]
+  trace_context = req.get("trace_context", {})
+
+  # Propagate tracer span context if available
+  parent_span = propagate.extract(trace_context)
+  with tracer.start_as_current_span("process_sampling_request", context=parent_span) as span:
+    try:
+      # 1. Manage weights reloading
+      weights_path = req.get("weights_path")
+      if is_fft_enabled() and weights_path:
+        async with reload_lock:
+          if weights_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
+            print(f"[vLLM Worker] Weight change detected. Current: {CURRENT_LOADED_SAMPLER_WEIGHTS}, Target: {weights_path}")
+            if engine is not None:
+              print("[vLLM Worker] Triggering sleep level 2...")
+              await engine.sleep(level=2)
+              print("[vLLM Worker] Waking up weights...")
+              await engine.wake_up(tags=["weights"])
+              print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
+              await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
+              print("[vLLM Worker] Waking up KV cache...")
+              await engine.wake_up(tags=["kv_cache"])
+            CURRENT_LOADED_SAMPLER_WEIGHTS = weights_path
+            print("[vLLM Worker] Weights reload completed successfully!")
+
+      # 2. Run inference
+      prompt_token_ids = req.get("prompt_token_ids", [])
+      max_tokens = req.get("max_tokens", 20)
+      temperature = req.get("temperature", 1.0)
+      stop = req.get("stop")
+      top_p = req.get("top_p", 1.0)
+      top_k = req.get("top_k", -1)
+      num_samples = req.get("num_samples", 1)
+      lora_id = req.get("lora_id")
+      lora_path = req.get("lora_path")
+      include_prompt_logprobs = req.get("include_prompt_logprobs", False)
+
+      result = await run_generation_backend(
+        request_id=request_id,
+        prompt_token_ids=prompt_token_ids,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stop=stop,
+        top_p=top_p,
+        top_k=top_k,
+        num_samples=num_samples,
+        lora_id=lora_id,
+        lora_path=lora_path,
+        include_prompt_logprobs=include_prompt_logprobs,
+      )
+
+      if result.get("type") != "RequestFailedResponse":
+        result["type"] = "sample"
+
+      await store.set_future(request_id, result)
+    except Exception as exc:
+      traceback.print_exc()
+      await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
+
+
+async def run_sampling_worker(model_id: str) -> None:
+  from server.store import get_store
+
+  init_engine()
+  store = get_store()
+
+  # Set a Redis key to indicate the sampler is ready to start receiving requests
+  if hasattr(store, "redis"):
+    await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
+    await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
+  
+  print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
+  while True:
+    try:
+      batch = await store.get_sampling_requests_for_model(model_id)
+      if not batch:
+        await asyncio.sleep(0.05)
+        continue
+
+      tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
+      await asyncio.gather(*tasks)
+    except asyncio.CancelledError:
+      break
+    except Exception as exc:
+      print(f"Error in sampling worker loop: {exc}")
+      traceback.print_exc()
+      await asyncio.sleep(1)
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser(description="Open-RL vLLM Pull-Mode Sampler Worker")
+  parser.add_argument("--model-id", type=str, required=True, help="The model ID of the RL job to process requests for")
+  args = parser.parse_args()
+
+  try:
+    asyncio.run(run_sampling_worker(args.model_id))
+  except KeyboardInterrupt:
+    print("[vLLM Worker] Exiting via KeyboardInterrupt.")
+
+
 if __name__ == "__main__":
-  uvicorn.run(app, host="0.0.0.0", port=8001)
+  main()

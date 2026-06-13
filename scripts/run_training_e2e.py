@@ -36,6 +36,7 @@ import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -53,7 +54,10 @@ GSM8K_ANSWER_RE = re.compile(r"-?\d[\d,]*")
 
 @chz.chz
 class RunConfig:
-  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
+  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "tiny-fft-rl", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
+  sampling_backend: str = "torch"
+  trainer_gpu: str = "0"
+  sampler_gpu: str = "1"
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
   steps: int | None = None
@@ -82,6 +86,7 @@ class ManagedProcess:
 
 def unused_tcp_port() -> int:
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
     sock.bind(("127.0.0.1", 0))
     return int(sock.getsockname()[1])
 
@@ -111,6 +116,17 @@ def redis_ok(host: str, port: int) -> bool:
     return client.recv(64).startswith(b"+PONG")
 
 
+def redis_key_ready(host: str, port: int, key: str) -> bool:
+  try:
+    with socket.create_connection((host, port), timeout=1) as client:
+      cmd = f"*2\r\n$3\r\nGET\r\n${len(key)}\r\n{key}\r\n"
+      client.sendall(cmd.encode("utf-8"))
+      res = client.recv(1024)
+      return b"$1\r\n1\r\n" in res
+  except Exception:
+    return False
+
+
 def print_log_tail(path: Path, lines: int = 100) -> None:
   if not path.exists():
     return
@@ -130,21 +146,30 @@ def launch(
   timeout: float,
 ) -> None:
   print(f"[training-e2e] starting {name}: {' '.join(command)}")
-  with log_path.open("w", encoding="utf-8") as log_file:
-    process = subprocess.Popen(
-      command,
-      cwd=REPO_ROOT,
-      env=env,
-      stdout=log_file,
-      stderr=subprocess.STDOUT,
-      text=True,
-      start_new_session=True,
-    )
+  process = subprocess.Popen(
+    command,
+    cwd=REPO_ROOT,
+    env=env,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    start_new_session=True,
+  )
+
+  def stream_log():
+    with log_path.open("w", encoding="utf-8") as log_file:
+      for line in iter(process.stdout.readline, ""):
+        log_file.write(line)
+        log_file.flush()
+        print(f"[{name}] {line.rstrip()}")
+
+  t = threading.Thread(target=stream_log, daemon=True)
+  t.start()
+
   processes.append(ManagedProcess(name=name, process=process, log_path=log_path))
   try:
     wait_until(name, ready, timeout)
   except Exception:
-    print_log_tail(log_path)
     raise
 
 
@@ -178,7 +203,7 @@ def base_env(config: RunConfig) -> dict[str, str]:
     "OPEN_RL_TMP_DIR": str(open_rl_tmp_dir(config)),
     "OPEN_RL_TRAIN_TOKEN_BUDGET": str(config.train_token_budget),
     "PYTHONUNBUFFERED": "1",
-    "SAMPLING_BACKEND": "torch",
+    "SAMPLING_BACKEND": config.sampling_backend,
     "TINKER_API_KEY": os.environ.get("TINKER_API_KEY", "tml-dummy-key"),
     "TOKENIZERS_PARALLELISM": "false",
   }
@@ -193,6 +218,7 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   port = config.port or unused_tcp_port()
   base_url = f"http://{config.host}:{port}"
   env = base_env(config)
+  env["CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
 
   if "fft" in config.scenario:
     if shutil.which("redis-server") is None:
@@ -229,6 +255,31 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   else:
     env.pop("REDIS_URL", None)
     env.pop("OPEN_RL_ENABLE_FFT", None)
+
+  if env.get("SAMPLING_BACKEND") == "vllm":
+    if "fft" in config.scenario:
+      env["SAMPLER_CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
+      env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
+    else:
+      vllm_env = env.copy()
+      vllm_env["CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
+      vllm_env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
+      redis_url = env.get("REDIS_URL")
+      if redis_url:
+        parts = redis_url.split(":")
+        r_port = int(parts[-1].split("/")[0])
+      else:
+        r_port = 6379
+      base_model = config.base_model
+      launch(
+        processes,
+        "vllm-worker",
+        uv_run(config.eval_uv_extra) + ["python", "-m", "server.vllm_sampler", "--model-id", base_model],
+        vllm_env,
+        log_dir / "vllm_worker.log",
+        lambda: redis_key_ready("127.0.0.1", r_port, f"open_rl:sampler_ready:{base_model}"),
+        timeout=config.startup_timeout,
+      )
 
   launch(
     processes,
@@ -300,15 +351,15 @@ def run_example(config: RunConfig, script: list[str], defaults: dict[str, str], 
 
 
 def run_tiny(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  script = "tiny_rl" if config.scenario == "tiny-rl" else "tiny_sft"
+  script = "tiny_rl" if "rl" in config.scenario else "tiny_sft"
   defaults = {
     "base_model": config.base_model,
     "base_url": base_url,
     "log_dir": str(Path(config.log_dir) / config.scenario.replace("-", "_")),
   }
-  if config.scenario == "tiny-fft":
-    # tiny_sft's 1e-3 default is tuned for LoRA adapters; full fine-tuning all
-    # params with Adam at that rate diverges (observed loss 0.93 -> 35).
+  if "fft" in config.scenario:
+    # tiny SFT/RL default is tuned for LoRA adapters; full fine-tuning all
+    # params with Adam at that rate diverges.
     defaults["learning_rate"] = "1e-5"
   if config.steps is not None:
     defaults["steps"] = str(config.steps)

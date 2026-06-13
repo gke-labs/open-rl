@@ -86,6 +86,11 @@ test:
 	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, fft-gsm8k, or fft-gsm8k-x2."; \
 	    exit 2; \
 	  fi; \
+	  pkill -u $$$$USER -9 -f uvicorn 2>/dev/null || true; \
+	  pkill -u $$$$USER -9 -f python 2>/dev/null || true; \
+	  pkill -u $$$$USER -9 -f redis-server 2>/dev/null || true; \
+	  pkill -u $$$$USER -9 -f snapshot_agent 2>/dev/null || true; \
+	  pkill -u $$$$USER -9 -f vllm 2>/dev/null || true; \
 	  set -- "scenario=$$scenario" "uv_extra=$(TRAINING_TEST_EXTRA)"; \
 	  if [ -n "$(TRAINING_TEST_BASE_URL)" ]; then set -- "$$@" "base_url=$(TRAINING_TEST_BASE_URL)"; fi; \
 	  uv run --extra "$(TRAINING_TEST_EXTRA)" python scripts/run_training_e2e.py "$$@" $(TRAINING_TEST_ARGS); \
