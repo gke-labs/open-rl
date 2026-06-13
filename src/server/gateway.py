@@ -4,11 +4,9 @@ import asyncio
 import logging
 import os
 import time
-import traceback
 import uuid
 from contextlib import asynccontextmanager
 
-import httpx
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
@@ -289,7 +287,7 @@ async def delete_model(req: dict):
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  
+
   if is_fft_enabled():
     command = {
       "op": "shutdown_workers",
@@ -298,7 +296,7 @@ async def delete_model(req: dict):
     }
     req_id = await enqueue_worker_launch(command)
     return {"status": "ok", "request_id": req_id}
-  
+
   return {"status": "ok"}
 
 

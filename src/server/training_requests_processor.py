@@ -265,19 +265,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       pass
 
   async def shutdown(self) -> None:
-    import sys
-    print(f"[WORKER] Received termination signal, shutting down model {self.model_id} trainer worker...")
-    if self.snapshot_registered:
-      try:
-        await self.snapshot_client.unregister(self.pid)
-        self.snapshot_registered = False
-      except Exception as exc:
-        print(f"[WORKER] Failed to unregister on signal: {exc}")
-    try:
-      await self.snapshot_client.close()
-    except Exception:
-      pass
-    os._exit(0)
+    await self.exit_gracefully()
 
   async def exit_gracefully(self) -> None:
     print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
@@ -292,9 +280,6 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     except Exception:
       pass
     os._exit(0)
-
-  async def shutdown(self) -> None:
-    await self.exit_gracefully()
 
   async def run(self) -> None:
     print("[WORKER] Full fine-tuning training requests processor started.")

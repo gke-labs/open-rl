@@ -462,7 +462,10 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     cp_t = set(re.findall(r"checkpointed pid (\d+)", text_t))
     rs_t = set(re.findall(r"restored pid (\d+)", text_t))
     if len(cp_t) < 2 or len(rs_t) < 2:
-      raise RuntimeError(f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {trainer_log}")
+      raise RuntimeError(
+        f"Expected both FFT trainer workers to interleave, but saw checkpoints "
+        f"{sorted(cp_t)} and restores {sorted(rs_t)} in {trainer_log}"
+      )
     print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
 
   sampler_log = Path(config.log_dir) / "snapshot-agent-sampler.log"
@@ -471,7 +474,10 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     cp_s = set(re.findall(r"checkpointed pid (\d+)", text_s))
     rs_s = set(re.findall(r"restored pid (\d+)", text_s))
     if len(cp_s) < 2 or len(rs_s) < 2:
-      raise RuntimeError(f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {sampler_log}")
+      raise RuntimeError(
+        f"Expected both FFT sampler workers to interleave, but saw checkpoints "
+        f"{sorted(cp_s)} and restores {sorted(rs_s)} in {sampler_log}"
+      )
     print(f"[training-e2e] sampler snapshot agent time-sliced: checkpointed pids {sorted(cp_s)}, restored pids {sorted(rs_s)}")
 
 

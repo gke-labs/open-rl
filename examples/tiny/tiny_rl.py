@@ -139,8 +139,8 @@ def main(config: Config) -> None:
     print(f"[tiny-rl] mean_reward={mean_reward:.2f}")
     print(f"final_state_path={final_state_path}")
   finally:
-    import urllib.request
     import json
+    import urllib.request
     try:
       model_id = trainer._guaranteed_model_id()
       url = f"{config.base_url}/api/v1/delete_model"

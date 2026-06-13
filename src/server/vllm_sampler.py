@@ -228,9 +228,8 @@ async def process_sampling_request(req: dict, store: Any) -> None:
   request_id = req["request_id"]
   trace_context = req.get("trace_context", {})
 
-  # Propagate tracer span context if available
   parent_span = propagate.extract(trace_context)
-  with tracer.start_as_current_span("process_sampling_request", context=parent_span) as span:
+  with tracer.start_as_current_span("process_sampling_request", context=parent_span):
     try:
       # 1. Manage weights reloading
       weights_path = req.get("weights_path")
@@ -301,7 +300,7 @@ async def run_sampling_worker(model_id: str) -> None:
       print(f"[vLLM Worker] Registering parent PID {parent_pid} for initialization lock...")
       await snapshot_client.register(parent_pid)
       async with snapshot_client.acquire(parent_pid):
-        print(f"[vLLM Worker] Initializing vLLM engine under parent lock...")
+        print("[vLLM Worker] Initializing vLLM engine under parent lock...")
         init_engine()
         preempt_pid = get_engine_core_pid(model_id)
         print(f"[vLLM Worker] Engine initialized. Target child PID: {preempt_pid}")
@@ -329,7 +328,6 @@ async def run_sampling_worker(model_id: str) -> None:
 
   if snapshot_client is not None:
     import signal
-    import sys
 
     async def exit_gracefully() -> None:
       print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
@@ -360,7 +358,7 @@ async def run_sampling_worker(model_id: str) -> None:
   if hasattr(store, "redis"):
     await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
-  
+
   print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
   try:
     while True:
