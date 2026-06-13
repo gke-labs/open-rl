@@ -307,6 +307,32 @@ async def run_sampling_worker(model_id: str) -> None:
     except Exception as exc:
       print(f"[vLLM Worker] Failed to register with snapshot agent: {exc}")
 
+  if snapshot_client is not None:
+    import signal
+    import sys
+
+    async def handle_shutdown():
+      print(f"[vLLM Worker] Received termination signal, shutting down model {model_id} sampler worker...")
+      nonlocal snapshot_registered
+      if snapshot_registered:
+        try:
+          await snapshot_client.unregister(preempt_pid)
+          snapshot_registered = False
+        except Exception as exc:
+          print(f"[vLLM Worker] Failed to unregister on signal: {exc}")
+      try:
+        await snapshot_client.close()
+      except Exception:
+        pass
+      sys.exit(0)
+
+    try:
+      loop = asyncio.get_running_loop()
+      for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(handle_shutdown()))
+    except NotImplementedError:
+      pass
+
   if hasattr(store, "redis"):
     await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)

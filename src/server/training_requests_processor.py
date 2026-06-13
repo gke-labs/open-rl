@@ -255,8 +255,33 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     self.snapshot_client = snapshot_client
     self.snapshot_registered = False
 
+  def setup_signals(self) -> None:
+    import signal
+    try:
+      loop = asyncio.get_running_loop()
+      for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(self.shutdown()))
+    except NotImplementedError:
+      pass
+
+  async def shutdown(self) -> None:
+    import sys
+    print(f"[WORKER] Received termination signal, shutting down model {self.model_id} trainer worker...")
+    if self.snapshot_registered:
+      try:
+        await self.snapshot_client.unregister(self.pid)
+        self.snapshot_registered = False
+      except Exception as exc:
+        print(f"[WORKER] Failed to unregister on signal: {exc}")
+    try:
+      await self.snapshot_client.close()
+    except Exception:
+      pass
+    sys.exit(0)
+
   async def run(self) -> None:
     print("[WORKER] Full fine-tuning training requests processor started.")
+    self.setup_signals()
 
     try:
       await self.snapshot_client.register(self.pid)
