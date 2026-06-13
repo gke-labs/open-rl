@@ -170,3 +170,23 @@ To run two concurrent FFT RL jobs sharing both trainer and sampler GPUs via Snap
 ```bash
 make test e2e tiny-fft-rl-x2 TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=5"
 ```
+
+---
+
+## 8. Session-ID and Weight Versioning
+
+In Open-RL, the `sampling_session_id` acts as a versioned weight reference that pins sampling requests to a specific iteration of the policy weights.
+
+### How it Works:
+1. **Weight Generation & Versioning**:
+   - The trainer calls `trainer.save_weights_for_sampler(name=alias)`.
+   - The request runs through the queue to ensure prior training steps are complete.
+   - The trainer writes the model weights to a versioned folder and registers a tinker URI: `tinker://<model_id>/sampler_weights/<alias>` (where `<alias>` contains a sequence number or timestamp).
+2. **Session Creation**:
+   - The client calls `create_sampling_client(weights_path)` passing the versioned `tinker://` URI.
+   - The gateway's `/api/v1/create_sampling_session` validates the model path, blocks until the model's dynamic sampler worker registers as ready in Redis, and returns the URI as the `sampling_session_id`.
+3. **Session Pinning during Sampling**:
+   - When the client requests generation, it calls `sample_async(prompt)` on the returned client, which sends a request to `/api/v1/asample` with the pinned `sampling_session_id`.
+   - The gateway extracts the relative path portion of the `tinker://` URI and resolves it to the absolute local directory: `/tmp/open-rl/sampler_full/<model_id>/sampler_weights/<alias>`.
+   - It packages this absolute path into the `weights_path` field of the sampling request payload and enqueues it to `open_rl:sampler_queue:<model_id>`.
+   - The sampler worker pops the request, compares the target `weights_path` to its currently loaded weights directory, and triggers a sleep-reload cycle if a change is detected. This ensures that the generated tokens are always sampled from the exact version of the policy weights corresponding to that session.
