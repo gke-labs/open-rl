@@ -128,6 +128,11 @@ graph LR
     end
 ```
 
+#### Rationale for Separate Snapshot Agent Instances
+Running two separate snapshot agent daemons (trainer and sampler) provides two vital benefits:
+1. **Independent Preemption Locking (GPU Concurrency)**: The snapshot agent operates on a single global preemption lock. If we shared a single agent instance, acquiring the lock to train on GPU 0 would block sampler processes from running on GPU 1. Isolating the daemons ensures training and sampling locks do not interfere, enabling parallel training-rollout overlaps between Job A and Job B.
+2. **CUDA Device Context Isolation**: Trainer processes run with `CUDA_VISIBLE_DEVICES=0` while samplers run with `CUDA_VISIBLE_DEVICES=1`. Inside their respective processes, both refer to their active GPU as index `0`. Separate daemons cleanly align lock requests with the target physical GPUs without device collisions.
+
 ### Option A: Single Shared vLLM Instance
 A single `vllm-worker` process runs on the GPU. It pulls requests sequentially from Redis and checks `weights_path`. If Job A and Job B both submit requests, it swaps weights back and forth:
 - **Pros**:
