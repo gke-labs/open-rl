@@ -240,3 +240,17 @@ The lifecycle of dynamic sampler workers (`vllm_sampler.py`) is decoupled and ma
 - **Graceful Teardown**: When the parent Gateway process receives a shutdown signal (e.g., `SIGTERM` or `SIGINT`), the gateway's FastAPI lifespan context cancels the launch loops and invokes `fft_worker_manager.shutdown_all()`.
 - **Signal Propagation**: `FFTWorkerManager` traverses its process registry (`self.processes`) and issues `.terminate()` (`SIGTERM`) to all dynamically spawned child processes (both trainers and samplers), ensuring a clean, leak-free process exit.
 - **Unregistering**: Upon receiving the termination signal, the sampler workers execute their `finally` blocks, unregistering their PIDs from the Snapshot Agent and closing active connections.
+
+### 4. Proposed De-provisioning Strategies (Preventing Process Leaks)
+Because the dynamic processes currently stay active for the duration of the gateway's lifespan, client crashes or runs that do not trigger full gateway restarts can result in process and memory leaks. Two strategies are proposed to resolve this:
+
+1. **Explicit Client Teardown Endpoint (Push Cleanup)**:
+   - Expose a `/api/v1/delete_model` or `/api/v1/shutdown_workers` HTTP endpoint in the gateway.
+   - When the client's python SDK context exits (e.g. in a `__del__` destructor, an `__exit__` context manager block, or try-finally blocks), the client automatically sends a `POST` request to this endpoint containing its `model_id`.
+   - The gateway calls `fft_worker_manager.shutdown_workers(model_id)` to target and terminate the processes for that specific run, freeing host memory immediately.
+   
+2. **Server-Side Idle Timeout (Pull Cleanup)**:
+   - The `WorkerLaunchProcessor` daemon monitors the activity of each `model_id` queue in Redis.
+   - If a queue has been idle (no new requests enqueued or popped) for a configurable timeout (e.g. 10 minutes), the gateway automatically invokes `fft_worker_manager.shutdown_workers(model_id)` to clean up the inactive processes.
+   - If the client subsequently submits another request for that model, the launch processor detects that the processes are missing and dynamically re-provisions them transparently.
+   - This approach is highly resilient as it automatically handles client crashes and network timeouts without requiring client-side modifications.
