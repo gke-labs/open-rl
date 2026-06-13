@@ -42,11 +42,17 @@ class FFTWorkerManager:
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
       sampler_env = env.copy()
+      sampler_env["OPEN_RL_MODEL_ID"] = model_id
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
+      
+      sampler_socket = os.getenv("OPEN_RL_SAMPLER_SNAPSHOT_AGENT_SOCKET")
+      if sampler_socket:
+        sampler_env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = sampler_socket
+
       p_sampler = subprocess.Popen(
-        [sys.executable, "-m", "server.vllm_sampler", "--model-id", model_id],
+        [sys.executable, "-u", "-m", "server.vllm_sampler", "--model-id", model_id],
         cwd=self.project_dir,
         env=sampler_env,
       )

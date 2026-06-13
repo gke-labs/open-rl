@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import hashlib
 import os
+import subprocess
 import sys
 import traceback
 from typing import Any
@@ -46,10 +47,41 @@ tracer = trace.get_tracer("vllm.inference.worker")
 engine: Any = None
 CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
 reload_lock = asyncio.Lock()
-
-
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
+
+
+def get_engine_core_pid(model_id: str) -> int:
+  import multiprocessing
+  children = multiprocessing.active_children()
+  print(f"[vLLM Worker] Active multiprocessing children: {[(c.name, c.pid) for c in children]}")
+  for child in children:
+    if child.pid is not None:
+      return child.pid
+
+  parent_pid = os.getpid()
+  try:
+    out = subprocess.check_output(["ps", "-o", "pid,command", "--no-headers", "--ppid", str(parent_pid)])
+    lines = out.decode().splitlines()
+    for line in lines:
+      parts = line.strip().split(None, 1)
+      if len(parts) >= 2:
+        child_pid = int(parts[0])
+        cmd = parts[1]
+        if "multiprocessing" in cmd or "EngineCore" in cmd or "vllm" in cmd:
+          return child_pid
+    if lines:
+      return int(lines[0].strip().split()[0])
+  except Exception as e:
+    print(f"[vLLM Worker] Warning: failed to find engine child pid: {e}")
+  return parent_pid
+
+
+snapshot_client: Any = None
+socket_path = os.getenv("OPEN_RL_SNAPSHOT_AGENT_SOCKET")
+if is_fft_enabled() and socket_path:
+  from snapshot_agent.client import SnapshotAgentClient
+  snapshot_client = SnapshotAgentClient(socket_path)
 
 
 def init_engine():
@@ -259,27 +291,53 @@ async def run_sampling_worker(model_id: str) -> None:
   init_engine()
   store = get_store()
 
-  # Set a Redis key to indicate the sampler is ready to start receiving requests
+  preempt_pid = get_engine_core_pid(model_id)
+  print(f"[vLLM Worker] Target PID for snapshot preemption: {preempt_pid}")
+
+  snapshot_registered = False
+  if snapshot_client is not None:
+    try:
+      await snapshot_client.register(preempt_pid)
+      snapshot_registered = True
+      # Acquire and immediately release to trigger initial checkpoint on startup
+      async with snapshot_client.acquire(preempt_pid):
+        pass
+    except Exception as exc:
+      print(f"[vLLM Worker] Failed to register with snapshot agent: {exc}")
+
   if hasattr(store, "redis"):
     await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
   
   print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
-  while True:
-    try:
-      batch = await store.get_sampling_requests_for_model(model_id)
-      if not batch:
-        await asyncio.sleep(0.05)
-        continue
+  try:
+    while True:
+      try:
+        batch = await store.get_sampling_requests_for_model(model_id)
+        if not batch:
+          await asyncio.sleep(0.05)
+          continue
 
-      tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
-      await asyncio.gather(*tasks)
-    except asyncio.CancelledError:
-      break
-    except Exception as exc:
-      print(f"Error in sampling worker loop: {exc}")
-      traceback.print_exc()
-      await asyncio.sleep(1)
+        if snapshot_client is not None:
+          async with snapshot_client.acquire(preempt_pid):
+            tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
+            await asyncio.gather(*tasks)
+        else:
+          tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
+          await asyncio.gather(*tasks)
+      except asyncio.CancelledError:
+        break
+      except Exception as exc:
+        print(f"Error in sampling worker loop: {exc}")
+        traceback.print_exc()
+        await asyncio.sleep(1)
+  finally:
+    if snapshot_client is not None:
+      try:
+        if snapshot_registered:
+          await snapshot_client.unregister(preempt_pid)
+      finally:
+        await snapshot_client.close()
 
 
 def main() -> None:

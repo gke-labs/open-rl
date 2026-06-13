@@ -54,7 +54,7 @@ GSM8K_ANSWER_RE = re.compile(r"-?\d[\d,]*")
 
 @chz.chz
 class RunConfig:
-  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "tiny-fft-rl", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
+  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "tiny-fft-rl", "tiny-fft-rl-x2", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
   sampling_backend: str = "torch"
   trainer_gpu: str = "0"
   sampler_gpu: str = "1"
@@ -238,18 +238,31 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
         "cuda-checkpoint is required for FFT e2e scenarios (the snapshot agent checkpoints workers around every batch); "
         "install the binary matching your driver from https://github.com/NVIDIA/cuda-checkpoint"
       )
-    snapshot_socket = log_dir / "snapshot-agent.sock"
-    snapshot_socket.unlink(missing_ok=True)
+    trainer_snapshot_socket = log_dir / "snapshot-agent-trainer.sock"
+    trainer_snapshot_socket.unlink(missing_ok=True)
     launch(
       processes,
-      "snapshot-agent",
+      "snapshot-agent-trainer",
       uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
-      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(snapshot_socket)},
-      log_dir / "snapshot-agent.log",
-      snapshot_socket.is_socket,
+      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(trainer_snapshot_socket)},
+      log_dir / "snapshot-agent-trainer.log",
+      trainer_snapshot_socket.is_socket,
       timeout=60,
     )
-    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(snapshot_socket)
+    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(trainer_snapshot_socket)
+
+    sampler_snapshot_socket = log_dir / "snapshot-agent-sampler.sock"
+    sampler_snapshot_socket.unlink(missing_ok=True)
+    launch(
+      processes,
+      "snapshot-agent-sampler",
+      uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
+      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(sampler_snapshot_socket)},
+      log_dir / "snapshot-agent-sampler.log",
+      sampler_snapshot_socket.is_socket,
+      timeout=60,
+    )
+    env["OPEN_RL_SAMPLER_SNAPSHOT_AGENT_SOCKET"] = str(sampler_snapshot_socket)
     env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
     env["OPEN_RL_ENABLE_FFT"] = "true"
   else:
@@ -439,19 +452,27 @@ def run_gsm8k(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> 
 
 
 def check_snapshot_interleaving(config: RunConfig) -> None:
-  log_path = Path(config.log_dir) / "snapshot-agent.log"
   if config.base_url:
     print("[training-e2e] external backend; skipping snapshot agent interleave check")
     return
-  text = log_path.read_text(encoding="utf-8", errors="replace")
-  checkpointed = set(re.findall(r"checkpointed pid (\d+)", text))
-  restored = set(re.findall(r"restored pid (\d+)", text))
-  if len(checkpointed) < 2 or len(restored) < 2:
-    raise RuntimeError(
-      f"Expected both FFT workers to round-trip through the snapshot agent, "
-      f"but saw checkpointed pids {sorted(checkpointed)} and restored pids {sorted(restored)}; see {log_path}"
-    )
-  print(f"[training-e2e] snapshot agent time-sliced workers: checkpointed pids {sorted(checkpointed)}, restored pids {sorted(restored)}")
+
+  trainer_log = Path(config.log_dir) / "snapshot-agent-trainer.log"
+  if trainer_log.exists():
+    text_t = trainer_log.read_text(encoding="utf-8", errors="replace")
+    cp_t = set(re.findall(r"checkpointed pid (\d+)", text_t))
+    rs_t = set(re.findall(r"restored pid (\d+)", text_t))
+    if len(cp_t) < 2 or len(rs_t) < 2:
+      raise RuntimeError(f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {trainer_log}")
+    print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
+
+  sampler_log = Path(config.log_dir) / "snapshot-agent-sampler.log"
+  if sampler_log.exists():
+    text_s = sampler_log.read_text(encoding="utf-8", errors="replace")
+    cp_s = set(re.findall(r"checkpointed pid (\d+)", text_s))
+    rs_s = set(re.findall(r"restored pid (\d+)", text_s))
+    if len(cp_s) < 2 or len(rs_s) < 2:
+      raise RuntimeError(f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {sampler_log}")
+    print(f"[training-e2e] sampler snapshot agent time-sliced: checkpointed pids {sorted(cp_s)}, restored pids {sorted(rs_s)}")
 
 
 def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
@@ -480,6 +501,39 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     assert isinstance(result, str)
     print(f"[training-e2e] evaluating {job}")
     run_gsm8k_eval(config, resolve_eval_model_path(result))
+
+
+def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Two concurrent FFT RL jobs against the same backend: each create_model spawns
+  its own trainer and dedicated sampler worker, and the snapshot agent time-slices them."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str) -> None:
+    try:
+      script = "tiny_rl"
+      defaults = {
+        "base_model": config.base_model,
+        "base_url": base_url,
+        "log_dir": str(Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"),
+        "learning_rate": "1e-5",
+      }
+      if config.steps is not None:
+        defaults["steps"] = str(config.steps)
+      results[job] = run_example(config, [f"examples/tiny/{script}.py"], defaults, watch=watch, prefix=f"[{job}] ")
+    except BaseException as exc:
+      results[job] = exc
+
+  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  for job, result in sorted(results.items()):
+    if isinstance(result, BaseException):
+      raise RuntimeError(f"tiny-fft-rl-x2 {job} failed") from result
+
+  check_snapshot_interleaving(config)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -543,6 +597,8 @@ def main() -> None:
       run_gsm8k_x2(config, base_url, processes)
     elif config.scenario == "lora-textsql":
       run_textsql(config, base_url, processes)
+    elif config.scenario == "tiny-fft-rl-x2":
+      run_tiny_fft_rl_x2(config, base_url, processes)
     else:
       run_tiny(config, base_url, processes)
   finally:
