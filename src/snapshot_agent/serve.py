@@ -119,9 +119,20 @@ class SnapshotAgent:
   async def run_checkpoint(self, pid: int) -> None:
     start = time.monotonic()
     try:
+      os.kill(pid, 0)
+    except OSError:
+      logger.info("process pid %s is already dead, skipping checkpoint", pid)
+      return
+
+    try:
       await asyncio.to_thread(self.restorer.checkpoint, pid)
       logger.info("checkpointed pid %s in %.2fs", pid, time.monotonic() - start)
     except Exception:
+      try:
+        os.kill(pid, 0)
+      except OSError:
+        logger.info("process pid %s died during checkpoint, skipping failure exit", pid)
+        return
       logger.critical(
         "checkpoint failed for pid %s after %.2fs; GPU state is unknown, killing snapshot agent", pid, time.monotonic() - start, exc_info=True
       )
@@ -130,9 +141,20 @@ class SnapshotAgent:
   async def run_restore(self, pid: int) -> None:
     start = time.monotonic()
     try:
+      os.kill(pid, 0)
+    except OSError:
+      logger.info("process pid %s is already dead, skipping restore", pid)
+      return
+
+    try:
       await asyncio.to_thread(self.restorer.restore, pid)
       logger.info("restored pid %s in %.2fs", pid, time.monotonic() - start)
     except Exception:
+      try:
+        os.kill(pid, 0)
+      except OSError:
+        logger.info("process pid %s died during restore, skipping failure exit", pid)
+        return
       logger.critical(
         "restore failed for pid %s after %.2fs; GPU state is unknown, killing snapshot agent", pid, time.monotonic() - start, exc_info=True
       )
