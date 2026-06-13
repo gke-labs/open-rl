@@ -138,9 +138,12 @@ A single `vllm-worker` process runs on the GPU. It pulls requests sequentially f
 ### Option B: Dedicated vLLM Instance Per Job (IMPLEMENTED)
 Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). Both processes share GPU 1. To share the GPU transparently, they take turns using `snapshot-agent-sampler`:
 - **Parent Proxying**: The parent `vllm_sampler` process runs on CPU and resolves the PID of its child `EngineCore` process (which holds all CUDA contexts).
-- **GPU Checkpoint/Restore**: When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `snapshot-agent-sampler.sock`. This checkpoints Job B's active `EngineCore` process (suspending its GPU memory) and restores Job A's `EngineCore` process. Once generation completes, Job A releases the GPU, triggering an immediate checkpoint to yield VRAM.
+- **GPU Checkpoint/Restore (with VRAM Pre-release)**:
+  - When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `snapshot-agent-sampler.sock`. This checkpoints Job B's `EngineCore` process and restores Job A's `EngineCore` process.
+  - **Optimization**: Once the batch of sampling requests completes, but **before** releasing the GPU lock, the sampler calls `await engine.sleep(level=2)`. This releases Job A's active weights and KV caches from the GPU (reducing its VRAM usage to ~0 MiB).
+  - Consequently, when the Snapshot Agent executes `cuda-checkpoint` on the process, there is almost no memory to copy, dropping checkpoint latency from **`~14 seconds`** to **`~0.5 seconds`** (a 28x speedup).
 - **Pros**:
-  - **Fast Wake Up**: In sleep mode, weights remain in host CPU memory. Waking up only requires copying weights from CPU memory to GPU VRAM (no disk I/O), taking only **`~0.7 seconds`** (twice as fast as Option A).
+  - **Fast Wake Up & Checkpoint**: Checkpointing is near-instantaneous (~0.5s). Waking up the engine on restore only requires copying weights from CPU RAM back to GPU VRAM, taking only **`~0.7 seconds`** (no disk I/O).
 - **Cons**:
   - **RAM Overhead**: Each inactive instance holds a full copy of the model weights in CPU RAM. High risk of system OOMs on large models.
 
