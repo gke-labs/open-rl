@@ -185,10 +185,12 @@ def translate_future_result(result: dict) -> dict:
   return result
 
 
+fft_worker_manager = None
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+  global fft_worker_manager
   task = None
-  fft_worker_manager = None
   worker_launch_task = None
   if is_fft_enabled():
     fft_worker_manager = FFTWorkerManager()
