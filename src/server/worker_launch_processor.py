@@ -58,6 +58,14 @@ class FFTWorkerManager:
       )
       self.processes[model_id].append(p_sampler)
 
+  def shutdown_workers(self, model_id: str) -> None:
+    procs = self.processes.pop(model_id, None)
+    if procs is not None:
+      print(f"[Worker Manager] Terminating trainer and sampler workers for model: {model_id}")
+      for p in procs:
+        if p.poll() is None:
+          p.terminate()
+
   def shutdown_all(self) -> None:
     for procs in self.processes.values():
       for proc in procs:

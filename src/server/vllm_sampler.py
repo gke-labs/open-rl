@@ -286,6 +286,8 @@ async def process_sampling_request(req: dict, store: Any) -> None:
 
 
 async def run_sampling_worker(model_id: str) -> None:
+  global engine
+  global CURRENT_LOADED_SAMPLER_WEIGHTS
   from server.store import get_store
 
   init_engine()
@@ -322,6 +324,10 @@ async def run_sampling_worker(model_id: str) -> None:
           async with snapshot_client.acquire(preempt_pid):
             tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
             await asyncio.gather(*tasks)
+            if engine is not None:
+              print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
+              await engine.sleep(level=2)
+              CURRENT_LOADED_SAMPLER_WEIGHTS = None
         else:
           tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
           await asyncio.gather(*tasks)

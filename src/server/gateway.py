@@ -282,6 +282,16 @@ async def create_model(req: dict):
   return {"request_id": req_id}
 
 
+@app.post("/api/v1/delete_model")
+async def delete_model(req: dict):
+  model_id = req.get("model_id")
+  if not model_id:
+    return JSONResponse(status_code=400, content={"error": "model_id is required"})
+  if fft_worker_manager is not None:
+    fft_worker_manager.shutdown_workers(model_id)
+  return {"status": "ok"}
+
+
 @app.post("/api/v1/create_model_from_state")
 async def create_model_from_state(req: dict):
   """ServiceClient.create_training_client_from_state_async()"""
