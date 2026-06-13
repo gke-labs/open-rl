@@ -107,9 +107,26 @@ Measurements captured during end-to-end training runs using `Qwen2.5-0.5B` on NV
 
 ---
 
-## 5. Sharing vs. Dedicated Sampler Workers (Multi-Job Design)
+## 5. Sharing vs. Dedicated Sampler Workers: Inter-Job Turn Taking
 
-When running multiple concurrent RL jobs ($N > 2$) sharing a GPU or node resources, two deployment configurations can be selected based on model sizes:
+When running multiple concurrent RL jobs ($N > 2$) sharing node resources, both training and sampling processes must coordinate their access to their respective GPUs to avoid VRAM conflicts. 
+
+### Symmetric Turn-Taking Architecture
+To support concurrent jobs, the Open-RL system boots two separate, isolated Snapshot Agent daemons:
+1. **`snapshot-agent-trainer`** (socket: `snapshot-agent-trainer.sock`): Manages and time-slices GPU 0 (the training GPU).
+2. **`snapshot-agent-sampler`** (socket: `snapshot-agent-sampler.sock`): Manages and time-slices GPU 1 (the sampling GPU).
+
+```mermaid
+graph LR
+    subgraph GPU 0: Trainer GPU
+        TrainerA[Job A Trainer Process] <-->|acquire/release| SAT[snapshot-agent-trainer]
+        TrainerB[Job B Trainer Process] <-->|acquire/release| SAT
+    end
+    subgraph GPU 1: Sampler GPU
+        EngineCoreA[Job A EngineCore Process] <-->|acquire/release| SAS[snapshot-agent-sampler]
+        EngineCoreB[Job B EngineCore Process] <-->|acquire/release| SAS
+    end
+```
 
 ### Option A: Single Shared vLLM Instance
 A single `vllm-worker` process runs on the GPU. It pulls requests sequentially from Redis and checks `weights_path`. If Job A and Job B both submit requests, it swaps weights back and forth:
@@ -119,9 +136,9 @@ A single `vllm-worker` process runs on the GPU. It pulls requests sequentially f
   - **I/O Latency**: Every swap requires reading safetensors from the network filesystem and compiling. Swapping takes **`~1.5 seconds`** on every step.
 
 ### Option B: Dedicated vLLM Instance Per Job (IMPLEMENTED)
-Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). When Job A is active, Job B's sampler process is put to Sleep Level 2 or suspended. To share the GPU transparently, the Snapshot Agent (`snapshot-agent-sampler`) is used:
+Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). Both processes share GPU 1. To share the GPU transparently, they take turns using `snapshot-agent-sampler`:
 - **Parent Proxying**: The parent `vllm_sampler` process runs on CPU and resolves the PID of its child `EngineCore` process (which holds all CUDA contexts).
-- **GPU Checkpoint/Restore**: The parent acquires/releases the GPU through the Snapshot Agent, which checkpoints and restores the child process's GPU memory, allowing multiple samplers to share a single GPU.
+- **GPU Checkpoint/Restore**: When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `snapshot-agent-sampler.sock`. This checkpoints Job B's active `EngineCore` process (suspending its GPU memory) and restores Job A's `EngineCore` process. Once generation completes, Job A releases the GPU, triggering an immediate checkpoint to yield VRAM.
 - **Pros**:
   - **Fast Wake Up**: In sleep mode, weights remain in host CPU memory. Waking up only requires copying weights from CPU memory to GPU VRAM (no disk I/O), taking only **`~0.7 seconds`** (twice as fast as Option A).
 - **Cons**:
