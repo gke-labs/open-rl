@@ -210,3 +210,28 @@ In Open-RL, the `sampling_session_id` acts as a versioned weight reference that 
    - The gateway extracts the relative path portion of the `tinker://` URI and resolves it to the absolute local directory: `/tmp/open-rl/sampler_full/<model_id>/sampler_weights/<alias>`.
    - It packages this absolute path into the `weights_path` field of the sampling request payload and enqueues it to `open_rl:sampler_queue:<model_id>`.
    - The sampler worker pops the request, compares the target `weights_path` to its currently loaded weights directory, and triggers a sleep-reload cycle if a change is detected. This ensures that the generated tokens are always sampled from the exact version of the policy weights corresponding to that session.
+
+---
+
+## 9. Sampler Worker Provisioning & Lifecycle Management
+
+The lifecycle of dynamic sampler workers (`vllm_sampler.py`) is decoupled and managed asynchronously using Redis queueing and process-level signaling.
+
+### 1. Provisioning & Activation
+- **Trigger**: When a client initializes a new RL model via `/api/v1/create_model` (or `/api/v1/create_model_from_state`), the gateway generates a unique `model_id` (UUID) and pushes a launch task onto the Redis queue `open_rl:worker_launch_queue`.
+- **Worker Spawning**: The `WorkerLaunchProcessor` daemon drains this launch queue:
+  - It calls `FFTWorkerManager.launch(model_id)`, which spawns the dedicated trainer process (`training_requests_processor.py`) and sampler process (`vllm_sampler.py`).
+  - The sampler process is bound to the target sampler GPU (GPU 1) via the `CUDA_VISIBLE_DEVICES` environment variable mapping.
+- **Readiness Handshake**: The sampler worker starts up, compiles CUDA graphs, and writes the key `open_rl:sampler_ready:<model_id> = "1"` to Redis. 
+- **Session Resolution**: Concurrently, the client's call to `create_sampling_session` blocks on the gateway, polling the `sampler_ready` key in Redis, and only returns the `session_id` to the client once the sampler is fully initialized.
+
+### 2. Lifespan & Resource Management (Idle State)
+- Spawned sampler processes run continuously for the duration of the gateway's lifecycle.
+- To prevent VRAM and compute resource exhaustion when a model is idle:
+  - If no requests are pending in `open_rl:sampler_queue:<model_id>`, the sampler worker yields GPU resources by executing a sleep Level 2 and releasing the Snapshot Agent preemption lock.
+  - The Snapshot Agent checkpoints the process, freeing all GPU resources. It remains suspended in host CPU memory, consuming no GPU resources.
+
+### 3. De-provisioning & Teardown
+- **Graceful Teardown**: When the parent Gateway process receives a shutdown signal (e.g., `SIGTERM` or `SIGINT`), the gateway's FastAPI lifespan context cancels the launch loops and invokes `fft_worker_manager.shutdown_all()`.
+- **Signal Propagation**: `FFTWorkerManager` traverses its process registry (`self.processes`) and issues `.terminate()` (`SIGTERM`) to all dynamically spawned child processes (both trainers and samplers), ensuring a clean, leak-free process exit.
+- **Unregistering**: Upon receiving the termination signal, the sampler workers execute their `finally` blocks, unregistering their PIDs from the Snapshot Agent and closing active connections.
