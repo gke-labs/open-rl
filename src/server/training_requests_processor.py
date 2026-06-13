@@ -279,6 +279,23 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       pass
     os._exit(0)
 
+  async def exit_gracefully(self) -> None:
+    print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
+    if self.snapshot_registered:
+      try:
+        await self.snapshot_client.unregister(self.pid)
+        self.snapshot_registered = False
+      except Exception as exc:
+        print(f"[WORKER] Failed to unregister: {exc}")
+    try:
+      await self.snapshot_client.close()
+    except Exception:
+      pass
+    os._exit(0)
+
+  async def shutdown(self) -> None:
+    await self.exit_gracefully()
+
   async def run(self) -> None:
     print("[WORKER] Full fine-tuning training requests processor started.")
     self.setup_signals()
@@ -326,10 +343,11 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         async with self.snapshot_client.acquire(self.pid):
           for request in training_reqs:
             await self.process_request(request, self.model_id)
+          if has_shutdown:
+            await self.exit_gracefully()
 
     if has_shutdown:
-      print("[WORKER] Shutdown sentinel popped from training queue. Initiating clean exit...")
-      raise asyncio.CancelledError()
+      await self.exit_gracefully()
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     raw_config = payload.get("full_config") or {}

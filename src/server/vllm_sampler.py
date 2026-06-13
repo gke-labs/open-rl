@@ -290,41 +290,65 @@ async def run_sampling_worker(model_id: str) -> None:
   global CURRENT_LOADED_SAMPLER_WEIGHTS
   from server.store import get_store
 
-  init_engine()
   store = get_store()
-
-  preempt_pid = get_engine_core_pid(model_id)
-  print(f"[vLLM Worker] Target PID for snapshot preemption: {preempt_pid}")
-
   snapshot_registered = False
+  preempt_pid = None
+
+
   if snapshot_client is not None:
     try:
-      await snapshot_client.register(preempt_pid)
-      snapshot_registered = True
-      # Acquire and immediately release to trigger initial checkpoint on startup
-      async with snapshot_client.acquire(preempt_pid):
-        pass
+      parent_pid = os.getpid()
+      print(f"[vLLM Worker] Registering parent PID {parent_pid} for initialization lock...")
+      await snapshot_client.register(parent_pid)
+      async with snapshot_client.acquire(parent_pid):
+        print(f"[vLLM Worker] Initializing vLLM engine under parent lock...")
+        init_engine()
+        preempt_pid = get_engine_core_pid(model_id)
+        print(f"[vLLM Worker] Engine initialized. Target child PID: {preempt_pid}")
+        await snapshot_client.register(preempt_pid)
+        snapshot_registered = True
+
+        # Transfer lock from parent_pid to preempt_pid before releasing the acquire context
+        print(f"[vLLM Worker] Transferring lock to child PID {preempt_pid}...")
+        await snapshot_client.transfer_lock(parent_pid, preempt_pid)
+
+      await snapshot_client.unregister(parent_pid)
+
+      # Now release the lock on preempt_pid (which was transferred to it) to checkpoint it and free VRAM
+      print(f"[vLLM Worker] Releasing lock on child PID {preempt_pid} to trigger initial checkpoint...")
+      await snapshot_client.request({"command": "RELEASE", "pid": preempt_pid})
     except Exception as exc:
-      print(f"[vLLM Worker] Failed to register with snapshot agent: {exc}")
+      print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
+      traceback.print_exc()
+      if preempt_pid is None:
+        init_engine()
+        preempt_pid = get_engine_core_pid(model_id)
+  else:
+    init_engine()
+    preempt_pid = get_engine_core_pid(model_id)
 
   if snapshot_client is not None:
     import signal
     import sys
 
-    async def handle_shutdown():
-      print(f"[vLLM Worker] Received termination signal, shutting down model {model_id} sampler worker...")
+    async def exit_gracefully() -> None:
+      print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
       nonlocal snapshot_registered
       if snapshot_registered:
         try:
           await snapshot_client.unregister(preempt_pid)
           snapshot_registered = False
         except Exception as exc:
-          print(f"[vLLM Worker] Failed to unregister on signal: {exc}")
+          print(f"[vLLM Worker] Failed to unregister: {exc}")
       try:
         await snapshot_client.close()
       except Exception:
         pass
       os._exit(0)
+
+    async def handle_shutdown():
+      print(f"[vLLM Worker] Received termination signal, shutting down model {model_id} sampler worker...")
+      await exit_gracefully()
 
     try:
       loop = asyncio.get_running_loop()
@@ -359,6 +383,8 @@ async def run_sampling_worker(model_id: str) -> None:
             async with snapshot_client.acquire(preempt_pid):
               tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
               await asyncio.gather(*tasks)
+              if has_shutdown:
+                await exit_gracefully()
               if engine is not None:
                 print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
                 await engine.sleep(level=2)
@@ -369,7 +395,7 @@ async def run_sampling_worker(model_id: str) -> None:
 
         if has_shutdown:
           print("[vLLM Worker] Shutdown sentinel popped from queue. Initiating clean exit...")
-          break
+          await exit_gracefully()
       except asyncio.CancelledError:
         break
       except Exception as exc:

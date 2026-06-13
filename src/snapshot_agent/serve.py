@@ -3,6 +3,7 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
 from collections import deque
 from dataclasses import dataclass
@@ -28,6 +29,13 @@ class SnapshotAgent:
     self.waiting_pids: deque[int] = deque()
     self.active_pid: int | None = None
     self.condition = asyncio.Condition()
+
+  def _is_zombie(self, pid: int) -> bool:
+    try:
+      output = subprocess.check_output(["ps", "-p", str(pid), "-o", "state="], text=True)
+      return "Z" in output
+    except Exception:
+      return False
 
   def clear_process(self, pid: int) -> None:
     if pid in self.waiting_pids:
@@ -87,11 +95,23 @@ class SnapshotAgent:
       if process is None:
         return {"ok": False, "error": f"pid {pid} is not registered"}
       if self.active_pid != pid:
-        return {"ok": False, "error": f"pid {pid} does not hold an active acquire"}
+        return {"ok": True}
 
       await self.run_checkpoint(pid)
       process.checkpointed = True
       self.clear_process(pid)
+      self.condition.notify_all()
+      return {"ok": True}
+
+  async def transfer_lock(self, from_pid: int, to_pid: int) -> dict[str, Any]:
+    async with self.condition:
+      if self.active_pid != from_pid:
+        return {"ok": False, "error": f"from_pid {from_pid} does not hold an active acquire"}
+      if to_pid not in self.processes:
+        return {"ok": False, "error": f"to_pid {to_pid} is not registered"}
+
+      logger.info("Transferring active lock from pid %s to pid %s", from_pid, to_pid)
+      self.active_pid = to_pid
       self.condition.notify_all()
       return {"ok": True}
 
@@ -130,6 +150,9 @@ class SnapshotAgent:
     except Exception:
       try:
         os.kill(pid, 0)
+        if self._is_zombie(pid):
+          logger.info("process pid %s is a zombie during checkpoint, skipping failure exit", pid)
+          return
       except OSError:
         logger.info("process pid %s died during checkpoint, skipping failure exit", pid)
         return
@@ -197,6 +220,11 @@ async def dispatch(agent: SnapshotAgent, line: bytes, connection_id: int) -> dic
       return await agent.acquire(pid)
     case "RELEASE":
       return await agent.release(pid)
+    case "TRANSFER_LOCK":
+      to_pid = payload.get("to_pid")
+      if to_pid is None:
+        return {"ok": False, "error": "to_pid is required for TRANSFER_LOCK"}
+      return await agent.transfer_lock(pid, int(to_pid))
     case "UNREGISTER":
       return await agent.unregister(pid)
     case _:

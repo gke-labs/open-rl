@@ -143,6 +143,15 @@ A single `vllm-worker` process runs on the GPU. It pulls requests sequentially f
 ### Option B: Dedicated vLLM Instance Per Job (IMPLEMENTED)
 Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). Both processes share GPU 1. To share the GPU transparently, they take turns using `snapshot-agent-sampler`:
 - **Parent Proxying**: The parent `vllm_sampler` process runs on CPU and resolves the PID of its child `EngineCore` process (which holds all CUDA contexts).
+- **Coordinated Engine Initialization (Lock Transfer)**:
+  - During engine startup (`from_engine_args`), vLLM allocates the KV cache and warms up CUDA graphs (which requires exclusive GPU access and allocates up to 70% VRAM).
+  - To prevent concurrent workers from initializing at the same time and causing OOMs on startup, the workers serialize their warmups using a coordinated lock transfer:
+    1. The parent `vllm_sampler` process registers its parent PID with the Snapshot Agent and acquires the GPU lock.
+    2. Under the parent lock, it calls `init_engine()` safely.
+    3. Once initialized, it resolves the child `EngineCore` process PID and registers it.
+    4. To prevent other waiting processes from stealing the GPU lock before the newly spawned child can be checkpointed, the worker calls `TRANSFER_LOCK` to transfer ownership of the active GPU lock from the parent PID to the child PID.
+    5. The parent process safely releases its acquire context (treated as a successful no-op on the daemon since the lock was transferred).
+    6. Finally, the worker calls `RELEASE` on the child PID, which checkpoints the child (freeing its GPU VRAM from 70% to ~0 MiB) and releases the GPU lock to the next waiting worker.
 - **GPU Checkpoint/Restore (with VRAM Pre-release)**:
   - When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `snapshot-agent-sampler.sock`. This checkpoints Job B's `EngineCore` process and restores Job A's `EngineCore` process.
   - **Optimization**: Once the batch of sampling requests completes, but **before** releasing the GPU lock, the sampler calls `await engine.sleep(level=2)`. This releases Job A's active weights and KV caches from the GPU (reducing its VRAM usage to ~0 MiB).

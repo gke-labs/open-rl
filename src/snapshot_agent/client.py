@@ -30,6 +30,9 @@ class SnapshotAgentClient:
   async def unregister(self, pid: int) -> dict[str, Any]:
     return await self.request({"command": "UNREGISTER", "pid": pid})
 
+  async def transfer_lock(self, from_pid: int, to_pid: int) -> dict[str, Any]:
+    return await self.request({"command": "TRANSFER_LOCK", "pid": from_pid, "to_pid": to_pid})
+
   @asynccontextmanager
   async def acquire(self, pid: int) -> AsyncIterator[None]:
     await self.request({"command": "ACQUIRE", "pid": pid})
