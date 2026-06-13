@@ -346,17 +346,30 @@ async def run_sampling_worker(model_id: str) -> None:
           await asyncio.sleep(0.05)
           continue
 
-        if snapshot_client is not None:
-          async with snapshot_client.acquire(preempt_pid):
-            tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
+        has_shutdown = False
+        sampling_reqs = []
+        for req in batch:
+          if req.get("request_id") == "SHUTDOWN_SENTINEL":
+            has_shutdown = True
+          else:
+            sampling_reqs.append(req)
+
+        if sampling_reqs:
+          if snapshot_client is not None:
+            async with snapshot_client.acquire(preempt_pid):
+              tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
+              await asyncio.gather(*tasks)
+              if engine is not None:
+                print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
+                await engine.sleep(level=2)
+                CURRENT_LOADED_SAMPLER_WEIGHTS = None
+          else:
+            tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
             await asyncio.gather(*tasks)
-            if engine is not None:
-              print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
-              await engine.sleep(level=2)
-              CURRENT_LOADED_SAMPLER_WEIGHTS = None
-        else:
-          tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in batch]
-          await asyncio.gather(*tasks)
+
+        if has_shutdown:
+          print("[vLLM Worker] Shutdown sentinel popped from queue. Initiating clean exit...")
+          break
       except asyncio.CancelledError:
         break
       except Exception as exc:

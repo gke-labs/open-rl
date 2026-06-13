@@ -289,8 +289,16 @@ async def delete_model(req: dict):
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  if fft_worker_manager is not None:
-    fft_worker_manager.shutdown_workers(model_id)
+  
+  if is_fft_enabled():
+    command = {
+      "op": "shutdown_workers",
+      "model_id": model_id,
+      "request_id": str(uuid.uuid4())
+    }
+    req_id = await enqueue_worker_launch(command)
+    return {"status": "ok", "request_id": req_id}
+  
   return {"status": "ok"}
 
 

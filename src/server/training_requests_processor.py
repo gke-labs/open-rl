@@ -308,14 +308,27 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       await asyncio.sleep(0.1)
       return
 
+    has_shutdown = False
+    training_reqs = []
+    for req in batch:
+      if req.get("request_id") == "SHUTDOWN_SENTINEL" or req.get("op") == "shutdown":
+        has_shutdown = True
+      else:
+        training_reqs.append(req)
+
     with tracer.start_as_current_span("training_requests_batch") as batch_span:
-      batch_span.set_attribute("batch_size", len(batch))
+      batch_span.set_attribute("batch_size", len(training_reqs))
       batch_span.set_attribute("model_id", self.model_id)
 
-      print(f"\n[TRAINING REQUESTS] Popped {len(batch)} requests for model: {self.model_id}")
-      async with self.snapshot_client.acquire(self.pid):
-        for request in batch:
-          await self.process_request(request, self.model_id)
+      if training_reqs:
+        print(f"\n[TRAINING REQUESTS] Popped {len(training_reqs)} requests for model: {self.model_id}")
+        async with self.snapshot_client.acquire(self.pid):
+          for request in training_reqs:
+            await self.process_request(request, self.model_id)
+
+    if has_shutdown:
+      print("[WORKER] Shutdown sentinel popped from training queue. Initiating clean exit...")
+      raise asyncio.CancelledError()
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     raw_config = payload.get("full_config") or {}

@@ -8,7 +8,7 @@ from pathlib import Path
 from server.store import RequestStore
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-WORKER_LAUNCH_OPS = {"create_model", "create_model_from_state"}
+WORKER_LAUNCH_OPS = {"create_model", "create_model_from_state", "shutdown_workers"}
 
 
 class FFTWorkerManager:
@@ -66,6 +66,26 @@ class FFTWorkerManager:
         if p.poll() is None:
           p.terminate()
 
+  def request_shutdown(self, model_id: str) -> None:
+    procs = self.processes.get(model_id)
+    if not procs:
+      return
+    print(f"[Worker Manager] Requesting graceful shutdown of workers for model: {model_id}...")
+    asyncio.create_task(self._monitor_and_force_teardown(model_id, procs))
+
+  async def _monitor_and_force_teardown(self, model_id: str, procs: list[subprocess.Popen]) -> None:
+    for _ in range(60):
+      await asyncio.sleep(0.5)
+      if all(p.poll() is not None for p in procs):
+        print(f"[Worker Manager] Workers for model {model_id} exited gracefully.")
+        break
+    else:
+      print(f"[Worker Manager] Workers for model {model_id} did not exit in time. Terminating...")
+      for p in procs:
+        if p.poll() is None:
+          p.terminate()
+    self.processes.pop(model_id, None)
+
   def shutdown_all(self) -> None:
     for procs in self.processes.values():
       for proc in procs:
@@ -91,8 +111,24 @@ class WorkerLaunchProcessor:
       if not model_id:
         raise ValueError("worker launch request requires model_id")
 
-      self.worker_manager.launch(model_id)
-      await self.store.put_request(request)
+      if op == "shutdown_workers":
+        # 1. Push sentinel to trainer queue
+        await self.store.put_request({
+          "model_id": model_id,
+          "request_id": "SHUTDOWN_SENTINEL",
+          "op": "shutdown"
+        })
+        # 2. Push sentinel to sampler queue
+        await self.store.put_sampling_request({
+          "model_id": model_id,
+          "request_id": "SHUTDOWN_SENTINEL"
+        })
+        self.worker_manager.request_shutdown(model_id)
+        if request_id:
+          await self.store.set_future(request_id, {"status": "ok"})
+      else:
+        self.worker_manager.launch(model_id)
+        await self.store.put_request(request)
     except Exception as exc:
       traceback.print_exc()
       if request_id is None:
