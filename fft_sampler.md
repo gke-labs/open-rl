@@ -118,8 +118,10 @@ A single `vllm-worker` process runs on the GPU. It pulls requests sequentially f
 - **Cons**:
   - **I/O Latency**: Every swap requires reading safetensors from the network filesystem and compiling. Swapping takes **`~1.5 seconds`** on every step.
 
-### Option B: Dedicated vLLM Instance Per Job
-Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). When Job A is active, Job B's sampler process is put to Sleep Level 2.
+### Option B: Dedicated vLLM Instance Per Job (IMPLEMENTED)
+Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). When Job A is active, Job B's sampler process is put to Sleep Level 2 or suspended. To share the GPU transparently, the Snapshot Agent (`snapshot-agent-sampler`) is used:
+- **Parent Proxying**: The parent `vllm_sampler` process runs on CPU and resolves the PID of its child `EngineCore` process (which holds all CUDA contexts).
+- **GPU Checkpoint/Restore**: The parent acquires/releases the GPU through the Snapshot Agent, which checkpoints and restores the child process's GPU memory, allowing multiple samplers to share a single GPU.
 - **Pros**:
   - **Fast Wake Up**: In sleep mode, weights remain in host CPU memory. Waking up only requires copying weights from CPU memory to GPU VRAM (no disk I/O), taking only **`~0.7 seconds`** (twice as fast as Option A).
 - **Cons**:
@@ -160,6 +162,11 @@ To configure and run disaggregated GPU training/sampling:
 | `VLLM_GPU_MEMORY_UTILIZATION=0.70` | Allocates VRAM bounds for the sampler engine. |
 
 ### Running the End-to-End Suite:
+To run a single FFT RL job in vLLM mode:
 ```bash
 make test e2e tiny-fft-rl TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=10"
+```
+To run two concurrent FFT RL jobs sharing both trainer and sampler GPUs via Snapshot Agent preemption:
+```bash
+make test e2e tiny-fft-rl-x2 TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=5"
 ```
