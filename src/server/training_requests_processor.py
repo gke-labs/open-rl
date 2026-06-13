@@ -277,7 +277,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       await self.snapshot_client.close()
     except Exception:
       pass
-    sys.exit(0)
+    os._exit(0)
 
   async def run(self) -> None:
     print("[WORKER] Full fine-tuning training requests processor started.")
@@ -301,6 +301,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
           await self.snapshot_client.unregister(self.pid)
       finally:
         await self.snapshot_client.close()
+        os._exit(0)
 
   async def run_once(self) -> None:
     batch = await self.store.get_requests_for_model(self.model_id)

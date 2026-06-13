@@ -324,7 +324,7 @@ async def run_sampling_worker(model_id: str) -> None:
         await snapshot_client.close()
       except Exception:
         pass
-      sys.exit(0)
+      os._exit(0)
 
     try:
       loop = asyncio.get_running_loop()
@@ -383,6 +383,7 @@ async def run_sampling_worker(model_id: str) -> None:
           await snapshot_client.unregister(preempt_pid)
       finally:
         await snapshot_client.close()
+        os._exit(0)
 
 
 def main() -> None:
