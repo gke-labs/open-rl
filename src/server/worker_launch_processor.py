@@ -8,7 +8,7 @@ from pathlib import Path
 from server.store import RequestStore
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
-WORKER_LAUNCH_OPS = {"create_model", "create_model_from_state", "shutdown_workers"}
+WORKER_LAUNCH_OPS = {"create_model", "create_model_from_state", "launch_sampler", "shutdown_workers"}
 
 
 class FFTWorkerManager:
@@ -19,18 +19,14 @@ class FFTWorkerManager:
     self.project_dir = project_dir
     self.processes: dict[str, list[subprocess.Popen]] = {}
 
-  def launch(self, model_id: str) -> None:
+  def launch_trainer(self, model_id: str) -> None:
     procs = self.processes.get(model_id)
-    if procs is not None and all(p.poll() is None for p in procs):
+    if procs is not None and any("server.training_requests_processor" in str(p.args) and p.poll() is None for p in procs):
       return
 
-    if procs is not None:
-      for p in procs:
-        if p.poll() is None:
-          p.terminate()
-
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    self.processes[model_id] = []
+    if model_id not in self.processes:
+      self.processes[model_id] = []
 
     p_train = subprocess.Popen(
       [sys.executable, "-m", "server.training_requests_processor", "--model-id", model_id],
@@ -38,6 +34,15 @@ class FFTWorkerManager:
       env=env,
     )
     self.processes[model_id].append(p_train)
+
+  def launch_sampler(self, model_id: str) -> None:
+    procs = self.processes.get(model_id)
+    if procs is not None and any("server.vllm_sampler" in str(p.args) and p.poll() is None for p in procs):
+      return
+
+    env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
+    if model_id not in self.processes:
+      self.processes[model_id] = []
 
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
@@ -57,6 +62,10 @@ class FFTWorkerManager:
         env=sampler_env,
       )
       self.processes[model_id].append(p_sampler)
+
+  def launch(self, model_id: str) -> None:
+    self.launch_trainer(model_id)
+    self.launch_sampler(model_id)
 
   def shutdown_workers(self, model_id: str) -> None:
     procs = self.processes.pop(model_id, None)
@@ -126,8 +135,12 @@ class WorkerLaunchProcessor:
         self.worker_manager.request_shutdown(model_id)
         if request_id:
           await self.store.set_future(request_id, {"status": "ok"})
+      elif op == "launch_sampler":
+        self.worker_manager.launch_sampler(model_id)
+        if request_id:
+          await self.store.set_future(request_id, {"status": "ok"})
       else:
-        self.worker_manager.launch(model_id)
+        self.worker_manager.launch_trainer(model_id)
         await self.store.put_request(request)
     except Exception as exc:
       traceback.print_exc()

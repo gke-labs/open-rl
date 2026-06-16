@@ -30,6 +30,12 @@ class WorkerManagerStub:
     if self.error is not None:
       raise self.error
 
+  def launch_trainer(self, model_id: str) -> None:
+    self.launch(model_id)
+
+  def launch_sampler(self, model_id: str) -> None:
+    self.launch(model_id)
+
 
 class WorkerLaunchProcessorTest(unittest.IsolatedAsyncioTestCase):
   async def test_process_request_launches_worker_then_forwards_request(self) -> None:

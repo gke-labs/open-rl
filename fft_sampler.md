@@ -73,9 +73,9 @@ Provides list-based queueing for sampling requests to decouple the API gateway f
 - `/api/v1/asample`: Resolves Tinker sequence/session IDs (e.g. `tinker://model-id/sampler_weights/sampler-seq`) to absolute local directories under `/tmp/open-rl/sampler_full/`. It packages the target directory as `weights_path` and enqueues the request to Redis.
 
 ### 3. Worker Launcher & Compatibility (`src/server/worker_launch_processor.py` & `scripts/run_training_e2e.py`)
-- **FFT Mode**: Trainer and sampler processes are launched dynamically when a new model is initialized (`create_model`):
-  - Spawns Trainer: `python -m server.training_requests_processor --model-id <model_id>`
-  - Spawns Sampler: `python -m server.vllm_sampler --model-id <model_id>` (overriding `CUDA_VISIBLE_DEVICES` using `SAMPLER_CUDA_VISIBLE_DEVICES`).
+- **FFT Mode**: Trainer and sampler processes are launched dynamically on demand:
+  - Spawns Trainer: `python -m server.training_requests_processor --model-id <model_id>` (triggered during `create_model`).
+  - Spawns Sampler: `python -m server.vllm_sampler --model-id <model_id>` (triggered during `create_sampling_session`, overriding `CUDA_VISIBLE_DEVICES` using `SAMPLER_CUDA_VISIBLE_DEVICES`).
 - **LoRA Mode**: The sampler worker is launched statically on startup with `--model-id <base_model_name>` and drains the corresponding queue directly.
 - **Readiness Checks**: The launcher uses a raw socket Redis client wrapper (`redis_key_ready`) to verify when a statically launched sampler has completed startup/compilation.
 
@@ -253,8 +253,8 @@ Gateway Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (r
 ---
 
 ### 2. Provisioning & Activation (Control Plane)
-- **Trigger**: When a client initializes a model via `/api/v1/create_model`, the gateway enqueues a `create_model` command to `open_rl:worker_launch_queue`.
-- **Worker Spawning**: The `WorkerLaunchProcessor` daemon pops the request and invokes `FFTWorkerManager.launch(model_id)` to spawn the dedicated trainer and sampler subprocesses for that `model_id`.
+- **Trainer Provisioning**: When a client initializes a model via `/api/v1/create_model`, the gateway enqueues a `create_model` command to `open_rl:worker_launch_queue`. The `WorkerLaunchProcessor` daemon pops the request and invokes `FFTWorkerManager.launch_trainer(model_id)` to spawn the dedicated PyTorch trainer subprocess.
+- **Sampler Provisioning**: When a client initializes a sampling session via `/api/v1/create_sampling_session`, the gateway enqueues a `launch_sampler` command to `open_rl:worker_launch_queue`. The processor pops it and invokes `FFTWorkerManager.launch_sampler(model_id)` to spawn the dedicated vLLM sampler worker.
 - **Readiness**: The sampler worker compiles CUDA graphs and writes `open_rl:sampler_ready:<model_id> = "1"`. The gateway blocks and polls this key, returning the versioned `session_id` to the client only when ready.
 
 ---
@@ -284,3 +284,44 @@ To clean up stale workers in the event of hard client VM crashes or unhandled sc
   - If a tenant's data queue has been idle (no requests popped/enqueued) for a configurable timeout (e.g. 10 minutes), the processor automatically triggers the sentinel shutdown flow for that `model_id`.
   - If the client subsequently resumes training, the processor detects the missing workers and dynamically re-provisions them transparently.
   - This ensures maximum robustness against crash-induced leaks without requiring client-side handlers.
+
+---
+
+## 10. Snapshot Agent Integration & Lock Management
+
+To coordinate GPU sharing, workers communicate with local Snapshot Agent instances via UNIX domain sockets:
+- `snapshot-agent-trainer.sock` (manages GPU 0 for trainers)
+- `snapshot-agent-sampler.sock` (manages GPU 1 for samplers)
+
+### 1. Lock Management & API Command Set
+The Snapshot Agent daemon supports the following JSON-based socket interface commands:
+- `REGISTER`: Registers a process PID to participate in scheduling.
+- `UNREGISTER`: Removes a process PID and cleans up its lock allocations.
+- `ACQUIRE`: Requests the global preemption lock for a PID. Blocks until the lock is acquired, and automatically suspends the active running process.
+- `RELEASE`: Signals that a process is yielding its GPU lock, triggering an immediate checkpoint snapshot.
+- `TRANSFER_LOCK`: Moves the ownership of an active lock from one PID to another atomically.
+
+---
+
+### 2. Architectural Requirement for the `TRANSFER_LOCK` Primitive
+
+During full fine-tuning rollouts, the vLLM sampler worker must serialize its engine startup to prevent CUDA Out of Memory (OOM) errors during CUDA graph warmups (which consume up to 70% VRAM). This is achieved through the coordinated parent-to-child lock transfer sequence:
+
+1. **Process Tree & CUDA Context Separation**:
+   - vLLM splits the sampler into a Python **parent process** (managing queues/IPC) and a dynamically spawned **child process** (`EngineCore` / `ModelExecutor`).
+   - The actual CUDA driver context and VRAM footprint reside entirely inside the child process.
+   - The utility `cuda-checkpoint` operates strictly on a **single target PID** (using direct POSIX real-time signals) and is not aware of the process tree. Thus, checkpointing/restoring must target the child process directly to reclaim/restore VRAM.
+
+2. **The Startup OOM Race Condition**:
+   - Because the child process PID is dynamically allocated during engine creation, the worker cannot know its PID beforehand.
+   - To serialize the initialization phase and prevent multiple samplers from compiling graphs simultaneously (which causes a CUDA OOM), the parent process must proxy the lock:
+     - The **parent** acquires the Snapshot Agent lock.
+     - The parent initializes the vLLM engine, which spawns the child process.
+     - The parent registers the child PID with the Snapshot Agent.
+
+3. **Why We Must "Transfer" Instead of "Release"**:
+   - If the parent released its lock using standard context managers immediately after initialization, a waiting concurrent worker would instantly acquire the lock and begin its graph warmups.
+   - At this moment, the first worker's child process is still running in memory because the Snapshot Agent has not yet checkpointed it (checkpointing is triggered asynchronously on release or preemption).
+   - This leads to two active engines compiling graphs at the same time, causing a CUDA OOM.
+   - **The Solution**: The parent calls **`TRANSFER_LOCK`** to transfer ownership of the active lock to the child process PID *before* exiting its code block. This keeps the GPU lock continuously active, blocking other workers until the child process is explicitly checkpointed (`RELEASE` command) to release its VRAM down to 0 MiB.
+

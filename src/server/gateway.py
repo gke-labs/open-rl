@@ -498,6 +498,13 @@ async def create_sampling_session(req: dict):
     target_model_id = sess_id
 
   if is_fft_enabled() and get_sampler_backend() == "vllm" and target_model_id:
+    command = {
+      "op": "launch_sampler",
+      "model_id": target_model_id,
+      "request_id": str(uuid.uuid4()),
+    }
+    await enqueue_worker_launch(command)
+
     store = get_store()
     if hasattr(store, "redis"):
       print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")
