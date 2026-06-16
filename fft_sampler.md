@@ -30,19 +30,23 @@ sequenceDiagram
     participant TS as Trainer Process (PyTorch)
     participant VS as Sampler Process (vLLM)
 
-    Note over Client, VS: 1. Initialization (Dynamic Worker Launch)
+    Note over Client, VS: 1. Trainer Initialization
     Client->>GW: create_model(model_id)
-    GW->>Redis: enqueues launch request
+    GW->>Redis: enqueues create_model request
     Note over GW: Worker Launch Processor drains launch queue
     GW->>TS: Dynamically Spawns training request processor (--model-id)
+
+    Note over Client, VS: 2. Sampler On-Demand Initialization
+    Client->>GW: create_sampling_session() / save_weights_for_sampler()
+    GW->>Redis: enqueues launch_sampler request
+    Note over GW: Worker Launch Processor drains launch queue
     GW->>VS: Dynamically Spawns vLLM sampler worker (--model-id)
     VS->>VS: Initializes vLLM Engine (Sleep Mode enabled)
     VS->>Redis: Set open_rl:sampler_ready:{model_id} = 1
 
-    Note over Client, VS: 2. Iterative RL Training / Rollout Loop
-    Client->>GW: create_sampling_session(model_path)
+    Note over Client, VS: 3. Iterative RL Training / Rollout Loop
     Note over GW: Blocks until open_rl:sampler_ready key is 1
-    GW-->>Client: Returns session ID
+    GW-->>Client: Returns session ID / completes request
 
     Client->>GW: sample_async(prompt, model_id)
     GW->>Redis: Pushes request (prompt, weights_path) to sampler_queue:<model_id>

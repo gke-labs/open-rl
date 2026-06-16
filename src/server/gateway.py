@@ -402,6 +402,14 @@ async def save_weights_for_sampler(req: dict):
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
 
+  if is_fft_enabled() and get_sampler_backend() == "vllm":
+    command = {
+      "op": "launch_sampler",
+      "model_id": model_id,
+      "request_id": str(uuid.uuid4()),
+    }
+    await enqueue_worker_launch(command)
+
   seq_id = req.get("sampling_session_seq_id") or int(time.time() * 1000)
   alias = req.get("name") or req.get("alias") or req.get("path")
 
