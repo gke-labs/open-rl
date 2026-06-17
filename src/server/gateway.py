@@ -146,12 +146,20 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   request_id = request["request_id"]
   await store.set_future(request_id, {"status": "pending"})
   try:
-    await asyncio.to_thread(fft_worker_manager.launch, request["model_id"])
+    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"])
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
     return request_id
   return await enqueue(request)
+
+
+async def ensure_sampler_launched(model_id: str) -> None:
+  if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
+    try:
+      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id)
+    except Exception:
+      traceback.print_exc()
 
 
 async def preflight_vllm() -> None:
@@ -307,6 +315,18 @@ async def create_model(req: dict):
   return {"request_id": req_id}
 
 
+@app.post("/api/v1/delete_model")
+async def delete_model(req: dict):
+  model_id = req.get("model_id")
+  if not model_id:
+    return JSONResponse(status_code=400, content={"error": "model_id is required"})
+  if is_fft_enabled():
+    print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
+    await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
+    await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
+  return {"status": "ok"}
+
+
 @app.post("/api/v1/create_model_from_state")
 async def create_model_from_state(req: dict):
   """ServiceClient.create_training_client_from_state_async()"""
@@ -409,6 +429,7 @@ async def save_weights_for_sampler(req: dict):
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
 
+  await ensure_sampler_launched(model_id)
   seq_id = req.get("sampling_session_seq_id") or int(time.time() * 1000)
   alias = req.get("name") or req.get("alias") or req.get("path")
 
@@ -494,10 +515,31 @@ async def create_sampling_session(req: dict):
 
   if model_path and model_path.startswith("tinker://"):
     sess_id = model_path
+    path = model_path[len("tinker://") :]
+    parts = path.split("/")
+    target_model_id = parts[0]
   elif base_model:
     sess_id = base_model
+    target_model_id = base_model
   else:
     sess_id = model_id or "samp-session-live-123"
+    target_model_id = sess_id
+
+  if get_sampler_backend() == "vllm" and target_model_id:
+    if is_fft_enabled():
+      await ensure_sampler_launched(target_model_id)
+    s = get_store()
+    if hasattr(s, "redis"):
+      print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")
+      start_time = time.monotonic()
+      while True:
+        is_ready = await s.redis.get(f"open_rl:sampler_ready:{target_model_id}")
+        if is_ready == "1" or is_ready == b"1":
+          print(f"[GATEWAY] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
+          break
+        if time.monotonic() - start_time > 300:
+          raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
+        await asyncio.sleep(1)
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
@@ -539,40 +581,39 @@ async def asample(req: dict):
 
   # vLLM backend
   req_id = str(uuid.uuid4())
+  carrier: dict = {}
+  propagate.inject(carrier)
   await store.set_future(req_id, {"status": "pending"})
 
-  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
-  headers: dict[str, str] = {"Content-Type": "application/json"}
-  propagate.inject(headers)
+  if is_fft_enabled():
+    rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
+    local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
+    weights_path = local_path
+    lora_id = None
+    lora_path = None
+  else:
+    weights_path = None
+    lora_id = model_id
+    lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
 
-  try:
-    async with httpx.AsyncClient(timeout=120.0) as client:
-      resp = await client.post(
-        f"{VLLM_URL.rstrip('/')}/generate",
-        json={
-          "request_id": req_id,
-          "prompt_token_ids": prompt,
-          "max_tokens": max_tokens,
-          "temperature": temperature,
-          "stop": stop,
-          "top_p": top_p,
-          "top_k": top_k,
-          "num_samples": num_samples,
-          "lora_id": model_id,
-          "lora_path": lora_path,
-          "include_prompt_logprobs": include_prompt_logprobs,
-        },
-        headers=headers,
-      )
-      resp.raise_for_status()
-      data = resp.json()
-      if data.get("type") != "RequestFailedResponse":
-        data["type"] = "sample"
-      await store.set_future(req_id, data)
-  except Exception as e:
-    traceback.print_exc()
-    await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
+  sampling_req = {
+    "request_id": req_id,
+    "prompt_token_ids": prompt,
+    "max_tokens": max_tokens,
+    "temperature": temperature,
+    "stop": stop,
+    "top_p": top_p,
+    "top_k": top_k,
+    "num_samples": num_samples,
+    "lora_id": lora_id,
+    "lora_path": lora_path,
+    "weights_path": weights_path,
+    "include_prompt_logprobs": include_prompt_logprobs,
+    "model_id": base_model_id or model_id,
+    "trace_context": carrier,
+  }
 
+  await store.put_sampling_request(sampling_req)
   return {"request_id": req_id}
 
 

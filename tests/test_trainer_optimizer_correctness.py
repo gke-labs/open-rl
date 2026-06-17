@@ -179,20 +179,20 @@ class _SnapshotClientStub:
   def __init__(self):
     self.events = []
 
-  async def register(self, pid):
-    self.events.append(("register", pid))
+  async def register(self, pid, group="default"):
+    self.events.append(("register", pid, group))
     return {"ok": True}
 
   @asynccontextmanager
-  async def acquire(self, pid):
-    self.events.append(("acquire", pid))
+  async def acquire(self, pid, group="default"):
+    self.events.append(("acquire", pid, group))
     try:
       yield
     finally:
-      self.events.append(("release", pid))
+      self.events.append(("release", pid, group))
 
-  async def unregister(self, pid):
-    self.events.append(("unregister", pid))
+  async def unregister(self, pid, group="default"):
+    self.events.append(("unregister", pid, group))
     return {"ok": True}
 
   async def close(self):
