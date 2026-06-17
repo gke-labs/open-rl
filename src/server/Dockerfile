@@ -40,13 +40,15 @@ ENV UV_COMPILE_BYTECODE=1 \
 # Install dependencies using uv with BuildKit cache
 # --frozen ensures it uses the uv.lock exactly
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --extra gpu --extra vllm
+    uv sync --frozen --no-install-project --extra gpu --extra vllm \
+    && uv cache clean
 
 # Copy source code
 COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --extra gpu --extra vllm
+    uv sync --frozen --extra gpu --extra vllm \
+    && uv cache clean
 
 # TODO: this is a hack until vllm is fixed upstream
 # Apply Gemma 4 LoRA deduplication patch
