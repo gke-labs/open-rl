@@ -4,7 +4,6 @@ import argparse
 import asyncio
 import hashlib
 import os
-import subprocess
 import sys
 import traceback
 from typing import Any
