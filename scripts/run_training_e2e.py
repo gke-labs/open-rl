@@ -116,17 +116,6 @@ def redis_ok(host: str, port: int) -> bool:
     return client.recv(64).startswith(b"+PONG")
 
 
-def redis_key_ready(host: str, port: int, key: str) -> bool:
-  try:
-    with socket.create_connection((host, port), timeout=1) as client:
-      cmd = f"*2\r\n$3\r\nGET\r\n${len(key)}\r\n{key}\r\n"
-      client.sendall(cmd.encode("utf-8"))
-      res = client.recv(1024)
-      return b"$1\r\n1\r\n" in res
-  except Exception:
-    return False
-
-
 def print_log_tail(path: Path, lines: int = 100) -> None:
   if not path.exists():
     return
@@ -277,12 +266,6 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
       vllm_env = env.copy()
       vllm_env["CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
       vllm_env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
-      redis_url = env.get("REDIS_URL")
-      if redis_url:
-        parts = redis_url.split(":")
-        r_port = int(parts[-1].split("/")[0])
-      else:
-        r_port = 6379
       base_model = config.base_model
       launch(
         processes,
@@ -290,7 +273,7 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
         uv_run(config.eval_uv_extra) + ["python", "-m", "server.vllm_sampler", "--model-id", base_model],
         vllm_env,
         log_dir / "vllm_worker.log",
-        lambda: redis_key_ready("127.0.0.1", r_port, f"open_rl:sampler_ready:{base_model}"),
+        lambda: True,
         timeout=config.startup_timeout,
       )
 

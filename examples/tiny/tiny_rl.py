@@ -142,6 +142,9 @@ def main(config: Config) -> None:
     import json
     import urllib.request
 
+    # The upstream Tinker SDK does not expose a delete_model() method. We make a
+    # direct HTTP POST call to Open-RL's custom /api/v1/delete_model gateway
+    # endpoint to signal background trainer and sampler worker processes to exit.
     try:
       model_id = trainer._guaranteed_model_id()
       url = f"{config.base_url}/api/v1/delete_model"

@@ -525,8 +525,9 @@ async def create_sampling_session(req: dict):
     sess_id = model_id or "samp-session-live-123"
     target_model_id = sess_id
 
-  if is_fft_enabled() and get_sampler_backend() == "vllm" and target_model_id:
-    await ensure_sampler_launched(target_model_id)
+  if get_sampler_backend() == "vllm" and target_model_id:
+    if is_fft_enabled():
+      await ensure_sampler_launched(target_model_id)
     s = get_store()
     if hasattr(s, "redis"):
       print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")
