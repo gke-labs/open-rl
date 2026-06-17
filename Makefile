@@ -122,7 +122,7 @@ deploy:
 	kubectl apply -k k8s/deploy/distributed-lustre/
 
 rollout:
-	kubectl rollout restart deployment redis-store open-rl-gateway open-rl-trainer-worker vllm-worker
+	kubectl rollout restart deployment redis-store open-rl-gateway open-rl-trainer-worker vllm-worker -n openrl-system
 
 # Local Redis (for testing distributed mode):
 #   sudo apt install redis-server && sudo service redis-server start
