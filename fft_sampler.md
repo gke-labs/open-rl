@@ -79,7 +79,7 @@ Provides list-based queueing for sampling requests to decouple the API gateway f
 ### 3. Worker Launcher & Compatibility (`src/server/worker_launch_processor.py` & `scripts/run_training_e2e.py`)
 - **FFT Mode**: Trainer and sampler processes are launched dynamically on demand:
   - Spawns Trainer: `python -m server.training_requests_processor --model-id <model_id>` (triggered during `create_model`).
-  - Spawns Sampler: `python -m server.vllm_sampler --model-id <model_id>` (triggered during `create_sampling_session`, overriding `CUDA_VISIBLE_DEVICES` using `SAMPLER_CUDA_VISIBLE_DEVICES`).
+  - Spawns Sampler: `python -m server.vllm_sampler --model-id <model_id>` (triggered during `create_sampling_session` / `save_weights_for_sampler`, overriding `CUDA_VISIBLE_DEVICES` using `SAMPLER_CUDA_VISIBLE_DEVICES`).
 - **LoRA Mode**: The sampler worker is launched statically on startup with `--model-id <base_model_name>` and drains the corresponding queue directly.
 - **Readiness Checks**: The launcher uses a raw socket Redis client wrapper (`redis_key_ready`) to verify when a statically launched sampler has completed startup/compilation.
 
@@ -247,7 +247,8 @@ Gateway Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (r
 
 | Plane | Operation | Protocol / Redis Key | Consumer |
 | :--- | :--- | :--- | :--- |
-| **Control Plane** | `create_model` (Launch workers) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `create_model` (Launch trainer) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `launch_sampler` (Launch sampler) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
 | **Control Plane** | `delete_model` (Stop workers) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
 | **Control Plane** | `create_sampling_session` | Registry Metadata Key (Redis) | Gateway |
 | **Data Plane** | `forward_backward`, `optim_step` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer |
@@ -258,7 +259,7 @@ Gateway Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (r
 
 ### 2. Provisioning & Activation (Control Plane)
 - **Trainer Provisioning**: When a client initializes a model via `/api/v1/create_model`, the gateway enqueues a `create_model` command to `open_rl:worker_launch_queue`. The `WorkerLaunchProcessor` daemon pops the request and invokes `FFTWorkerManager.launch_trainer(model_id)` to spawn the dedicated PyTorch trainer subprocess.
-- **Sampler Provisioning**: When a client initializes a sampling session via `/api/v1/create_sampling_session`, the gateway enqueues a `launch_sampler` command to `open_rl:worker_launch_queue`. The processor pops it and invokes `FFTWorkerManager.launch_sampler(model_id)` to spawn the dedicated vLLM sampler worker.
+- **Sampler Provisioning**: When a client initializes a sampling session via `/api/v1/create_sampling_session` (or saves weights for sampling via `/api/v1/save_weights_for_sampler`), the gateway enqueues a `launch_sampler` command to `open_rl:worker_launch_queue`. The processor pops it and invokes `FFTWorkerManager.launch_sampler(model_id)` to spawn the dedicated vLLM sampler worker (if not already running).
 - **Readiness**: The sampler worker compiles CUDA graphs and writes `open_rl:sampler_ready:<model_id> = "1"`. The gateway blocks and polls this key, returning the versioned `session_id` to the client only when ready.
 
 ---
