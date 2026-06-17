@@ -1,0 +1,13 @@
+# One DRA ResourceClaim for the sampler GPU allocation. Every sampler worker pod
+# that references this claim is scheduled onto a node that can access the same
+# allocated physical GPU.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: open-rl-sampler-gpu-1
+spec:
+  devices:
+    requests:
+    - name: gpu
+      exactly:
+        deviceClassName: gpu.nvidia.com

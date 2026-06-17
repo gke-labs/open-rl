@@ -19,8 +19,16 @@ spec:
       hostPID: true
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
-      nodeSelector:
-        group.timeslice.io/trainers: "true"
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: group.timeslice.io/trainers
+                operator: Exists
+            - matchExpressions:
+              - key: group.timeslice.io/samplers
+                operator: Exists
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

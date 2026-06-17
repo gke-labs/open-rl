@@ -53,9 +53,9 @@ spec:
               key: BASE_MODEL
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/shared/open-rl"
-        # Trainer workers sample in-process, so this variant runs no vLLM worker.
+        # vLLM sampling enabled on cluster.
         - name: SAMPLING_BACKEND
-          value: "torch"
+          value: "vllm"
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
         - name: OPEN_RL_WORKER_MANAGER
@@ -64,10 +64,12 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.namespace
+        - name: OPEN_RL_TRAINER_POD_TEMPLATE
+          value: "/etc/open-rl/trainer/trainer-worker-pod.yaml"
+        - name: OPEN_RL_SAMPLER_POD_TEMPLATE
+          value: "/etc/open-rl/sampler/sampler-worker-pod.yaml"
         - name: OPEN_RL_WORKER_POD_TEMPLATE
-          value: "/etc/open-rl/trainer-worker-pod.yaml"
-        # Logical OpenRL snapshot group. It intentionally matches the
-        # timeslice.io/group label convention stamped onto trainer worker pods.
+          value: "/etc/open-rl/trainer/trainer-worker-pod.yaml"
         - name: OPEN_RL_TIME_SLICE_GROUP
           value: "trainers"
         resources:
@@ -87,13 +89,19 @@ spec:
         volumeMounts:
         - name: shared-storage
           mountPath: /mnt/shared
-        - name: trainer-worker-pod-template
-          mountPath: /etc/open-rl
+        - name: trainer-tmpl
+          mountPath: /etc/open-rl/trainer
+          readOnly: true
+        - name: sampler-tmpl
+          mountPath: /etc/open-rl/sampler
           readOnly: true
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
           claimName: open-rl-shared-pvc
-      - name: trainer-worker-pod-template
+      - name: trainer-tmpl
         configMap:
           name: open-rl-trainer-worker-pod-template
+      - name: sampler-tmpl
+        configMap:
+          name: open-rl-sampler-worker-pod-template

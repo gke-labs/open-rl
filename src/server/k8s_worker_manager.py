@@ -41,11 +41,17 @@ class KubernetesFFTWorkerManager:
     if not os.getenv("REDIS_URL"):
       raise RuntimeError("OPEN_RL_ENABLE_FFT=true requires REDIS_URL so launched workers can share queues and futures")
 
-    template_path = os.getenv("OPEN_RL_WORKER_POD_TEMPLATE")
-    if not template_path:
-      raise RuntimeError("OPEN_RL_WORKER_MANAGER=kubernetes requires OPEN_RL_WORKER_POD_TEMPLATE pointing at the worker pod YAML")
-    with open(template_path, encoding="utf-8") as f:
-      self.pod_template: dict[str, Any] = yaml.safe_load(f)
+    trainer_path = os.getenv("OPEN_RL_TRAINER_POD_TEMPLATE") or os.getenv("OPEN_RL_WORKER_POD_TEMPLATE")
+    if not trainer_path:
+      raise RuntimeError("OPEN_RL_WORKER_MANAGER=kubernetes requires OPEN_RL_TRAINER_POD_TEMPLATE or OPEN_RL_WORKER_POD_TEMPLATE")
+    with open(trainer_path, encoding="utf-8") as f:
+      self.trainer_template: dict[str, Any] = yaml.safe_load(f)
+
+    sampler_path = os.getenv("OPEN_RL_SAMPLER_POD_TEMPLATE") or trainer_path
+    with open(sampler_path, encoding="utf-8") as f:
+      self.sampler_template: dict[str, Any] = yaml.safe_load(f)
+
+    self.pod_template = self.trainer_template
 
     self.namespace = os.getenv("OPEN_RL_WORKER_NAMESPACE", "default")
     self.group_id = os.getenv("OPEN_RL_TIME_SLICE_GROUP", "trainers")
@@ -97,7 +103,8 @@ class KubernetesFFTWorkerManager:
     pass
 
   def render_pod(self, pod_name: str, model_id: str, job_id: str, role: str = "trainer") -> dict[str, Any]:
-    pod = copy.deepcopy(self.pod_template)
+    base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
+    pod = copy.deepcopy(base_tmpl)
     metadata = pod.setdefault("metadata", {})
     metadata["name"] = pod_name
     app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
@@ -115,7 +122,9 @@ class KubernetesFFTWorkerManager:
     if role == "sampler":
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
     container.setdefault("args", []).extend(["--model-id", model_id])
-    container.setdefault("env", []).append({"name": "OPEN_RL_TIME_SLICE_JOB_ID", "value": job_id})
+    env_list = container.setdefault("env", [])
+    env_list.append({"name": "OPEN_RL_TIME_SLICE_JOB_ID", "value": job_id})
+    env_list.append({"name": "OPEN_RL_TIMESLICE_GROUP", "value": group_val})
     return pod
 
   def read_pod(self, pod_name: str) -> Any | None:

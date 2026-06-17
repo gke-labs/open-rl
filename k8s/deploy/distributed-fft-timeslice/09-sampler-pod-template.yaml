@@ -1,0 +1,67 @@
+# Pod template the gateway uses to launch one sampler worker per model
+# (server/k8s_worker_manager.py). All sampler worker pods reference the shared
+# DRA ResourceClaim open-rl-sampler-gpu-1 (08-sampler-resourceclaim.yaml) and are
+# placed onto the sampler GPU node. The node-local snapshot agent time-slices
+# GPU access across concurrent inference engines.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: open-rl-sampler-worker-pod-template
+data:
+  sampler-worker-pod.yaml: |
+    apiVersion: v1
+    kind: Pod
+    spec:
+      restartPolicy: OnFailure
+      hostPID: true
+      containers:
+      - name: sampler-worker
+        image: ghcr.io/gke-labs/open-rl/server:latest
+        imagePullPolicy: Always
+        command: ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
+        env:
+        - name: REDIS_URL
+          value: "redis://redis-service:6379"
+        - name: BASE_MODEL
+          valueFrom:
+            configMapKeyRef:
+              name: open-rl-config
+              key: BASE_MODEL
+        - name: OPEN_RL_ENABLE_FFT
+          value: "true"
+        - name: OPEN_RL_TMP_DIR
+          value: "/mnt/shared/open-rl"
+        - name: HF_HOME
+          value: "/mnt/shared/open-rl/huggingface"
+        - name: OPEN_RL_SNAPSHOT_AGENT_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        - name: OPEN_RL_SNAPSHOT_AGENT_PORT
+          value: "9753"
+        - name: OPEN_RL_TIMESLICE_GROUP
+          value: "samplers"
+        resources:
+          claims:
+          - name: sampler-gpu
+          limits:
+            memory: "32Gi"
+          requests:
+            memory: "32Gi"
+            cpu: "4"
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      resourceClaims:
+      - name: sampler-gpu
+        resourceClaimName: open-rl-sampler-gpu-1
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
+      nodeSelector:
+        group.timeslice.io/samplers: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"

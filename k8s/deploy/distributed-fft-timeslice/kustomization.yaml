@@ -12,6 +12,8 @@ resources:
   - 05-worker-pod-template.yaml
   - 06-gpu-resourceclaim.yaml
   - 07-snapshot-agent-daemonset.yaml
+  - 08-sampler-resourceclaim.yaml
+  - 09-sampler-pod-template.yaml
 
 configMapGenerator:
   - name: open-rl-config
