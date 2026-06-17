@@ -109,6 +109,7 @@ vllm = [
 ]
 
 [tool.ruff]
+force-exclude = true
 exclude = [
     ".git",
     ".venv",

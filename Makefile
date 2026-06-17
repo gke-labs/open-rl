@@ -169,8 +169,8 @@ REMOTE_HOST ?= <PLACE_HOLDER_FOR_REMOTE_HOST_ADDRESS>
 
 # Push local workspace changes to the remote VM
 push-vm:
-	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' ./ $(REMOTE_HOST):~/open-rl
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'scratch' ./ $(REMOTE_HOST):~/open-rl
 
 # Pull changes from the remote VM back to the local workspace
 pull-vm:
-	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' $(REMOTE_HOST):~/open-rl/ ./
+	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'scratch' $(REMOTE_HOST):~/open-rl/ ./

@@ -6,7 +6,7 @@ import os
 import subprocess
 import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
 from typing import Any
