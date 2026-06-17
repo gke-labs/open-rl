@@ -227,31 +227,18 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
         "cuda-checkpoint is required for FFT e2e scenarios (the snapshot agent checkpoints workers around every batch); "
         "install the binary matching your driver from https://github.com/NVIDIA/cuda-checkpoint"
       )
-    trainer_snapshot_socket = log_dir / "snapshot-agent-trainer.sock"
-    trainer_snapshot_socket.unlink(missing_ok=True)
+    snapshot_socket = log_dir / "snapshot-agent.sock"
+    snapshot_socket.unlink(missing_ok=True)
     launch(
       processes,
-      "snapshot-agent-trainer",
+      "snapshot-agent",
       uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
-      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(trainer_snapshot_socket)},
-      log_dir / "snapshot-agent-trainer.log",
-      trainer_snapshot_socket.is_socket,
+      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(snapshot_socket)},
+      log_dir / "snapshot-agent.log",
+      snapshot_socket.is_socket,
       timeout=60,
     )
-    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(trainer_snapshot_socket)
-
-    sampler_snapshot_socket = log_dir / "snapshot-agent-sampler.sock"
-    sampler_snapshot_socket.unlink(missing_ok=True)
-    launch(
-      processes,
-      "snapshot-agent-sampler",
-      uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
-      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(sampler_snapshot_socket)},
-      log_dir / "snapshot-agent-sampler.log",
-      sampler_snapshot_socket.is_socket,
-      timeout=60,
-    )
-    env["OPEN_RL_SAMPLER_SNAPSHOT_AGENT_SOCKET"] = str(sampler_snapshot_socket)
+    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(snapshot_socket)
     env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
     env["OPEN_RL_ENABLE_FFT"] = "true"
   else:
@@ -439,25 +426,25 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     print("[training-e2e] external backend; skipping snapshot agent interleave check")
     return
 
-  trainer_log = Path(config.log_dir) / "snapshot-agent-trainer.log"
-  if trainer_log.exists():
-    text_t = trainer_log.read_text(encoding="utf-8", errors="replace")
-    cp_t = set(re.findall(r"checkpointed pid (\d+)", text_t))
-    rs_t = set(re.findall(r"restored pid (\d+)", text_t))
-    if len(cp_t) < 2 or len(rs_t) < 2:
-      raise RuntimeError(
-        f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {trainer_log}"
-      )
-    print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
+  log_path = Path(config.log_dir) / "snapshot-agent.log"
+  if not log_path.exists():
+    return
+  text = log_path.read_text(encoding="utf-8", errors="replace")
 
-  sampler_log = Path(config.log_dir) / "snapshot-agent-sampler.log"
-  if config.sampling_backend == "vllm" and sampler_log.exists():
-    text_s = sampler_log.read_text(encoding="utf-8", errors="replace")
-    cp_s = set(re.findall(r"checkpointed pid (\d+)", text_s))
-    rs_s = set(re.findall(r"restored pid (\d+)", text_s))
+  cp_t = set(re.findall(r"checkpointed pid (\d+) \(group trainers\)", text))
+  rs_t = set(re.findall(r"restored pid (\d+) \(group trainers\)", text))
+  if len(cp_t) < 2 or len(rs_t) < 2:
+    raise RuntimeError(
+      f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {log_path}"
+    )
+  print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
+
+  if config.sampling_backend == "vllm":
+    cp_s = set(re.findall(r"checkpointed pid (\d+) \(group samplers\)", text))
+    rs_s = set(re.findall(r"restored pid (\d+) \(group samplers\)", text))
     if len(cp_s) < 2 or len(rs_s) < 2:
       raise RuntimeError(
-        f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {sampler_log}"
+        f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {log_path}"
       )
     print(f"[training-e2e] sampler snapshot agent time-sliced: checkpointed pids {sorted(cp_s)}, restored pids {sorted(rs_s)}")
 

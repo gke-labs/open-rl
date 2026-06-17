@@ -10,11 +10,11 @@ DEFAULT_TCP_PORT = 9753
 
 
 class SnapshotClient(Protocol):
-  async def register(self, pid: int) -> dict[str, Any]: ...
+  async def register(self, pid: int, group: str = "default") -> dict[str, Any]: ...
 
-  async def unregister(self, pid: int) -> dict[str, Any]: ...
+  async def unregister(self, pid: int, group: str = "default") -> dict[str, Any]: ...
 
-  def acquire(self, pid: int) -> AbstractAsyncContextManager[None]: ...
+  def acquire(self, pid: int, group: str = "default") -> AbstractAsyncContextManager[None]: ...
 
   async def close(self) -> None: ...
 
@@ -43,19 +43,19 @@ class SnapshotAgentClient:
     self.reader = None
     self.writer = None
 
-  async def register(self, pid: int) -> dict[str, Any]:
-    return await self.request({"command": "REGISTER", "pid": pid})
+  async def register(self, pid: int, group: str = "default") -> dict[str, Any]:
+    return await self.request({"command": "REGISTER", "pid": pid, "group": group})
 
-  async def unregister(self, pid: int) -> dict[str, Any]:
-    return await self.request({"command": "UNREGISTER", "pid": pid})
+  async def unregister(self, pid: int, group: str = "default") -> dict[str, Any]:
+    return await self.request({"command": "UNREGISTER", "pid": pid, "group": group})
 
   @asynccontextmanager
-  async def acquire(self, pid: int) -> AsyncIterator[None]:
-    await self.request({"command": "ACQUIRE", "pid": pid})
+  async def acquire(self, pid: int, group: str = "default") -> AsyncIterator[None]:
+    await self.request({"command": "ACQUIRE", "pid": pid, "group": group})
     try:
       yield
     finally:
-      await self.request({"command": "RELEASE", "pid": pid})
+      await self.request({"command": "RELEASE", "pid": pid, "group": group})
 
   async def request(self, payload: dict[str, Any]) -> dict[str, Any]:
     await self.connect()
@@ -80,14 +80,14 @@ class NoopSnapshotAgentClient:
   async def close(self) -> None:
     pass
 
-  async def register(self, pid: int) -> dict[str, Any]:
-    return {"ok": True, "pid": pid}
+  async def register(self, pid: int, group: str = "default") -> dict[str, Any]:
+    return {"ok": True, "pid": pid, "group": group}
 
-  async def unregister(self, pid: int) -> dict[str, Any]:
-    return {"ok": True, "pid": pid}
+  async def unregister(self, pid: int, group: str = "default") -> dict[str, Any]:
+    return {"ok": True, "pid": pid, "group": group}
 
   @asynccontextmanager
-  async def acquire(self, pid: int) -> AsyncIterator[None]:
+  async def acquire(self, pid: int, group: str = "default") -> AsyncIterator[None]:
     yield
 
 

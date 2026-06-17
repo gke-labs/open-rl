@@ -64,7 +64,7 @@ class FFTWorkerManager:
     if proc is not None and proc.poll() is None:
       return
 
-    env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
+    env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true", "OPEN_RL_TIMESLICE_GROUP": "trainers"}
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
@@ -81,13 +81,10 @@ class FFTWorkerManager:
     if sampling_backend == "vllm":
       sampler_env = env.copy()
       sampler_env["OPEN_RL_MODEL_ID"] = model_id
+      sampler_env["OPEN_RL_TIMESLICE_GROUP"] = "samplers"
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
-
-      sampler_socket = os.getenv("OPEN_RL_SAMPLER_SNAPSHOT_AGENT_SOCKET")
-      if sampler_socket:
-        sampler_env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = sampler_socket
 
       self.sampler_processes[model_id] = subprocess.Popen(
         _py_cmd(["gpu", "vllm"], "server.vllm_sampler", model_id),

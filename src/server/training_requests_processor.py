@@ -248,6 +248,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     self.worker = worker
     self.model_id = model_id
     self.pid = os.getpid()
+    self.group = os.getenv("OPEN_RL_TIMESLICE_GROUP", "trainers")
     self.snapshot_client = snapshot_client
     self.snapshot_registered = False
 
@@ -255,7 +256,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
     if self.snapshot_registered:
       try:
-        await self.snapshot_client.unregister(self.pid)
+        await self.snapshot_client.unregister(self.pid, group=self.group)
         self.snapshot_registered = False
       except Exception as exc:
         print(f"[WORKER] Failed to unregister: {exc}")
@@ -269,7 +270,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     print("[WORKER] Full fine-tuning training requests processor started.")
 
     try:
-      await self.snapshot_client.register(self.pid)
+      await self.snapshot_client.register(self.pid, group=self.group)
       self.snapshot_registered = True
       while True:
         try:
@@ -283,7 +284,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     finally:
       try:
         if self.snapshot_registered:
-          await self.snapshot_client.unregister(self.pid)
+          await self.snapshot_client.unregister(self.pid, group=self.group)
       finally:
         await self.snapshot_client.close()
 
@@ -307,7 +308,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
 
       if training_reqs:
         print(f"\n[TRAINING REQUESTS] Popped {len(training_reqs)} requests for model: {self.model_id}")
-        async with self.snapshot_client.acquire(self.pid):
+        async with self.snapshot_client.acquire(self.pid, group=self.group):
           for request in training_reqs:
             await self.process_request(request, self.model_id)
 

@@ -268,13 +268,14 @@ async def run_sampling_worker(model_id: str) -> None:
   store = get_store()
   snapshot_registered = False
   worker_pid = os.getpid()
+  group = os.getenv("OPEN_RL_TIMESLICE_GROUP", "samplers")
 
   if snapshot_client is not None:
     try:
-      print(f"[vLLM Worker] Registering parent PID {worker_pid} for initialization lock...")
-      await snapshot_client.register(worker_pid)
+      print(f"[vLLM Worker] Registering parent PID {worker_pid} (group {group}) for initialization lock...")
+      await snapshot_client.register(worker_pid, group=group)
       snapshot_registered = True
-      async with snapshot_client.acquire(worker_pid):
+      async with snapshot_client.acquire(worker_pid, group=group):
         print("[vLLM Worker] Initializing vLLM engine under parent lock...")
         init_engine()
         print("[vLLM Worker] Engine initialized successfully.")
