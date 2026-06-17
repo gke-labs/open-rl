@@ -3,8 +3,9 @@ import asyncio
 import json
 import logging
 import os
+import subprocess
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
@@ -18,122 +19,240 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ProcessRegistration:
   connection_id: int | None
+  group: str = "default"
   checkpointed: bool = False
   failed: bool = False
+
+
+class GroupCoordination:
+  def __init__(self):
+    self.waiting_pids: deque[int] = deque()
+    self.active_pid: int | None = None
+    self.condition: asyncio.Condition | None = None
+
+  def get_condition(self) -> asyncio.Condition:
+    if self.condition is None:
+      self.condition = asyncio.Condition()
+    return self.condition
 
 
 class SnapshotAgent:
   def __init__(self, restorer: CheckpointRestorer):
     self.restorer = restorer
     self.processes: dict[int, ProcessRegistration] = {}
-    self.waiting_pids: deque[int] = deque()
-    self.active_pid: int | None = None
-    self.condition = asyncio.Condition()
+    self.groups: dict[str, GroupCoordination] = defaultdict(GroupCoordination)
+
+  @property
+  def active_pid(self) -> int | None:
+    return self.groups["default"].active_pid
+
+  @property
+  def waiting_pids(self) -> deque[int]:
+    return self.groups["default"].waiting_pids
+
+  def _is_zombie(self, pid: int) -> bool:
+    try:
+      output = subprocess.check_output(["ps", "-p", str(pid), "-o", "state="], text=True)
+      return "Z" in output
+    except Exception:
+      return False
+
+  def _has_cuda(self, pid: int) -> bool:
+    try:
+      maps_file = Path(f"/proc/{pid}/maps")
+      if not maps_file.exists():
+        return True
+      content = maps_file.read_text(errors="ignore")
+      return "libcuda" in content or "nvidia" in content
+    except Exception:
+      return True
+
+  def _get_descendants(self, root_pid: int) -> list[int]:
+    try:
+      out = subprocess.check_output(["ps", "-e", "-o", "pid=,ppid="], text=True)
+      children: dict[int, list[int]] = {}
+      for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+          p, pp = int(parts[0]), int(parts[1])
+          children.setdefault(pp, []).append(p)
+
+      tree = []
+      queue = deque(children.get(root_pid, []))
+      while queue:
+        curr = queue.popleft()
+        tree.append(curr)
+        queue.extend(children.get(curr, []))
+      return tree
+    except Exception:
+      return []
+
+  def discover_target_pids(self, root_pid: int) -> int | list[int]:
+    if not isinstance(self.restorer, CudaCheckpointRestorer):
+      return root_pid
+    candidates = [root_pid, *self._get_descendants(root_pid)]
+    cuda_pids = [p for p in candidates if self._has_cuda(p)]
+    return sorted(set(cuda_pids)) if cuda_pids else []
 
   def clear_process(self, pid: int) -> None:
-    if pid in self.waiting_pids:
-      self.waiting_pids.remove(pid)
-    if self.active_pid == pid:
-      self.active_pid = None
+    proc = self.processes.get(pid)
+    if proc is None:
+      return
+    grp = self.groups[proc.group]
+    if pid in grp.waiting_pids:
+      grp.waiting_pids.remove(pid)
+    if grp.active_pid == pid:
+      grp.active_pid = None
 
-  async def register(self, pid: int, connection_id: int | None = None) -> dict[str, Any]:
-    async with self.condition:
-      process = self.processes.get(pid)
-
-      if process is not None:
+  async def register(self, pid: int, group: str = "default", connection_id: int | None = None) -> dict[str, Any]:
+    grp = self.groups[group]
+    cond = grp.get_condition()
+    async with cond:
+      if pid in self.processes:
         return {"ok": False, "error": f"pid {pid} is already registered"}
 
-      self.processes[pid] = ProcessRegistration(connection_id=connection_id)
-      self.condition.notify_all()
+      self.processes[pid] = ProcessRegistration(connection_id=connection_id, group=group)
+      cond.notify_all()
       return {"ok": True}
 
   async def acquire(self, pid: int) -> dict[str, Any]:
-    async with self.condition:
-      process = self.processes.get(pid)
-      if process is None:
-        return {"ok": False, "error": f"pid {pid} is not registered"}
-      if process.failed:
+    proc = self.processes.get(pid)
+    if proc is None:
+      return {"ok": False, "error": f"pid {pid} is not registered"}
+    group = proc.group
+    grp = self.groups[group]
+    cond = grp.get_condition()
+    async with cond:
+      if proc.failed:
         return {"ok": False, "error": f"pid {pid} is failed"}
-      if pid in self.waiting_pids or self.active_pid == pid:
+      if pid in grp.waiting_pids or grp.active_pid == pid:
         return {"ok": False, "error": f"pid {pid} already has a pending or active acquire"}
 
-      self.waiting_pids.append(pid)
+      grp.waiting_pids.append(pid)
       try:
-        while self.active_pid is not None or (pid in self.waiting_pids and self.waiting_pids[0] != pid):
-          await self.condition.wait()
+        while grp.active_pid is not None or (pid in grp.waiting_pids and grp.waiting_pids[0] != pid):
+          await cond.wait()
       except BaseException:
-        if pid in self.waiting_pids:
-          self.waiting_pids.remove(pid)
-        self.condition.notify_all()
+        if pid in grp.waiting_pids:
+          grp.waiting_pids.remove(pid)
+        cond.notify_all()
         raise
 
-      process = self.processes.get(pid)
-      if process is None or process.failed or pid not in self.waiting_pids:
+      proc = self.processes.get(pid)
+      if proc is None or proc.failed or pid not in grp.waiting_pids:
         self.clear_process(pid)
-        self.condition.notify_all()
+        cond.notify_all()
         return {"ok": False, "error": f"pid {pid} is not available"}
 
-      self.waiting_pids.popleft()
-      self.active_pid = pid
-      if process.checkpointed:
-        await self.run_restore(pid)
-        process.checkpointed = False
+      grp.waiting_pids.popleft()
+      grp.active_pid = pid
+      if proc.checkpointed:
+        await self.run_restore(pid, group=group)
+        proc.checkpointed = False
 
-      self.condition.notify_all()
+      cond.notify_all()
       return {"ok": True}
 
   async def release(self, pid: int) -> dict[str, Any]:
-    async with self.condition:
-      process = self.processes.get(pid)
-      if process is None:
-        return {"ok": False, "error": f"pid {pid} is not registered"}
-      if self.active_pid != pid:
+    proc = self.processes.get(pid)
+    if proc is None:
+      return {"ok": False, "error": f"pid {pid} is not registered"}
+    group = proc.group
+    grp = self.groups[group]
+    cond = grp.get_condition()
+    async with cond:
+      if grp.active_pid != pid:
         return {"ok": False, "error": f"pid {pid} does not hold an active acquire"}
 
-      await self.run_checkpoint(pid)
-      process.checkpointed = True
+      await self.run_checkpoint(pid, group=group)
+      proc.checkpointed = True
       self.clear_process(pid)
-      self.condition.notify_all()
+      cond.notify_all()
       return {"ok": True}
 
   async def unregister(self, pid: int) -> dict[str, Any]:
-    async with self.condition:
-      if pid not in self.processes:
-        return {"ok": False, "error": f"pid {pid} is not registered"}
-
+    proc = self.processes.get(pid)
+    if proc is None:
+      return {"ok": False, "error": f"pid {pid} is not registered"}
+    group = proc.group
+    grp = self.groups[group]
+    cond = grp.get_condition()
+    async with cond:
       self.clear_process(pid)
       del self.processes[pid]
-      self.condition.notify_all()
+      cond.notify_all()
       return {"ok": True}
 
   async def connection_closed(self, connection_id: int) -> None:
-    async with self.condition:
-      for pid, process in self.processes.items():
-        if process.connection_id != connection_id:
-          continue
+    for pid, proc in list(self.processes.items()):
+      if proc.connection_id != connection_id:
+        continue
+      group = proc.group
+      grp = self.groups[group]
+      cond = grp.get_condition()
+      async with cond:
         self.clear_process(pid)
-        process.failed = True
-        process.checkpointed = False
-        process.connection_id = None
-      self.condition.notify_all()
+        proc.failed = True
+        proc.checkpointed = False
+        proc.connection_id = None
+        cond.notify_all()
 
-  async def run_checkpoint(self, pid: int) -> None:
+  async def run_checkpoint(self, pid: int, group: str = "default") -> None:
     start = time.monotonic()
+    if isinstance(self.restorer, CudaCheckpointRestorer):
+      try:
+        os.kill(pid, 0)
+      except OSError:
+        logger.info("process pid %s is already dead, skipping checkpoint", pid)
+        return
+
+    targets = self.discover_target_pids(pid)
+    if not targets:
+      logger.info("no CUDA target pids found for root pid %s, skipping checkpoint", pid)
+      return
+
     try:
-      await asyncio.to_thread(self.restorer.checkpoint, pid)
-      logger.info("checkpointed pid %s in %.2fs", pid, time.monotonic() - start)
+      await asyncio.to_thread(self.restorer.checkpoint, targets)
+      logger.info("checkpointed pid %s (group %s) in %.2fs", pid, group, time.monotonic() - start)
     except Exception:
+      if isinstance(self.restorer, CudaCheckpointRestorer):
+        try:
+          os.kill(pid, 0)
+          if self._is_zombie(pid):
+            logger.info("process pid %s is a zombie during checkpoint, skipping failure exit", pid)
+            return
+        except OSError:
+          logger.info("process pid %s died during checkpoint, skipping failure exit", pid)
+          return
       logger.critical(
         "checkpoint failed for pid %s after %.2fs; GPU state is unknown, killing snapshot agent", pid, time.monotonic() - start, exc_info=True
       )
       os._exit(1)
 
-  async def run_restore(self, pid: int) -> None:
+  async def run_restore(self, pid: int, group: str = "default") -> None:
     start = time.monotonic()
+    if isinstance(self.restorer, CudaCheckpointRestorer):
+      try:
+        os.kill(pid, 0)
+      except OSError:
+        logger.info("process pid %s is already dead, skipping restore", pid)
+        return
+
+    targets = self.discover_target_pids(pid)
+    if not targets:
+      logger.info("no CUDA target pids found for root pid %s, skipping restore", pid)
+      return
+
     try:
-      await asyncio.to_thread(self.restorer.restore, pid)
-      logger.info("restored pid %s in %.2fs", pid, time.monotonic() - start)
+      await asyncio.to_thread(self.restorer.restore, targets)
+      logger.info("restored pid %s (group %s) in %.2fs", pid, group, time.monotonic() - start)
     except Exception:
+      if isinstance(self.restorer, CudaCheckpointRestorer):
+        try:
+          os.kill(pid, 0)
+        except OSError:
+          logger.info("process pid %s died during restore, skipping failure exit", pid)
+          return
       logger.critical(
         "restore failed for pid %s after %.2fs; GPU state is unknown, killing snapshot agent", pid, time.monotonic() - start, exc_info=True
       )
@@ -173,10 +292,11 @@ async def dispatch(agent: SnapshotAgent, line: bytes, connection_id: int) -> dic
 
   assert pid is not None, "pid is required"
   pid = int(pid)
+  group = payload.get("group", "default")
 
   match command:
     case "REGISTER":
-      return await agent.register(pid, connection_id=connection_id)
+      return await agent.register(pid, group=group, connection_id=connection_id)
     case "ACQUIRE":
       return await agent.acquire(pid)
     case "RELEASE":
