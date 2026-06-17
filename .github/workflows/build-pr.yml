@@ -24,6 +24,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
