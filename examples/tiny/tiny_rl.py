@@ -141,6 +141,7 @@ def main(config: Config) -> None:
   finally:
     import json
     import urllib.request
+
     try:
       model_id = trainer._guaranteed_model_id()
       url = f"{config.base_url}/api/v1/delete_model"

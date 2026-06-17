@@ -47,12 +47,15 @@ tracer = trace.get_tracer("vllm.inference.worker")
 engine: Any = None
 CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
 reload_lock = asyncio.Lock()
+
+
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
 
 def get_engine_core_pid(model_id: str) -> int:
   import multiprocessing
+
   children = multiprocessing.active_children()
   print(f"[vLLM Worker] Active multiprocessing children: {[(c.name, c.pid) for c in children]}")
   for child in children:
@@ -81,6 +84,7 @@ snapshot_client: Any = None
 socket_path = os.getenv("OPEN_RL_SNAPSHOT_AGENT_SOCKET")
 if is_fft_enabled() and socket_path:
   from snapshot_agent.client import SnapshotAgentClient
+
   snapshot_client = SnapshotAgentClient(socket_path)
 
 
@@ -292,7 +296,6 @@ async def run_sampling_worker(model_id: str) -> None:
   store = get_store()
   snapshot_registered = False
   preempt_pid = None
-
 
   if snapshot_client is not None:
     try:

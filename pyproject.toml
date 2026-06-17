@@ -107,3 +107,12 @@ torchvision = [
 vllm = [
     { index = "vllm-cu129", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "scratch",
+    "scratch/**",
+]
