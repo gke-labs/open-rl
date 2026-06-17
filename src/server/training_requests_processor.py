@@ -248,14 +248,29 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     self.worker = worker
     self.model_id = model_id
     self.pid = os.getpid()
+    self.group = os.getenv("OPEN_RL_TIMESLICE_GROUP", "trainers")
     self.snapshot_client = snapshot_client
     self.snapshot_registered = False
+
+  async def exit_gracefully(self) -> None:
+    print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
+    if self.snapshot_registered:
+      try:
+        await self.snapshot_client.unregister(self.pid, group=self.group)
+        self.snapshot_registered = False
+      except Exception as exc:
+        print(f"[WORKER] Failed to unregister: {exc}")
+    try:
+      await self.snapshot_client.close()
+    except Exception:
+      pass
+    os._exit(0)
 
   async def run(self) -> None:
     print("[WORKER] Full fine-tuning training requests processor started.")
 
     try:
-      await self.snapshot_client.register(self.pid)
+      await self.snapshot_client.register(self.pid, group=self.group)
       self.snapshot_registered = True
       while True:
         try:
@@ -269,7 +284,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     finally:
       try:
         if self.snapshot_registered:
-          await self.snapshot_client.unregister(self.pid)
+          await self.snapshot_client.unregister(self.pid, group=self.group)
       finally:
         await self.snapshot_client.close()
 
@@ -279,14 +294,26 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       await asyncio.sleep(0.1)
       return
 
+    has_shutdown = False
+    training_reqs = []
+    for req in batch:
+      if req.get("request_id") == "SHUTDOWN_SENTINEL" or req.get("op") in {"shutdown", "shutdown_workers"}:
+        has_shutdown = True
+      else:
+        training_reqs.append(req)
+
     with tracer.start_as_current_span("training_requests_batch") as batch_span:
-      batch_span.set_attribute("batch_size", len(batch))
+      batch_span.set_attribute("batch_size", len(training_reqs))
       batch_span.set_attribute("model_id", self.model_id)
 
-      print(f"\n[TRAINING REQUESTS] Popped {len(batch)} requests for model: {self.model_id}")
-      async with self.snapshot_client.acquire(self.pid):
-        for request in batch:
-          await self.process_request(request, self.model_id)
+      if training_reqs:
+        print(f"\n[TRAINING REQUESTS] Popped {len(training_reqs)} requests for model: {self.model_id}")
+        async with self.snapshot_client.acquire(self.pid, group=self.group):
+          for request in training_reqs:
+            await self.process_request(request, self.model_id)
+
+    if has_shutdown:
+      await self.exit_gracefully()
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     raw_config = payload.get("full_config") or {}

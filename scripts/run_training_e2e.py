@@ -36,6 +36,7 @@ import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import threading
 import time
@@ -53,7 +54,10 @@ GSM8K_ANSWER_RE = re.compile(r"-?\d[\d,]*")
 
 @chz.chz
 class RunConfig:
-  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
+  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "tiny-fft-rl", "tiny-fft-rl-x2", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
+  sampling_backend: str = "torch"
+  trainer_gpu: str = "0"
+  sampler_gpu: str = "1"
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
   steps: int | None = None
@@ -71,9 +75,6 @@ class RunConfig:
   startup_timeout: float = 300.0
   train_token_budget: int = 65_536
   vllm_gpu_memory_utilization: float = 0.70
-  # Where OPEN_RL_TMP_DIR lives on the cluster's shared PVC; used to print the
-  # scripts/run_cluster_eval.py command when the checkpoint is not visible locally.
-  cluster_tmp_dir: str = "/mnt/shared/open-rl"
 
 
 @dataclass
@@ -85,6 +86,7 @@ class ManagedProcess:
 
 def unused_tcp_port() -> int:
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
     sock.bind(("127.0.0.1", 0))
     return int(sock.getsockname()[1])
 
@@ -133,21 +135,30 @@ def launch(
   timeout: float,
 ) -> None:
   print(f"[training-e2e] starting {name}: {' '.join(command)}")
-  with log_path.open("w", encoding="utf-8") as log_file:
-    process = subprocess.Popen(
-      command,
-      cwd=REPO_ROOT,
-      env=env,
-      stdout=log_file,
-      stderr=subprocess.STDOUT,
-      text=True,
-      start_new_session=True,
-    )
+  process = subprocess.Popen(
+    command,
+    cwd=REPO_ROOT,
+    env=env,
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+    start_new_session=True,
+  )
+
+  def stream_log():
+    with log_path.open("w", encoding="utf-8") as log_file:
+      for line in iter(process.stdout.readline, ""):
+        log_file.write(line)
+        log_file.flush()
+        print(f"[{name}] {line.rstrip()}")
+
+  t = threading.Thread(target=stream_log, daemon=True)
+  t.start()
+
   processes.append(ManagedProcess(name=name, process=process, log_path=log_path))
   try:
     wait_until(name, ready, timeout)
   except Exception:
-    print_log_tail(log_path)
     raise
 
 
@@ -181,7 +192,7 @@ def base_env(config: RunConfig) -> dict[str, str]:
     "OPEN_RL_TMP_DIR": str(open_rl_tmp_dir(config)),
     "OPEN_RL_TRAIN_TOKEN_BUDGET": str(config.train_token_budget),
     "PYTHONUNBUFFERED": "1",
-    "SAMPLING_BACKEND": "torch",
+    "SAMPLING_BACKEND": config.sampling_backend,
     "TINKER_API_KEY": os.environ.get("TINKER_API_KEY", "tml-dummy-key"),
     "TOKENIZERS_PARALLELISM": "false",
   }
@@ -196,6 +207,7 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   port = config.port or unused_tcp_port()
   base_url = f"http://{config.host}:{port}"
   env = base_env(config)
+  env["CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
 
   if "fft" in config.scenario:
     if shutil.which("redis-server") is None:
@@ -232,6 +244,25 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   else:
     env.pop("REDIS_URL", None)
     env.pop("OPEN_RL_ENABLE_FFT", None)
+
+  if env.get("SAMPLING_BACKEND") == "vllm":
+    if "fft" in config.scenario:
+      env["SAMPLER_CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
+      env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
+    else:
+      vllm_env = env.copy()
+      vllm_env["CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
+      vllm_env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
+      base_model = config.base_model
+      launch(
+        processes,
+        "vllm-worker",
+        uv_run(config.eval_uv_extra) + ["python", "-m", "server.vllm_sampler", "--model-id", base_model],
+        vllm_env,
+        log_dir / "vllm_worker.log",
+        lambda: True,
+        timeout=config.startup_timeout,
+      )
 
   launch(
     processes,
@@ -303,15 +334,15 @@ def run_example(config: RunConfig, script: list[str], defaults: dict[str, str], 
 
 
 def run_tiny(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  script = "tiny_rl" if config.scenario == "tiny-rl" else "tiny_sft"
+  script = "tiny_rl" if "rl" in config.scenario else "tiny_sft"
   defaults = {
     "base_model": config.base_model,
     "base_url": base_url,
     "log_dir": str(Path(config.log_dir) / config.scenario.replace("-", "_")),
   }
-  if config.scenario == "tiny-fft":
-    # tiny_sft's 1e-3 default is tuned for LoRA adapters; full fine-tuning all
-    # params with Adam at that rate diverges (observed loss 0.93 -> 35).
+  if "fft" in config.scenario:
+    # tiny SFT/RL default is tuned for LoRA adapters; full fine-tuning all
+    # params with Adam at that rate diverges.
     defaults["learning_rate"] = "1e-5"
   if config.steps is not None:
     defaults["steps"] = str(config.steps)
@@ -342,11 +373,11 @@ def write_gsm8k_eval_data(config: RunConfig) -> Path:
   return data_path
 
 
-def resolve_eval_model_path(output: str, must_exist: bool = True) -> str:
+def resolve_eval_model_path(output: str) -> str:
   for line in reversed(output.splitlines()):
     if line.startswith("eval_model_path="):
       path = line.removeprefix("eval_model_path=").strip()
-      if must_exist and not Path(path).exists():
+      if not Path(path).exists():
         raise RuntimeError(f"Eval model path does not exist: {path}")
       return path
   raise RuntimeError("GSM8K SFT finished without printing eval_model_path=...")
@@ -385,52 +416,37 @@ def run_gsm8k_eval(config: RunConfig, model_path: str) -> None:
   )
 
 
-def cluster_model_path(model_path: str, cluster_tmp_dir: str) -> str:
-  """Re-root a shared OpenRL artifact path onto the cluster's OPEN_RL_TMP_DIR.
-
-  gsm8k_sft prints eval_model_path using the *client's* OPEN_RL_TMP_DIR; against
-  a remote backend the checkpoint actually lives under the cluster's tmp dir on
-  the shared PVC, so swap the prefix while keeping the OpenRL artifact tail.
-  """
-  for marker in ("/sampler_full/", "/checkpoints/"):
-    if marker in model_path:
-      return cluster_tmp_dir.rstrip("/") + marker + model_path.split(marker, 1)[1]
-  return model_path
-
-
-def run_or_print_gsm8k_eval(config: RunConfig, model_path: str, label: str = "") -> None:
-  """Eval locally when the checkpoint is reachable; otherwise print the exact
-  command that runs the same eval as a job on the cluster (the checkpoint lives
-  on the cluster's PVC when the backend was remote)."""
-  if Path(model_path).exists():
-    run_gsm8k_eval(config, model_path)
-    return
-  remote_path = cluster_model_path(model_path, config.cluster_tmp_dir)
-  tag = f" {label}" if label else ""
-  print(f"[training-e2e]{tag} checkpoint {model_path} is not visible locally (remote backend at {config.base_url}).")
-  print(f"[training-e2e]{tag} run the GSM8K eval on the cluster with:")
-  print(f"    make cluster-eval EVAL_MODEL_PATH={shlex.quote(remote_path)} EVAL_EXAMPLES={config.eval_examples}")
-
-
 def run_gsm8k(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   output = run_gsm8k_train(config, base_url, watch, "fft_gsm8k")
-  run_or_print_gsm8k_eval(config, resolve_eval_model_path(output, must_exist=not config.base_url))
+  run_gsm8k_eval(config, resolve_eval_model_path(output))
 
 
 def check_snapshot_interleaving(config: RunConfig) -> None:
-  log_path = Path(config.log_dir) / "snapshot-agent.log"
   if config.base_url:
     print("[training-e2e] external backend; skipping snapshot agent interleave check")
     return
+
+  log_path = Path(config.log_dir) / "snapshot-agent.log"
+  if not log_path.exists():
+    return
   text = log_path.read_text(encoding="utf-8", errors="replace")
-  checkpointed = set(re.findall(r"checkpointed pid (\d+)", text))
-  restored = set(re.findall(r"restored pid (\d+)", text))
-  if len(checkpointed) < 2 or len(restored) < 2:
+
+  cp_t = set(re.findall(r"checkpointed pid (\d+) \(group trainers\)", text))
+  rs_t = set(re.findall(r"restored pid (\d+) \(group trainers\)", text))
+  if len(cp_t) < 2 or len(rs_t) < 2:
     raise RuntimeError(
-      f"Expected both FFT workers to round-trip through the snapshot agent, "
-      f"but saw checkpointed pids {sorted(checkpointed)} and restored pids {sorted(restored)}; see {log_path}"
+      f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {log_path}"
     )
-  print(f"[training-e2e] snapshot agent time-sliced workers: checkpointed pids {sorted(checkpointed)}, restored pids {sorted(restored)}")
+  print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
+
+  if config.sampling_backend == "vllm":
+    cp_s = set(re.findall(r"checkpointed pid (\d+) \(group samplers\)", text))
+    rs_s = set(re.findall(r"restored pid (\d+) \(group samplers\)", text))
+    if len(cp_s) < 2 or len(rs_s) < 2:
+      raise RuntimeError(
+        f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {log_path}"
+      )
+    print(f"[training-e2e] sampler snapshot agent time-sliced: checkpointed pids {sorted(cp_s)}, restored pids {sorted(rs_s)}")
 
 
 def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
@@ -458,7 +474,40 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
   for job, result in sorted(results.items()):
     assert isinstance(result, str)
     print(f"[training-e2e] evaluating {job}")
-    run_or_print_gsm8k_eval(config, resolve_eval_model_path(result, must_exist=not config.base_url), label=job)
+    run_gsm8k_eval(config, resolve_eval_model_path(result))
+
+
+def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Two concurrent FFT RL jobs against the same backend: each create_model spawns
+  its own trainer and dedicated sampler worker, and the snapshot agent time-slices them."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str) -> None:
+    try:
+      script = "tiny_rl"
+      defaults = {
+        "base_model": config.base_model,
+        "base_url": base_url,
+        "log_dir": str(Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"),
+        "learning_rate": "1e-5",
+      }
+      if config.steps is not None:
+        defaults["steps"] = str(config.steps)
+      results[job] = run_example(config, [f"examples/tiny/{script}.py"], defaults, watch=watch, prefix=f"[{job}] ")
+    except BaseException as exc:
+      results[job] = exc
+
+  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  for job, result in sorted(results.items()):
+    if isinstance(result, BaseException):
+      raise RuntimeError(f"tiny-fft-rl-x2 {job} failed") from result
+
+  check_snapshot_interleaving(config)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -522,6 +571,8 @@ def main() -> None:
       run_gsm8k_x2(config, base_url, processes)
     elif config.scenario == "lora-textsql":
       run_textsql(config, base_url, processes)
+    elif config.scenario == "tiny-fft-rl-x2":
+      run_tiny_fft_rl_x2(config, base_url, processes)
     else:
       run_tiny(config, base_url, processes)
   finally:
