@@ -7,12 +7,22 @@ the launched-worker state, and both launchers are idempotent per model_id.
 """
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Protocol
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
+
+
+def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
+  if shutil.which("uv"):
+    extra_args = []
+    for e in extras:
+      extra_args.extend(["--extra", e])
+    return ["uv", "run", *extra_args, "python", "-u", "-m", module, "--model-id", model_id]
+  return [sys.executable, "-u", "-m", module, "--model-id", model_id]
 
 
 class WorkerManager(Protocol):
@@ -56,7 +66,7 @@ class FFTWorkerManager:
 
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
     self.train_processes[model_id] = subprocess.Popen(
-      [sys.executable, "-u", "-m", "server.training_requests_processor", "--model-id", model_id],
+      _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
       env=env,
     )
@@ -80,7 +90,7 @@ class FFTWorkerManager:
         sampler_env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = sampler_socket
 
       self.sampler_processes[model_id] = subprocess.Popen(
-        [sys.executable, "-u", "-m", "server.vllm_sampler", "--model-id", model_id],
+        _py_cmd(["gpu", "vllm"], "server.vllm_sampler", model_id),
         cwd=self.project_dir,
         env=sampler_env,
       )

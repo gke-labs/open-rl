@@ -53,33 +53,6 @@ def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
 
-def get_engine_core_pid(model_id: str) -> int:
-  import multiprocessing
-
-  children = multiprocessing.active_children()
-  print(f"[vLLM Worker] Active multiprocessing children: {[(c.name, c.pid) for c in children]}")
-  for child in children:
-    if child.pid is not None:
-      return child.pid
-
-  parent_pid = os.getpid()
-  try:
-    out = subprocess.check_output(["ps", "-o", "pid,command", "--no-headers", "--ppid", str(parent_pid)])
-    lines = out.decode().splitlines()
-    for line in lines:
-      parts = line.strip().split(None, 1)
-      if len(parts) >= 2:
-        child_pid = int(parts[0])
-        cmd = parts[1]
-        if "multiprocessing" in cmd or "EngineCore" in cmd or "vllm" in cmd:
-          return child_pid
-    if lines:
-      return int(lines[0].strip().split()[0])
-  except Exception as e:
-    print(f"[vLLM Worker] Warning: failed to find engine child pid: {e}")
-  return parent_pid
-
-
 snapshot_client: Any = None
 socket_path = os.getenv("OPEN_RL_SNAPSHOT_AGENT_SOCKET")
 if is_fft_enabled() and socket_path:
@@ -295,39 +268,24 @@ async def run_sampling_worker(model_id: str) -> None:
 
   store = get_store()
   snapshot_registered = False
-  preempt_pid = None
+  worker_pid = os.getpid()
 
   if snapshot_client is not None:
     try:
-      parent_pid = os.getpid()
-      print(f"[vLLM Worker] Registering parent PID {parent_pid} for initialization lock...")
-      await snapshot_client.register(parent_pid)
-      async with snapshot_client.acquire(parent_pid):
+      print(f"[vLLM Worker] Registering parent PID {worker_pid} for initialization lock...")
+      await snapshot_client.register(worker_pid)
+      snapshot_registered = True
+      async with snapshot_client.acquire(worker_pid):
         print("[vLLM Worker] Initializing vLLM engine under parent lock...")
         init_engine()
-        preempt_pid = get_engine_core_pid(model_id)
-        print(f"[vLLM Worker] Engine initialized. Target child PID: {preempt_pid}")
-        await snapshot_client.register(preempt_pid)
-        snapshot_registered = True
-
-        # Transfer lock from parent_pid to preempt_pid before releasing the acquire context
-        print(f"[vLLM Worker] Transferring lock to child PID {preempt_pid}...")
-        await snapshot_client.transfer_lock(parent_pid, preempt_pid)
-
-      await snapshot_client.unregister(parent_pid)
-
-      # Now release the lock on preempt_pid (which was transferred to it) to checkpoint it and free VRAM
-      print(f"[vLLM Worker] Releasing lock on child PID {preempt_pid} to trigger initial checkpoint...")
-      await snapshot_client.request({"command": "RELEASE", "pid": preempt_pid})
+        print("[vLLM Worker] Engine initialized successfully.")
     except Exception as exc:
       print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
       traceback.print_exc()
-      if preempt_pid is None:
+      if engine is None:
         init_engine()
-        preempt_pid = get_engine_core_pid(model_id)
   else:
     init_engine()
-    preempt_pid = get_engine_core_pid(model_id)
 
   if snapshot_client is not None:
     import signal
@@ -337,7 +295,7 @@ async def run_sampling_worker(model_id: str) -> None:
       nonlocal snapshot_registered
       if snapshot_registered:
         try:
-          await snapshot_client.unregister(preempt_pid)
+          await snapshot_client.unregister(worker_pid)
           snapshot_registered = False
         except Exception as exc:
           print(f"[vLLM Worker] Failed to unregister: {exc}")
@@ -381,7 +339,7 @@ async def run_sampling_worker(model_id: str) -> None:
 
         if sampling_reqs:
           if snapshot_client is not None:
-            async with snapshot_client.acquire(preempt_pid):
+            async with snapshot_client.acquire(worker_pid):
               tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
               await asyncio.gather(*tasks)
               if has_shutdown:
@@ -407,7 +365,7 @@ async def run_sampling_worker(model_id: str) -> None:
     if snapshot_client is not None:
       try:
         if snapshot_registered:
-          await snapshot_client.unregister(preempt_pid)
+          await snapshot_client.unregister(worker_pid)
       finally:
         await snapshot_client.close()
         os._exit(0)

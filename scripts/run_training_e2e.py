@@ -451,7 +451,7 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed pids {sorted(cp_t)}, restored pids {sorted(rs_t)}")
 
   sampler_log = Path(config.log_dir) / "snapshot-agent-sampler.log"
-  if sampler_log.exists():
+  if config.sampling_backend == "vllm" and sampler_log.exists():
     text_s = sampler_log.read_text(encoding="utf-8", errors="replace")
     cp_s = set(re.findall(r"checkpointed pid (\d+)", text_s))
     rs_s = set(re.findall(r"restored pid (\d+)", text_s))

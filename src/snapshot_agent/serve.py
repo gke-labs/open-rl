@@ -21,7 +21,6 @@ class ProcessRegistration:
   connection_id: int | None
   checkpointed: bool = False
   failed: bool = False
-  transferred_lock: bool = False
 
 
 class SnapshotAgent:
@@ -38,6 +37,43 @@ class SnapshotAgent:
       return "Z" in output
     except Exception:
       return False
+
+  def _has_cuda(self, pid: int) -> bool:
+    try:
+      maps_file = Path(f"/proc/{pid}/maps")
+      if not maps_file.exists():
+        return True
+      content = maps_file.read_text(errors="ignore")
+      return "libcuda" in content or "nvidia" in content
+    except Exception:
+      return True
+
+  def _get_descendants(self, root_pid: int) -> list[int]:
+    try:
+      out = subprocess.check_output(["ps", "-e", "-o", "pid=,ppid="], text=True)
+      children: dict[int, list[int]] = {}
+      for line in out.splitlines():
+        parts = line.split()
+        if len(parts) == 2:
+          p, pp = int(parts[0]), int(parts[1])
+          children.setdefault(pp, []).append(p)
+
+      tree = []
+      queue = deque(children.get(root_pid, []))
+      while queue:
+        curr = queue.popleft()
+        tree.append(curr)
+        queue.extend(children.get(curr, []))
+      return tree
+    except Exception:
+      return []
+
+  def discover_target_pids(self, root_pid: int) -> int | list[int]:
+    if not isinstance(self.restorer, CudaCheckpointRestorer):
+      return root_pid
+    candidates = [root_pid, *self._get_descendants(root_pid)]
+    cuda_pids = [p for p in candidates if self._has_cuda(p)]
+    return sorted(set(cuda_pids)) if cuda_pids else []
 
   def clear_process(self, pid: int) -> None:
     if pid in self.waiting_pids:
@@ -97,27 +133,11 @@ class SnapshotAgent:
       if process is None:
         return {"ok": False, "error": f"pid {pid} is not registered"}
       if self.active_pid != pid:
-        if process.transferred_lock:
-          process.transferred_lock = False
-          return {"ok": True}
         return {"ok": False, "error": f"pid {pid} does not hold an active acquire"}
 
       await self.run_checkpoint(pid)
       process.checkpointed = True
       self.clear_process(pid)
-      self.condition.notify_all()
-      return {"ok": True}
-
-  async def transfer_lock(self, from_pid: int, to_pid: int) -> dict[str, Any]:
-    async with self.condition:
-      if self.active_pid != from_pid:
-        return {"ok": False, "error": f"from_pid {from_pid} does not hold an active acquire"}
-      if to_pid not in self.processes:
-        return {"ok": False, "error": f"to_pid {to_pid} is not registered"}
-
-      logger.info("Transferring active lock from pid %s to pid %s", from_pid, to_pid)
-      self.processes[from_pid].transferred_lock = True
-      self.active_pid = to_pid
       self.condition.notify_all()
       return {"ok": True}
 
@@ -151,8 +171,13 @@ class SnapshotAgent:
         logger.info("process pid %s is already dead, skipping checkpoint", pid)
         return
 
+    targets = self.discover_target_pids(pid)
+    if not targets:
+      logger.info("no CUDA target pids found for root pid %s, skipping checkpoint", pid)
+      return
+
     try:
-      await asyncio.to_thread(self.restorer.checkpoint, pid)
+      await asyncio.to_thread(self.restorer.checkpoint, targets)
       logger.info("checkpointed pid %s in %.2fs", pid, time.monotonic() - start)
     except Exception:
       if isinstance(self.restorer, CudaCheckpointRestorer):
@@ -178,8 +203,13 @@ class SnapshotAgent:
         logger.info("process pid %s is already dead, skipping restore", pid)
         return
 
+    targets = self.discover_target_pids(pid)
+    if not targets:
+      logger.info("no CUDA target pids found for root pid %s, skipping restore", pid)
+      return
+
     try:
-      await asyncio.to_thread(self.restorer.restore, pid)
+      await asyncio.to_thread(self.restorer.restore, targets)
       logger.info("restored pid %s in %.2fs", pid, time.monotonic() - start)
     except Exception:
       if isinstance(self.restorer, CudaCheckpointRestorer):
@@ -235,11 +265,6 @@ async def dispatch(agent: SnapshotAgent, line: bytes, connection_id: int) -> dic
       return await agent.acquire(pid)
     case "RELEASE":
       return await agent.release(pid)
-    case "TRANSFER_LOCK":
-      to_pid = payload.get("to_pid")
-      if to_pid is None:
-        return {"ok": False, "error": "to_pid is required for TRANSFER_LOCK"}
-      return await agent.transfer_lock(pid, int(to_pid))
     case "UNREGISTER":
       return await agent.unregister(pid)
     case _:
