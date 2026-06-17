@@ -28,6 +28,12 @@ class WorkerManagerStub:
     if self.error is not None:
       raise self.error
 
+  def launch_trainer(self, model_id: str) -> None:
+    self.launch(model_id)
+
+  def launch_sampler(self, model_id: str) -> None:
+    self.launch(model_id)
+
   def shutdown(self, model_id: str) -> None:
     self.shutdown_model_ids.append(model_id)
 

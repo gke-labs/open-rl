@@ -10,9 +10,6 @@ from typing import Any
 import redis.asyncio as redis
 from redis.exceptions import TimeoutError as RedisTimeoutError
 
-# How long a resolved request result stays available to retrieve_future polling.
-FUTURE_TTL_S = int(os.getenv("OPEN_RL_FUTURE_TTL_S", "300"))
-
 
 class RequestStore(ABC):
   @abstractmethod
@@ -21,13 +18,33 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
+  async def put_worker_launch_request(self, req_data: dict[str, Any]) -> None:
+    """Push a create-model request onto the queue that starts dedicated FFT workers."""
+    pass
+
+  @abstractmethod
   async def get_requests(self) -> list[dict[str, Any]]:
     """Block until at least 1 request is available, then return all currently queued requests."""
     pass
 
   @abstractmethod
+  async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
+    """Block until at least 1 worker-launch request is available, then drain that queue."""
+    pass
+
+  @abstractmethod
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     """Block until this model has at least 1 request, then return all queued requests for it."""
+    pass
+
+  @abstractmethod
+  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
+    """Push a sampling request into the queue for its model."""
+    pass
+
+  @abstractmethod
+  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
+    """Block until this model has at least 1 sampling request, then return all queued requests for it."""
     pass
 
   @abstractmethod
@@ -64,6 +81,9 @@ class InMemoryStore(RequestStore):
         self.active_tenants.append(model_id)
         self.active_tenants_cv.notify()
 
+  async def put_worker_launch_request(self, req_data: dict[str, Any]) -> None:
+    raise RuntimeError("Worker launch requests require REDIS_URL; in-memory queues cannot be shared across processes")
+
   async def get_requests(self) -> list[dict[str, Any]]:
     async with self.active_tenants_cv:
       # Block until at least one tenant is active
@@ -87,8 +107,17 @@ class InMemoryStore(RequestStore):
 
       return batch
 
+  async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
+    raise RuntimeError("Worker launch requests require REDIS_URL; in-memory queues cannot be shared across processes")
+
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     raise RuntimeError("Per-model full fine-tuning workers require REDIS_URL; in-memory queues cannot be shared across processes")
+
+  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
+    raise RuntimeError("Sampling queues require REDIS_URL")
+
+  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
+    raise RuntimeError("Sampling queues require REDIS_URL")
 
   async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
     self.futures_store[req_id] = result
@@ -119,6 +148,7 @@ class RedisStore(RequestStore):
     self.active_list = "open_rl:active_tenants"
     # We also keep a set to guarantee O(1) deduplication before RPushing
     self.active_set = "open_rl:active_tenants_set"
+    self.worker_launch_queue = "open_rl:worker_launch_queue"
 
   async def put_request(self, req_data: dict[str, Any]) -> None:
     model_id = req_data.get("model_id", "default")
@@ -132,6 +162,9 @@ class RedisStore(RequestStore):
     is_new = await self.redis.sadd(self.active_set, model_id)
     if is_new == 1:
       await self.redis.rpush(self.active_list, model_id)
+
+  async def put_worker_launch_request(self, req_data: dict[str, Any]) -> None:
+    await self.redis.rpush(self.worker_launch_queue, json.dumps(req_data))
 
   async def get_requests(self) -> list[dict[str, Any]]:
     # BRPOPLPUSH blocks until an item is available.
@@ -170,6 +203,25 @@ class RedisStore(RequestStore):
 
     return batch
 
+  async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
+    try:
+      result = await self.redis.blpop(self.worker_launch_queue, timeout=5)
+    except RedisTimeoutError:
+      return []
+
+    if not result:
+      return []
+
+    batch = [json.loads(result[1])]
+
+    while True:
+      item = await self.redis.lpop(self.worker_launch_queue)
+      if not item:
+        break
+      batch.append(json.loads(item))
+
+    return batch
+
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     queue_key = f"open_rl:queue:{model_id}"
     try:
@@ -195,36 +247,60 @@ class RedisStore(RequestStore):
 
     return batch
 
+  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
+    model_id = req_data.get("model_id", "default")
+    queue_key = f"open_rl:sampler_queue:{model_id}"
+    await self.redis.rpush(queue_key, json.dumps(req_data))
+
+  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
+    queue_key = f"open_rl:sampler_queue:{model_id}"
+    try:
+      result = await self.redis.blpop(queue_key, timeout=5)
+    except RedisTimeoutError:
+      return []
+
+    if not result:
+      return []
+
+    batch = [json.loads(result[1])]
+
+    while True:
+      item = await self.redis.lpop(queue_key)
+      if not item:
+        break
+      batch.append(json.loads(item))
+
+    return batch
+
   async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
     if result.get("status") == "pending":
       return
 
-    # The value key is the source of truth; the publish only wakes long-pollers.
-    # Late subscribers and lost messages still find the result with a plain GET.
-    await self.redis.set(f"open_rl:future:{req_id}", json.dumps(result), ex=FUTURE_TTL_S)
-    await self.redis.publish(f"open_rl:future_done:{req_id}", "1")
+    key = f"open_rl:future:{req_id}"
+    await self.redis.rpush(key, json.dumps(result))
+    await self.redis.expire(key, 300)
 
   async def get_future(self, req_id: str, timeout: float) -> dict[str, Any] | None:
     key = f"open_rl:future:{req_id}"
-    if (value := await self.redis.get(key)) is not None:
-      return json.loads(value)
 
-    async with self.redis.pubsub() as pubsub:
-      await pubsub.subscribe(f"open_rl:future_done:{req_id}")
-      # The result may have landed between the GET above and the subscribe.
-      if (value := await self.redis.get(key)) is not None:
-        return json.loads(value)
-      # Wait in slices shorter than the client's 5s default socket timeout, and
-      # re-check the key each slice in case the publish was missed entirely.
-      deadline = time.monotonic() + timeout
-      while (remaining := deadline - time.monotonic()) > 0:
-        try:
-          await pubsub.get_message(ignore_subscribe_messages=True, timeout=min(3.0, remaining))
-        except RedisTimeoutError:
-          pass
-        if (value := await self.redis.get(key)) is not None:
-          return json.loads(value)
-    return {"type": "try_again", "request_id": req_id, "queue_state": "active"}
+    # redis-py 8 defaults the client socket timeout to 5s, so a single BLPOP can
+    # never block for the full long-poll window. Poll in slices shorter than the
+    # socket timeout until the deadline so clients only see try_again when the
+    # request genuinely outlived the window.
+    deadline = time.monotonic() + timeout
+    while True:
+      remaining = deadline - time.monotonic()
+      if remaining <= 0:
+        return {"type": "try_again", "request_id": req_id, "queue_state": "active"}
+      try:
+        result = await self.redis.blpop(key, timeout=min(3, max(1, int(remaining))))
+      except RedisTimeoutError:
+        result = None
+      if result:
+        payload = json.loads(result[1])
+        await self.redis.rpush(key, result[1])
+        await self.redis.expire(key, 300)
+        return payload
 
 
 # Global singleton factory

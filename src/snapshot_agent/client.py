@@ -57,6 +57,19 @@ class SnapshotAgentClient:
     finally:
       await self.request({"command": "RELEASE", "pid": pid})
 
+  @asynccontextmanager
+  async def acquire_transferred(self, pid: int) -> AsyncIterator[None]:
+    try:
+      yield
+    finally:
+      await self.request({"command": "RELEASE", "pid": pid})
+
+  async def release(self, pid: int) -> dict[str, Any]:
+    return await self.request({"command": "RELEASE", "pid": pid})
+
+  async def transfer_lock(self, from_pid: int, to_pid: int) -> dict[str, Any]:
+    return await self.request({"command": "TRANSFER_LOCK", "pid": from_pid, "to_pid": to_pid})
+
   async def request(self, payload: dict[str, Any]) -> dict[str, Any]:
     await self.connect()
     assert self.reader is not None

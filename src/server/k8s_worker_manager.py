@@ -58,8 +58,18 @@ class KubernetesFFTWorkerManager:
     self.core_api = core_api
 
   def launch(self, model_id: str) -> None:
+    self.launch_trainer(model_id)
+
+  def launch_trainer(self, model_id: str) -> None:
+    self._launch_pod(model_id, role="trainer")
+
+  def launch_sampler(self, model_id: str) -> None:
+    self._launch_pod(model_id, role="sampler")
+
+  def _launch_pod(self, model_id: str, role: str) -> None:
     job_id = sanitize_job_id(model_id)
-    pod_name = POD_NAME_PREFIX + job_id
+    prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
+    pod_name = prefix + job_id
 
     existing = self.read_pod(pod_name)
     if existing is not None:
@@ -68,41 +78,43 @@ class KubernetesFFTWorkerManager:
       self.delete_pod_and_wait(pod_name)
 
     try:
-      self.core_api.create_namespaced_pod(namespace=self.namespace, body=self.render_pod(pod_name, model_id, job_id))
+      self.core_api.create_namespaced_pod(namespace=self.namespace, body=self.render_pod(pod_name, model_id, job_id, role=role))
     except Exception as exc:
-      # Another gateway replica created it between our read and create.
       if getattr(exc, "status", None) != 409:
         raise
 
   def shutdown(self, model_id: str) -> None:
-    pod_name = POD_NAME_PREFIX + sanitize_job_id(model_id)
-    try:
-      self.core_api.delete_namespaced_pod(name=pod_name, namespace=self.namespace)
-    except Exception as exc:
-      if getattr(exc, "status", None) != 404:
-        raise
+    job_id = sanitize_job_id(model_id)
+    for prefix in ("open-rl-trainer-", "open-rl-sampler-"):
+      pod_name = prefix + job_id
+      try:
+        self.core_api.delete_namespaced_pod(name=pod_name, namespace=self.namespace)
+      except Exception as exc:
+        if getattr(exc, "status", None) != 404:
+          raise
 
   def shutdown_all(self) -> None:
-    # Trainer worker pods deliberately outlive gateway restarts; Kubernetes owns them.
     pass
 
-  def render_pod(self, pod_name: str, model_id: str, job_id: str) -> dict[str, Any]:
+  def render_pod(self, pod_name: str, model_id: str, job_id: str, role: str = "trainer") -> dict[str, Any]:
     pod = copy.deepcopy(self.pod_template)
     metadata = pod.setdefault("metadata", {})
     metadata["name"] = pod_name
+    app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
+    group_val = self.group_id if role == "trainer" else "samplers"
     metadata.setdefault("labels", {}).update(
       {
-        "app": "open-rl-trainer-worker",
+        "app": app_label,
         "snapshot-agent": "true",
-        "timeslice.io/group": self.group_id,
+        "timeslice.io/group": group_val,
         "timeslice.io/job-id": job_id,
       }
     )
 
     container = pod["spec"]["containers"][0]
+    if role == "sampler":
+      container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
     container.setdefault("args", []).extend(["--model-id", model_id])
-    # Keep the env value aligned with the label so current and future
-    # coordination clients use the same sanitized job id.
     container.setdefault("env", []).append({"name": "OPEN_RL_TIME_SLICE_JOB_ID", "value": job_id})
     return pod
 

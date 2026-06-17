@@ -1,14 +1,13 @@
 # This file contains the vLLM worker implementation for high-throughput inference in Open-RL.
 
+import argparse
 import asyncio
 import hashlib
 import os
+import subprocess
 import sys
-from contextlib import asynccontextmanager
+import traceback
 from typing import Any
-
-import uvicorn
-from fastapi import FastAPI, Request
 
 try:
   from vllm import SamplingParams
@@ -26,8 +25,7 @@ except ImportError:
   RequestOutputKind = None
   VLLM_AVAILABLE = False
 
-from opentelemetry import trace
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
@@ -47,14 +45,50 @@ if os.getenv("ENABLE_GCP_TRACE", "0") == "1":
 tracer = trace.get_tracer("vllm.inference.worker")
 
 engine: Any = None
+CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
+reload_lock = asyncio.Lock()
+def is_fft_enabled() -> bool:
+  return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
+def get_engine_core_pid(model_id: str) -> int:
+  import multiprocessing
+  children = multiprocessing.active_children()
+  print(f"[vLLM Worker] Active multiprocessing children: {[(c.name, c.pid) for c in children]}")
+  for child in children:
+    if child.pid is not None:
+      return child.pid
+
+  parent_pid = os.getpid()
+  try:
+    out = subprocess.check_output(["ps", "-o", "pid,command", "--no-headers", "--ppid", str(parent_pid)])
+    lines = out.decode().splitlines()
+    for line in lines:
+      parts = line.strip().split(None, 1)
+      if len(parts) >= 2:
+        child_pid = int(parts[0])
+        cmd = parts[1]
+        if "multiprocessing" in cmd or "EngineCore" in cmd or "vllm" in cmd:
+          return child_pid
+    if lines:
+      return int(lines[0].strip().split()[0])
+  except Exception as e:
+    print(f"[vLLM Worker] Warning: failed to find engine child pid: {e}")
+  return parent_pid
+
+
+snapshot_client: Any = None
+socket_path = os.getenv("OPEN_RL_SNAPSHOT_AGENT_SOCKET")
+if is_fft_enabled() and socket_path:
+  from snapshot_agent.client import SnapshotAgentClient
+  snapshot_client = SnapshotAgentClient(socket_path)
+
+
+def init_engine():
   global engine
 
   print("\n" + "=" * 50)
-  print("        Open-RL vLLM Inference Engine")
+  print("        Open-RL vLLM Inference Engine (Queue Mode)")
   print("=" * 50)
   cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
@@ -63,9 +97,9 @@ async def lifespan(app: FastAPI):
 
   mock_vllm = os.getenv("MOCK_VLLM", "0") == "1"
   if mock_vllm or not VLLM_AVAILABLE:
-    print("[vLLM Subprocess] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
+    print("[vLLM Worker] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
   elif not model_name:
-    print("[vLLM Subprocess] Error: BASE_MODEL environment variable is required.")
+    print("[vLLM Worker] Error: BASE_MODEL environment variable is required.")
     sys.exit(1)
   else:
     hf_overrides: dict = {}
@@ -75,53 +109,40 @@ async def lifespan(app: FastAPI):
 
     engine_kwargs = {
       "model": model_name,
-      "enable_lora": True,
-      "max_loras": 8,
-      "max_lora_rank": 64,
+      "enable_sleep_mode": is_fft_enabled(),
+      "enable_lora": not is_fft_enabled(),
       "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
       "max_num_seqs": int(os.getenv("VLLM_MAX_NUM_SEQS", "64")),
       "gpu_memory_utilization": float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.90")),
       "enable_prefix_caching": False,
       "enforce_eager": os.getenv("VLLM_ENFORCE_EAGER", "0") == "1",
     }
+    if not is_fft_enabled():
+      engine_kwargs["max_loras"] = 8
+      engine_kwargs["max_lora_rank"] = 64
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
     engine_args = AsyncEngineArgs(**engine_kwargs)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
 
-    print("[vLLM Subprocess] Engine initialized and ready to serve IPC requests.")
-
-  yield
+    print("[vLLM Worker] Engine initialized successfully.")
 
 
-app = FastAPI(title="Open-RL vLLM Subprocess", lifespan=lifespan)
-FastAPIInstrumentor.instrument_app(app, excluded_urls="/healthz")
-
-
-@app.get("/healthz")
-async def healthz():
-  return {"status": "ok", "mock": engine is None}
-
-
-@app.post("/generate")
-async def generate(req: Request):
+async def run_generation_backend(
+  request_id: str,
+  prompt_token_ids: list[int],
+  max_tokens: int,
+  temperature: float,
+  stop: list[int] | None,
+  top_p: float,
+  top_k: int,
+  num_samples: int,
+  lora_id: str | None,
+  lora_path: str | None,
+  include_prompt_logprobs: bool,
+) -> dict[str, Any]:
   try:
-    data = await req.json()
-
-    request_id = data.get("request_id")
-    prompt_token_ids = data.get("prompt_token_ids")
-    max_tokens = data.get("max_tokens", 20)
-    temperature = data.get("temperature", 1.0)
-    stop = data.get("stop", None)
-    top_p = data.get("top_p", 1.0)
-    top_k = data.get("top_k", -1)
-    num_samples = data.get("num_samples", 1)
-
-    lora_id = data.get("lora_id", None)
-    lora_path = data.get("lora_path", None)
-    include_prompt_logprobs = data.get("include_prompt_logprobs", False)
-
     current_engine = engine
     if current_engine is None:
       # Mocking for local Mac dev
@@ -191,14 +212,214 @@ async def generate(req: Request):
           else:
             prompt_logprobs_out.append(None)
 
-    return {"sequences": sequences_out, "prompt_logprobs": prompt_logprobs_out}
+    res = {"sequences": sequences_out}
+    if prompt_logprobs_out is not None:
+      res["prompt_logprobs"] = prompt_logprobs_out
+    return res
   except Exception as e:
-    import traceback
-
     traceback.print_exc()
-    # Return explicit 500 so upstream client logs it
     return {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(e)}"}
 
 
+async def process_sampling_request(req: dict, store: Any) -> None:
+  global engine
+  global CURRENT_LOADED_SAMPLER_WEIGHTS
+
+  request_id = req["request_id"]
+  trace_context = req.get("trace_context", {})
+
+  parent_span = propagate.extract(trace_context)
+  with tracer.start_as_current_span("process_sampling_request", context=parent_span):
+    try:
+      # 1. Manage weights reloading
+      weights_path = req.get("weights_path")
+      if is_fft_enabled() and weights_path:
+        async with reload_lock:
+          if weights_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
+            print(f"[vLLM Worker] Weight change detected. Current: {CURRENT_LOADED_SAMPLER_WEIGHTS}, Target: {weights_path}")
+            if engine is not None:
+              print("[vLLM Worker] Triggering sleep level 2...")
+              await engine.sleep(level=2)
+              print("[vLLM Worker] Waking up weights...")
+              await engine.wake_up(tags=["weights"])
+              print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
+              await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
+              print("[vLLM Worker] Waking up KV cache...")
+              await engine.wake_up(tags=["kv_cache"])
+            CURRENT_LOADED_SAMPLER_WEIGHTS = weights_path
+            print("[vLLM Worker] Weights reload completed successfully!")
+
+      # 2. Run inference
+      prompt_token_ids = req.get("prompt_token_ids", [])
+      max_tokens = req.get("max_tokens", 20)
+      temperature = req.get("temperature", 1.0)
+      stop = req.get("stop")
+      top_p = req.get("top_p", 1.0)
+      top_k = req.get("top_k", -1)
+      num_samples = req.get("num_samples", 1)
+      lora_id = req.get("lora_id")
+      lora_path = req.get("lora_path")
+      include_prompt_logprobs = req.get("include_prompt_logprobs", False)
+
+      result = await run_generation_backend(
+        request_id=request_id,
+        prompt_token_ids=prompt_token_ids,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        stop=stop,
+        top_p=top_p,
+        top_k=top_k,
+        num_samples=num_samples,
+        lora_id=lora_id,
+        lora_path=lora_path,
+        include_prompt_logprobs=include_prompt_logprobs,
+      )
+
+      if result.get("type") != "RequestFailedResponse":
+        result["type"] = "sample"
+
+      await store.set_future(request_id, result)
+    except Exception as exc:
+      traceback.print_exc()
+      await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
+
+
+async def run_sampling_worker(model_id: str) -> None:
+  global engine
+  global CURRENT_LOADED_SAMPLER_WEIGHTS
+  from server.store import get_store
+
+  store = get_store()
+  snapshot_registered = False
+  preempt_pid = None
+
+
+  if snapshot_client is not None:
+    try:
+      parent_pid = os.getpid()
+      print(f"[vLLM Worker] Registering parent PID {parent_pid} for initialization lock...")
+      await snapshot_client.register(parent_pid)
+      async with snapshot_client.acquire(parent_pid):
+        print("[vLLM Worker] Initializing vLLM engine under parent lock...")
+        init_engine()
+        preempt_pid = get_engine_core_pid(model_id)
+        print(f"[vLLM Worker] Engine initialized. Target child PID: {preempt_pid}")
+        await snapshot_client.register(preempt_pid)
+        snapshot_registered = True
+
+        # Transfer lock from parent_pid to preempt_pid before releasing the acquire context
+        print(f"[vLLM Worker] Transferring lock to child PID {preempt_pid}...")
+        await snapshot_client.transfer_lock(parent_pid, preempt_pid)
+
+      await snapshot_client.unregister(parent_pid)
+
+      # Now release the lock on preempt_pid (which was transferred to it) to checkpoint it and free VRAM
+      print(f"[vLLM Worker] Releasing lock on child PID {preempt_pid} to trigger initial checkpoint...")
+      await snapshot_client.request({"command": "RELEASE", "pid": preempt_pid})
+    except Exception as exc:
+      print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
+      traceback.print_exc()
+      if preempt_pid is None:
+        init_engine()
+        preempt_pid = get_engine_core_pid(model_id)
+  else:
+    init_engine()
+    preempt_pid = get_engine_core_pid(model_id)
+
+  if snapshot_client is not None:
+    import signal
+
+    async def exit_gracefully() -> None:
+      print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
+      nonlocal snapshot_registered
+      if snapshot_registered:
+        try:
+          await snapshot_client.unregister(preempt_pid)
+          snapshot_registered = False
+        except Exception as exc:
+          print(f"[vLLM Worker] Failed to unregister: {exc}")
+      try:
+        await snapshot_client.close()
+      except Exception:
+        pass
+      os._exit(0)
+
+    async def handle_shutdown():
+      print(f"[vLLM Worker] Received termination signal, shutting down model {model_id} sampler worker...")
+      await exit_gracefully()
+
+    try:
+      loop = asyncio.get_running_loop()
+      for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda: asyncio.create_task(handle_shutdown()))
+    except NotImplementedError:
+      pass
+
+  if hasattr(store, "redis"):
+    await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
+    await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
+
+  print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
+  try:
+    while True:
+      try:
+        batch = await store.get_sampling_requests_for_model(model_id)
+        if not batch:
+          await asyncio.sleep(0.05)
+          continue
+
+        has_shutdown = False
+        sampling_reqs = []
+        for req in batch:
+          if req.get("request_id") == "SHUTDOWN_SENTINEL":
+            has_shutdown = True
+          else:
+            sampling_reqs.append(req)
+
+        if sampling_reqs:
+          if snapshot_client is not None:
+            async with snapshot_client.acquire(preempt_pid):
+              tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
+              await asyncio.gather(*tasks)
+              if has_shutdown:
+                await exit_gracefully()
+              if engine is not None:
+                print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
+                await engine.sleep(level=2)
+                CURRENT_LOADED_SAMPLER_WEIGHTS = None
+          else:
+            tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
+            await asyncio.gather(*tasks)
+
+        if has_shutdown:
+          print("[vLLM Worker] Shutdown sentinel popped from queue. Initiating clean exit...")
+          await exit_gracefully()
+      except asyncio.CancelledError:
+        break
+      except Exception as exc:
+        print(f"Error in sampling worker loop: {exc}")
+        traceback.print_exc()
+        await asyncio.sleep(1)
+  finally:
+    if snapshot_client is not None:
+      try:
+        if snapshot_registered:
+          await snapshot_client.unregister(preempt_pid)
+      finally:
+        await snapshot_client.close()
+        os._exit(0)
+
+
+def main() -> None:
+  parser = argparse.ArgumentParser(description="Open-RL vLLM Pull-Mode Sampler Worker")
+  parser.add_argument("--model-id", type=str, required=True, help="The model ID of the RL job to process requests for")
+  args = parser.parse_args()
+
+  try:
+    asyncio.run(run_sampling_worker(args.model_id))
+  except KeyboardInterrupt:
+    print("[vLLM Worker] Exiting via KeyboardInterrupt.")
+
+
 if __name__ == "__main__":
-  uvicorn.run(app, host="0.0.0.0", port=8001)
+  main()
