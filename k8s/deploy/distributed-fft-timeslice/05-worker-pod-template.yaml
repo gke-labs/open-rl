@@ -57,11 +57,11 @@ data:
           claims:
           - name: trainer-gpu
           limits:
-            memory: "24Gi"
+            memory: "20Gi"
           requests:
             # Sized generously for model load and optimizer state; increase this
             # if a future coordination layer checkpoints GPU state to host RAM.
-            memory: "24Gi"
+            memory: "16Gi"
             cpu: "2"
         volumeMounts:
         - name: shared-storage
