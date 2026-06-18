@@ -26,7 +26,7 @@ data:
       hostPID: true
       containers:
       - name: trainer-worker
-        image: ghcr.io/gke-labs/open-rl/server:latest
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
         imagePullPolicy: Always
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:

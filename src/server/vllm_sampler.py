@@ -287,23 +287,24 @@ async def run_sampling_worker(model_id: str) -> None:
   else:
     init_engine()
 
-  if snapshot_client is not None:
-    import signal
-
-    async def exit_gracefully() -> None:
-      print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
-      nonlocal snapshot_registered
-      if snapshot_registered:
-        try:
-          await snapshot_client.unregister(worker_pid)
-          snapshot_registered = False
-        except Exception as exc:
-          print(f"[vLLM Worker] Failed to unregister: {exc}")
+  async def exit_gracefully() -> None:
+    print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
+    nonlocal snapshot_registered
+    if snapshot_registered and snapshot_client is not None:
+      try:
+        await snapshot_client.unregister(worker_pid)
+        snapshot_registered = False
+      except Exception as exc:
+        print(f"[vLLM Worker] Failed to unregister: {exc}")
+    if snapshot_client is not None:
       try:
         await snapshot_client.close()
       except Exception:
         pass
-      os._exit(0)
+    os._exit(0)
+
+  if snapshot_client is not None:
+    import signal
 
     async def handle_shutdown():
       print(f"[vLLM Worker] Received termination signal, shutting down model {model_id} sampler worker...")

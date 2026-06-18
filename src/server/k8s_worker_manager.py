@@ -119,6 +119,9 @@ class KubernetesFFTWorkerManager:
     )
 
     container = pod["spec"]["containers"][0]
+    worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
+    if worker_image:
+      container["image"] = worker_image
     if role == "sampler":
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
     container.setdefault("args", []).extend(["--model-id", model_id])
