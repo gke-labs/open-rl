@@ -50,7 +50,7 @@ gcloud container node-pools create gpu-dra \
   --machine-type=g2-standard-12 \
   --accelerator="type=nvidia-l4,count=1,gpu-driver-version=disabled" \
   --node-labels="group.timeslice.io/trainers=true,group.timeslice.io/samplers=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true" \
-  --num-nodes=1
+  --num-nodes=2
 ```
 
 ### 3. Install NVIDIA Runtime Driver & DRA Kubelet Plugin

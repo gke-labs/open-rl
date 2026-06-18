@@ -17,17 +17,10 @@ three ideas that build on each other:
 There are three separate responsibilities in this PR.
 
 First, DRA is used only for GPU allocation and placement. The deployment creates
-one `ResourceClaim` named `open-rl-trainer-gpu-1`. Trainer worker pods reference
-that same claim. Kubernetes allocates one matching NVIDIA GPU to
-the claim and schedules those pods onto a node where that device is available.
-DRA does not serialize CUDA execution, perform checkpoint/restore, or decide
-which process runs next.
+two static `ResourceClaims` named `open-rl-trainer-gpu-1` and `open-rl-sampler-gpu-1`. Trainer worker pods reference `open-rl-trainer-gpu-1`, while Sampler worker pods reference `open-rl-sampler-gpu-1`. Kubernetes allocates one matching NVIDIA GPU to each claim and schedules those pods onto separate physical nodes where those devices are available.
 
 Second, the Kubernetes worker manager is the deployment launcher. It runs inside
-the gateway process today. When the gateway receives `create_model` or
-`create_model_from_state` in FFT mode, it
-creates a pod for that `model_id` from the trainer worker pod template, stamps
-the pod name, labels, job-id env var, and `--model-id`, then enqueues the request
+the gateway process today. When the gateway receives `create_model` in FFT mode, it creates a trainer pod for that `model_id`. When it receives `create_sampling_client`, it creates a dedicated vLLM sampler pod for that `model_id` from the sampler worker pod template. It enqueues the request
 on the model-specific Redis queue. It is idempotent: if the trainer worker pod
 for a model is already running, it reuses it.
 
@@ -98,14 +91,13 @@ scheduler.
 
 ## 1. DRA pins the GPU allocation
 
-`k8s/deploy/distributed-fft-timeslice/06-gpu-resourceclaim.yaml` creates a
-single namespace-scoped `ResourceClaim`:
+`k8s/deploy/distributed-fft-timeslice/06-gpu-resourceclaim.yaml` and `08-sampler-resourceclaim.yaml` create dedicated namespace-scoped `ResourceClaims` for Trainers and Samplers:
 
 ```yaml
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
-  name: open-rl-trainer-gpu-1
+  name: open-rl-trainer-gpu-1 # (and open-rl-sampler-gpu-1)
 spec:
   devices:
     requests:
@@ -114,22 +106,15 @@ spec:
         deviceClassName: gpu.nvidia.com
 ```
 
-Trainer worker pods reference that same claim:
+Trainer worker pods reference `open-rl-trainer-gpu-1`, while Sampler worker pods reference `open-rl-sampler-gpu-1`:
 
 ```yaml
-resources:
-  claims:
-  - name: trainer-gpu
 resourceClaims:
-- name: trainer-gpu
-  resourceClaimName: open-rl-trainer-gpu-1
+- name: trainer-gpu # (or sampler-gpu)
+  resourceClaimName: open-rl-trainer-gpu-1 # (or open-rl-sampler-gpu-1)
 ```
 
-Because this is a shared `ResourceClaim`, Kubernetes allocates a single matching
-device to the claim and schedules all referencing pods where that allocated
-device is accessible. Do not use a `ResourceClaimTemplate` for this PR's pinning
-behavior: templates generate per-pod claims, which is the pattern for separate
-devices.
+Because these are shared `ResourceClaims`, Kubernetes allocates a single matching device to each claim and schedules referencing pods onto the dedicated nodes where those claims reside (`group.timeslice.io/trainers` vs `samplers`).
 
 DRA is the allocation and placement layer. It does not serialize CUDA execution
 by itself. This PR is intentionally an oversubscription model: multiple trainer
@@ -230,8 +215,8 @@ gcloud container node-pools create gpu-dra \
   --cluster "${CLUSTER}" --zone "${ZONE}" \
   --machine-type g2-standard-24 \
   --accelerator "type=nvidia-l4,count=1,gpu-driver-version=disabled" \
-  --node-labels="group.timeslice.io/trainers=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true" \
-  --num-nodes 1
+  --node-labels="group.timeslice.io/trainers=true,group.timeslice.io/samplers=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true" \
+  --num-nodes 2
 ```
 
 Install the GPU driver manually. Use the `latest` installer so the
@@ -287,17 +272,15 @@ The deployment assumes one base model per rollout: set `BASE_MODEL` in
 `kustomization.yaml`, and the gateway uses that value for `get_info` and
 `create_model` requests that do not explicitly pass a base model.
 
-There is no static trainer worker. Every `create_model` call makes the gateway
-create a trainer worker pod named `open-rl-trainer-<model-id>`, labeled:
+There are no static worker deployments. Every `create_model` call makes the gateway create a trainer pod named `open-rl-trainer-<model-id>`, and every `create_sampling_client` call makes the gateway create a dedicated vLLM sampler pod named `open-rl-sampler-<model-id>`. Both are labeled:
 
 ```yaml
-snapshot-agent: "true"          # OpenRL/future coordinator marker
-timeslice.io/group: trainers    # snapshot-agent group
+snapshot-agent: "true"          # OpenRL coordinator marker
+timeslice.io/group: trainers    # (or samplers for vLLM rollout workers)
 timeslice.io/job-id: <model-id> # per-worker identity
 ```
 
-The gateway's `open-rl-sa` service account has a Role allowing pod CRUD in the
-workload namespace (`03-rbac.yaml`).
+The gateway's `open-rl-sa` service account has a Role allowing pod CRUD in the workload namespace (`03-rbac.yaml`). When weight updates occur during FFT training, Trainers write checkpoints to NFS `/mnt/shared`, and Samplers dynamically reload those checkpoint safetensors in-place in ~1.1 seconds while yielding GPU VRAM via cooperative sleep.
 
 ## Setup 3: Run training on the cluster
 
