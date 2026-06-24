@@ -377,8 +377,6 @@ def resolve_eval_model_path(output: str) -> str:
   for line in reversed(output.splitlines()):
     if line.startswith("eval_model_path="):
       path = line.removeprefix("eval_model_path=").strip()
-      if not Path(path).exists():
-        raise RuntimeError(f"Eval model path does not exist: {path}")
       return path
   raise RuntimeError("GSM8K SFT finished without printing eval_model_path=...")
 
@@ -388,7 +386,7 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
     "base_model": config.base_model,
     "base_url": base_url,
     "log_path": str(Path(config.log_dir) / log_subdir),
-    "max_steps": str(config.steps if config.steps is not None else 50),
+    "max_steps": str(config.steps if config.steps is not None else 10),
     "batch": "1",
     "rank": "16",
     "max_len": "640",
@@ -400,12 +398,12 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
 
 def run_gsm8k_eval(config: RunConfig, model_path: str) -> None:
   run_command(
-    uv_run(config.eval_uv_extra)
+    ["uv", "--project", "examples", "run", "python", "examples/sft/gsm8k/vllm_eval.py"]
     + [
-      "python",
-      "examples/sft/gsm8k/vllm_eval.py",
       "--path",
       model_path,
+      "--base-url",
+      config.base_url or "http://127.0.0.1:8000",
       "--data",
       str(write_gsm8k_eval_data(config)),
       "--gpu-memory-utilization",

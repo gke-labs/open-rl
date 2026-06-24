@@ -386,6 +386,24 @@ async def retrieve_future(req: dict):
 
 
 # *** TrainingClient endpoints ***
+@app.post("/api/v1/forward")
+async def forward(req: dict):
+  """TrainingClient.forward_async()"""
+  fwd_input = req.get("forward_input") or req.get("forward_backward_input") or {}
+  req_id = await enqueue(
+    make_training_request(
+      "forward_backward",
+      req.get("model_id"),
+      {
+        "data": fwd_input.get("data", []),
+        "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
+        "loss_config": fwd_input.get("loss_fn_config", {}),
+      },
+    )
+  )
+  return {"request_id": req_id}
+
+
 @app.post("/api/v1/forward_backward")
 async def forward_backward(req: dict):
   """TrainingClient.forward_backward_async()"""
