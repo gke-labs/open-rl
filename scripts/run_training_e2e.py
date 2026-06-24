@@ -396,12 +396,15 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
   return run_example(config, ["examples/sft/gsm8k/gsm8k_sft.py"], defaults, watch=watch, prefix=prefix)
 
 
-def run_gsm8k_eval(config: RunConfig, model_path: str) -> None:
+def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
+  paths = model_path if isinstance(model_path, list) else [model_path]
+  path_args = []
+  for p in paths:
+    path_args.extend(["--path", p])
   run_command(
     ["uv", "--project", "examples", "run", "python", "examples/sft/gsm8k/vllm_eval.py"]
+    + path_args
     + [
-      "--path",
-      model_path,
       "--base-url",
       config.base_url or "http://127.0.0.1:8000",
       "--data",
@@ -472,10 +475,12 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
       raise RuntimeError(f"gsm8k {job} failed") from result
 
   check_snapshot_interleaving(config)
-  for job, result in sorted(results.items()):
+  eval_paths = []
+  for _, result in sorted(results.items()):
     assert isinstance(result, str)
-    print(f"[training-e2e] evaluating {job}")
-    run_gsm8k_eval(config, resolve_eval_model_path(result))
+    eval_paths.append(resolve_eval_model_path(result))
+  print(f"[training-e2e] evaluating jobs in single micro-batched invocation: {eval_paths}")
+  run_gsm8k_eval(config, eval_paths)
 
 
 def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:

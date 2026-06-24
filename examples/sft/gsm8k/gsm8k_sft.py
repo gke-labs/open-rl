@@ -40,8 +40,8 @@ class GSM8KDataset(SupervisedDatasetBuilder):
 
     eval_dataset = load_dataset("openai/gsm8k", "main", split="test[:16]")
     return (
-        SupervisedDatasetFromHFDataset(dataset, self.batch_size, map_fn=make_datum),
-        SupervisedDatasetFromHFDataset(eval_dataset, self.batch_size, map_fn=make_datum),
+      SupervisedDatasetFromHFDataset(dataset, self.batch_size, map_fn=make_datum),
+      SupervisedDatasetFromHFDataset(eval_dataset, self.batch_size, map_fn=make_datum),
     )
 
 
