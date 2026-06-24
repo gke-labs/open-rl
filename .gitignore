@@ -9,6 +9,7 @@ env/
 # Training Logs & Plots
 scratch/
 docs/scratch/
+VERSION
 *.txt
 *.png
 *.log

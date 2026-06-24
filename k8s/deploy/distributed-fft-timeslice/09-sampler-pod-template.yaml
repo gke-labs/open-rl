@@ -16,7 +16,7 @@ data:
       containers:
       - name: sampler-worker
         image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
         env:
         - name: REDIS_URL

@@ -33,7 +33,7 @@ spec:
       containers:
       - name: gateway
         image: ghcr.io/gke-labs/open-rl/gateway:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command: ["uv", "run", "uvicorn", "server.gateway:app", "--host", "0.0.0.0", "--port", "8000"]
         ports:
         - containerPort: 8000

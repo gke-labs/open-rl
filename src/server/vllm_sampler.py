@@ -281,6 +281,9 @@ async def run_sampling_worker(model_id: str) -> None:
         print("[vLLM Worker] Initializing vLLM engine under parent lock...")
         init_engine()
         print("[vLLM Worker] Engine initialized successfully.")
+        if engine is not None:
+          print("[vLLM Worker] Sleeping engine after init to yield GPU memory...")
+          await engine.sleep(level=2)
     except Exception as exc:
       print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
       traceback.print_exc()

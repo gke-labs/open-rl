@@ -93,6 +93,7 @@ test:
 	  fi; \
 	  set -- "scenario=$$scenario" "uv_extra=$(TRAINING_TEST_EXTRA)"; \
 	  if [ -n "$(TRAINING_TEST_BASE_URL)" ]; then set -- "$$@" "base_url=$(TRAINING_TEST_BASE_URL)"; fi; \
+	  kubectl delete pods -l snapshot-agent=true --force --grace-period=0 2>/dev/null || true; \
 	  uv run --extra "$(TRAINING_TEST_EXTRA)" python scripts/run_training_e2e.py "$$@" $(TRAINING_TEST_ARGS); \
 	elif [ "$$mode" = "piglatin" ]; then \
 	  PYTHONPATH="$(PIGLATIN_TEST_PYTHONPATH)" uv --project examples run python -m unittest tests.test_piglatin_qwen tests.test_piglatin_gemma; \
@@ -113,7 +114,7 @@ fmt:
 # Deployment (GKE)
 # ---------------------------------------------------------------------------
 GCP_PROJECT ?= cdrollouts-sunilarora
-IMAGE_TAG   ?= latest
+IMAGE_TAG   ?= $(shell git rev-parse --short HEAD 2>/dev/null || cat VERSION 2>/dev/null || echo latest)
 
 build-images:
 	DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
@@ -122,6 +123,9 @@ build-images:
 push-images:
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG)
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG)
+	kubectl set image deployment/open-rl-gateway gateway=gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) 2>/dev/null || true
+	kubectl set image daemonset/open-rl-snapshot-agent snapshot-agent=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
+	kubectl set env deployment/open-rl-gateway OPEN_RL_WORKER_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 
 deploy:
 	kubectl apply -k k8s/deploy/distributed-lustre/
@@ -169,6 +173,7 @@ REMOTE_HOST ?= <PLACE_HOLDER_FOR_REMOTE_HOST_ADDRESS>
 
 # Push local workspace changes to the remote VM
 push-vm:
+	@git rev-parse --short HEAD > VERSION 2>/dev/null || true
 	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'scratch' ./ $(REMOTE_HOST):~/open-rl
 
 # Pull changes from the remote VM back to the local workspace

@@ -265,6 +265,38 @@ Notes:
   plugin's [time-slicing config](https://github.com/NVIDIA/k8s-device-plugin#shared-access-to-gpus-with-cuda-time-slicing)
   (`replicas: 2`) plus the node label.
 
+## Setup 1.5: Install and deploy llm-d Snapshot Agent DaemonSet
+
+Because `open-rl-snapshot-agent` runs with `--backend llmd` in cluster deployments, it delegates physical kernel-level CUDA process freezing and unfreezing (`cuda-checkpoint`) to `llmd-snapshot-agent` over gRPC on `127.0.0.1:9001`.
+
+To build and deploy the official `llmd-snapshot-agent` DaemonSet on GPU nodes:
+
+1. **Clone the official `llm-d-rl-time-slicing` repository:**
+   ```bash
+   git clone https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git ~/.cache/checkouts/github.com/llm-d-incubation/llm-d-rl-time-slicing
+   cd ~/.cache/checkouts/github.com/llm-d-incubation/llm-d-rl-time-slicing
+   ```
+
+2. **Build and push the Go Daemon container image:**
+   *(Note: The Dockerfile requires a pre-built `bin/` directory. Ensure `bin/` exists before running Docker build).*
+   ```bash
+   mkdir -p bin/
+   DOCKER_BUILDKIT=1 docker build -t gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent:latest -f deploy/snapshot-agent/Dockerfile .
+   docker push gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent:latest
+   ```
+
+3. **Deploy the Helm Chart into `timeslice-system`:**
+   ```bash
+   helm template snapshot-agent deploy/snapshot-agent/ \
+     --namespace timeslice-system \
+     --set image.repository=gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent \
+     --set image.tag=latest \
+     --set tolerations[0].key=nvidia.com/gpu \
+     --set tolerations[0].operator=Exists \
+     --set tolerations[0].effect=NoSchedule | kubectl apply -f -
+   ```
+   Verify both DaemonSet Pods (`llmd-snapshot-agent-*`) transition to `Running` and actively listen on TCP `9001` across all target GPU nodes.
+
 ## Setup 2: Build, push, and deploy OpenRL
 
 ```bash

@@ -35,7 +35,7 @@ spec:
       containers:
       - name: snapshot-agent
         image: ghcr.io/gke-labs/open-rl/server:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-m", "snapshot_agent.serve"]
         args: ["--listen-host", "0.0.0.0", "--port", "9753", "--backend", "llmd", "--llmd-snapshot-endpoint", "127.0.0.1:9001"]
         ports:
