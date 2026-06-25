@@ -136,6 +136,27 @@ def print_log_tail(path: Path, lines: int = 100) -> None:
     print(line)
 
 
+def cleanup_remote_models(base_url: str, outputs: list[str]) -> None:
+  """Find model IDs in recipe output and request worker cleanup via /api/v1/delete_model."""
+  if not base_url.startswith("http"):
+    return
+  model_ids = set()
+  for output in outputs:
+    if isinstance(output, str):
+      for match in re.finditer(r"(?:TrainingClient|ServiceClient) initialized for (?:model|session) ([a-f0-9-]+)", output):
+        model_ids.add(match.group(1))
+  for model_id in sorted(model_ids):
+    try:
+      url = f"{base_url}/api/v1/delete_model"
+      data = json.dumps({"model_id": model_id}).encode("utf-8")
+      req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+      with urllib.request.urlopen(req) as response:
+        response.read()
+      print(f"[training-e2e] successfully requested cleanup of workers for model {model_id}")
+    except Exception as exc:
+      print(f"[training-e2e] warning: failed to request worker cleanup for {model_id}: {exc}")
+
+
 def launch(
   processes: list[ManagedProcess],
   name: str,
@@ -513,11 +534,15 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     "eval_every=0",
     "save_every=1",
   ]
-  run_command(
-    ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
-    env=examples_env(config),
-    watch=watch,
-  )
+  out = None
+  try:
+    out = run_command(
+      ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
+      env=examples_env(config),
+      watch=watch,
+    )
+  finally:
+    cleanup_remote_models(base_url, [out] if out else [])
 
 
 def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
@@ -559,9 +584,12 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
   for thread in threads:
     thread.join()
 
-  for job, result in sorted(results.items()):
-    if isinstance(result, BaseException):
-      raise RuntimeError(f"fft-gsm8k-rl-x2 {job} failed") from result
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"fft-gsm8k-rl-x2 {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
 
   check_snapshot_interleaving(config)
 
