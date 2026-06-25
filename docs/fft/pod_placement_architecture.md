@@ -21,15 +21,15 @@ graph TD
 
     subgraph Cluster ["GKE Regional Standard Cluster (open-rl-dra)"]
         subgraph Node1 ["Physical Machine 1: dcbk (g2-standard-12)<br/>DRA Group: trainers"]
-            SA1["Snapshot Agent DaemonSet (tcp://:9753)"]:::n1
+            SA1["Accelerator Time-Slicer DaemonSet (tcp://:9753)"]:::n1
             TrA["open-rl-trainer-job-a<br/>RAM: 16GiB / Claim: trainer-gpu-1"]:::podA
             TrB["open-rl-trainer-job-b<br/>RAM: 16GiB / Claim: trainer-gpu-1"]:::podB
-            TrA <-->|CRIU Time-Slice| SA1
-            TrB <-->|CRIU Time-Slice| SA1
+            TrA <-->|Lock/Release Queue| SA1
+            TrB <-->|Lock/Release Queue| SA1
         end
 
         subgraph Node2 ["Physical Machine 2: hzp3 (g2-standard-12)<br/>DRA Group: samplers"]
-            SA2["Snapshot Agent DaemonSet (tcp://:9753)"]:::n2
+            SA2["Accelerator Time-Slicer DaemonSet (tcp://:9753)"]:::n2
             SmA["open-rl-sampler-job-a<br/>RAM: 16GiB / Claim: sampler-gpu-1"]:::podA
             SmB["open-rl-sampler-job-b<br/>RAM: 16GiB / Claim: sampler-gpu-1"]:::podB
             SmA <-->|vLLM Sleep VRAM Yield| SA2
@@ -119,12 +119,12 @@ When scheduling multiple tenant pods onto a single machine, `kube-scheduler` cal
 
 ## 5. Node-Local Time-Slicing Virtualization
 
-Once co-scheduled onto the same physical GPU, workloads are virtualized in-flight by the node-local DaemonSet defined in `07-snapshot-agent-daemonset.yaml`.
+Once co-scheduled onto the same physical GPU, workloads are virtualized in-flight by the node-local DaemonSet defined in `07-accel-timeslicer-daemonset.yaml`. Open-RL's Accelerator Time-Slicer manages lock acquisition queues and layers on top of llm-d's physical snapshot agent or standalone CUDA checkpointing.
 
-### A. Trainer Virtualization (CRIU Process Swapping)
-On the Trainer Node (`dcbk`), the Snapshot Agent intercepts PyTorch CUDA allocations over `tcp://status.hostIP:9753`. When Job A finishes its microbatch gradient calculation:
-1. Snapshot Agent freezes Job A's Linux process via CRIU (`checkpointed pid 34715 in 1.99s`).
-2. Snapshot Agent restores Job B's memory state into VRAM (`restored pid 34716 in 0.39s`).
+### A. Trainer Virtualization (Time-Slice Swapping)
+On the Trainer Node (`dcbk`), the Accelerator Time-Slicer coordinates GPU access over `tcp://status.hostIP:9753`. When Job A finishes its microbatch gradient calculation:
+1. Accelerator Time-Slicer instructs the physical checkpoint backend to snapshot and freeze Job A's GPU state.
+2. Accelerator Time-Slicer instructs the backend to restore Job B's memory state into VRAM (`restored pid in 0.39s`).
 
 ### B. Sampler Virtualization (vLLM Cooperative Sleep)
 On the Sampler Node (`hzp3`), vLLM inference engines time-slice cooperatively inside `vllm_sampler.py`:

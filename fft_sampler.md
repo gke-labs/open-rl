@@ -116,25 +116,25 @@ Measurements captured during end-to-end training runs using `Qwen2.5-0.5B` on NV
 When running multiple concurrent RL jobs ($N > 2$) sharing node resources, both training and sampling processes must coordinate their access to their respective GPUs to avoid VRAM conflicts. 
 
 ### Symmetric Turn-Taking Architecture
-To support concurrent jobs, the Open-RL system boots two separate, isolated Snapshot Agent daemons:
-1. **`snapshot-agent-trainer`** (socket: `snapshot-agent-trainer.sock`): Manages and time-slices GPU 0 (the training GPU).
-2. **`snapshot-agent-sampler`** (socket: `snapshot-agent-sampler.sock`): Manages and time-slices GPU 1 (the sampling GPU).
+To support concurrent jobs, the Open-RL system boots two separate, isolated Accelerator Time-Slicer daemons (which layer over physical snapshot backends):
+1. **`accel-timeslicer-trainer`** (socket: `accel-timeslicer-trainer.sock`): Manages and time-slices GPU 0 (the training GPU).
+2. **`accel-timeslicer-sampler`** (socket: `accel-timeslicer-sampler.sock`): Manages and time-slices GPU 1 (the sampling GPU).
 
 ```mermaid
 graph LR
     subgraph GPU 0: Trainer GPU
-        TrainerA[Job A Trainer Process] <-->|acquire/release| SAT[snapshot-agent-trainer]
+        TrainerA[Job A Trainer Process] <-->|acquire/release| SAT[accel-timeslicer-trainer]
         TrainerB[Job B Trainer Process] <-->|acquire/release| SAT
     end
     subgraph GPU 1: Sampler GPU
-        EngineCoreA[Job A EngineCore Process] <-->|acquire/release| SAS[snapshot-agent-sampler]
+        EngineCoreA[Job A EngineCore Process] <-->|acquire/release| SAS[accel-timeslicer-sampler]
         EngineCoreB[Job B EngineCore Process] <-->|acquire/release| SAS
     end
 ```
 
-#### Rationale for Separate Snapshot Agent Instances
-Running two separate snapshot agent daemons (trainer and sampler) provides two vital benefits:
-1. **Independent Preemption Locking (GPU Concurrency)**: The snapshot agent operates on a single global preemption lock. If we shared a single agent instance, acquiring the lock to train on GPU 0 would block sampler processes from running on GPU 1. Isolating the daemons ensures training and sampling locks do not interfere, enabling parallel training-rollout overlaps between Job A and Job B.
+#### Rationale for Separate Accelerator Time-Slicer Instances
+Running two separate time-slicer daemons (trainer and sampler) provides two vital benefits:
+1. **Independent Preemption Locking (GPU Concurrency)**: The time-slicer operates on a single global preemption lock per instance. If we shared a single agent instance, acquiring the lock to train on GPU 0 would block sampler processes from running on GPU 1. Isolating the daemons ensures training and sampling locks do not interfere, enabling parallel training-rollout overlaps between Job A and Job B.
 2. **CUDA Device Context Isolation**: Trainer processes run with `CUDA_VISIBLE_DEVICES=0` while samplers run with `CUDA_VISIBLE_DEVICES=1`. Inside their respective processes, both refer to their active GPU as index `0`. Separate daemons cleanly align lock requests with the target physical GPUs without device collisions.
 
 ### Option A: Single Shared vLLM Instance
@@ -145,21 +145,21 @@ A single `vllm-worker` process runs on the GPU. It pulls requests sequentially f
   - **I/O Latency**: Every swap requires reading safetensors from the network filesystem and compiling. Swapping takes **`~1.5 seconds`** on every step.
 
 ### Option B: Dedicated vLLM Instance Per Job (IMPLEMENTED)
-Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). Both processes share GPU 1. To share the GPU transparently, they take turns using `snapshot-agent-sampler`:
+Each job launches its own dedicated `vllm_sampler` process (each listening to its own `sampler_queue:<model_id>`). Both processes share GPU 1. To share the GPU transparently, they take turns using `accel-timeslicer-sampler`:
 - **Parent Proxying**: The parent `vllm_sampler` process runs on CPU and resolves the PID of its child `EngineCore` process (which holds all CUDA contexts).
 - **Coordinated Engine Initialization (Lock Transfer)**:
   - During engine startup (`from_engine_args`), vLLM allocates the KV cache and warms up CUDA graphs (which requires exclusive GPU access and allocates up to 70% VRAM).
   - To prevent concurrent workers from initializing at the same time and causing OOMs on startup, the workers serialize their warmups using a coordinated lock transfer:
-    1. The parent `vllm_sampler` process registers its parent PID with the Snapshot Agent and acquires the GPU lock.
+    1. The parent `vllm_sampler` process registers its parent PID with the Accelerator Time-Slicer and acquires the GPU lock.
     2. Under the parent lock, it calls `init_engine()` safely.
     3. Once initialized, it resolves the child `EngineCore` process PID and registers it.
     4. To prevent other waiting processes from stealing the GPU lock before the newly spawned child can be checkpointed, the worker calls `TRANSFER_LOCK` to transfer ownership of the active GPU lock from the parent PID to the child PID.
     5. The parent process safely releases its acquire context (treated as a successful no-op on the daemon since the lock was transferred).
     6. Finally, the worker calls `RELEASE` on the child PID, which checkpoints the child (freeing its GPU VRAM from 70% to ~0 MiB) and releases the GPU lock to the next waiting worker.
 - **GPU Checkpoint/Restore (with VRAM Pre-release)**:
-  - When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `snapshot-agent-sampler.sock`. This checkpoints Job B's `EngineCore` process and restores Job A's `EngineCore` process.
+  - When Job A needs to generate rollouts, its parent sampler process calls `acquire(EngineCoreA_PID)` via `accel-timeslicer-sampler.sock`. This checkpoints Job B's `EngineCore` process and restores Job A's `EngineCore` process.
   - **Optimization**: Once the batch of sampling requests completes, but **before** releasing the GPU lock, the sampler calls `await engine.sleep(level=2)`. This releases Job A's active weights and KV caches from the GPU (reducing its VRAM usage to ~0 MiB).
-  - Consequently, when the Snapshot Agent executes `cuda-checkpoint` on the process, there is almost no memory to copy, dropping checkpoint latency from **`~14 seconds`** to **`~0.5 seconds`** (a 28x speedup).
+  - Consequently, when the backend executes `cuda-checkpoint` on the process, there is almost no memory to copy, dropping checkpoint latency from **`~14 seconds`** to **`~0.5 seconds`** (a 28x speedup).
 - **Pros**:
   - **Fast Wake Up & Checkpoint**: Checkpointing is near-instantaneous (~0.5s). Waking up the engine on restore only requires copying weights from CPU RAM back to GPU VRAM, taking only **`~0.7 seconds`** (no disk I/O).
 - **Cons**:
@@ -204,7 +204,7 @@ To run a single FFT RL job in vLLM mode:
 ```bash
 make test e2e tiny-fft-rl TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=10"
 ```
-To run two concurrent FFT RL jobs sharing both trainer and sampler GPUs via Snapshot Agent preemption:
+To run two concurrent FFT RL jobs sharing both trainer and sampler GPUs via Accelerator Time-Slicer preemption:
 ```bash
 make test e2e tiny-fft-rl-x2 TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=5"
 ```
@@ -272,12 +272,12 @@ To prevent dropping in-flight sampling or optimization steps, de-provisioning is
 3. **Control-to-Data Signaling**: The `WorkerLaunchProcessor` pops the command and enqueues a **Shutdown Sentinel (Poison Pill)** (`{"request_id": "SHUTDOWN_SENTINEL"}`) to the tails of both the trainer (`open_rl:queue:<model_id>`) and sampler (`open_rl:sampler_queue:<model_id>`) FIFO data queues.
 4. **FIFO Request Drainage**:
    - The workers continue to pop and process all pending requests in their queues.
-   - When a worker pops the sentinel, it halts polling, awaits any active asyncio tasks (token generation or backward steps), unregisters its PID from the Snapshot Agent, and exits gracefully.
+   - When a worker pops the sentinel, it halts polling, awaits any active asyncio tasks (token generation or backward steps), unregisters its PID from the Accelerator Time-Slicer, and exits gracefully.
 5. **Background Process Reaping**:
    - `FFTWorkerManager` runs a non-blocking background task to monitor the spawned PIDs.
    - If they exit cleanly, it clears them from the registry. If they fail to exit within a grace period (e.g. 30 seconds), it falls back to a hard `terminate()` to reclaim resources.
-6. **Snapshot Resiliency**:
-   - The Snapshot Agent (`serve.py`) checks PID liveness before/during preemption tasks. Dead or zombie processes are skipped gracefully, and socket closure automatically cleans up daemon state.
+6. **Time-Slicer Resiliency**:
+   - The Accelerator Time-Slicer (`serve.py`) checks PID liveness before/during preemption tasks. Dead or zombie processes are skipped gracefully, and socket closure automatically cleans up daemon state.
 
 ---
 
@@ -292,11 +292,11 @@ To clean up stale workers in the event of hard client VM crashes or unhandled sc
 
 ---
 
-## 10. Snapshot Agent Integration & Lock Management
+## 10. Accelerator Time-Slicer Integration & Lock Management
 
-To coordinate GPU sharing, workers communicate with local Snapshot Agent instances via UNIX domain sockets:
-- `snapshot-agent-trainer.sock` (manages GPU 0 for trainers)
-- `snapshot-agent-sampler.sock` (manages GPU 1 for samplers)
+To coordinate GPU sharing, workers communicate with local Accelerator Time-Slicer instances via UNIX domain sockets:
+- `accel-timeslicer-trainer.sock` (manages GPU 0 for trainers)
+- `accel-timeslicer-sampler.sock` (manages GPU 1 for samplers)
 
 ### 1. Lock Management & API Command Set
 The Snapshot Agent daemon supports the following JSON-based socket interface commands:
@@ -320,13 +320,13 @@ During full fine-tuning rollouts, the vLLM sampler worker must serialize its eng
 2. **The Startup OOM Race Condition**:
    - Because the child process PID is dynamically allocated during engine creation, the worker cannot know its PID beforehand.
    - To serialize the initialization phase and prevent multiple samplers from compiling graphs simultaneously (which causes a CUDA OOM), the parent process must proxy the lock:
-     - The **parent** acquires the Snapshot Agent lock.
+     - The **parent** acquires the Accelerator Time-Slicer lock.
      - The parent initializes the vLLM engine, which spawns the child process.
-     - The parent registers the child PID with the Snapshot Agent.
+     - The parent registers the child PID with the Accelerator Time-Slicer.
 
 3. **Why We Must "Transfer" Instead of "Release"**:
    - If the parent released its lock using standard context managers immediately after initialization, a waiting concurrent worker would instantly acquire the lock and begin its graph warmups.
-   - At this moment, the first worker's child process is still running in memory because the Snapshot Agent has not yet checkpointed it (checkpointing is triggered asynchronously on release or preemption).
+   - At this moment, the first worker's child process is still running in memory because the physical snapshot backend has not yet checkpointed it (checkpointing is triggered asynchronously on release or preemption).
    - This leads to two active engines compiling graphs at the same time, causing a CUDA OOM.
    - **The Solution**: The parent calls **`TRANSFER_LOCK`** to transfer ownership of the active lock to the child process PID *before* exiting its code block. This keeps the GPU lock continuously active, blocking other workers until the child process is explicitly checkpointed (`RELEASE` command) to release its VRAM down to 0 MiB.
 

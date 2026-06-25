@@ -1,6 +1,6 @@
-# Time Slicer
+# Accelerator Time-Slicer
 
-The time slicer is OpenRL's acquire/release coordinator for full fine-tuning
+The accelerator time-slicer is OpenRL's acquire/release coordinator for full fine-tuning
 workers that share one accelerator bundle.
 
 It exposes workload commands over a Unix socket or TCP listener:
@@ -32,7 +32,7 @@ current GPU PIDs before checkpoint, then restores the same PID set.
 
 In Kubernetes, this agent runs as a node-local DaemonSet with `hostNetwork:
 true`. FFT worker pods connect to the agent on their node via
-`OPEN_RL_SNAPSHOT_AGENT_HOST=status.hostIP` and `OPEN_RL_SNAPSHOT_AGENT_PORT`.
+`OPEN_RL_ACCEL_TIMESLICER_HOST=status.hostIP` and `OPEN_RL_ACCEL_TIMESLICER_PORT`.
 The node-local time slicer is the coordination point for worker pods that share
 one DRA `ResourceClaim`. The cluster manifest runs this process with
 `--backend llmd` so llm-d's snapshot agent owns pod/PID discovery and physical

@@ -72,16 +72,16 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `OPEN_RL_WORKER_MANAGER` | `local` | Trainer worker manager mode. Use `local` for subprocess workers or `kubernetes` for the DRA worker-manager deployment. |
-| `OPEN_RL_SNAPSHOT_AGENT_SOCKET` | `/tmp/open-rl/snapshot-agent.sock` | Unix socket path for a local snapshot agent. Used when `OPEN_RL_SNAPSHOT_AGENT_HOST` is unset. |
-| `OPEN_RL_SNAPSHOT_AGENT_HOST` | unset | Node-local snapshot-agent host for Kubernetes workers. When set, the worker uses TCP instead of the Unix socket; Kubernetes sets this from `status.hostIP`. |
-| `OPEN_RL_SNAPSHOT_AGENT_PORT` | `9753` | Node-local snapshot-agent TCP port for Kubernetes workers. |
+| `OPEN_RL_ACCEL_TIMESLICER_SOCKET` | `/tmp/open-rl/accel-timeslicer.sock` | Unix socket path for a local accelerator time-slicer. Used when `OPEN_RL_ACCEL_TIMESLICER_HOST` is unset. |
+| `OPEN_RL_ACCEL_TIMESLICER_HOST` | unset | Node-local accelerator time-slicer host for Kubernetes workers. When set, the worker uses TCP instead of the Unix socket; Kubernetes sets this from `status.hostIP`. |
+| `OPEN_RL_ACCEL_TIMESLICER_PORT` | `9753` | Node-local accelerator time-slicer TCP port for Kubernetes workers. |
 
-For local FFT subprocess mode, start `python -m snapshot_agent.serve` before the
+For local FFT subprocess mode, start `python -m accel_timeslicer.serve` before the
 workers run. The local launcher tags each worker with a time-slice job id and
 starts it in its own process group so the CUDA checkpoint backend can discover
 the active GPU PIDs. Kubernetes deploys the equivalent process with the
-`open-rl-snapshot-agent` DaemonSet, which uses the llm-d snapshot backend by
-default.
+`open-rl-accel-timeslicer` DaemonSet, which layers on top of the llm-d snapshot
+backend by default for physical checkpoint/restore.
 
 ## vLLM variables
 

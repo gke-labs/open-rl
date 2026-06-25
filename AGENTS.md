@@ -49,7 +49,7 @@ pkill -9 -f port-forward 2>/dev/null; nohup sh -c '\''while true; do kubectl por
 - **`tiny-rl`**: Simple sample -> reward -> train policy update loop.
 - **`lora-textsql`**: A trimmed version of a real Reinforcement Learning recipe for Text-to-SQL.
 - **`fft-gsm8k`**: Full fine-tuning SFT training + vLLM evaluation on 100 math problems (*requires `redis-server`*).
-- **`fft-gsm8k-x2`**: Runs two concurrent `fft-gsm8k` jobs sharing a single GPU via the Checkpoint/Restore Snapshot Agent.
+- **`fft-gsm8k-x2`**: Runs two concurrent `fft-gsm8k` jobs sharing a single GPU via the Accelerator Time-Slicer (which layers on llm-d's physical checkpoint/restore snapshot agent).
 
 ---
 
@@ -89,5 +89,5 @@ If there is a persistent active tmux session (e.g., `work`) on the remote machin
 ## 5. Required System Dependencies on VM
 If you encounter errors during E2E training or evaluation on a fresh GPU VM, ensure these system packages are installed:
 
-- **`redis-server`**: Required by the Snapshot Agent for memory/state synchronization in FFT/time-slicing scenarios (`sudo apt-get install -y redis-server`).
+- **`redis-server`**: Required by the Accelerator Time-Slicer for memory/state synchronization in FFT/time-slicing scenarios (`sudo apt-get install -y redis-server`).
 - **`python3-dev`**: Required for compiling custom Triton runtime kernels during vLLM engine initialization (`sudo apt-get install -y python3-dev`).
