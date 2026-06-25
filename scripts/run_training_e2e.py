@@ -513,7 +513,11 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     "eval_every=0",
     "save_every=1",
   ]
-  run_command(["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args], env=examples_env(config), watch=watch)
+  run_command(
+    ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
+    env=examples_env(config),
+    watch=watch,
+  )
 
 
 def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
@@ -540,7 +544,12 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         "eval_every=0",
         "save_every=1",
       ]
-      results[job] = run_command(["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args], env=examples_env(config), watch=watch, prefix=f"[{job}] ")
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
+        env=examples_env(config),
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
     except BaseException as exc:
       results[job] = exc
 
