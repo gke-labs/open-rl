@@ -7,12 +7,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from snapshot_agent.checkpoint import CudaCheckpointRestorer
-from snapshot_agent.llmd import LlmDCheckpointRestorer
-from snapshot_agent.serve import start_tcp_time_slicer, start_time_slicer
-from snapshot_agent.single_node import SingleNodeTimeSlicer
-from snapshot_agent.time_slicer import SocketTimeSlicerClient, time_slicer_client_from_env, workload_from_env
-from snapshot_agent.workload import WorkloadRef
+from accel_timeslicer.checkpoint import CudaCheckpointRestorer
+from accel_timeslicer.llmd import LlmDCheckpointRestorer
+from accel_timeslicer.serve import start_tcp_time_slicer, start_time_slicer
+from accel_timeslicer.single_node import SingleNodeTimeSlicer
+from accel_timeslicer.time_slicer import SocketTimeSlicerClient, time_slicer_client_from_env, workload_from_env
+from accel_timeslicer.workload import WorkloadRef
 
 
 class RecordingRestorer:
@@ -240,7 +240,7 @@ class SingleNodeTimeSlicerSocketTest(unittest.IsolatedAsyncioTestCase):
     restorer = RecordingRestorer()
     agent = SingleNodeTimeSlicer(restorer)
     with tempfile.TemporaryDirectory() as tmp:
-      socket_path = str(Path(tmp) / "snapshot-agent.sock")
+      socket_path = str(Path(tmp) / "accel-timeslicer.sock")
       server = await start_time_slicer(agent, socket_path)
       client_a = SocketTimeSlicerClient(socket_path)
       client_b = SocketTimeSlicerClient(socket_path)
@@ -264,7 +264,7 @@ class SingleNodeTimeSlicerSocketTest(unittest.IsolatedAsyncioTestCase):
   async def test_closing_active_socket_marks_run_failed(self) -> None:
     agent = SingleNodeTimeSlicer(RecordingRestorer())
     with tempfile.TemporaryDirectory() as tmp:
-      socket_path = str(Path(tmp) / "snapshot-agent.sock")
+      socket_path = str(Path(tmp) / "accel-timeslicer.sock")
       server = await start_time_slicer(agent, socket_path)
       client = SocketTimeSlicerClient(socket_path)
       try:
@@ -309,8 +309,8 @@ class SingleNodeTimeSlicerSocketTest(unittest.IsolatedAsyncioTestCase):
     server = await start_tcp_time_slicer(agent, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     env = {
-      "OPEN_RL_SNAPSHOT_AGENT_HOST": "127.0.0.1",
-      "OPEN_RL_SNAPSHOT_AGENT_PORT": str(port),
+      "OPEN_RL_ACCEL_TIMESLICER_HOST": "127.0.0.1",
+      "OPEN_RL_ACCEL_TIMESLICER_PORT": str(port),
       "OPEN_RL_TIME_SLICE_JOB_ID": "job-a",
       "OPEN_RL_TIME_SLICE_GROUP": "ignored-group",
     }
@@ -406,7 +406,7 @@ class CudaCheckpointRestorerTest(unittest.TestCase):
       restorer.restore(workload)
 
   def test_process_discovery_checks_gpu_pids_and_process_group_leaders(self) -> None:
-    from snapshot_agent.process_discovery import discover_workload_gpu_pids, workload_root_pids
+    from accel_timeslicer.process_discovery import discover_workload_gpu_pids, workload_root_pids
 
     workload = WorkloadRef(job_id="trainer-model-a")
 
@@ -421,9 +421,9 @@ class CudaCheckpointRestorerTest(unittest.TestCase):
       return {12: 11, 99: 98}.get(pid)
 
     with (
-      patch("snapshot_agent.process_discovery.process_environ", side_effect=environ),
-      patch("snapshot_agent.process_discovery.process_group_id", side_effect=pgid),
-      patch("snapshot_agent.process_discovery.nvidia_smi_compute_pids", return_value=[12, 99]),
+      patch("accel_timeslicer.process_discovery.process_environ", side_effect=environ),
+      patch("accel_timeslicer.process_discovery.process_group_id", side_effect=pgid),
+      patch("accel_timeslicer.process_discovery.nvidia_smi_compute_pids", return_value=[12, 99]),
     ):
       self.assertEqual(discover_workload_gpu_pids(workload), [12])
       self.assertEqual(workload_root_pids(workload), [11])

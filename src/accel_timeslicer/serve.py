@@ -75,11 +75,11 @@ def workload_from_payload(payload: dict[str, Any]) -> WorkloadRef:
 
 
 def parse_args() -> argparse.Namespace:
-  parser = argparse.ArgumentParser(description="Run the OpenRL snapshot agent.")
-  parser.add_argument("--socket", default=os.getenv("OPEN_RL_SNAPSHOT_AGENT_SOCKET", "/tmp/open-rl/snapshot-agent.sock"))
+  parser = argparse.ArgumentParser(description="Run the OpenRL accelerator time-slicer.")
+  parser.add_argument("--socket", default=os.getenv("OPEN_RL_ACCEL_TIMESLICER_SOCKET", "/tmp/open-rl/accel-timeslicer.sock"))
   parser.add_argument("--listen-host", default=None)
   parser.add_argument("--port", type=int, default=None)
-  parser.add_argument("--backend", choices=["cuda", "llmd"], default=os.getenv("OPEN_RL_SNAPSHOT_AGENT_BACKEND", "cuda"))
+  parser.add_argument("--backend", choices=["cuda", "llmd"], default=os.getenv("OPEN_RL_ACCEL_TIMESLICER_BACKEND", "cuda"))
   parser.add_argument("--cuda-checkpoint-bin", default=os.getenv("CUDA_CHECKPOINT_BIN", "cuda-checkpoint"))
   parser.add_argument("--cuda-checkpoint-timeout-ms", type=int, default=None)
   parser.add_argument("--llmd-snapshot-endpoint", default=os.getenv("LLMD_SNAPSHOT_AGENT_ENDPOINT", "127.0.0.1:9001"))
@@ -110,7 +110,7 @@ async def main_async() -> None:
 
 
 def main() -> None:
-  logging.basicConfig(level=logging.INFO, format="[SNAPSHOT_AGENT] %(levelname)s %(message)s")
+  logging.basicConfig(level=logging.INFO, format="[ACCEL_TIMESLICER] %(levelname)s %(message)s")
   asyncio.run(main_async())
 
 

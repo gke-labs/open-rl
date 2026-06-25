@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 from typing import Protocol
 
-from snapshot_agent.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 

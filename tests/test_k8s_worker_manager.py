@@ -78,7 +78,7 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
       body["metadata"]["labels"],
       {
         "app": "open-rl-trainer-worker",
-        "snapshot-agent": "true",
+        "accel-timeslicer": "true",
         "timeslice.io/group": "trainers",
         "timeslice.io/job-id": "trainer-model-a-1",
       },
@@ -112,7 +112,7 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
       body["metadata"]["labels"],
       {
         "app": "open-rl-sampler-worker",
-        "snapshot-agent": "true",
+        "accel-timeslicer": "true",
         "timeslice.io/group": "samplers",
         "timeslice.io/job-id": "sampler-model-a-1",
       },

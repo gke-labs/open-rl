@@ -7,7 +7,7 @@ Scenarios ("tiny-" = minimal overfit/smoke tests; the rest are real workloads):
   lora-textsql          examples/text-to-sql/texttosql_sft_grpo.py (real RL recipe, trimmed)
   fft-gsm8k             examples/sft/gsm8k/gsm8k_sft.py + vLLM eval (min_accuracy gate)
   fft-gsm8k-x2          two concurrent fft-gsm8k jobs sharing one GPU through the
-                        snapshot agent (asserts both workers checkpoint/restore)
+                        accel timeslicer (asserts both workers checkpoint/restore)
 
 There is no FFT RL scenario: the FFT backend does not support sampling during
 training yet (no vLLM sampling mid-training).
@@ -238,18 +238,18 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
         "cuda-checkpoint is required for FFT e2e scenarios (the snapshot agent checkpoints workers around every batch); "
         "install the binary matching your driver from https://github.com/NVIDIA/cuda-checkpoint"
       )
-    snapshot_socket = log_dir / "snapshot-agent.sock"
+    snapshot_socket = log_dir / "accel-timeslicer.sock"
     snapshot_socket.unlink(missing_ok=True)
     launch(
       processes,
-      "snapshot-agent",
-      uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
-      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(snapshot_socket)},
-      log_dir / "snapshot-agent.log",
+      "accel-timeslicer",
+      uv_run(config.uv_extra) + ["python", "-m", "accel_timeslicer.serve"],
+      {**base_env(config), "OPEN_RL_ACCEL_TIMESLICER_SOCKET": str(snapshot_socket)},
+      log_dir / "accel-timeslicer.log",
       snapshot_socket.is_socket,
       timeout=60,
     )
-    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(snapshot_socket)
+    env["OPEN_RL_ACCEL_TIMESLICER_SOCKET"] = str(snapshot_socket)
     env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
     env["OPEN_RL_ENABLE_FFT"] = "true"
   else:
@@ -439,7 +439,7 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     print("[training-e2e] external backend; skipping snapshot agent interleave check")
     return
 
-  log_path = Path(config.log_dir) / "snapshot-agent.log"
+  log_path = Path(config.log_dir) / "accel-timeslicer.log"
   if not log_path.exists():
     return
   text = log_path.read_text(encoding="utf-8", errors="replace")
@@ -453,7 +453,7 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
     raise RuntimeError(
       f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {log_path}"
     )
-  print(f"[training-e2e] trainer snapshot agent time-sliced: checkpointed workloads {sorted(cp_t)}, restored workloads {sorted(rs_t)}")
+  print(f"[training-e2e] trainer accel timeslicer time-sliced: checkpointed workloads {sorted(cp_t)}, restored workloads {sorted(rs_t)}")
 
   if config.sampling_backend == "vllm":
     cp_s = {workload for workload in checkpointed if ":sampler-" in workload or workload.startswith("sampler-")}
@@ -462,12 +462,12 @@ def check_snapshot_interleaving(config: RunConfig) -> None:
       raise RuntimeError(
         f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {log_path}"
       )
-    print(f"[training-e2e] sampler snapshot agent time-sliced: checkpointed workloads {sorted(cp_s)}, restored workloads {sorted(rs_s)}")
+    print(f"[training-e2e] sampler accel timeslicer time-sliced: checkpointed workloads {sorted(cp_s)}, restored workloads {sorted(rs_s)}")
 
 
 def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Two concurrent FFT jobs against the same backend: each create_model spawns
-  its own worker, and the snapshot agent time-slices the GPU between them."""
+  its own worker, and the accel timeslicer time-slices the GPU between them."""
   results: dict[str, str | BaseException] = {}
 
   def train(job: str) -> None:
@@ -521,7 +521,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
 
 
 def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run two concurrent FFT RL jobs on GSM8K using standard tinker_cookbook math_rl CLI, check Snapshot Agent
+  """Run two concurrent FFT RL jobs on GSM8K using standard tinker_cookbook math_rl CLI, check accel timeslicer
   time slicing, and verify metrics."""
   results: dict[str, str | BaseException] = {}
 
@@ -568,7 +568,7 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
 
 def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Two concurrent FFT RL jobs against the same backend: each create_model spawns
-  its own trainer and dedicated sampler worker, and the snapshot agent time-slices them."""
+  its own trainer and dedicated sampler worker, and the accel timeslicer time-slices them."""
   results: dict[str, str | BaseException] = {}
 
   def train(job: str) -> None:

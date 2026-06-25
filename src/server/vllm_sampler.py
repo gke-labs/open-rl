@@ -54,8 +54,8 @@ def is_fft_enabled() -> bool:
 
 time_slicer: Any = None
 if is_fft_enabled():
-  from snapshot_agent.time_slicer import time_slicer_client_from_env, workload_from_env
-  from snapshot_agent.workload import SAMPLER_TIME_SLICE_GROUP, workload_job_id
+  from accel_timeslicer.time_slicer import time_slicer_client_from_env, workload_from_env
+  from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, workload_job_id
 
   time_slicer = time_slicer_client_from_env()
 

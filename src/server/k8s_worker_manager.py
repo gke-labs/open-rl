@@ -21,7 +21,7 @@ from typing import Any
 import yaml
 from kubernetes import client, config
 
-from snapshot_agent.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 
 POD_NAME_PREFIX = "open-rl-trainer-"
 TERMINAL_POD_PHASES = {"Succeeded", "Failed"}
@@ -113,7 +113,7 @@ class KubernetesFFTWorkerManager:
     metadata.setdefault("labels", {}).update(
       {
         "app": app_label,
-        "snapshot-agent": "true",
+        "accel-timeslicer": "true",
         "timeslice.io/group": role_group,
         "timeslice.io/job-id": role_job_id,
       }

@@ -13,7 +13,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_gateway_paths tests.test_snapshot_agent tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_k8s_worker_manager tests.test_redis_store tests.test_cluster_eval_script
+UNIT_TESTS ?= tests.test_gateway_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_k8s_worker_manager tests.test_redis_store tests.test_cluster_eval_script
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
@@ -85,7 +85,7 @@ test:
 	@mode="$(TEST_MODE)"; \
 	scenario="$(TEST_SCENARIO)"; \
 	if [ -z "$$mode" ] || [ "$$mode" = "unit" ]; then \
-	  uv run --frozen --exact --extra cpu python -m unittest $(UNIT_TESTS); \
+	  uv run --frozen --exact --extra cpu --extra cluster python -m unittest $(UNIT_TESTS); \
 	elif [ "$$mode" = "e2e" ]; then \
 	  if [ -z "$$scenario" ]; then \
 	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, fft-gsm8k, or fft-gsm8k-x2."; \
@@ -93,7 +93,7 @@ test:
 	  fi; \
 	  set -- "scenario=$$scenario" "uv_extra=$(TRAINING_TEST_EXTRA)"; \
 	  if [ -n "$(TRAINING_TEST_BASE_URL)" ]; then set -- "$$@" "base_url=$(TRAINING_TEST_BASE_URL)"; fi; \
-	  kubectl delete pods -l snapshot-agent=true --force --grace-period=0 2>/dev/null || true; \
+	  kubectl delete pods -l accel-timeslicer=true --force --grace-period=0 2>/dev/null || true; \
 	  uv run --extra "$(TRAINING_TEST_EXTRA)" python scripts/run_training_e2e.py "$$@" $(TRAINING_TEST_ARGS); \
 	elif [ "$$mode" = "piglatin" ]; then \
 	  PYTHONPATH="$(PIGLATIN_TEST_PYTHONPATH)" uv --project examples run python -m unittest tests.test_piglatin_qwen tests.test_piglatin_gemma; \
@@ -124,7 +124,7 @@ push-images:
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG)
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG)
 	kubectl set image deployment/open-rl-gateway gateway=gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) 2>/dev/null || true
-	kubectl set image daemonset/open-rl-snapshot-agent snapshot-agent=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
+	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set env deployment/open-rl-gateway OPEN_RL_WORKER_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 
 deploy:

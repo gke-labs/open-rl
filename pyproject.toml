@@ -55,7 +55,7 @@ cluster = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["server*", "training*", "snapshot_agent*"]
+include = ["server*", "training*", "accel_timeslicer*"]
 
 [tool.uv]
 override-dependencies = [

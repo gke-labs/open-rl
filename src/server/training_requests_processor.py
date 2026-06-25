@@ -12,9 +12,9 @@ from fastapi import FastAPI, HTTPException
 from opentelemetry import context as otel_context
 from opentelemetry import propagate, trace
 
+from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
+from accel_timeslicer.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.store import RequestStore, get_store
-from snapshot_agent.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
-from snapshot_agent.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from training.fft_trainer_worker import FFTConfig, FFTTrainingWorker
 from training.lora_trainer_worker import LoraConfig, LoraTrainingWorker
 from training.trainer_worker import Datum

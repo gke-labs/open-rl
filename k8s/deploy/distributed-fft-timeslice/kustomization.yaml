@@ -11,7 +11,7 @@ resources:
   - 04-gateway.yaml
   - 05-worker-pod-template.yaml
   - 06-gpu-resourceclaim.yaml
-  - 07-snapshot-agent-daemonset.yaml
+  - 07-accel-timeslicer-daemonset.yaml
   - 08-sampler-resourceclaim.yaml
   - 09-sampler-pod-template.yaml
 

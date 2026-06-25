@@ -497,8 +497,8 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     self.assertEqual([event[0] for event in time_slicer.events], ["register", "acquire", "release", "unregister", "close"])
     for event in time_slicer.events:
       if len(event) >= 2 and event[0] != "close":
-        self.assertEqual(event[1].job_id, "model-a")
-        self.assertEqual(event[1].group, "shared-accelerator")
+        self.assertEqual(event[1].job_id, "trainer-model-a")
+        self.assertEqual(event[1].group, "trainers")
     self.assertEqual(worker.created_models[0][0], "base-model")
     self.assertEqual(store.results["req-a"]["model_id"], "model-a")
 

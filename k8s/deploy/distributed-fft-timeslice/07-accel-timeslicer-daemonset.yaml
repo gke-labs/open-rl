@@ -1,20 +1,20 @@
-# Node-local OpenRL time-slicer. One agent runs on each GPU node, owns the
+# Node-local OpenRL accelerator time-slicer. One agent runs on each GPU node, owns the
 # acquire/release queue for trainer worker pods placed on that node, and uses
 # the llm-d snapshot-agent API for physical checkpoint/restore.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: open-rl-snapshot-agent
+  name: open-rl-accel-timeslicer
   labels:
-    app: open-rl-snapshot-agent
+    app: open-rl-accel-timeslicer
 spec:
   selector:
     matchLabels:
-      app: open-rl-snapshot-agent
+      app: open-rl-accel-timeslicer
   template:
     metadata:
       labels:
-        app: open-rl-snapshot-agent
+        app: open-rl-accel-timeslicer
     spec:
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
@@ -33,10 +33,10 @@ spec:
         operator: "Exists"
         effect: "NoSchedule"
       containers:
-      - name: snapshot-agent
+      - name: accel-timeslicer
         image: ghcr.io/gke-labs/open-rl/server:latest
         imagePullPolicy: IfNotPresent
-        command: ["uv", "run", "python", "-m", "snapshot_agent.serve"]
+        command: ["uv", "run", "python", "-m", "accel_timeslicer.serve"]
         args: ["--listen-host", "0.0.0.0", "--port", "9753", "--backend", "llmd", "--llmd-snapshot-endpoint", "127.0.0.1:9001"]
         ports:
         - name: snapshot
