@@ -37,6 +37,11 @@ E2E tests boot up a local backend and run actual SFT/RL training against it. Run
 ```bash
 make test e2e <scenario_name>
 ```
+An example command for running end to end test:
+```
+pkill -9 -f port-forward 2>/dev/null; nohup sh -c '\''while true; do kubectl port-forward svc/open-rl-gateway-service 8000:8000 >/dev/null 2>&1; sleep 1; done'\'' >/dev/null 2>&1 & make test e2e fft-gsm8k-rl BASE_URL=http://127.0.0.1:8000
+```
+
 
 ### Supported Scenarios:
 - **`tiny-lora`**: Minimal overfit test using LoRA (asserts that loss drops).
