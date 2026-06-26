@@ -1,10 +1,11 @@
 # One DRA ResourceClaim for the trainer GPU allocation. Every trainer worker pod
 # that references this claim is scheduled onto a node that can access the same
-# allocated physical GPU.
+# allocated physical GPU(s).
 #
-# The claim itself does not serialize CUDA execution or bound how many pods may
-# reference it. Run one active GPU workload at a time unless an external
-# coordination layer is active.
+# For single-GPU training (e.g. 0.5B, 1.7B models), request exactly 1 GPU.
+# For multi-GPU sharded training (e.g. Qwen 4B+ models using FSDP / device_map="auto"),
+# replace the `exactly:` block below with `count: 2` (or 4) to allocate multiple
+# co-located physical GPUs on a multi-GPU node.
 apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:

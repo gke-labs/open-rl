@@ -37,8 +37,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.optimizer: torch.optim.Optimizer | None = None
     self.cpu_offload: bool = True
     self._is_offloaded: bool = False
-    self._param_shadow: dict[torch.nn.Parameter, torch.Tensor] = {}
-    self._grad_shadow: dict[torch.nn.Parameter, torch.Tensor] = {}
+    self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
+    self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -46,12 +46,14 @@ class FFTTrainingWorker(BaseTrainerWorker):
       print(f"Full fine-tuning model {base_model_name} already loaded.")
       return
 
-    print(f"Loading full fine-tuning model {base_model_name} to {self.device}...")
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    target_device = "auto" if num_gpus > 1 else self.device
+    print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
-    self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
+    self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
     print("Successfully loaded full fine-tuning model.")
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
@@ -223,25 +225,31 @@ class FFTTrainingWorker(BaseTrainerWorker):
       not getattr(self, "cpu_offload", False)
       or getattr(self, "model", None) is None
       or getattr(self, "_is_offloaded", False)
-      or getattr(self, "device", None) is None
-      or self.device.type != "cuda"
+      or not torch.cuda.is_available()
     ):
       return
     start_t = time.perf_counter()
 
     for param in self.model.parameters():
       if param.device.type == "cuda":
-        self._param_shadow[param] = param.data.to("cpu", non_blocking=True).pin_memory()
-        param.data = torch.empty(0, dtype=param.dtype, device="cuda")
+        orig_device = param.device
+        self._param_shadow[param] = (orig_device, param.data.to("cpu", non_blocking=True).pin_memory())
+        param.data = torch.empty(0, dtype=param.dtype, device=orig_device)
       if param.grad is not None and param.grad.device.type == "cuda":
-        self._grad_shadow[param] = param.grad.data.to("cpu", non_blocking=True).pin_memory()
-        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device="cuda")
+        orig_device = param.grad.device
+        self._grad_shadow[param] = (orig_device, param.grad.data.to("cpu", non_blocking=True).pin_memory())
+        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device=orig_device)
 
     if self.optimizer is not None:
       for state in self.optimizer.state.values():
-        for k, v in state.items():
-          if isinstance(v, torch.Tensor) and v.device.type == "cuda":
-            state[k] = v.to("cpu", non_blocking=True).pin_memory()
+        if isinstance(state, dict):
+          orig_devices = {}
+          for k, v in list(state.items()):
+            if isinstance(v, torch.Tensor) and v.device.type == "cuda":
+              orig_devices[k] = v.device
+              state[k] = v.to("cpu", non_blocking=True).pin_memory()
+          if orig_devices:
+            state["_orig_devices"] = orig_devices
 
     if torch.cuda.is_available():
       torch.cuda.synchronize()
@@ -256,26 +264,30 @@ class FFTTrainingWorker(BaseTrainerWorker):
       not getattr(self, "cpu_offload", False)
       or getattr(self, "model", None) is None
       or not getattr(self, "_is_offloaded", False)
-      or getattr(self, "device", None) is None
-      or self.device.type != "cuda"
+      or not torch.cuda.is_available()
     ):
       return
     start_t = time.perf_counter()
 
     for param in self.model.parameters():
-      cpu_data = self._param_shadow.pop(param, None)
-      if cpu_data is not None:
-        param.data = cpu_data.to(self.device, non_blocking=True)
+      param_entry = self._param_shadow.pop(param, None)
+      if param_entry is not None:
+        orig_device, cpu_data = param_entry if isinstance(param_entry, tuple) else (self.device, param_entry)
+        param.data = cpu_data.to(orig_device, non_blocking=True)
       if param.grad is not None:
-        cpu_grad = self._grad_shadow.pop(param, None)
-        if cpu_grad is not None:
-          param.grad.data = cpu_grad.to(self.device, non_blocking=True)
+        grad_entry = self._grad_shadow.pop(param, None)
+        if grad_entry is not None:
+          orig_device, cpu_grad = grad_entry if isinstance(grad_entry, tuple) else (self.device, grad_entry)
+          param.grad.data = cpu_grad.to(orig_device, non_blocking=True)
 
     if self.optimizer is not None:
       for state in self.optimizer.state.values():
-        for k, v in state.items():
-          if isinstance(v, torch.Tensor) and v.device.type == "cpu":
-            state[k] = v.to(self.device, non_blocking=True)
+        if isinstance(state, dict):
+          orig_devices = state.pop("_orig_devices", {})
+          for k, v in list(state.items()):
+            if isinstance(v, torch.Tensor) and v.device.type == "cpu":
+              target_device = orig_devices.get(k, self.device)
+              state[k] = v.to(target_device, non_blocking=True)
 
     if torch.cuda.is_available():
       torch.cuda.synchronize()
