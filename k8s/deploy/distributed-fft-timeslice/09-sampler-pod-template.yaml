@@ -42,9 +42,9 @@ data:
           claims:
           - name: sampler-gpu
           limits:
-            memory: "20Gi"
+            memory: "32Gi"
           requests:
-            memory: "16Gi"
+            memory: "24Gi"
             cpu: "4"
         volumeMounts:
         - name: shared-storage

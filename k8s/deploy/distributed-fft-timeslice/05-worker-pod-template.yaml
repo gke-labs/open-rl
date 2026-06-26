@@ -50,12 +50,11 @@ data:
           claims:
           - name: trainer-gpu
           limits:
-            memory: "20Gi"
+            memory: "48Gi"
           requests:
-            # Sized generously for model load and optimizer state; increase this
-            # if a future coordination layer checkpoints GPU state to host RAM.
-            memory: "16Gi"
-            cpu: "2"
+            # Sized for 4B+ model parameter and AdamW momentum state offloading to pinned DRAM.
+            memory: "32Gi"
+            cpu: "4"
         volumeMounts:
         - name: shared-storage
           mountPath: /mnt/shared
