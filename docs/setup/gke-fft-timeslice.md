@@ -322,6 +322,19 @@ timeslice.io/job-id: trainer-<model-id> # or sampler-<model-id>
 
 The gateway's `open-rl-sa` service account has a Role allowing pod CRUD in the workload namespace (`03-rbac.yaml`). When weight updates occur during FFT training, Trainers write checkpoints to NFS `/mnt/shared`, and Samplers dynamically reload those checkpoint safetensors in-place in ~1.1 seconds while yielding GPU VRAM via cooperative sleep.
 
+### Structured Model Serialization in Redis
+To ensure reliable metadata persistence across gateway restarts and worker spawns, model configuration is serialized in Redis using the `TrainingModelMetadata` dataclass:
+- **Generic KV Store:** The `RequestStore` interface provides generic `set_value`, `get_value`, and `delete_values` operations for storing structured objects alongside tenant request queues.
+- **Mandatory Architecture Specification:** The `/api/v1/create_model` endpoint strictly requires a valid `base_model` in the request payload, guaranteeing deterministic worker pod configuration.
+
+### Zero-Fragmentation Application-Level CPU Offloading
+When multiple training jobs share physical GPUs via the Accelerator Time-Slicer, `FFTTrainingWorker` performs zero-fragmentation memory swapping between VRAM and Pinned DRAM during time-slicer `acquire()` and `release()` cycles:
+- **Client Toggle:** Configured via `cpu_offload: bool = True` inside `FFTConfig`.
+- **Symmetric Primitives:** `sleep()` transfers model parameters and initialized AdamW optimizer states (`exp_avg`, `exp_avg_sq`) to pinned host memory (`.to("cpu", non_blocking=True).pin_memory()`) while replacing GPU tensors with empty shells (`torch.empty(0, ...)`). `wake_up()` reloads pinned shadow tensors back to CUDA instantly before processing training requests.
+
+### DCGM GPU Observability
+The Kustomize rollout includes `10-dcgm-monitoring.yaml`, deploying the NVIDIA DCGM Exporter DaemonSet and a Google Cloud Monitoring `PodMonitoring` custom resource to scrape GPU utilization, VRAM usage, clock speeds, and temperature metrics every 10 seconds.
+
 ## Setup 3: Run training on the cluster
 
 ```bash

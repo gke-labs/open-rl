@@ -122,6 +122,7 @@ class _FullModelStub:
 
 class _RecordingFullWorker(training_requests_processor_module.FFTTrainingWorker):
   def __init__(self):
+    super().__init__()
     self.base_model_name = None
     self.loaded_base_models = []
     self.created_models = []
@@ -144,6 +145,7 @@ class _RecordingFullWorker(training_requests_processor_module.FFTTrainingWorker)
 
 class _RecordingLoraWorker(training_requests_processor_module.LoraTrainingWorker):
   def __init__(self):
+    super().__init__()
     self.loaded_base_models = []
     self.created_models = []
 

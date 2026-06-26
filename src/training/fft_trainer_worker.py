@@ -18,6 +18,7 @@ ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") 
 
 class FFTConfig(BaseModel):
   seed: int | None = None
+  cpu_offload: bool = True
 
 
 def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Parameter]:
@@ -34,6 +35,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.base_model_name: str | None = None
     self.trainable_params: list[torch.nn.Parameter] = []
     self.optimizer: torch.optim.Optimizer | None = None
+    self.cpu_offload: bool = True
+    self._is_offloaded: bool = False
+    self._param_shadow: dict[torch.nn.Parameter, torch.Tensor] = {}
+    self._grad_shadow: dict[torch.nn.Parameter, torch.Tensor] = {}
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -51,6 +56,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
     """Load the per-job model if needed, then prepare it for full fine-tuning."""
+    if config is not None:
+      self.cpu_offload = config.cpu_offload
     self.load_base_model(base_model_name)
     if config is not None and config.seed is not None:
       torch.manual_seed(config.seed)
@@ -209,3 +216,69 @@ class FFTTrainingWorker(BaseTrainerWorker):
     include_prompt_logprobs: bool = False,
   ) -> dict[str, Any]:
     return super().generate(self.model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+
+  def sleep(self) -> None:
+    """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""
+    if (
+      not getattr(self, "cpu_offload", False)
+      or getattr(self, "model", None) is None
+      or getattr(self, "_is_offloaded", False)
+      or getattr(self, "device", None) is None
+      or self.device.type != "cuda"
+    ):
+      return
+    start_t = time.perf_counter()
+
+    for param in self.model.parameters():
+      if param.device.type == "cuda":
+        self._param_shadow[param] = param.data.to("cpu", non_blocking=True).pin_memory()
+        param.data = torch.empty(0, dtype=param.dtype, device="cuda")
+      if param.grad is not None and param.grad.device.type == "cuda":
+        self._grad_shadow[param] = param.grad.data.to("cpu", non_blocking=True).pin_memory()
+        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device="cuda")
+
+    if self.optimizer is not None:
+      for state in self.optimizer.state.values():
+        for k, v in state.items():
+          if isinstance(v, torch.Tensor) and v.device.type == "cuda":
+            state[k] = v.to("cpu", non_blocking=True).pin_memory()
+
+    if torch.cuda.is_available():
+      torch.cuda.synchronize()
+      torch.cuda.empty_cache()
+
+    self._is_offloaded = True
+    print(f"[FFT Worker] Offloaded weights & states to pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
+
+  def wake_up(self) -> None:
+    """Reload pinned CPU shadow tensors back to CUDA VRAM."""
+    if (
+      not getattr(self, "cpu_offload", False)
+      or getattr(self, "model", None) is None
+      or not getattr(self, "_is_offloaded", False)
+      or getattr(self, "device", None) is None
+      or self.device.type != "cuda"
+    ):
+      return
+    start_t = time.perf_counter()
+
+    for param in self.model.parameters():
+      cpu_data = self._param_shadow.pop(param, None)
+      if cpu_data is not None:
+        param.data = cpu_data.to(self.device, non_blocking=True)
+      if param.grad is not None:
+        cpu_grad = self._grad_shadow.pop(param, None)
+        if cpu_grad is not None:
+          param.grad.data = cpu_grad.to(self.device, non_blocking=True)
+
+    if self.optimizer is not None:
+      for state in self.optimizer.state.values():
+        for k, v in state.items():
+          if isinstance(v, torch.Tensor) and v.device.type == "cpu":
+            state[k] = v.to(self.device, non_blocking=True)
+
+    if torch.cuda.is_available():
+      torch.cuda.synchronize()
+
+    self._is_offloaded = False
+    print(f"[FFT Worker] Reloaded weights & states to CUDA in {(time.perf_counter() - start_t) * 1000:.1f} ms.")

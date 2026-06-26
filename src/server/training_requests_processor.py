@@ -315,8 +315,14 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         print(f"\n[TRAINING REQUESTS] Popped {len(training_reqs)} requests for model: {self.model_id}")
         results = []
         async with self.time_slicer.acquire(self.workload):
-          for request in training_reqs:
-            results.append(await self.handle_request(request, self.model_id))
+          if hasattr(self.worker, "wake_up"):
+            await asyncio.to_thread(self.worker.wake_up)
+          try:
+            for request in training_reqs:
+              results.append(await self.handle_request(request, self.model_id))
+          finally:
+            if hasattr(self.worker, "sleep"):
+              await asyncio.to_thread(self.worker.sleep)
 
         for request_id, result in results:
           if request_id is not None:
