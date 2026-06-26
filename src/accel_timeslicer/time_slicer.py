@@ -106,6 +106,7 @@ def workload_from_env(pid: int | None = None, job_id: str | None = None, group: 
 def time_slicer_client_from_env() -> TimeSlicerClient:
   host = os.getenv("OPEN_RL_ACCEL_TIMESLICER_HOST")
   if host:
-    return SocketTimeSlicerClient(host=host, port=int(os.getenv("OPEN_RL_ACCEL_TIMESLICER_PORT", str(DEFAULT_TCP_PORT))))
+    port = int(os.getenv("OPEN_RL_ACCEL_TIMESLICER_PORT", str(DEFAULT_TCP_PORT)))
+    return SocketTimeSlicerClient(host=host, port=port)
 
   return SocketTimeSlicerClient(socket_path=os.getenv("OPEN_RL_ACCEL_TIMESLICER_SOCKET", DEFAULT_SOCKET_PATH))

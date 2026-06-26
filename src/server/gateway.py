@@ -5,8 +5,10 @@ import logging
 import os
 import time
 import traceback
+import json
 import uuid
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, asdict
 
 import httpx
 from fastapi import FastAPI
@@ -18,6 +20,14 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_fft_worker_manager
+
+
+@dataclass
+class TrainingModelMetadata:
+  base_model: str
+  created_at: float
+  training_kind: str
+
 
 store = get_store()
 fft_worker_manager: WorkerManager | None = None
@@ -144,9 +154,10 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   """
   assert fft_worker_manager is not None, "FFT worker manager is initialized by the app lifespan when FFT is enabled"
   request_id = request["request_id"]
+  base_model = request.get("payload", {}).get("base_model")
   await store.set_future(request_id, {"status": "pending"})
   try:
-    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"])
+    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"], base_model)
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
@@ -154,10 +165,19 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   return await enqueue(request)
 
 
-async def ensure_sampler_launched(model_id: str) -> None:
+async def ensure_sampler_launched(model_id: str, base_model: str | None = None) -> None:
   if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
+    if not base_model:
+      s = get_store()
+      val = await s.get_value(f"open_rl:model_meta:{model_id}") or await s.get_value(f"open_rl:model_base:{model_id}")
+      if val:
+        try:
+          meta = json.loads(val)
+          base_model = meta.get("base_model") if isinstance(meta, dict) else val
+        except Exception:
+          base_model = val
     try:
-      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id)
+      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id, base_model)
     except Exception:
       traceback.print_exc()
 
@@ -293,14 +313,14 @@ async def session_heartbeat(_: dict):
 @app.post("/api/v1/create_model")
 async def create_model(req: dict):
   """ServiceClient.create_lora_training_client_async()"""
-  configured_base_model = get_default_model_name()
-  requested_base_model = req.get("base_model")
-  if configured_base_model and requested_base_model and requested_base_model != configured_base_model:
-    return JSONResponse(status_code=400, content={"error": f"base_model must match configured BASE_MODEL {configured_base_model}"})
-  base_model = configured_base_model or requested_base_model
+  base_model = req.get("base_model")
   if not base_model:
-    return JSONResponse(status_code=400, content={"error": "base_model is required"})
+    return JSONResponse(status_code=400, content={"error": "base_model is required in request payload"})
   model_id = str(uuid.uuid4())
+  s = get_store()
+  meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="full")
+  await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
+  await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   command = make_training_request(
     "create_model",
     model_id,
@@ -324,6 +344,7 @@ async def delete_model(req: dict):
     print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
     await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
+  await store.delete_values(f"open_rl:model_meta:{model_id}", f"open_rl:model_base:{model_id}")
   return {"status": "ok"}
 
 
@@ -336,6 +357,12 @@ async def create_model_from_state(req: dict):
   # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
   resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
   model_id = str(uuid.uuid4())
+  base_model = req.get("base_model")
+  s = get_store()
+  if base_model:
+    meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="restored")
+    await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
+    await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   command = make_training_request(
     "create_model_from_state",
     model_id,
@@ -545,7 +572,7 @@ async def create_sampling_session(req: dict):
 
   if get_sampler_backend() == "vllm" and target_model_id:
     if is_fft_enabled():
-      await ensure_sampler_launched(target_model_id)
+      await ensure_sampler_launched(target_model_id, base_model)
     s = get_store()
     if hasattr(s, "redis"):
       print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")

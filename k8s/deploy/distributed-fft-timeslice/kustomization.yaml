@@ -21,13 +21,13 @@ generatorOptions:
 configMapGenerator:
   - name: open-rl-config
     literals:
-      - BASE_MODEL="Qwen/Qwen2.5-0.5B"
+      - BASE_MODEL="Qwen/Qwen3-4B-Instruct-2507"
       - ENABLE_GCP_TRACE="1"
 
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: latest
+    newTag: 0.1.3
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: latest
+    newTag: 0.1.3

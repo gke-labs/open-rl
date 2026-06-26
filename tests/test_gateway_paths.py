@@ -27,20 +27,16 @@ class GetInfoTest(unittest.TestCase):
       response = asyncio.run(gateway.get_info({"model_id": "model-a"}))
     self.assertEqual(response.status_code, 404)
 
-  def test_create_model_defaults_to_base_model_env(self) -> None:
-    with patch.dict(os.environ, {"BASE_MODEL": "env-model"}, clear=True):
-      created = asyncio.run(gateway.create_model({}))
+  def test_create_model_requires_base_model_payload(self) -> None:
+    response = asyncio.run(gateway.create_model({}))
+    self.assertEqual(response.status_code, 400)
 
+  def test_create_model_accepts_base_model_payload(self) -> None:
+    created = asyncio.run(gateway.create_model({"base_model": "my-model"}))
     model_id = created["request_id"]
     queued = asyncio.run(gateway.store.get_requests())
     self.assertEqual(queued[0]["model_id"], model_id)
-    self.assertEqual(queued[0]["payload"]["base_model"], "env-model")
-
-  def test_create_model_rejects_base_model_that_differs_from_env(self) -> None:
-    with patch.dict(os.environ, {"BASE_MODEL": "env-model"}, clear=True):
-      response = asyncio.run(gateway.create_model({"base_model": "other-model"}))
-
-    self.assertEqual(response.status_code, 400)
+    self.assertEqual(queued[0]["payload"]["base_model"], "my-model")
 
 
 class GatewayPathTest(unittest.TestCase):

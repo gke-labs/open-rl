@@ -57,6 +57,21 @@ class RequestStore(ABC):
     """Block until the future resolves or the timeout is reached."""
     pass
 
+  @abstractmethod
+  async def set_value(self, key: str, value: str) -> None:
+    """Store a simple string value by key."""
+    pass
+
+  @abstractmethod
+  async def get_value(self, key: str) -> str | None:
+    """Fetch a string value by key."""
+    pass
+
+  @abstractmethod
+  async def delete_values(self, *keys: str) -> None:
+    """Delete one or more keys."""
+    pass
+
 
 class InMemoryStore(RequestStore):
   def __init__(self):
@@ -67,6 +82,7 @@ class InMemoryStore(RequestStore):
     self.active_tenants_cv = asyncio.Condition()
     self.futures_store: dict[str, dict[str, Any]] = {}
     self.futures_events: dict[str, asyncio.Event] = {}
+    self.kv_store: dict[str, str] = {}
 
   async def put_request(self, req_data: dict[str, Any]) -> None:
     model_id = req_data.get("model_id", "default")
@@ -140,6 +156,16 @@ class InMemoryStore(RequestStore):
       return {"type": "try_again", "request_id": req_id, "queue_state": "active"}
     finally:
       self.futures_events.pop(req_id, None)
+
+  async def set_value(self, key: str, value: str) -> None:
+    self.kv_store[key] = value
+
+  async def get_value(self, key: str) -> str | None:
+    return self.kv_store.get(key)
+
+  async def delete_values(self, *keys: str) -> None:
+    for k in keys:
+      self.kv_store.pop(k, None)
 
 
 class RedisStore(RequestStore):
@@ -301,6 +327,16 @@ class RedisStore(RequestStore):
         await self.redis.rpush(key, result[1])
         await self.redis.expire(key, 300)
         return payload
+
+  async def set_value(self, key: str, value: str) -> None:
+    await self.redis.set(key, value)
+
+  async def get_value(self, key: str) -> str | None:
+    return await self.redis.get(key)
+
+  async def delete_values(self, *keys: str) -> None:
+    if keys:
+      await self.redis.delete(*keys)
 
 
 # Global singleton factory

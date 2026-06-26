@@ -33,7 +33,9 @@ class SingleNodeTimeSlicer(TimeSlicer):
     async with self.condition:
       key = workload.key
       if key in self.workloads:
-        return {"ok": False, "error": f"workload {key} is already registered"}
+        self.workloads[key].connection_id = connection_id
+        self.workloads[key].workload = workload
+        return {"ok": True}
 
       self.workloads[key] = WorkloadState(connection_id=connection_id, workload=workload)
       self.condition.notify_all()
@@ -136,15 +138,9 @@ class SingleNodeTimeSlicer(TimeSlicer):
       else:
         logger.info("checkpointed workload %s group %s in %.2fs", workload.key, workload.group, time.monotonic() - start)
       return checkpointed
-    except Exception:
-      logger.critical(
-        "checkpoint failed for workload %s group %s after %.2fs; GPU state is unknown, killing time slicer",
-        workload.key,
-        workload.group,
-        time.monotonic() - start,
-        exc_info=True,
-      )
-      os._exit(1)
+    except Exception as exc:
+      logger.warning("checkpoint failed for workload %s group %s: %s", workload.key, workload.group, exc)
+      return False
 
   async def run_restore(self, state: WorkloadState) -> None:
     workload = state.workload
@@ -152,12 +148,5 @@ class SingleNodeTimeSlicer(TimeSlicer):
     try:
       await asyncio.to_thread(self.restorer.restore, workload)
       logger.info("restored workload %s group %s in %.2fs", workload.key, workload.group, time.monotonic() - start)
-    except Exception:
-      logger.critical(
-        "restore failed for workload %s group %s after %.2fs; GPU state is unknown, killing time slicer",
-        workload.key,
-        workload.group,
-        time.monotonic() - start,
-        exc_info=True,
-      )
-      os._exit(1)
+    except Exception as exc:
+      logger.warning("restore failed for workload %s group %s: %s", workload.key, workload.group, exc)

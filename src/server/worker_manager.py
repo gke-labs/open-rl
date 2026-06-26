@@ -28,15 +28,15 @@ def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
 
 
 class WorkerManager(Protocol):
-  def launch(self, model_id: str) -> None:
+  def launch(self, model_id: str, base_model: str | None = None) -> None:
     """Ensure the model's worker exists; idempotent per model_id."""
     ...
 
-  def launch_trainer(self, model_id: str) -> None:
+  def launch_trainer(self, model_id: str, base_model: str | None = None) -> None:
     """Ensure the trainer worker exists."""
     ...
 
-  def launch_sampler(self, model_id: str) -> None:
+  def launch_sampler(self, model_id: str, base_model: str | None = None) -> None:
     """Ensure the sampler worker exists."""
     ...
 
@@ -58,10 +58,10 @@ class FFTWorkerManager:
     self.train_processes: dict[str, subprocess.Popen] = {}
     self.sampler_processes: dict[str, subprocess.Popen] = {}
 
-  def launch(self, model_id: str) -> None:
-    self.launch_trainer(model_id)
+  def launch(self, model_id: str, base_model: str | None = None) -> None:
+    self.launch_trainer(model_id, base_model)
 
-  def launch_trainer(self, model_id: str) -> None:
+  def launch_trainer(self, model_id: str, base_model: str | None = None) -> None:
     proc = self.train_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
@@ -72,6 +72,8 @@ class FFTWorkerManager:
       "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", model_id),
       "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
     }
+    if base_model:
+      env["BASE_MODEL"] = base_model
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
@@ -79,12 +81,14 @@ class FFTWorkerManager:
       start_new_session=True,
     )
 
-  def launch_sampler(self, model_id: str) -> None:
+  def launch_sampler(self, model_id: str, base_model: str | None = None) -> None:
     proc = self.sampler_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
 
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
+    if base_model:
+      env["BASE_MODEL"] = base_model
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
       sampler_env = env.copy()

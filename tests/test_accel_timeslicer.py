@@ -190,7 +190,7 @@ class SingleNodeTimeSlicerTest(unittest.IsolatedAsyncioTestCase):
     agent = SingleNodeTimeSlicer(RecordingRestorer())
     await agent.register(WorkloadRef(job_id="101"))
 
-    self.assertFalse((await agent.register(WorkloadRef(job_id="101")))["ok"])
+    self.assertTrue((await agent.register(WorkloadRef(job_id="101")))["ok"])
     self.assertTrue((await agent.acquire(WorkloadRef(job_id="101")))["ok"])
     self.assertFalse((await agent.acquire(WorkloadRef(job_id="101")))["ok"])
     self.assertTrue((await agent.release(WorkloadRef(job_id="101")))["ok"])

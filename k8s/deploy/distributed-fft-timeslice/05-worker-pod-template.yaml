@@ -21,7 +21,7 @@ data:
       restartPolicy: OnFailure
       containers:
       - name: trainer-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:latest
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.3
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
@@ -34,15 +34,17 @@ data:
               key: BASE_MODEL
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
+        - name: PYTORCH_CUDA_ALLOC_CONF
+          value: "expandable_segments:True"
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/shared/open-rl"
         - name: HF_HOME
           value: "/mnt/shared/open-rl/huggingface"
-        - name: OPEN_RL_SNAPSHOT_AGENT_HOST
+        - name: OPEN_RL_ACCEL_TIMESLICER_HOST
           valueFrom:
             fieldRef:
               fieldPath: status.hostIP
-        - name: OPEN_RL_SNAPSHOT_AGENT_PORT
+        - name: OPEN_RL_ACCEL_TIMESLICER_PORT
           value: "9753"
         resources:
           claims:
