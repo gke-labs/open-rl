@@ -219,12 +219,21 @@ driver install (per the
 follow it if these flags have drifted):
 
 ```bash
+# Single-GPU pool (for smaller models e.g. 0.5B, 1.7B):
 gcloud container node-pools create gpu-dra \
   --cluster "${CLUSTER}" --zone "${ZONE}" \
   --machine-type g2-standard-24 \
   --accelerator "type=nvidia-l4,count=1,gpu-driver-version=disabled" \
   --node-labels="group.timeslice.io/trainers=true,group.timeslice.io/samplers=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true" \
   --num-nodes 2
+
+# Multi-GPU pool (for Qwen 4B+ sharded FSDP training):
+gcloud container node-pools create gpu-dra-2x \
+  --cluster "${CLUSTER}" --zone "${ZONE}" \
+  --machine-type g2-standard-24 \
+  --accelerator "type=nvidia-l4,count=2,gpu-driver-version=disabled" \
+  --node-labels="group.timeslice.io/trainers=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true" \
+  --num-nodes 1
 ```
 
 Install the GPU driver manually. Use the `latest` installer so the driver has
