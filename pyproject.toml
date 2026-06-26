@@ -49,6 +49,9 @@ cluster = [
     "kubernetes>=29",
     "timeslice @ git+https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git#subdirectory=pkg/client/python",
 ]
+dev = [
+    "ruff>=0.5.0",
+]
 
 [tool.setuptools.package-dir]
 "" = "src"

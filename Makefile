@@ -103,12 +103,12 @@ test:
 	fi
 
 lint:
-	uvx ruff check .
-	uvx ruff format --check .
+	uv run --extra dev ruff check .
+	uv run --extra dev ruff format --check .
 
 fmt:
-	uvx ruff check --fix .
-	uvx ruff format .
+	uv run --extra dev ruff check --fix .
+	uv run --extra dev ruff format .
 
 # ---------------------------------------------------------------------------
 # Deployment (GKE)

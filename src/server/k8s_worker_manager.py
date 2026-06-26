@@ -84,7 +84,8 @@ class KubernetesFFTWorkerManager:
       self.delete_pod_and_wait(pod_name)
 
     try:
-      self.core_api.create_namespaced_pod(namespace=self.namespace, body=self.render_pod(pod_name, model_id, job_id, role=role, base_model=base_model))
+      pod_body = self.render_pod(pod_name, model_id, job_id, role=role, base_model=base_model)
+      self.core_api.create_namespaced_pod(namespace=self.namespace, body=pod_body)
     except Exception as exc:
       if getattr(exc, "status", None) != 409:
         raise
