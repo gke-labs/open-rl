@@ -567,7 +567,8 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         "max_tokens=64",
         "learning_rate=1e-5",
         "eval_every=0",
-        "save_every=1",
+        "save_every=0",
+        *shlex.split(config.extra),
       ]
       results[job] = run_command(
         ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],

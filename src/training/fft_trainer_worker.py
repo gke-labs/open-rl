@@ -243,13 +243,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if self.optimizer is not None:
       for state in self.optimizer.state.values():
         if isinstance(state, dict):
-          orig_devices = {}
           for k, v in list(state.items()):
             if isinstance(v, torch.Tensor) and v.device.type == "cuda":
-              orig_devices[k] = v.device
               state[k] = v.to("cpu", non_blocking=True).pin_memory()
-          if orig_devices:
-            state["_orig_devices"] = orig_devices
 
     if torch.cuda.is_available():
       torch.cuda.synchronize()
@@ -281,12 +277,12 @@ class FFTTrainingWorker(BaseTrainerWorker):
           param.grad.data = cpu_grad.to(orig_device, non_blocking=True)
 
     if self.optimizer is not None:
-      for state in self.optimizer.state.values():
+      for param, state in self.optimizer.state.items():
         if isinstance(state, dict):
-          orig_devices = state.pop("_orig_devices", {})
+          state.pop("_orig_devices", None)
+          target_device = param.device
           for k, v in list(state.items()):
-            if isinstance(v, torch.Tensor) and v.device.type == "cpu":
-              target_device = orig_devices.get(k, self.device)
+            if isinstance(v, torch.Tensor) and v.device.type == "cpu" and k != "step":
               state[k] = v.to(target_device, non_blocking=True)
 
     if torch.cuda.is_available():
