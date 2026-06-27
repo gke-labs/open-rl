@@ -71,7 +71,7 @@ spec:
         - name: OPEN_RL_WORKER_POD_TEMPLATE
           value: "/etc/open-rl/trainer/trainer-worker-pod.yaml"
         - name: OPEN_RL_WORKER_IMAGE
-          value: "gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.5"
+          value: "gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.7"
         resources:
           limits:
             memory: "2Gi"

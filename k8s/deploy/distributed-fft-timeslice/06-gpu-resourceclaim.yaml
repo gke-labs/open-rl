@@ -15,4 +15,6 @@ spec:
     requests:
     - name: gpu
       exactly:
+        allocationMode: ExactCount
+        count: 2
         deviceClassName: gpu.nvidia.com

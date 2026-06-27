@@ -21,7 +21,7 @@ data:
       restartPolicy: OnFailure
       containers:
       - name: trainer-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.5
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.7
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
@@ -50,10 +50,10 @@ data:
           claims:
           - name: trainer-gpu
           limits:
-            memory: "48Gi"
+            memory: "80Gi"
           requests:
-            # Sized for 4B+ model parameter and AdamW momentum state offloading to pinned DRAM.
-            memory: "32Gi"
+            # Sized at 18Gi to allow concurrent pod scheduling on 42Gi allocatable nodes.
+            memory: "18Gi"
             cpu: "4"
         volumeMounts:
         - name: shared-storage

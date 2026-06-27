@@ -28,7 +28,7 @@ configMapGenerator:
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.1.5
+    newTag: 0.1.7
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.1.5
+    newTag: 0.1.7
