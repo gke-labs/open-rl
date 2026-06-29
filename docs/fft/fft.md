@@ -1,6 +1,6 @@
-# Full Parameter Fine-Tuning (FFT) Multi-Tenant Architecture in Open-RL
+# Full Parameter Fine-Tuning (FFT) Architecture & Implementation Guide
 
-This document provides a detailed technical overview of the architectural changes introduced in the `fft` branch relative to `main`. It captures how Open-RL achieves multi-tenant Full Parameter Fine-Tuning (FFT) and Reinforcement Learning (RL) on shared Kubernetes clusters by combining dynamic worker provisioning, decoupled queue scheduling, application-level memory offloading, and hardware accelerator time-slicing.
+This document provides a comprehensive technical deep-dive into the multi-tenant Full Parameter Fine-Tuning (FFT) and Reinforcement Learning (RL) architecture in Open-RL. It consolidates cluster topology, pod placement, dynamic weight swapping, control plane decoupling, hardware time-slicing, workload profiling, and empirical benchmark verifications into a single authoritative reference.
 
 ---
 
@@ -16,16 +16,16 @@ When training lightweight **LoRA** adapters, only a tiny fraction (~0.1% to 1%) 
 In contrast, **Full Parameter Fine-Tuning (FFT)** modifies 100% of the base model weights at every training step. Serving engines cannot natively mutate or reload multibillion-parameter weight matrices in-place while serving concurrent requests. 
 
 ### The Hardware Utilization Bottleneck
-Maintaining separate, dedicated GPU clusters for training and sampling leads to hardware underutilization:
+Maintaining separate, dedicated GPU clusters for training and sampling leads to severe hardware underutilization:
 * While Samplers generate rollouts, expensive Trainer GPUs sit 100% idle.
 * While Trainers compute gradient steps, inference GPUs sit 100% idle.
 * Holding full 16-bit model parameters, 16-bit gradients, 32-bit AdamW momentum states (`exp_avg`, `exp_avg_sq`), and large KV caches simultaneously in VRAM exceeds single-GPU memory boundaries even for modest models (~4B+ parameters).
 
-Open-RL solves this by implementing a **consolidated multi-tenant hardware time-slicing architecture**, enabling multiple concurrent RL experiments to share the exact same physical GPUs without virtualization overhead or OOM crashes.
+Open-RL solves this by implementing a **consolidated multi-tenant hardware time-slicing architecture**, enabling multiple concurrent RL experiments to share physical GPUs without virtualization overhead or memory corruption.
 
 ---
 
-## 2. High-Level Architecture & Topology
+## 2. High-Level Cluster Topology & Pod Placement Architecture
 
 Open-RL decouples policy gradient computation (Trainers) from rollout generation (Samplers) using asynchronous MultiTenant WorkQueues, while co-locating workloads onto regional Kubernetes GPU nodes governed by a node-local accelerator time-slicer daemon.
 
@@ -66,9 +66,49 @@ graph TD
     end
 ```
 
+### Strict Role Segregation via `nodeSelector`
+To prevent heavy PyTorch autograd compilations from interfering with latency-sensitive vLLM inference kernels, pod templates enforce explicit hardware boundaries using Kubernetes label selectors:
+* **Trainers:** Configured with `nodeSelector: timeslice.io/group: trainers`, binding pods exclusively to nodes running trainer-scoped time-slicer instances.
+* **Samplers:** Configured with `nodeSelector: timeslice.io/group: samplers`, confining rollout engines to dedicated inference nodes.
+
 ---
 
-## 3. Core Components & Interactions
+## 3. Control Plane & Data Plane Decoupling (Lifecycle Management)
+
+Open-RL segregates operations into a **Control Plane** (infrastructure provisioning, worker lifecycles) and a **Data Plane** (training step computation, token sampling) to guarantee zero-drop request drainage and fail-safe scalability.
+
+```
+[Control Plane Operations]
+API Server Control Queue (open_rl:worker_launch_queue) ---> WorkerLaunchProcessor (launches/gracefully stops PIDs)
+
+[Data Plane Operations]
+API Server Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (runs steps/computes tokens)
+```
+
+### Queue Division & Protocols
+| Plane | Operation | Protocol / Redis Key | Consumer |
+| :--- | :--- | :--- | :--- |
+| **Control Plane** | `create_model` (Launch trainer) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `launch_sampler` (Launch sampler) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `delete_model` (Stop workers) | `open_rl:worker_launch_queue` (Central) | `WorkerLaunchProcessor` |
+| **Control Plane** | `create_sampling_session` | Registry Metadata Key (Redis) | API Server |
+| **Data Plane** | `forward_backward`, `optim_step` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer Worker |
+| **Data Plane** | `save_weights_for_sampler` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer Worker |
+| **Data Plane** | `sample`, `asample` | `open_rl:sampler_queue:<model_id>` (Isolated) | vLLM Sampler Worker |
+
+### Provisioning & Activation Mechanics
+* **Trainer Provisioning:** When `/api/v1/create_model` is invoked, the API Server enqueues a launch command. `WorkerLaunchProcessor` pops the request and invokes `FFTWorkerManager.launch_trainer(model_id)` to provision the pod or subprocess.
+* **Sampler Provisioning:** When `/api/v1/create_sampling_session` is invoked, `WorkerLaunchProcessor` invokes `FFTWorkerManager.launch_sampler(model_id)`. The sampler compiles CUDA graphs and posts `open_rl:sampler_ready:<model_id> = "1"` to Redis. The API Server polls this key, blocking session return until physical readiness is verified.
+
+### Graceful Queue-Based Teardown (Sentinel Pattern)
+To prevent dropping in-flight rollouts during de-provisioning, teardown uses the **Sentinel Pattern**:
+1. When `/api/v1/delete_model` is invoked, the API Server enqueues a `shutdown_workers` command to `open_rl:worker_launch_queue`.
+2. `WorkerLaunchProcessor` enqueues a **Shutdown Sentinel (Poison Pill)** (`{"request_id": "SHUTDOWN_SENTINEL"}`) to the tails of both the trainer (`queue:<model_id>`) and sampler (`sampler_queue:<model_id>`) FIFO data queues.
+3. Workers continue popping and processing pending tasks. Upon popping the sentinel, they halt polling, complete active asyncio tasks, unregister from the time-slicer daemon, and exit gracefully.
+
+---
+
+## 4. Core Components & Deep Interaction Analysis
 
 ### A. API Server (`open-rl-gateway`)
 The API Server acts as the central REST API facade and orchestration controller. It receives incoming client SDK requests (`create_model`, `create_sampling_client`, inference rollouts, and training steps), validates session payloads, and routes execution tasks into MultiTenant WorkQueues. While hosted inside the same OS process as the worker manager in the current implementation, architecturally it remains a distinct, decoupled request controller.
@@ -106,9 +146,10 @@ Weight synchronization between the decoupled Trainer and Sampler pods is achieve
 
 ---
 
-## 4. End-to-End RL Workflow for 2 Concurrent Jobs
+## 5. End-to-End Execution Workflows & Turn-Taking Models
 
-When two independent RL experiments (`job-a` and `job-b`) execute concurrently against a shared dual-GPU node (`fft-gsm8k-rl-x2`), execution interleaves seamlessly across hardware time slices:
+### A. 2-Job Concurrent RL Workflow (`fft-gsm8k-rl-x2`)
+When two independent RL experiments (`job-a` and `job-b`) execute concurrently against a shared dual-GPU node, execution interleaves cleanly across hardware time slices:
 
 ```mermaid
 sequenceDiagram
@@ -146,9 +187,17 @@ sequenceDiagram
     SmPod->>TS: ACQUIRE(sampler-job-b) -> Reloads sampler-1 in-place -> Samples -> RELEASE
 ```
 
+### B. Sharing vs. Dedicated Sampler Workers (Inter-Job Turn Taking)
+Because sampling is queue-driven, the framework supports two distinct operational topologies:
+1. **Dedicated Samplers (1:1):** Each tenant model spawns an independent vLLM pod. The Accelerator Time-Slicer arbitrates physical GPU turn-taking between them.
+2. **Shared Samplers (Many:1):** Multiple client runs can route sampling requests into a shared vLLM engine instance by passing different versioned `sampling_session_id` tokens. The shared sampler inspects the incoming request header, detects the target weight version, and executes an in-place `sleep-reload` cycle only when switching between differing policy checkpoints.
+
+### C. Out-of-Order & Parallel Sampling Across Weight Versions
+The architecture supports asynchronous evaluation rollouts occurring concurrently with active training. Because `save_weights_for_sampler` exports immutable checkpoint shards (`sampler-1`, `sampler-2`, `final`) tagged with unique sequence numbers under shared storage (`tinker://<model_id>/sampler_weights/<alias>`), evaluation workers can independently pull historical checkpoints without locking active training worker threads.
+
 ---
 
-## 5. Workload Profiling, Node Mapping & Dynamic Resource Allocation (DRA)
+## 6. Workload Profiling, Node Mapping & Dynamic Resource Allocation (DRA)
 
 To efficiently support diverse model architectures—ranging from compact sub-1B models to multi-billion parameter workloads—Open-RL couples workload profiling with intelligent Kubernetes pod placement driven by **Dynamic Resource Allocation (DRA)**.
 
@@ -180,7 +229,34 @@ Rather than attaching rigid, static `nvidia.com/gpu` integer device requests dir
 
 ---
 
-## 6. Key Engineering Insights, Bugs & Workarounds
+## 7. Configuration & Runtime Environment Variables
+
+The following environment variables govern multi-tenant GPU execution across Gateway and Worker processes:
+
+| Environment Variable | Target Process | Description |
+| :--- | :--- | :--- |
+| `OPEN_RL_ENABLE_FFT=true` | Gateway / Workers | Enables Full Fine-Tuning execution pathways and dynamic worker provisioning. |
+| `OPEN_RL_WORKER_MANAGER=kubernetes` | Gateway | Configures API Server to provision pod workloads on cluster nodes rather than local subprocesses. |
+| `OPEN_RL_WORKER_IMAGE=<tag>` | Gateway | Runtime override injecting explicit container image digests into rendered worker pod specifications. |
+| `SAMPLING_BACKEND=vllm` | Client / Gateway | Instructs the framework to route rollout requests to vLLM dynamic sampler pods. |
+| `CUDA_VISIBLE_DEVICES=<ids>` | Trainer Worker | Binds PyTorch FSDP autograd engines to designated physical accelerator UUIDs or indices. |
+| `SAMPLER_CUDA_VISIBLE_DEVICES=<ids>` | Sampler Worker | Binds vLLM Dynamo engines to isolated inference accelerators. |
+| `VLLM_GPU_MEMORY_UTILIZATION=0.70` | Sampler Worker | Configures vLLM pre-allocated KV cache ceiling, leaving headroom for cooperative memory swapping. |
+| `OPEN_RL_ACCEL_TIMESLICER_HOST` | Workers | Target IP (`status.hostIP`) of the node-local time-slicer daemon controlling hardware locks. |
+
+### Reference E2E Invocation Commands
+To execute single-job FFT RL benchmark verification:
+```bash
+make test e2e tiny-fft-rl TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=10"
+```
+To execute concurrent dual-job time-slicing verification:
+```bash
+make test e2e tiny-fft-rl-x2 TRAINING_TEST_ARGS="sampling_backend=vllm trainer_gpu=0 sampler_gpu=1 steps=5"
+```
+
+---
+
+## 8. Key Engineering Insights, Bugs & Workarounds
 
 ### A. PyTorch AdamW Multi-Tensor Device Mismatch Bug
 * **Issue:** At Step 2 of multi-GPU FSDP runs, trainers crashed with `RuntimeError: Tensors of the same index must be on the same device and the same dtype except step tensors...`.
@@ -195,9 +271,15 @@ Rather than attaching rigid, static `nvidia.com/gpu` integer device requests dir
 * **Issue:** Serializing 8 GiB PyTorch state dictionaries across the GKE Filestore NFS cluster (`time/save_checkpoint`) took **155 to 179 seconds** per job step, consuming >60% of total training time.
 * **Workaround:** Configured `save_every=0` during benchmark execution. This completely bypasses writing historical epoch checkpoints (`checkpoints.jsonl`), while continuing to write lightweight ephemeral weights (`sampler-X`) required for vLLM sampler synchronization.
 
+### D. Gemma 4 Renderer Incompatibility
+* **Issue:** Default Tinker SDK chat renderers (`qwen3_instruct`) emit special delimiters (`<|im_start|>`) unsupported by Gemma 4 models (`<start_of_turn>`).
+* **Workaround:** Implemented two non-destructive integration patterns without editing installed SDK code:
+  1. **Runtime Injection:** Using `tinker_cookbook.renderers.register_renderer("gemma4", factory)` at startup to dynamically inject HuggingFace chat template rendering into the SDK lookup registry.
+  2. **Raw Prompt Bypass:** Formatting prompt strings directly (`PLAIN_SQL_PROMPT`) and pre-tokenizing inputs (`add_special_tokens=False`), feeding raw ID sequences directly into dataset builders.
+
 ---
 
-## 7. Empirical Benchmark Numbers & Performance Verification
+## 9. Empirical Benchmark Numbers & Performance Verification
 
 Data compiled from verified 10-step concurrent dual-job benchmark runs (`task-5397`, archived in repository `runs/` directory):
 
