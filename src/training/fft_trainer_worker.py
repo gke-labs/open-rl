@@ -287,7 +287,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if self.optimizer is not None:
       for param, state in self.optimizer.state.items():
         if isinstance(state, dict):
-          for k, v in list(state.items()):
+          for k in list(state.keys()):
             opt_key = (param, k)
             if opt_key in self._opt_shadow:
               orig_device, cpu_buf = self._opt_shadow[opt_key]

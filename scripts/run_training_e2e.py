@@ -707,7 +707,13 @@ def run_textsql_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProce
         "rl.max_tokens": "64",
         "rl.eval_every": "1",
       }
-      results[job] = run_example(config, ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"], defaults, watch=watch, prefix=f"[{job}] ")
+      results[job] = run_example(
+        config,
+        ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"],
+        defaults,
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
     except BaseException as exc:
       results[job] = exc
 
