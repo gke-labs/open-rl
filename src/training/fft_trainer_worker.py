@@ -39,6 +39,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._is_offloaded: bool = False
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
+    self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -147,7 +148,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.base_model_name = base_model
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-    self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=self.device)
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    target_device = "auto" if num_gpus > 1 else self.device
+    self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)
     self.prepare_model_for_training()
 
     if restore_optimizer and metadata.get("has_optimizer"):
@@ -162,10 +165,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def forward_backward(self, data: list[Datum], loss_fn: str, loss_config: dict | None = None, model_id: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
-    return super().forward_backward(self.model, data, loss_fn, loss_config)
+    res = super().forward_backward(self.model, data, loss_fn, loss_config)
+    if torch.cuda.is_available():
+      torch.cuda.empty_cache()
+    return res
 
   def optim_step(self, adam_params: dict[str, Any], model_id: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    if torch.cuda.is_available():
+      torch.cuda.empty_cache()
     if not self.trainable_params:
       self.trainable_params = trainable_model_parameters(self.model)
 
@@ -230,32 +238,69 @@ class FFTTrainingWorker(BaseTrainerWorker):
       return
     start_t = time.perf_counter()
 
+    # Phase 1: Launch Batched Asynchronous DMA copies WITHOUT freeing GPU tensors!
     for param in self.model.parameters():
       if param.device.type == "cuda":
         orig_device = param.device
-        self._param_shadow[param] = (orig_device, param.data.to("cpu", non_blocking=True).pin_memory())
-        param.data = torch.empty(0, dtype=param.dtype, device=orig_device)
+        if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+          cpu_buf = self._param_shadow[param][1]
+        else:
+          cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=True)
+          self._param_shadow[param] = (orig_device, cpu_buf)
+        cpu_buf.copy_(param.data, non_blocking=True)
       if param.grad is not None and param.grad.device.type == "cuda":
         orig_device = param.grad.device
-        self._grad_shadow[param] = (orig_device, param.grad.data.to("cpu", non_blocking=True).pin_memory())
-        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device=orig_device)
+        if param in self._grad_shadow and self._grad_shadow[param][1].shape == param.grad.shape:
+          cpu_buf = self._grad_shadow[param][1]
+        else:
+          cpu_buf = torch.empty(param.grad.shape, dtype=param.grad.dtype, device="cpu", pin_memory=True)
+          self._grad_shadow[param] = (orig_device, cpu_buf)
+        cpu_buf.copy_(param.grad.data, non_blocking=True)
 
     if self.optimizer is not None:
-      for state in self.optimizer.state.values():
+      for param, state in self.optimizer.state.items():
         if isinstance(state, dict):
           for k, v in list(state.items()):
             if isinstance(v, torch.Tensor) and v.device.type == "cuda":
-              state[k] = v.to("cpu", non_blocking=True).pin_memory()
+              orig_device = v.device
+              opt_key = (param, k)
+              if opt_key in self._opt_shadow and self._opt_shadow[opt_key][1].shape == v.shape:
+                cpu_buf = self._opt_shadow[opt_key][1]
+              else:
+                cpu_buf = torch.empty(v.shape, dtype=v.dtype, device="cpu", pin_memory=True)
+                self._opt_shadow[opt_key] = (orig_device, cpu_buf)
+              cpu_buf.copy_(v, non_blocking=True)
 
+    # Phase 2: Single Barrier Synchronization point!
     if torch.cuda.is_available():
       torch.cuda.synchronize()
+
+    # Phase 3: Now that DMA has finished, safely deallocate GPU VRAM!
+    for param in self.model.parameters():
+      if param in self._param_shadow:
+        orig_device = self._param_shadow[param][0]
+        param.data = torch.empty(0, dtype=param.dtype, device=orig_device)
+      if param.grad is not None and param in self._grad_shadow:
+        orig_device = self._grad_shadow[param][0]
+        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device=orig_device)
+
+    if self.optimizer is not None:
+      for param, state in self.optimizer.state.items():
+        if isinstance(state, dict):
+          for k, v in list(state.items()):
+            opt_key = (param, k)
+            if opt_key in self._opt_shadow:
+              orig_device, cpu_buf = self._opt_shadow[opt_key]
+              state[k] = cpu_buf
+
+    if torch.cuda.is_available():
       torch.cuda.empty_cache()
 
     self._is_offloaded = True
     print(f"[FFT Worker] Offloaded weights & states to pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
 
   def wake_up(self) -> None:
-    """Reload pinned CPU shadow tensors back to CUDA VRAM."""
+    """Reload pinned CPU shadow tensors back to CUDA VRAM without destroying host shadow buffers."""
     if (
       not getattr(self, "cpu_offload", False)
       or getattr(self, "model", None) is None
@@ -266,15 +311,12 @@ class FFTTrainingWorker(BaseTrainerWorker):
     start_t = time.perf_counter()
 
     for param in self.model.parameters():
-      param_entry = self._param_shadow.pop(param, None)
-      if param_entry is not None:
-        orig_device, cpu_data = param_entry if isinstance(param_entry, tuple) else (self.device, param_entry)
+      if param in self._param_shadow:
+        orig_device, cpu_data = self._param_shadow[param]
         param.data = cpu_data.to(orig_device, non_blocking=True)
-      if param.grad is not None:
-        grad_entry = self._grad_shadow.pop(param, None)
-        if grad_entry is not None:
-          orig_device, cpu_grad = grad_entry if isinstance(grad_entry, tuple) else (self.device, grad_entry)
-          param.grad.data = cpu_grad.to(orig_device, non_blocking=True)
+      if param.grad is not None and param in self._grad_shadow:
+        orig_device, cpu_grad = self._grad_shadow[param]
+        param.grad.data = cpu_grad.to(orig_device, non_blocking=True)
 
     if self.optimizer is not None:
       for param, state in self.optimizer.state.items():
@@ -282,7 +324,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
           state.pop("_orig_devices", None)
           target_device = param.device
           for k, v in list(state.items()):
-            if isinstance(v, torch.Tensor) and v.device.type == "cpu" and k != "step":
+            opt_key = (param, k)
+            if opt_key in self._opt_shadow:
+              orig_device, cpu_buf = self._opt_shadow[opt_key]
+              state[k] = cpu_buf.to(orig_device, non_blocking=True)
+            elif isinstance(v, torch.Tensor) and v.device.type == "cpu" and k != "step":
               state[k] = v.to(target_device, non_blocking=True)
 
     if torch.cuda.is_available():

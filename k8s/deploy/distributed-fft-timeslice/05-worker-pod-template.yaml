@@ -21,7 +21,7 @@ data:
       restartPolicy: OnFailure
       containers:
       - name: trainer-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.7
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.11
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
@@ -50,7 +50,7 @@ data:
           claims:
           - name: trainer-gpu
           limits:
-            memory: "80Gi"
+            memory: "180Gi"
           requests:
             # Sized at 18Gi to allow concurrent pod scheduling on 42Gi allocatable nodes.
             memory: "18Gi"
@@ -67,6 +67,7 @@ data:
           claimName: open-rl-shared-pvc
       nodeSelector:
         group.timeslice.io/trainers: "true"
+        cloud.google.com/gke-accelerator: "nvidia-h100-80gb"
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

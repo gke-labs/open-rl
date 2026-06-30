@@ -65,6 +65,8 @@ class RunConfig:
     "fft-gsm8k-x2",
     "fft-gsm8k-rl",
     "fft-gsm8k-rl-x2",
+    "fft-textsql-rl",
+    "fft-textsql-rl-x2",
   ]
   sampling_backend: str = "torch"
   trainer_gpu: str = "0"
@@ -642,7 +644,7 @@ def require_finite_metric(row: dict, key: str) -> float:
 
 
 def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  log_dir = Path(config.log_dir) / "lora_textsql"
+  log_dir = Path(config.log_dir) / config.scenario.replace("-", "_")
   defaults = {
     "phase": "rl_only",
     "base_url": base_url,
@@ -650,16 +652,16 @@ def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -
     "model.base_model": config.base_model,
     "model.tokenizer_name": config.base_model,
     "model.rank": "16",
-    "dataset.train_limit": "16",
-    "dataset.rl_train_limit": "16",
+    "dataset.train_limit": "64",
+    "dataset.rl_train_limit": "64",
     # Eval runs through the torch sampler (no vLLM during training), so keep it
     # small here; override with extra='dataset.eval_limit=N'.
     "dataset.eval_limit": "8",
     "dataset.eval_max_tokens": "64",
     "sft.steps": "0",
     "rl.steps": str(config.steps if config.steps is not None else 2),
-    "rl.prompts_per_step": "2",
-    "rl.samples_per_prompt": "2",
+    "rl.prompts_per_step": "4",
+    "rl.samples_per_prompt": "4",
     "rl.max_tokens": "64",
     "rl.eval_every": "1",
   }
@@ -677,6 +679,63 @@ def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -
   print(f"[training-e2e] textsql rollouts={rollouts} final_execution_match={execution_match:.1%}")
 
 
+def run_textsql_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Two concurrent Text-to-SQL FFT RL jobs against the same backend: each create_model spawns
+  its own trainer and dedicated sampler worker, and the accel timeslicer time-slices them."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str) -> None:
+    try:
+      log_dir = Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"
+      if log_dir.exists():
+        shutil.rmtree(log_dir)
+      defaults = {
+        "phase": "rl_only",
+        "base_url": base_url,
+        "log_dir": str(log_dir),
+        "model.base_model": config.base_model,
+        "model.tokenizer_name": config.base_model,
+        "model.rank": "16",
+        "dataset.train_limit": "64",
+        "dataset.rl_train_limit": "64",
+        "dataset.eval_limit": "8",
+        "dataset.eval_max_tokens": "64",
+        "sft.steps": "0",
+        "rl.steps": str(config.steps if config.steps is not None else 2),
+        "rl.prompts_per_step": "4",
+        "rl.samples_per_prompt": "4",
+        "rl.max_tokens": "64",
+        "rl.eval_every": "1",
+      }
+      results[job] = run_example(config, ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"], defaults, watch=watch, prefix=f"[{job}] ")
+    except BaseException as exc:
+      results[job] = exc
+
+  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  for job, result in sorted(results.items()):
+    if isinstance(result, BaseException):
+      raise RuntimeError(f"fft-textsql-rl-x2 {job} failed") from result
+
+    log_dir = Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"
+    rows = read_jsonl(log_dir / "metrics.jsonl")
+    train_rows = [row for row in rows if row.get("phase") == "rl_train"]
+    eval_rows = [row for row in rows if row.get("phase") == "rl_eval"]
+    if not train_rows or not eval_rows:
+      raise RuntimeError(f"Text-to-SQL RL {job} must log rl_train and rl_eval metrics in {log_dir / 'metrics.jsonl'}")
+    rollouts = sum(int(require_finite_metric(row, "num_rollouts")) for row in train_rows)
+    if rollouts <= 0:
+      raise RuntimeError(f"Text-to-SQL RL {job} did not produce any trainable rollouts")
+    execution_match = require_finite_metric(eval_rows[-1], "execution_match")
+    print(f"[training-e2e] textsql {job} rollouts={rollouts} final_execution_match={execution_match:.1%}")
+
+  check_snapshot_interleaving(config)
+
+
 def main() -> None:
   config = chz.entrypoint(RunConfig, allow_hyphens=True)
   Path(config.log_dir).mkdir(parents=True, exist_ok=True)
@@ -691,8 +750,10 @@ def main() -> None:
       run_gsm8k_rl(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2":
       run_gsm8k_rl_x2(config, base_url, processes)
-    elif config.scenario == "lora-textsql":
+    elif config.scenario in {"lora-textsql", "fft-textsql-rl"}:
       run_textsql(config, base_url, processes)
+    elif config.scenario == "fft-textsql-rl-x2":
+      run_textsql_rl_x2(config, base_url, processes)
     elif config.scenario == "tiny-fft-rl-x2":
       run_tiny_fft_rl_x2(config, base_url, processes)
     else:

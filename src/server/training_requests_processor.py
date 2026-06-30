@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import os
+import shutil
 import threading
 import traceback
 from typing import Any, Protocol
@@ -370,6 +371,8 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
 
   async def optim_step(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     result = await asyncio.to_thread(self.worker.optim_step, payload.get("adam_params", {}), model_id)
+    staging_dir = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", f"{model_id}_staging")
+    await asyncio.to_thread(self.worker.save_state, model_id, staging_dir, False, "sampler")
     result["type"] = "optim_step_completed"
     return result
 
@@ -411,7 +414,14 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       raise ValueError("save_weights_for_sampler requires path or sampling_session_id")
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
     local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
-    await asyncio.to_thread(self.worker.save_state, model_id, local_path, False, "sampler")
+    staging_dir = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", f"{model_id}_staging")
+    if os.path.exists(staging_dir):
+      os.makedirs(os.path.dirname(local_path), exist_ok=True)
+      if os.path.exists(local_path):
+        shutil.rmtree(local_path)
+      await asyncio.to_thread(os.rename, staging_dir, local_path)
+    else:
+      await asyncio.to_thread(self.worker.save_state, model_id, local_path, False, "sampler")
     return {
       "path": payload.get("path"),
       "sampling_session_id": payload.get("sampling_session_id"),

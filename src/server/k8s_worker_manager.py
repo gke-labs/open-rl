@@ -5,8 +5,8 @@ FFT model gets its own trainer worker pod, labeled with a stable per-model id.
 The pod spec comes from a ConfigMap-mounted YAML template; this class only stamps the
 per-model name, labels, job-id env, and --model-id argument. The labels follow
 the time-slicing convention used by the node-local snapshot agent. DRA pinning
-is handled by the shared ResourceClaim in the pod template; the snapshot agent
-coordinates which colocated worker process may touch CUDA.
+is handled by the shared ResourceClaim in the pod template; the accel-timeslicer
+coordinates which colocated worker process may access CUDA.
 
 This module is part of the cluster extra; importing it assumes Kubernetes
 dependencies are installed.

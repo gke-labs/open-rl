@@ -36,7 +36,7 @@ help:
 	@echo "make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm"
 	@echo "VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM make vllm BASE_MODEL=google/gemma-4-e2b"
 	@echo "make test                               # fast unit tests"
-	@echo "make test e2e tiny-lora|tiny-fft|tiny-rl|lora-textsql|fft-gsm8k|fft-gsm8k-x2  # tiny-* = fast overfit smoke tests"
+	@echo "make test e2e tiny-lora|tiny-fft|tiny-rl|lora-textsql|fft-gsm8k|fft-gsm8k-x2|fft-textsql-rl|fft-textsql-rl-x2  # tiny-* = fast overfit smoke tests"
 	@echo "make test e2e tiny-lora BASE_URL=http://host:9003"
 	@echo "CUDA_VISIBLE_DEVICES=0 make test e2e tiny-fft"
 	@echo "make test e2e tiny-fft TRAINING_TEST_ARGS='steps=20'"
@@ -88,7 +88,7 @@ test:
 	  uv run --frozen --exact --extra cpu --extra cluster python -m unittest $(UNIT_TESTS); \
 	elif [ "$$mode" = "e2e" ]; then \
 	  if [ -z "$$scenario" ]; then \
-	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, fft-gsm8k, or fft-gsm8k-x2."; \
+	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, fft-gsm8k, fft-gsm8k-x2, fft-textsql-rl, or fft-textsql-rl-x2."; \
 	    exit 2; \
 	  fi; \
 	  set -- "scenario=$$scenario" "uv_extra=$(TRAINING_TEST_EXTRA)"; \
