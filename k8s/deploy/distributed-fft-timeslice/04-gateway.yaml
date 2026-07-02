@@ -44,7 +44,7 @@ spec:
               name: open-rl-config
               key: ENABLE_GCP_TRACE
         - name: REDIS_URL
-          value: "redis://redis-service:6379"
+          value: "redis://redis-service:6379?max_connections=500"
         # This cluster path assumes one base model per deployment.
         - name: BASE_MODEL
           valueFrom:

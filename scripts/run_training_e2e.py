@@ -518,20 +518,29 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
   run_gsm8k_eval(config, eval_paths)
 
 
+def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
+  if "gemma" in base_model.lower():
+    return "recipes.math_rl.train_gemma", "gemma4"
+  if "Instruct" in base_model or "Qwen2.5" in base_model:
+    return "tinker_cookbook.recipes.math_rl.train", "qwen3_instruct"
+  return "tinker_cookbook.recipes.math_rl.train", "qwen3"
+
+
 def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   log_path = str(open_rl_tmp_dir(config) / "fft_gsm8k_rl")
   if os.path.exists(log_path):
     shutil.rmtree(log_path)
+  module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
   args = [
     "env=gsm8k",
     f"model_name={config.base_model}",
-    "renderer_name=qwen3_instruct",
+    f"renderer_name={renderer_name}",
     f"max_steps={config.steps if config.steps is not None else 2}",
     f"base_url={base_url}",
     f"log_path={log_path}",
-    "group_size=2",
-    "groups_per_batch=1",
-    "max_tokens=64",
+    "group_size=4",
+    "groups_per_batch=16",
+    "max_tokens=512",
     "learning_rate=1e-5",
     "eval_every=0",
     "save_every=1",
@@ -539,7 +548,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
   out = None
   try:
     out = run_command(
-      ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
+      ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
       env=examples_env(config),
       watch=watch,
     )
@@ -557,23 +566,26 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
       log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
       if os.path.exists(log_path):
         shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      temp = "1.0"
       args = [
         "env=gsm8k",
         f"model_name={config.base_model}",
-        "renderer_name=qwen3_instruct",
+        f"renderer_name={renderer_name}",
         f"max_steps={config.steps if config.steps is not None else 2}",
         f"base_url={base_url}",
         f"log_path={log_path}",
-        "group_size=2",
-        "groups_per_batch=1",
-        "max_tokens=64",
+        "group_size=8",
+        "groups_per_batch=8",
+        "max_tokens=512",
         "learning_rate=1e-5",
+        f"temperature={temp}",
         "eval_every=0",
         "save_every=0",
         *shlex.split(config.extra),
       ]
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", "tinker_cookbook.recipes.math_rl.train", *args],
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
         env=examples_env(config),
         watch=watch,
         prefix=f"[{job}] ",

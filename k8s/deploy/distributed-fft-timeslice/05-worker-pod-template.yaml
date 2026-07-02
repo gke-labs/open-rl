@@ -26,7 +26,7 @@ data:
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
         - name: REDIS_URL
-          value: "redis://redis-service:6379"
+          value: "redis://redis-service:6379?max_connections=500"
         - name: BASE_MODEL
           valueFrom:
             configMapKeyRef:

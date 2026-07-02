@@ -20,7 +20,7 @@ data:
         command: ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
         env:
         - name: REDIS_URL
-          value: "redis://redis-service:6379"
+          value: "redis://redis-service:6379?max_connections=500"
         - name: BASE_MODEL
           valueFrom:
             configMapKeyRef:
