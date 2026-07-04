@@ -51,8 +51,13 @@ spec:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
-      nodeSelector:
-        cloud.google.com/gke-accelerator: nvidia-l4
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: cloud.google.com/gke-accelerator
+                operator: Exists
       containers:
       - name: dcgm-exporter
         image: us-central1-artifactregistry.gcr.io/gke-release/gke-release/nvidia/gke-dcgm-exporter:4.4.1-4.6.0-gke.11@sha256:5c96863584d86494f1f677fcb15d567befa27b0f71b4a92606f8934fb583858e
@@ -90,6 +95,9 @@ spec:
           readOnly: true
         - name: dev-fs
           mountPath: /dev
+        - name: pod-resources
+          mountPath: /var/lib/kubelet/pod-resources
+          readOnly: true
       volumes:
       - name: nvidia-install-dir-host
         hostPath:
@@ -101,6 +109,10 @@ spec:
       - name: dev-fs
         hostPath:
           path: /dev
+      - name: pod-resources
+        hostPath:
+          path: /var/lib/kubelet/pod-resources
+          type: DirectoryOrCreate
 ---
 apiVersion: monitoring.googleapis.com/v1
 kind: PodMonitoring

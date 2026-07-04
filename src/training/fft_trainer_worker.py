@@ -1,5 +1,7 @@
 # Full fine-tuning trainer worker lifecycle.
 
+import gc
+import itertools
 import json
 import math
 import os
@@ -83,6 +85,20 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self.model.train()
 
+  def _prepare_for_save(self) -> bool:
+    was_offloaded = getattr(self, "_is_offloaded", False)
+    if was_offloaded and self.model is not None:
+      for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+        if tensor in self._param_shadow:
+          tensor.data = self._param_shadow[tensor][1]
+    return was_offloaded
+
+  def _cleanup_after_save(self, was_offloaded: bool) -> None:
+    if was_offloaded and self.model is not None:
+      for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+        if tensor in self._param_shadow:
+          tensor.data = torch.empty(0, dtype=tensor.dtype, device=self._param_shadow[tensor][0])
+
   def save_model(self, alias: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
 
@@ -91,9 +107,13 @@ class FFTTrainingWorker(BaseTrainerWorker):
     save_path = name if os.path.isabs(name) else os.path.join(tmp_dir, "fft", name)
     os.makedirs(save_path, exist_ok=True)
 
-    self.model.save_pretrained(save_path)
-    if self.tokenizer is not None:
-      self.tokenizer.save_pretrained(save_path)
+    was_offloaded = self._prepare_for_save()
+    try:
+      self.model.save_pretrained(save_path)
+      if self.tokenizer is not None:
+        self.tokenizer.save_pretrained(save_path)
+    finally:
+      self._cleanup_after_save(was_offloaded)
 
     metadata = {
       "base_model": self.base_model_name,
@@ -112,12 +132,16 @@ class FFTTrainingWorker(BaseTrainerWorker):
     assert self.model is not None, "Model must be loaded first."
 
     os.makedirs(state_path, exist_ok=True)
-    self.model.save_pretrained(state_path)
-    if self.tokenizer is not None:
-      self.tokenizer.save_pretrained(state_path)
+    was_offloaded = self._prepare_for_save()
+    try:
+      self.model.save_pretrained(state_path)
+      if self.tokenizer is not None:
+        self.tokenizer.save_pretrained(state_path)
 
-    if include_optimizer and self.optimizer is not None:
-      torch.save(self.optimizer.state_dict(), os.path.join(state_path, "optimizer.pt"))
+      if include_optimizer and self.optimizer is not None:
+        torch.save(self.optimizer.state_dict(), os.path.join(state_path, "optimizer.pt"))
+    finally:
+      self._cleanup_after_save(was_offloaded)
 
     metadata = {
       "base_model": self.base_model_name,
@@ -239,23 +263,23 @@ class FFTTrainingWorker(BaseTrainerWorker):
     start_t = time.perf_counter()
 
     # Phase 1: Launch Batched Asynchronous DMA copies WITHOUT freeing GPU tensors!
-    for param in self.model.parameters():
-      if param.device.type == "cuda":
-        orig_device = param.device
-        if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
-          cpu_buf = self._param_shadow[param][1]
+    for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+      if tensor.device.type == "cuda":
+        orig_device = tensor.device
+        if tensor in self._param_shadow and self._param_shadow[tensor][1].shape == tensor.shape:
+          cpu_buf = self._param_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=True)
-          self._param_shadow[param] = (orig_device, cpu_buf)
-        cpu_buf.copy_(param.data, non_blocking=True)
-      if param.grad is not None and param.grad.device.type == "cuda":
-        orig_device = param.grad.device
-        if param in self._grad_shadow and self._grad_shadow[param][1].shape == param.grad.shape:
-          cpu_buf = self._grad_shadow[param][1]
+          cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=True)
+          self._param_shadow[tensor] = (orig_device, cpu_buf)
+        cpu_buf.copy_(tensor.data, non_blocking=True)
+      if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor.grad.device.type == "cuda":
+        orig_device = tensor.grad.device
+        if tensor in self._grad_shadow and self._grad_shadow[tensor][1].shape == tensor.grad.shape:
+          cpu_buf = self._grad_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(param.grad.shape, dtype=param.grad.dtype, device="cpu", pin_memory=True)
-          self._grad_shadow[param] = (orig_device, cpu_buf)
-        cpu_buf.copy_(param.grad.data, non_blocking=True)
+          cpu_buf = torch.empty(tensor.grad.shape, dtype=tensor.grad.dtype, device="cpu", pin_memory=True)
+          self._grad_shadow[tensor] = (orig_device, cpu_buf)
+        cpu_buf.copy_(tensor.grad.data, non_blocking=True)
 
     if self.optimizer is not None:
       for param, state in self.optimizer.state.items():
@@ -276,13 +300,13 @@ class FFTTrainingWorker(BaseTrainerWorker):
       torch.cuda.synchronize()
 
     # Phase 3: Now that DMA has finished, safely deallocate GPU VRAM!
-    for param in self.model.parameters():
-      if param in self._param_shadow:
-        orig_device = self._param_shadow[param][0]
-        param.data = torch.empty(0, dtype=param.dtype, device=orig_device)
-      if param.grad is not None and param in self._grad_shadow:
-        orig_device = self._grad_shadow[param][0]
-        param.grad.data = torch.empty(0, dtype=param.grad.dtype, device=orig_device)
+    for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+      if tensor in self._param_shadow:
+        orig_device = self._param_shadow[tensor][0]
+        tensor.data = torch.empty(0, dtype=tensor.dtype, device=orig_device)
+      if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor in self._grad_shadow:
+        orig_device = self._grad_shadow[tensor][0]
+        tensor.grad.data = torch.empty(0, dtype=tensor.grad.dtype, device=orig_device)
 
     if self.optimizer is not None:
       for param, state in self.optimizer.state.items():
@@ -294,7 +318,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
               state[k] = cpu_buf
 
     if torch.cuda.is_available():
+      gc.collect()
       torch.cuda.empty_cache()
+      if hasattr(torch.cuda, "ipc_collect"):
+        torch.cuda.ipc_collect()
 
     self._is_offloaded = True
     print(f"[FFT Worker] Offloaded weights & states to pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
@@ -310,13 +337,13 @@ class FFTTrainingWorker(BaseTrainerWorker):
       return
     start_t = time.perf_counter()
 
-    for param in self.model.parameters():
-      if param in self._param_shadow:
-        orig_device, cpu_data = self._param_shadow[param]
-        param.data = cpu_data.to(orig_device, non_blocking=True)
-      if param.grad is not None and param in self._grad_shadow:
-        orig_device, cpu_grad = self._grad_shadow[param]
-        param.grad.data = cpu_grad.to(orig_device, non_blocking=True)
+    for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+      if tensor in self._param_shadow:
+        orig_device, cpu_data = self._param_shadow[tensor]
+        tensor.data = cpu_data.to(orig_device, non_blocking=True)
+      if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor in self._grad_shadow:
+        orig_device, cpu_grad = self._grad_shadow[tensor]
+        tensor.grad.data = cpu_grad.to(orig_device, non_blocking=True)
 
     if self.optimizer is not None:
       for param, state in self.optimizer.state.items():
