@@ -21,7 +21,37 @@ Maintaining separate, dedicated GPU clusters for training and sampling leads to 
 * While Trainers compute gradient steps, inference GPUs sit 100% idle.
 * Holding full 16-bit model parameters, 16-bit gradients, 32-bit AdamW momentum states (`exp_avg`, `exp_avg_sq`), and large KV caches simultaneously in VRAM exceeds single-GPU memory boundaries even for modest models (~4B+ parameters).
 
-Open-RL solves this by implementing a **consolidated multi-tenant hardware time-slicing architecture**, enabling multiple concurrent RL experiments to share physical GPUs without virtualization overhead or memory corruption.
+### Anatomy of an RL Step & The Platoon Effect
+A **single RL step** represents one complete, closed-loop Reinforcement Learning iteration across four sequential phases:
+1. **Rollout Generation (`time/sampling`):** Worker acquires the Sampler GPU lock (`r8f5`), restores model weights in vLLM, and generates rollout trajectories (e.g., 192 completions across math prompts).
+2. **Reward Scoring (`time/do_group_rollout...`):** Host CPU scores completions against formatting/accuracy rules and computes group-relative advantages.
+3. **Policy Gradient Optimization (`time/train_step`):** Worker acquires the Trainer GPU lock (`tpdj`), reloads 16-bit weights/gradients and 32-bit AdamW momentum states from pinned CPU RAM into physical H100 VRAM (`wake_up`), runs FSDP forward/backward passes and AdamW updates, then offloads back to pinned CPU RAM (`sleep`) before releasing the GPU lock.
+4. **Non-Blocking Checkpoint Saving (`time/save_checkpoint`):** Outside the GPU mutex lock, the worker serializes updated model shards from pinned CPU RAM (`_param_shadow`) to NFS shared storage in background parallel while the next job computes on the GPU.
+
+#### The Platoon Effect (Why FIFO Fails)
+In a multi-tenant cluster where jobs share regional GPU nodes via time-slicing, using standard First-In, First-Out queueing (`deque.popleft()`) causes severe **platooning**. If identical concurrent jobs start simultaneously (`jitter_sec=0`) or synchronize even once, whoever arrives at the queue tail first is served first on every subsequent phase transition. Workloads bunch up into rigid, sequential traffic jams (`1 -> 2 -> 3 -> 1 -> 2 -> 3`):
+```text
+[Node r8f5 - Samplers]: |--- Job 1 ---|--- Job 2 ---|--- Job 3 ---| (100% Idle for minutes...)
+[Node tpdj - Trainers]: (100% Idle!)  |--- Job 1 ---|--- Job 2 ---|--- Job 3 ---|
+```
+While all three jobs wait in line on the Trainer node, the opposite Sampler node sits completely empty, inflating step durations by >50%.
+
+#### How Least Recently Served (LRS) Addresses It
+To eliminate platooning, Open-RL implements **Least Recently Served (LRS)** (`--scheduling-policy lrs`). Whenever a workload releases a GPU lock, the time-slicer records its wall-clock departure timestamp (`last_release_time[job_id]`). When multiple workloads compete for a free GPU lock, the scheduler ignores queue arrival order and selects whichever waiting job released the GPU *least recently* ($\min(\text{last\_release\_time})$).
+* LRS acts as an automatic **phase-balancing spring**: if a job gets held up on the Trainer node, its release timestamp is much older than jobs that sampled recently. When it returns to the Sampler node, LRS grants it immediate express-lane priority.
+* By actively serving out-of-phase workloads, LRS forces concurrent jobs apart in time, breaking lockstep synchronization and ensuring continuous cross-node overlap (one model trains on `tpdj` while another samples on `r8f5`).
+
+#### Empirical Verification: FIFO vs. LRS Scheduling (3x Qwen 0.5B Concurrent Fine-Tuning)
+To empirically verify the de-platooning effect of LRS, we executed two side-by-side 3-job concurrent fine-tuning campaigns (`fft-gsm8k-rl-x3`, 10 steps each, starting with zero jitter `jitter_sec=0`) across dual physical NVIDIA GPU nodes:
+
+| Metric / Scheduling Policy | `fifo` (First-In, First-Out) | `lrs` (Least Recently Served) | Impact / Advantage |
+| :--- | :--- | :--- | :--- |
+| **Average Step Duration** | **143.70s** | **130.26s** | **9.4% overall reduction in average step time** |
+| **Minimum Step Duration** | **70.19s** | **50.89s** | **27.5% faster minimum step iteration** when out-of-phase compute overlaps without queue delays |
+| **Maximum Step Duration** | **320.48s** (Step 0 traffic jam) | **300.45s** | Reduces initial queue bunching overhead |
+| **Lock Acquisition Pattern** | Rigid Lockstep (`1->2->3->1->2->3`) | De-synchronized / Out-of-Phase | Continuous cross-node hardware utilization |
+
+Open-RL solves memory boundaries and platooning by implementing a **consolidated multi-tenant hardware time-slicing architecture**, enabling multiple concurrent RL experiments to share physical GPUs without virtualization overhead or memory corruption.
 
 ---
 
@@ -126,6 +156,9 @@ In addition to task queuing, Open-RL utilizes a centralized Metadata Store to ma
 
 ### E. Accelerator Time-Slicer DaemonSet (`open-rl-accel-timeslicer`)
 Running as a `hostNetwork: true` DaemonSet across GPU nodes, the time-slicer serializes CUDA execution within workload groups (`trainers` vs. `samplers`) by coordinating application-level memory offloading with external process snapshotting.
+* **Configurable Queue Scheduling Policy (`--scheduling-policy fifo|lrs`):** When multiple tenant workloads compete for a GPU lock on the same node, the time-slicer supports two distinct queueing algorithms:
+  * **`fifo` (First-In, First-Out):** Serves waiting workloads in strict order of arrival (`deque.popleft()`). While simple, when concurrent jobs start simultaneously, FIFO can trap workloads into rigid, sequential lockstep platoons (`1 -> 2 -> 3 -> 1 -> 2 -> 3`), causing one GPU node to sit 100% idle while workloads bunch up on the opposite node.
+  * **`lrs` (Least Recently Served, Recommended Default):** Tracks the wall-clock release timestamp (`last_release_time[job_id]`) of each workload and prioritizes whichever waiting job released the GPU *least recently* ($\min(\text{last\_release\_time})$). By serving the job that has been away from this GPU longest, LRS acts as an automatic phase-balancing spring that breaks lockstep platoons and maintains continuous hardware overlap across physical nodes.
 * **Cooperative Sleep & Snapshotting:** When a worker yields its time slice (`RELEASE(workload)`), it first performs an application-level sleep to offload active GPU memory to system CPU RAM. Once offloaded, the daemon invokes its `llm-d` backend (`LlmDCheckpointRestorer`) to checkpoint residual VRAM pages and freeze the execution context.
 * **Restore & Wakeup:** When a workload is granted GPU access (`ACQUIRE(workload)`), `llm-d` restores the process context on the accelerator. The worker then executes an application-level wakeup to reload its model weights and optimizer states back into GPU VRAM before resuming execution.
 
@@ -133,6 +166,13 @@ Running as a `hostNetwork: true` DaemonSet across GPU nodes, the time-slicer ser
 The trainer executes PyTorch FSDP policy gradient optimization and coordinates directly with the time-slicer during context handoffs:
 * **`sleep()`:** Before triggering time-slice release, the trainer iterates across model parameters and AdamW optimizer momentum dictionaries (`exp_avg`, `exp_avg_sq`), transferring CUDA tensors to pinned CPU host memory (`v.to("cpu").pin_memory()`) and clearing CUDA cache allocators.
 * **`wake_up()`:** After time-slice acquisition, the trainer asynchronously pushes pinned CPU tensors back across PCIe lanes into target GPU devices, restoring active training state.
+* **Non-Blocking DRAM Checkpoint Saving (Removing GPU from the Save Path):** In traditional LLM training loops, checkpoint serialization (`save_weights_for_sampler`) holds the active GPU lock while writing multi-gigabyte weight tensors across network filesystems (NFS). In Open-RL, checkpoint saving is completely decoupled from physical accelerator ownership:
+  * **Early GPU Release & CPU Offloading:** When an optimization step finishes, the trainer worker immediately executes `sleep()`, offloading active model parameters from GPU VRAM into pinned CPU host RAM (`_param_shadow`) and releasing the time-slicer GPU mutex lock *early*.
+  * **Removing GPU from the Save Path:** When the worker thread subsequently pops `save_weights_for_sampler`, the physical GPU has *already* been yielded to the next tenant! The worker serializes `.safetensors` checkpoint shards directly from CPU host RAM (`_param_shadow`) to shared NFS storage.
+  * **Architectural Advantages:**
+    1. **Zero GPU Idle Time During Disk I/O:** Serializing multi-gigabyte weight tensors across network storage is I/O-bound and latency-prone (~4s to ~100s+ depending on cluster filesystem load). Removing the GPU from the save path ensures expensive H100 accelerators never sit blocked waiting for network disk serialization.
+    2. **Massive Concurrency Overlap:** While Job A serializes its `.safetensors` shards to NFS from CPU RAM, Job B is actively executing forward and backward passes on the physical GPU! In concurrent multi-tenant benchmarks (such as 2x Qwen 8B), this dropped step iteration time from >180s down to ~76s per step.
+    3. **Decoupled Failure Domains:** Transient storage stalls or NFS dropouts during checkpoint serialization only affect the background saving thread of that individual tenant without holding up the accelerator time-slicer daemon or freezing other tenants' GPU computation.
 
 ### G. vLLM Dynamic Sampler Worker (`vLLM Worker`)
 The sampler runs an inference engine wrapped around vLLM Dynamo and implements **cooperative sleep optimization** during handoffs:

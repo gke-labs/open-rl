@@ -85,6 +85,7 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--llmd-snapshot-endpoint", default=os.getenv("LLMD_SNAPSHOT_AGENT_ENDPOINT", "127.0.0.1:9001"))
   parser.add_argument("--llmd-backend", default=os.getenv("LLMD_SNAPSHOT_BACKEND", "CUDA"))
   parser.add_argument("--llmd-poll-interval-sec", type=float, default=float(os.getenv("LLMD_SNAPSHOT_POLL_INTERVAL_SEC", "1.0")))
+  parser.add_argument("--scheduling-policy", choices=["lrs", "fifo"], default=os.getenv("OPEN_RL_ACCEL_TIMESLICER_SCHEDULING_POLICY", "lrs"), help="Queue scheduling policy when multiple workloads wait for a lock.")
   return parser.parse_args()
 
 
@@ -94,10 +95,10 @@ async def main_async() -> None:
     if LlmDClient is None:
       raise RuntimeError("--backend llmd requires the llm-d timeslice snapshot client package")
     restorer = LlmDCheckpointRestorer(LlmDClient(endpoint=args.llmd_snapshot_endpoint), args.llmd_backend, args.llmd_poll_interval_sec)
-    time_slicer = SingleNodeTimeSlicer(restorer=restorer)
+    time_slicer = SingleNodeTimeSlicer(restorer=restorer, scheduling_policy=args.scheduling_policy)
   else:
     restorer = CudaCheckpointRestorer(args.cuda_checkpoint_bin, args.cuda_checkpoint_timeout_ms)
-    time_slicer = SingleNodeTimeSlicer(restorer=restorer)
+    time_slicer = SingleNodeTimeSlicer(restorer=restorer, scheduling_policy=args.scheduling_policy)
   if args.port is None:
     server = await start_time_slicer(time_slicer, args.socket)
     logger.info("listening on unix://%s", args.socket)
