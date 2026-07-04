@@ -85,7 +85,12 @@ def parse_args() -> argparse.Namespace:
   parser.add_argument("--llmd-snapshot-endpoint", default=os.getenv("LLMD_SNAPSHOT_AGENT_ENDPOINT", "127.0.0.1:9001"))
   parser.add_argument("--llmd-backend", default=os.getenv("LLMD_SNAPSHOT_BACKEND", "CUDA"))
   parser.add_argument("--llmd-poll-interval-sec", type=float, default=float(os.getenv("LLMD_SNAPSHOT_POLL_INTERVAL_SEC", "1.0")))
-  parser.add_argument("--scheduling-policy", choices=["lrs", "fifo"], default=os.getenv("OPEN_RL_ACCEL_TIMESLICER_SCHEDULING_POLICY", "lrs"), help="Queue scheduling policy when multiple workloads wait for a lock.")
+  parser.add_argument(
+    "--scheduling-policy",
+    choices=["lrs", "fifo"],
+    default=os.getenv("OPEN_RL_ACCEL_TIMESLICER_SCHEDULING_POLICY", "lrs"),
+    help="Queue scheduling policy when multiple workloads wait for a lock.",
+  )
   return parser.parse_args()
 
 
