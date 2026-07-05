@@ -37,10 +37,19 @@ E2E tests boot up a local backend and run actual SFT/RL training against it. Run
 ```bash
 make test e2e <scenario_name>
 ```
-An example command for running end to end test:
-```
-pkill -9 -f port-forward 2>/dev/null; nohup sh -c '\''while true; do kubectl port-forward svc/open-rl-gateway-service 8000:8000 >/dev/null 2>&1; sleep 1; done'\'' >/dev/null 2>&1 & make test e2e fft-gsm8k-rl BASE_URL=http://127.0.0.1:8000
-```
+### E2E Execution Workflow & Port-Forwarding Tip
+**Important Tip:** Never chain `kubectl port-forward` and test commands together in a single command. Running them separately keeps the port-forward process visible in the agent's **Tasks panel** and ensures test restarts or aborts do not orphan background port-forward loops.
+
+1. **Step 1: Start the Gateway Port-Forward in the Background:**
+   Launch this as a standalone background command so it appears cleanly in your Tasks panel:
+   ```bash
+   while true; do kubectl port-forward svc/open-rl-gateway-service 8000:8000; sleep 1; done
+   ```
+2. **Step 2: Execute the Test Scenario:**
+   Run your test command separately:
+   ```bash
+   make test e2e fft-gsm8k-rl BASE_URL=http://127.0.0.1:8000
+   ```
 
 
 ### Supported Scenarios:
