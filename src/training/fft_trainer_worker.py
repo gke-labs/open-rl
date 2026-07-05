@@ -88,6 +88,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.model.train()
 
   def _prepare_for_save(self) -> bool:
+    if getattr(self, "_is_offloaded_to_disk", False):
+      self.prefetch_shadow_from_disk()
     was_offloaded = getattr(self, "_is_offloaded", False)
     if was_offloaded and self.model is not None:
       for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
@@ -264,13 +266,19 @@ class FFTTrainingWorker(BaseTrainerWorker):
     start_t = time.perf_counter()
 
     # Phase 1: Launch Batched Asynchronous DMA copies WITHOUT freeing GPU tensors!
+    # NOTE: We intentionally use pin_memory=False (standard Linux virtual memory via malloc/mmap)
+    # instead of pinned CUDA host memory (pin_memory=True). Pinned memory allocation and
+    # deallocation (cudaHostAlloc/cudaHostFree) acquire a process/system-wide NVIDIA driver
+    # mutex. When multiple worker pods on the same host concurrently deallocate tens of
+    # gigabytes of pinned shadow buffers, they saturate this mutex, causing severe driver futex
+    # deadlocks. Unpinned memory avoids CUDA driver interaction entirely and frees instantaneously.
     for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
       if tensor.device.type == "cuda":
         orig_device = tensor.device
         if tensor in self._param_shadow and self._param_shadow[tensor][1].shape == tensor.shape:
           cpu_buf = self._param_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=True)
+          cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=False)
           self._param_shadow[tensor] = (orig_device, cpu_buf)
         cpu_buf.copy_(tensor.data, non_blocking=True)
       if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor.grad.device.type == "cuda":
@@ -278,7 +286,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
         if tensor in self._grad_shadow and self._grad_shadow[tensor][1].shape == tensor.grad.shape:
           cpu_buf = self._grad_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(tensor.grad.shape, dtype=tensor.grad.dtype, device="cpu", pin_memory=True)
+          cpu_buf = torch.empty(tensor.grad.shape, dtype=tensor.grad.dtype, device="cpu", pin_memory=False)
           self._grad_shadow[tensor] = (orig_device, cpu_buf)
         cpu_buf.copy_(tensor.grad.data, non_blocking=True)
 
@@ -292,7 +300,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
               if opt_key in self._opt_shadow and self._opt_shadow[opt_key][1].shape == v.shape:
                 cpu_buf = self._opt_shadow[opt_key][1]
               else:
-                cpu_buf = torch.empty(v.shape, dtype=v.dtype, device="cpu", pin_memory=True)
+                cpu_buf = torch.empty(v.shape, dtype=v.dtype, device="cpu", pin_memory=False)
                 self._opt_shadow[opt_key] = (orig_device, cpu_buf)
               cpu_buf.copy_(v, non_blocking=True)
 
@@ -364,7 +372,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     gc.collect()
 
     self._is_offloaded_to_disk = True
-    print(f"[FFT Worker] Offloaded shadow buffers from DRAM to disk ({offload_dir}) in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
+    print(f"[FFT Worker] Offloaded shadow buffers from DRAM to disk ({offload_dir}) in {(time.perf_counter() - start_t) * 1000:.1f} ms.", flush=True)
 
   def prefetch_shadow_from_disk(self, offload_dir: str | None = None) -> None:
     """Reload offloaded shadow tensors from disk back into pinned host CPU DRAM."""
@@ -381,22 +389,16 @@ class FFTTrainingWorker(BaseTrainerWorker):
     for idx, orig_device, cpu_buf in data.get("params", []):
       if idx < len(all_tensors):
         tensor = all_tensors[idx]
-        if not cpu_buf.is_pinned() and torch.cuda.is_available():
-          cpu_buf = cpu_buf.pin_memory()
         self._param_shadow[tensor] = (orig_device, cpu_buf)
 
     for idx, orig_device, cpu_buf in data.get("grads", []):
       if idx < len(all_tensors):
         tensor = all_tensors[idx]
-        if not cpu_buf.is_pinned() and torch.cuda.is_available():
-          cpu_buf = cpu_buf.pin_memory()
         self._grad_shadow[tensor] = (orig_device, cpu_buf)
 
     for idx, k, orig_device, cpu_buf in data.get("opts", []):
       if idx < len(all_tensors):
         param = all_tensors[idx]
-        if not cpu_buf.is_pinned() and torch.cuda.is_available():
-          cpu_buf = cpu_buf.pin_memory()
         self._opt_shadow[(param, k)] = (orig_device, cpu_buf)
 
     self._is_offloaded_to_disk = False
