@@ -257,11 +257,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def sleep(self) -> None:
     """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""
-    if (
-      not getattr(self, "cpu_offload", False)
-      or getattr(self, "model", None) is None
-      or getattr(self, "_is_offloaded", False)
-    ):
+    if not getattr(self, "cpu_offload", False) or getattr(self, "model", None) is None or getattr(self, "_is_offloaded", False):
       return
     start_t = time.perf_counter()
 
@@ -406,11 +402,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def wake_up(self) -> None:
     """Reload pinned CPU shadow tensors back to CUDA VRAM without destroying host shadow buffers."""
-    if (
-      not getattr(self, "cpu_offload", False)
-      or getattr(self, "model", None) is None
-      or not getattr(self, "_is_offloaded", False)
-    ):
+    if not getattr(self, "cpu_offload", False) or getattr(self, "model", None) is None or not getattr(self, "_is_offloaded", False):
       return
     if getattr(self, "_is_offloaded_to_disk", False):
       self.prefetch_shadow_from_disk()
