@@ -50,6 +50,7 @@ class SingleNodeTimeSlicer(TimeSlicer):
       if key in self.workloads:
         self.workloads[key].connection_id = connection_id
         self.workloads[key].workload = workload
+        self.workloads[key].failed = False
         return {"ok": True}
 
       self.workloads[key] = WorkloadState(connection_id=connection_id, workload=workload)
@@ -126,6 +127,27 @@ class SingleNodeTimeSlicer(TimeSlicer):
       del self.workloads[key]
       self.condition.notify_all()
       return {"ok": True}
+
+  async def check_quota(self, workload: WorkloadRef, max_warm: int = 2) -> dict[str, Any]:
+    async with self.condition:
+      key = workload.key
+      if key not in self.workloads:
+        return {"ok": False, "error": f"workload {key} is not registered"}
+      alive_workloads = [k for k, s in self.workloads.items() if not s.failed]
+      active_count = len(alive_workloads)
+      if active_count <= max_warm:
+        return {"ok": True, "should_offload": False, "rank": 0, "active_count": active_count}
+      ordered: list[str] = []
+      if self.active_workload and self.active_workload in alive_workloads:
+        ordered.append(self.active_workload)
+      for k in self.waiting_workloads:
+        if k in alive_workloads and k not in ordered:
+          ordered.append(k)
+      idle_keys = [k for k in alive_workloads if k not in ordered and k != self.active_workload]
+      idle_keys.sort(key=lambda k: self.last_release_time.get(k, 0.0))
+      ordered.extend(idle_keys)
+      rank = ordered.index(key) if key in ordered else active_count
+      return {"ok": True, "should_offload": rank >= max_warm, "rank": rank, "active_count": active_count}
 
   async def connection_closed(self, connection_id: int) -> None:
     async with self.condition:

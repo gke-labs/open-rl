@@ -16,6 +16,8 @@ class TimeSlicerClient(Protocol):
 
   async def unregister(self, workload: WorkloadRef) -> dict[str, Any]: ...
 
+  async def check_quota(self, workload: WorkloadRef, max_warm: int = 2) -> dict[str, Any]: ...
+
   def acquire(self, workload: WorkloadRef) -> AbstractAsyncContextManager[None]: ...
 
   async def close(self) -> None: ...
@@ -29,6 +31,8 @@ class TimeSlicer(Protocol):
   async def release(self, workload: WorkloadRef) -> dict[str, Any]: ...
 
   async def unregister(self, workload: WorkloadRef) -> dict[str, Any]: ...
+
+  async def check_quota(self, workload: WorkloadRef, max_warm: int = 2) -> dict[str, Any]: ...
 
 
 class SocketTimeSlicerClient:
@@ -65,6 +69,9 @@ class SocketTimeSlicerClient:
 
   async def unregister(self, workload: WorkloadRef) -> dict[str, Any]:
     return await self.request({"command": "UNREGISTER", **workload.as_payload()})
+
+  async def check_quota(self, workload: WorkloadRef, max_warm: int = 2) -> dict[str, Any]:
+    return await self.request({"command": "CHECK_QUOTA", "max_warm": max_warm, **workload.as_payload()})
 
   @asynccontextmanager
   async def acquire(self, workload: WorkloadRef) -> AsyncIterator[None]:

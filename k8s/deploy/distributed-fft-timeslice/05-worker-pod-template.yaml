@@ -21,7 +21,7 @@ data:
       restartPolicy: OnFailure
       containers:
       - name: trainer-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.17
+        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.20
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
@@ -34,6 +34,8 @@ data:
               key: BASE_MODEL
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
+        - name: OPEN_RL_MAX_WARM_WORKERS
+          value: "2"
         - name: PYTORCH_CUDA_ALLOC_CONF
           value: "expandable_segments:True"
         - name: OPEN_RL_TMP_DIR

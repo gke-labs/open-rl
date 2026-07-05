@@ -80,6 +80,30 @@ class SingleNodeTimeSlicerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(restorer.simple_labels(), [("checkpoint", "101")])
     self.assertEqual(agent.active_workload, "shared-accelerator:202")
 
+  async def test_check_quota_enforces_max_warm(self) -> None:
+    restorer = RecordingRestorer()
+    agent = SingleNodeTimeSlicer(restorer)
+    w1 = WorkloadRef(job_id="101")
+    w2 = WorkloadRef(job_id="202")
+    w3 = WorkloadRef(job_id="303")
+    await agent.register(w1)
+    await agent.register(w2)
+    await agent.register(w3)
+
+    await agent.acquire(w1)
+    asyncio.create_task(agent.acquire(w2))
+    asyncio.create_task(agent.acquire(w3))
+    await asyncio.sleep(0.05)
+
+    q1 = await agent.check_quota(w1, max_warm=2)
+    q2 = await agent.check_quota(w2, max_warm=2)
+    q3 = await agent.check_quota(w3, max_warm=2)
+
+    self.assertFalse(q1["should_offload"])
+    self.assertFalse(q2["should_offload"])
+    self.assertTrue(q3["should_offload"])
+    self.assertEqual(q3["rank"], 2)
+
   async def test_first_acquire_is_cold_and_later_acquire_restores_after_checkpoint(self) -> None:
     restorer = RecordingRestorer()
     agent = SingleNodeTimeSlicer(restorer)

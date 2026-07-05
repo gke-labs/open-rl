@@ -42,6 +42,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
+    self._is_offloaded_to_disk: bool = False
+    self._offload_dir: str | None = None
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -257,7 +259,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
       not getattr(self, "cpu_offload", False)
       or getattr(self, "model", None) is None
       or getattr(self, "_is_offloaded", False)
-      or not torch.cuda.is_available()
     ):
       return
     start_t = time.perf_counter()
@@ -325,6 +326,81 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self._is_offloaded = True
     print(f"[FFT Worker] Offloaded weights & states to pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
+    if os.getenv("OPEN_RL_FORCE_DISK_OFFLOAD", "0") == "1":
+      offload_dir = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "offload_cache", f"worker_{id(self)}")
+      self.offload_shadow_to_disk(offload_dir)
+
+  def offload_shadow_to_disk(self, offload_dir: str) -> None:
+    """Flush pinned CPU shadow buffers to local/shared disk and purge host DRAM."""
+    if not self._is_offloaded or self._is_offloaded_to_disk or self.model is None:
+      return
+    start_t = time.perf_counter()
+    os.makedirs(offload_dir, exist_ok=True)
+    self._offload_dir = offload_dir
+    all_tensors = list(itertools.chain(self.model.parameters(), self.model.buffers()))
+    param_to_idx = {tensor: i for i, tensor in enumerate(all_tensors)}
+
+    param_list = []
+    grad_list = []
+    for idx, tensor in enumerate(all_tensors):
+      if tensor in self._param_shadow:
+        param_list.append((idx, self._param_shadow[tensor][0], self._param_shadow[tensor][1]))
+      if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor in self._grad_shadow:
+        grad_list.append((idx, self._grad_shadow[tensor][0], self._grad_shadow[tensor][1]))
+
+    opt_list = []
+    for (param, k), (orig_device, cpu_buf) in self._opt_shadow.items():
+      if param in param_to_idx:
+        opt_list.append((param_to_idx[param], k, orig_device, cpu_buf))
+
+    torch.save(
+      {"params": param_list, "grads": grad_list, "opts": opt_list},
+      os.path.join(offload_dir, "shadow_offload.pt"),
+    )
+
+    self._param_shadow.clear()
+    self._grad_shadow.clear()
+    self._opt_shadow.clear()
+    gc.collect()
+
+    self._is_offloaded_to_disk = True
+    print(f"[FFT Worker] Offloaded shadow buffers from DRAM to disk ({offload_dir}) in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
+
+  def prefetch_shadow_from_disk(self, offload_dir: str | None = None) -> None:
+    """Reload offloaded shadow tensors from disk back into pinned host CPU DRAM."""
+    target_dir = offload_dir or self._offload_dir
+    if not getattr(self, "_is_offloaded_to_disk", False) or not target_dir:
+      return
+    file_path = os.path.join(target_dir, "shadow_offload.pt")
+    if not os.path.exists(file_path):
+      return
+    start_t = time.perf_counter()
+
+    data = torch.load(file_path, map_location="cpu")
+    all_tensors = list(itertools.chain(self.model.parameters(), self.model.buffers()))
+    for idx, orig_device, cpu_buf in data.get("params", []):
+      if idx < len(all_tensors):
+        tensor = all_tensors[idx]
+        if not cpu_buf.is_pinned() and torch.cuda.is_available():
+          cpu_buf = cpu_buf.pin_memory()
+        self._param_shadow[tensor] = (orig_device, cpu_buf)
+
+    for idx, orig_device, cpu_buf in data.get("grads", []):
+      if idx < len(all_tensors):
+        tensor = all_tensors[idx]
+        if not cpu_buf.is_pinned() and torch.cuda.is_available():
+          cpu_buf = cpu_buf.pin_memory()
+        self._grad_shadow[tensor] = (orig_device, cpu_buf)
+
+    for idx, k, orig_device, cpu_buf in data.get("opts", []):
+      if idx < len(all_tensors):
+        param = all_tensors[idx]
+        if not cpu_buf.is_pinned() and torch.cuda.is_available():
+          cpu_buf = cpu_buf.pin_memory()
+        self._opt_shadow[(param, k)] = (orig_device, cpu_buf)
+
+    self._is_offloaded_to_disk = False
+    print(f"[FFT Worker] Prefetched shadow buffers from disk to DRAM in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
 
   def wake_up(self) -> None:
     """Reload pinned CPU shadow tensors back to CUDA VRAM without destroying host shadow buffers."""
@@ -332,9 +408,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
       not getattr(self, "cpu_offload", False)
       or getattr(self, "model", None) is None
       or not getattr(self, "_is_offloaded", False)
-      or not torch.cuda.is_available()
     ):
       return
+    if getattr(self, "_is_offloaded_to_disk", False):
+      self.prefetch_shadow_from_disk()
     start_t = time.perf_counter()
 
     for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
