@@ -60,6 +60,8 @@ async def dispatch(time_slicer: SingleNodeTimeSlicer, line: bytes, connection_id
       return await time_slicer.release(workload)
     case "UNREGISTER":
       return await time_slicer.unregister(workload)
+    case "CHECK_QUOTA":
+      return await time_slicer.check_quota(workload, max_warm=int(payload.get("max_warm", 2)))
     case _:
       return {"ok": False, "error": f"unknown command '{command}'"}
 

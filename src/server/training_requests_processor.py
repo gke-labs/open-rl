@@ -329,6 +329,21 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
               if hasattr(self.worker, "sleep"):
                 await asyncio.to_thread(self.worker.sleep)
 
+          if hasattr(self.time_slicer, "check_quota") and hasattr(self.worker, "offload_shadow_to_disk"):
+            try:
+              quota = await self.time_slicer.check_quota(self.workload, max_warm=int(os.getenv("OPEN_RL_MAX_WARM_WORKERS", "2")))
+              if quota.get("should_offload"):
+                offload_dir = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "offload_cache", f"worker_{id(self.worker)}")
+                # NOTE: We call offload_shadow_to_disk directly on the main event loop thread
+                # rather than via asyncio.to_thread(). Running torch.save() and gc.collect()
+                # inside a ThreadPoolExecutor while large shadow buffers are deallocating can cause a
+                # thread-to-asyncio wakeup deadlock (futex contention in CUDA driver memory freeing),
+                # preventing await asyncio.to_thread(...) from ever resuming. Since the loop has
+                # no other concurrent tasks during model setup, direct execution is safe and deadlock-free.
+                self.worker.offload_shadow_to_disk(offload_dir)
+            except Exception as e:
+              print(f"[WORKER] Failed quota check for offloading: {e}")
+
         for request in save_reqs:
           results.append(await self.handle_request(request, self.model_id))
 

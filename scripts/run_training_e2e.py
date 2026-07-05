@@ -66,6 +66,8 @@ class RunConfig:
     "fft-gsm8k-rl",
     "fft-gsm8k-rl-x2",
     "fft-gsm8k-rl-x3",
+    "fft-gsm8k-rl-x4",
+    "fft-gsm8k-rl-x5",
     "fft-gsm8k-rl-hetero",
     "fft-textsql-rl",
     "fft-textsql-rl-x2",
@@ -548,6 +550,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     "temperature=1.0",
     "eval_every=0",
     "save_every=0",
+    *shlex.split(config.extra),
   ]
   out = None
   try:
@@ -666,6 +669,127 @@ def run_gsm8k_rl_x3(config: RunConfig, base_url: str, watch: list[ManagedProcess
     for job, result in sorted(results.items()):
       if isinstance(result, BaseException):
         raise RuntimeError(f"fft-gsm8k-rl-x3 {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+  check_snapshot_interleaving(config)
+
+
+def run_gsm8k_rl_x4(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Four concurrent FFT RL jobs against the same backend with startup jitter to stagger execution."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, delay_sec: int) -> None:
+    try:
+      if delay_sec > 0:
+        time.sleep(delay_sec)
+      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      temp = "1.0"
+      args = [
+        "env=gsm8k",
+        f"model_name={config.base_model}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 2}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        "group_size=8",
+        "groups_per_batch=24",
+        "max_tokens=512",
+        "learning_rate=1e-5",
+        f"temperature={temp}",
+        "eval_every=0",
+        "save_every=0",
+        *shlex.split(config.extra),
+      ]
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=examples_env(config),
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  jobs_with_delay = [
+    ("job-a", 0),
+    ("job-b", config.jitter_sec),
+    ("job-c", config.jitter_sec * 2),
+    ("job-d", config.jitter_sec * 3),
+  ]
+  threads = [threading.Thread(target=train, args=(job, delay)) for job, delay in jobs_with_delay]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"fft-gsm8k-rl-x4 {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+  check_snapshot_interleaving(config)
+
+
+def run_gsm8k_rl_x5(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Five concurrent FFT RL jobs against the same backend with startup jitter to stagger execution."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, delay_sec: int) -> None:
+    try:
+      if delay_sec > 0:
+        time.sleep(delay_sec)
+      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      temp = "1.0"
+      args = [
+        "env=gsm8k",
+        f"model_name={config.base_model}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 2}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        "group_size=8",
+        "groups_per_batch=24",
+        "max_tokens=512",
+        "learning_rate=1e-5",
+        f"temperature={temp}",
+        "eval_every=0",
+        "save_every=0",
+        *shlex.split(config.extra),
+      ]
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=examples_env(config),
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  jobs_with_delay = [
+    ("job-a", 0),
+    ("job-b", config.jitter_sec),
+    ("job-c", config.jitter_sec * 2),
+    ("job-d", config.jitter_sec * 3),
+    ("job-e", config.jitter_sec * 4),
+  ]
+  threads = [threading.Thread(target=train, args=(job, delay)) for job, delay in jobs_with_delay]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"fft-gsm8k-rl-x5 {job} failed") from result
   finally:
     cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
 
@@ -892,6 +1016,10 @@ def main() -> None:
       run_gsm8k_rl_x2(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x3":
       run_gsm8k_rl_x3(config, base_url, processes)
+    elif config.scenario == "fft-gsm8k-rl-x4":
+      run_gsm8k_rl_x4(config, base_url, processes)
+    elif config.scenario == "fft-gsm8k-rl-x5":
+      run_gsm8k_rl_x5(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-hetero":
       run_gsm8k_rl_hetero(config, base_url, processes)
     elif config.scenario in {"lora-textsql", "fft-textsql-rl"}:

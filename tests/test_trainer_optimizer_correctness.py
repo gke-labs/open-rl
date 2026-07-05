@@ -119,6 +119,9 @@ class _FullModelStub:
   def parameters(self):
     yield from self.params
 
+  def buffers(self):
+    return []
+
 
 class _RecordingFullWorker(training_requests_processor_module.FFTTrainingWorker):
   def __init__(self):
@@ -673,6 +676,51 @@ class TestTrainerPaddedBatchingMath(unittest.TestCase):
 
     self.assertEqual(len(result["loss_fn_outputs"]), len(data))
     self.assertGreater(len(worker.model.calls), 0)
+
+
+class TestFFTWorkerDiskOffloading(unittest.TestCase):
+  def test_offload_and_prefetch_shadow_buffers(self) -> None:
+    worker = FFTTrainingWorker()
+    worker.device = torch.device("cpu")
+    worker.model = _FullModelStub([torch.nn.Parameter(torch.ones(4, 4, requires_grad=True))])
+    worker.trainable_params = list(worker.model.parameters())
+    worker.optimizer = torch.optim.AdamW(worker.trainable_params, lr=1e-3)
+
+    # Do a mock optimizer step so state is non-empty
+    for p in worker.trainable_params:
+      p.grad = torch.ones_like(p.data)
+    worker.optimizer.step()
+
+    # Populate shadow buffers as if sleep() ran on CUDA
+    for p in worker.trainable_params:
+      worker._param_shadow[p] = (torch.device("cpu"), p.data.clone())
+    for param, state in worker.optimizer.state.items():
+      for k, v in state.items():
+        if isinstance(v, torch.Tensor):
+          worker._opt_shadow[(param, k)] = (torch.device("cpu"), v.clone())
+    worker._is_offloaded = True
+
+    self.assertTrue(worker._is_offloaded)
+    self.assertGreater(len(worker._param_shadow), 0)
+    self.assertGreater(len(worker._opt_shadow), 0)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+      # Offload to disk should clear DRAM buffers
+      worker.offload_shadow_to_disk(tmp_dir)
+      self.assertTrue(worker._is_offloaded_to_disk)
+      self.assertEqual(len(worker._param_shadow), 0)
+      self.assertEqual(len(worker._opt_shadow), 0)
+      self.assertTrue(os.path.exists(os.path.join(tmp_dir, "shadow_offload.pt")))
+
+      # Prefetch should rehydrate DRAM buffers from disk
+      worker.prefetch_shadow_from_disk()
+      self.assertFalse(worker._is_offloaded_to_disk)
+      self.assertGreater(len(worker._param_shadow), 0)
+      self.assertGreater(len(worker._opt_shadow), 0)
+
+      # Wake up should restore weights cleanly
+      worker.wake_up()
+      self.assertFalse(worker._is_offloaded)
 
 
 if __name__ == "__main__":
