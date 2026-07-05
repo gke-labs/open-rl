@@ -324,6 +324,10 @@ class RedisStore(RequestStore):
         result = None
       if result:
         payload = json.loads(result[1])
+        if payload.get("status") == "pending":
+          await self.redis.rpush(key, result[1])
+          await asyncio.sleep(0.2)
+          continue
         await self.redis.rpush(key, result[1])
         await self.redis.expire(key, 300)
         return payload
