@@ -24,6 +24,9 @@ EVAL_MODEL_PATH ?=
 EVAL_EXAMPLES ?= 100
 EVAL_DATA_PATH ?=
 EVAL_NAMESPACE ?=
+E2E_SCENARIO ?=
+E2E_ARGS ?=
+E2E_NAMESPACE ?=
 
 # CUDA_VISIBLE_DEVICES can be provided either as an environment variable or as a
 # Make variable, and is inherited by the backend/eval subprocesses.
@@ -119,10 +122,12 @@ IMAGE_TAG   ?= $(shell git rev-parse --short HEAD 2>/dev/null || cat VERSION 2>/
 build-images:
 	DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
 	DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) -f src/server/Dockerfile.gateway .
+	DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-client:$(IMAGE_TAG) -f src/server/Dockerfile.client .
 
 push-images:
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG)
 	docker push gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG)
+	docker push gcr.io/$(GCP_PROJECT)/open-rl-client:$(IMAGE_TAG)
 	kubectl set image deployment/open-rl-gateway gateway=gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set env deployment/open-rl-gateway OPEN_RL_WORKER_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
@@ -150,6 +155,18 @@ cluster-eval:
 	if [ -n "$(EVAL_DATA_PATH)" ]; then set -- "$$@" --data-path "$(EVAL_DATA_PATH)"; fi; \
 	if [ -n "$(EVAL_NAMESPACE)" ]; then set -- "$$@" --namespace "$(EVAL_NAMESPACE)"; fi; \
 	python3 scripts/run_cluster_eval.py "$$@"
+
+# One-off E2E training/RL client job on the Kubernetes cluster:
+cluster-e2e:
+	@if [ -z "$(E2E_SCENARIO)" ]; then \
+	  echo "Missing E2E_SCENARIO. Example:"; \
+	  echo "  make cluster-e2e E2E_SCENARIO=fft-gsm8k-rl-x2 E2E_ARGS=\"base_model=Qwen/Qwen3-8B steps=30 jitter_sec=5\""; \
+	  exit 2; \
+	fi; \
+	set -- --scenario "$(E2E_SCENARIO)" --image "gcr.io/$(GCP_PROJECT)/open-rl-client:$(IMAGE_TAG)"; \
+	if [ -n "$(E2E_ARGS)" ]; then set -- "$$@" --args "$(E2E_ARGS)"; fi; \
+	if [ -n "$(E2E_NAMESPACE)" ]; then set -- "$$@" --namespace "$(E2E_NAMESPACE)"; fi; \
+	python3 scripts/run_cluster_e2e.py "$$@"
 
 # Local Redis (for testing distributed mode):
 #   sudo apt install redis-server && sudo service redis-server start

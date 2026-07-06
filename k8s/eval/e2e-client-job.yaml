@@ -1,0 +1,52 @@
+# One-off End-to-End (E2E) Training/RL Client Job for Kubernetes.
+# This job runs client-side recipes (like fft-gsm8k-rl-x2) inside a cluster pod,
+# communicating with the open-rl-gateway service over Kubernetes internal DNS.
+#
+# Easiest usage via Makefile:
+#   make cluster-e2e SCENARIO=fft-gsm8k-rl-x2 ARGS="base_model=Qwen/Qwen3-8B steps=30 jitter_sec=5"
+#
+# By hand: replace E2E-* placeholders below, then
+#   kubectl delete job open-rl-e2e-client --ignore-not-found
+#   kubectl apply -f k8s/eval/e2e-client-job.yaml
+#   kubectl logs -f job/open-rl-e2e-client
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: open-rl-e2e-client
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app: open-rl-e2e-client
+    spec:
+      restartPolicy: Never
+      serviceAccountName: open-rl-sa
+      containers:
+      - name: e2e-client
+        image: E2E-IMAGE
+        imagePullPolicy: Always
+        args:
+        - "scenario=E2E-SCENARIO"
+        - "uv_extra=cpu"
+        - "base_url=http://open-rl-gateway-service:8000"
+        - "E2E-EXTRA-ARGS"
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: HF_HOME
+          value: "/mnt/shared/open-rl/huggingface"
+        resources:
+          limits:
+            memory: "16Gi"
+          requests:
+            cpu: "2"
+            memory: "8Gi"
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
