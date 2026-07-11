@@ -32,11 +32,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
     worker.model = SimpleModel()
 
     # Initialize shadow with base weights W0
-    worker._prev_weights_shadow = {
-      name: param.data.detach().cpu().clone()
-      for name, param in worker.model.named_parameters()
-      if param.requires_grad
-    }
+    worker._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in worker.model.named_parameters() if param.requires_grad}
 
     # Simulate an Adam update where 2 out of 100 elements change (2% sparsity)
     orig_w0 = worker.model.fc.weight.data.clone()
@@ -44,7 +40,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
     worker.model.fc.weight.data[5, 7] = -13.37
 
     state_path = os.path.join(self.test_dir, "step_1")
-    result = worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler")
+    worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler")
 
     # 1. Verify metadata
     metadata_path = os.path.join(state_path, "metadata.json")
@@ -59,6 +55,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
     delta_file = os.path.join(state_path, "delta.safetensors")
     self.assertTrue(os.path.exists(delta_file))
     import safetensors.torch
+
     sparse_delta = safetensors.torch.load_file(delta_file)
 
     self.assertIn("fc.weight.indices", sparse_delta)

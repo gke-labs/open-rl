@@ -65,11 +65,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
-    self._prev_weights_shadow = {
-      name: param.data.detach().cpu().clone()
-      for name, param in self.model.named_parameters()
-      if param.requires_grad
-    }
+    self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
     print("Successfully loaded full fine-tuning model.")
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
@@ -214,6 +210,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
       self._cleanup_after_save(was_offloaded)
 
     import safetensors.torch
+
     delta_path = os.path.join(state_path, "delta.safetensors")
     safetensors.torch.save_file(delta_tensors, delta_path)
 

@@ -5,18 +5,19 @@ delta patching in host CPU RAM and reload tensors directly into GPU VRAM
 without external sleep/wake workarounds.
 """
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
 import os
 import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
 from typing import Any
+
 import torch
 
 try:
   from vllm.distributed.weight_transfer.base import (
-      WeightTransferEngine,
-      WeightTransferInitInfo,
-      WeightTransferUpdateInfo,
+    WeightTransferEngine,
+    WeightTransferInitInfo,
+    WeightTransferUpdateInfo,
   )
 except ImportError:
 
@@ -29,7 +30,6 @@ except ImportError:
     is_checkpoint_format: bool = True
 
   class WeightTransferEngine:
-
     def __init__(self, *args, **kwargs):
       pass
 
@@ -82,9 +82,9 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     pass
 
   def receive_weights(
-      self,
-      update_info: DeltaSnapshotUpdateInfo,
-      load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
+    self,
+    update_info: DeltaSnapshotUpdateInfo,
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
   ) -> None:
     """Receive/patch sparse delta weights in host CPU RAM and pass to load_weights."""
     target_path = update_info.target_weights_path
@@ -112,19 +112,16 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       raise ValueError(f"Unsupported weight path format: {target_path}")
 
     elapsed_read = (time.perf_counter() - start_t) * 1000.0
-    print(
-        "[DeltaSnapshotEngine] Loaded %d parameter tensors from %s in %.2f ms"
-        % (len(weights), target_path, elapsed_read)
-    )
+    print(f"[DeltaSnapshotEngine] Loaded {len(weights)} parameter tensors from {target_path} in {elapsed_read:.2f} ms")
 
     changed_weights: list[tuple[str, torch.Tensor]] = []
     no_op_tensors = 0
     for name, incoming_tensor in weights:
       if (
-          name in self._cpu_snapshot
-          and self._cpu_snapshot[name].shape == incoming_tensor.shape
-          and self._cpu_snapshot[name].dtype == incoming_tensor.dtype
-          and torch.equal(self._cpu_snapshot[name], incoming_tensor)
+        name in self._cpu_snapshot
+        and self._cpu_snapshot[name].shape == incoming_tensor.shape
+        and self._cpu_snapshot[name].dtype == incoming_tensor.dtype
+        and torch.equal(self._cpu_snapshot[name], incoming_tensor)
       ):
         no_op_tensors += 1
       else:
@@ -133,26 +130,17 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     if len(changed_weights) == 0 and len(weights) > 0:
       self.current_weights_path = target_path
-      print(
-          f"[DeltaSnapshotEngine] Verified patch: 0/{len(weights)} tensors changed"
-          " (NO-OP PATCH DETECTED - Skipping GPU reload)"
-      )
+      print(f"[DeltaSnapshotEngine] Verified patch: 0/{len(weights)} tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
       return
 
-    print(
-        f"[DeltaSnapshotEngine] Verified patch: {len(changed_weights)}/{len(weights)} tensors"
-        f" changed ({no_op_tensors} no-op tensors skipped)"
-    )
+    print(f"[DeltaSnapshotEngine] Verified patch: {len(changed_weights)}/{len(weights)} tensors changed ({no_op_tensors} no-op tensors skipped)")
 
     # 2. Feed changed parameter tensors directly into vLLM's internal layer loader
     start_load = time.perf_counter()
     load_weights(changed_weights)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
     self.current_weights_path = target_path
-    print(
-        "[DeltaSnapshotEngine] Incremental load_weights completed in %.2f ms"
-        % elapsed_load
-    )
+    print(f"[DeltaSnapshotEngine] Incremental load_weights completed in {elapsed_load:.2f} ms")
 
   def finish_weight_update(self) -> None:
     """Finalize layerwise reload."""
@@ -164,8 +152,8 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
   @staticmethod
   def trainer_send_weights(
-      iterator: Iterator[tuple[str, torch.Tensor]],
-      trainer_args: dict[str, Any] | Any,
+    iterator: Iterator[tuple[str, torch.Tensor]],
+    trainer_args: dict[str, Any] | Any,
   ) -> None:
     """Static trainer-side hook for push engines (no-op for pull engines)."""
     pass

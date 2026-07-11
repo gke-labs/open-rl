@@ -2,13 +2,14 @@
 
 import argparse
 import asyncio
-import json
-import redis.asyncio as redis
 import hashlib
+import json
 import os
 import sys
 import traceback
 from typing import Any
+
+import redis.asyncio as redis
 
 try:
   from vllm import SamplingParams
@@ -76,6 +77,7 @@ def patch_vllm_worker_for_delta_sync():
   def custom_cache_prefetch_weights(self, *args, **kwargs):
     import json
     import os
+
     weights_path = kwargs.get("weights_path") or (args[0] if args else None)
     if not weights_path:
       return
@@ -94,20 +96,22 @@ def patch_vllm_worker_for_delta_sync():
         delta_file = os.path.join(weights_path, "delta.safetensors")
         if os.path.exists(delta_file):
           import safetensors.torch
+
           print(f"[vLLM Worker] Pre-loading weights delta to CPU cache: {delta_file}")
           # Load strictly to CPU
           sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
           # Keep only the latest prefetched version to prevent leaks
           self._prefetch_cache.clear()
           self._prefetch_cache[weights_path] = sparse_delta
-          print(f"[vLLM Worker] Pre-loaded weights delta to CPU cache successfully.")
+          print("[vLLM Worker] Pre-loaded weights delta to CPU cache successfully.")
 
   def custom_reload_weights(self, *args, **kwargs):
     import json
     import os
-    import torch
     import time
-    
+
+    import torch
+
     # Save the base model path at the very first reload attempt
     if not hasattr(self, "_base_model_path"):
       self._base_model_path = self.model_config.model
@@ -128,19 +132,21 @@ def patch_vllm_worker_for_delta_sync():
         delta_file = os.path.join(weights_path, "delta.safetensors")
         if os.path.exists(delta_file):
           import safetensors.torch
+
           sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
 
     if sparse_delta is not None:
       t0 = time.perf_counter()
-      
+
       # 1. Initialize CPU weights snapshot if not present
       if not hasattr(self, "_bf16_snapshot") or not self._bf16_snapshot:
         print(f"[Open-RL Delta Sync] Initializing CPU weights snapshot from base model: {self._base_model_path}")
         self._bf16_snapshot = {}
         from vllm.model_executor.model_loader import get_model_loader
+
         model_loader = get_model_loader(self.load_config)
         model = self.model_runner.get_model()
-        
+
         orig_model = self.model_config.model
         self.model_config.model = self._base_model_path
         base_iterator = model_loader.get_all_weights(self.model_config, model)
@@ -152,7 +158,7 @@ def patch_vllm_worker_for_delta_sync():
 
       # 2. Extract changed parameter names
       changed_params = set()
-      for key in sparse_delta.keys():
+      for key in sparse_delta:
         if key.endswith(".indices"):
           changed_params.add(key[:-8])
 
@@ -175,9 +181,9 @@ def patch_vllm_worker_for_delta_sync():
       changed_tuples = [(name, self._bf16_snapshot[name]) for name in changed_params]
       t_reload_start = time.perf_counter()
       original_reload(
-          self,
-          weights_iterator=changed_tuples,
-          is_checkpoint_format=True,
+        self,
+        weights_iterator=changed_tuples,
+        is_checkpoint_format=True,
       )
       t_reload_ms = (time.perf_counter() - t_reload_start) * 1000.0
       print(f"[Open-RL Delta Sync] Transferred {len(changed_tuples)} modified tensor(s) to GPU in {t_reload_ms:.2f} ms")
@@ -423,7 +429,7 @@ async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
               print(f"[vLLM Worker] Prefetch signal received. Target weights path: {target_path}")
               async with reload_lock:
                 if target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
-                  print(f"[vLLM Worker] Prefetching delta weights to CPU cache in background...")
+                  print("[vLLM Worker] Prefetching delta weights to CPU cache in background...")
                   t0 = asyncio.get_event_loop().time()
                   await engine.collective_rpc("cache_prefetch_weights", kwargs={"weights_path": target_path})
                   dt = (asyncio.get_event_loop().time() - t0) * 1000.0
