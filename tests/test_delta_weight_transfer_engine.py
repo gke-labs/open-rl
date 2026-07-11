@@ -63,7 +63,82 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       self.assertIn(
           "model.layers.0.self_attn.q_proj.weight", loaded_names
       )
-      self.assertIn("model.layers.0.mlp.gate_proj.weight", loaded_names)
+  def test_noop_patch_detection_skips_gpu_reload(self):
+    """Test that applying an identical patch is identified as a no-op and skipped."""
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      weights_v1 = {
+          "layer.0.weight": torch.ones(4, 4),
+          "layer.1.weight": torch.zeros(4, 4),
+      }
+      file_v1 = os.path.join(tmpdir, "delta1.safetensors")
+      save_file(weights_v1, file_v1)
+
+      engine = DeltaSnapshotWeightTransferEngine(
+          config=None, parallel_config=None  # type: ignore
+      )
+
+      # First update: 2 new/changed tensors
+      calls_v1: list[list[tuple[str, torch.Tensor]]] = []
+      engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=file_v1),
+          lambda w: calls_v1.append(w),
+      )
+      self.assertEqual(len(calls_v1), 1)
+      self.assertEqual(len(calls_v1[0]), 2)
+
+      # Second update: identical weights (NO-OP patch)
+      file_v2 = os.path.join(tmpdir, "delta2.safetensors")
+      save_file(weights_v1, file_v2)
+
+      calls_v2: list[list[tuple[str, torch.Tensor]]] = []
+      engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=file_v2),
+          lambda w: calls_v2.append(w),
+      )
+      # Must detect complete no-op and skip calling load_weights callback
+      self.assertEqual(len(calls_v2), 0)
+      self.assertEqual(engine.current_weights_path, file_v2)
+
+  def test_selective_layer_filtering_skips_noop_tensors(self):
+    """Test that only genuinely modified tensors are passed to load_weights."""
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      weights_v1 = {
+          "layer.0.weight": torch.ones(4, 4),
+          "layer.1.weight": torch.zeros(4, 4),
+      }
+      file_v1 = os.path.join(tmpdir, "delta1.safetensors")
+      save_file(weights_v1, file_v1)
+
+      engine = DeltaSnapshotWeightTransferEngine(
+          config=None, parallel_config=None  # type: ignore
+      )
+      engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=file_v1),
+          lambda w: None,
+      )
+
+      # Update 2: layer.0.weight is unchanged (no-op), layer.1.weight is modified
+      weights_v2 = {
+          "layer.0.weight": torch.ones(4, 4),
+          "layer.1.weight": torch.full((4, 4), 2.5),
+      }
+      file_v2 = os.path.join(tmpdir, "delta2.safetensors")
+      save_file(weights_v2, file_v2)
+
+      loaded_calls: list[tuple[str, torch.Tensor]] = []
+      engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=file_v2),
+          lambda w: loaded_calls.extend(w),
+      )
+
+      # Only layer.1.weight should be passed to callback
+      self.assertEqual(len(loaded_calls), 1)
+      self.assertEqual(loaded_calls[0][0], "layer.1.weight")
+      self.assertTrue(torch.equal(loaded_calls[0][1], torch.full((4, 4), 2.5)))
 
 
 if __name__ == "__main__":

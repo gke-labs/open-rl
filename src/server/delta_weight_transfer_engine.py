@@ -71,6 +71,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   def __init__(self, *args, **kwargs) -> None:
     super().__init__(*args, **kwargs)
     self.current_weights_path: str | None = None
+    self._cpu_snapshot: dict[str, torch.Tensor] = {}
 
   def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
     """Initialize the delta transfer engine on the inference worker."""
@@ -116,9 +117,36 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         % (len(weights), target_path, elapsed_read)
     )
 
-    # 2. Feed parameter tensors directly into vLLM's internal layer loader
+    changed_weights: list[tuple[str, torch.Tensor]] = []
+    no_op_tensors = 0
+    for name, incoming_tensor in weights:
+      if (
+          name in self._cpu_snapshot
+          and self._cpu_snapshot[name].shape == incoming_tensor.shape
+          and self._cpu_snapshot[name].dtype == incoming_tensor.dtype
+          and torch.equal(self._cpu_snapshot[name], incoming_tensor)
+      ):
+        no_op_tensors += 1
+      else:
+        self._cpu_snapshot[name] = incoming_tensor
+        changed_weights.append((name, incoming_tensor))
+
+    if len(changed_weights) == 0 and len(weights) > 0:
+      self.current_weights_path = target_path
+      print(
+          f"[DeltaSnapshotEngine] Verified patch: 0/{len(weights)} tensors changed"
+          " (NO-OP PATCH DETECTED - Skipping GPU reload)"
+      )
+      return
+
+    print(
+        f"[DeltaSnapshotEngine] Verified patch: {len(changed_weights)}/{len(weights)} tensors"
+        f" changed ({no_op_tensors} no-op tensors skipped)"
+    )
+
+    # 2. Feed changed parameter tensors directly into vLLM's internal layer loader
     start_load = time.perf_counter()
-    load_weights(weights)
+    load_weights(changed_weights)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
     self.current_weights_path = target_path
     print(

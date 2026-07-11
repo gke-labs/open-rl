@@ -77,6 +77,9 @@ class RunConfig:
   base_model: str = "Qwen/Qwen2.5-0.5B"
   jitter_sec: int = 180
   steps: int | None = None
+  group_size: int = 8
+  groups_per_batch: int = 8
+  max_tokens: int = 512
   # Calibration (A100, 50 FFT steps on Qwen2.5-0.5B): measured 15.6% accuracy.
   # 100 examples + 5% floor keeps healthy-run flake risk below ~0.1% while
   # still failing a lobotomized checkpoint; eval costs ~15s in vLLM.
@@ -541,9 +544,9 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     f"max_steps={config.steps if config.steps is not None else 2}",
     f"base_url={base_url}",
     f"log_path={log_path}",
-    "group_size=8",
-    "groups_per_batch=8",
-    "max_tokens=512",
+    f"group_size={config.group_size}",
+    f"groups_per_batch={config.groups_per_batch}",
+    f"max_tokens={config.max_tokens}",
     "learning_rate=1e-5",
     "temperature=1.0",
     "eval_every=0",
