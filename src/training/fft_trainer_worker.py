@@ -21,7 +21,7 @@ ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") 
 class FFTConfig(BaseModel):
   seed: int | None = None
   cpu_offload: bool = True
-  weight_sync_strategy: str = "delta"
+  weight_sync_strategy: str | None = None
 
 
 def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Parameter]:
