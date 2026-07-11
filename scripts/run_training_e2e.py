@@ -548,6 +548,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     "temperature=1.0",
     "eval_every=0",
     "save_every=0",
+    *shlex.split(config.extra),
   ]
   out = None
   try:

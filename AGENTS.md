@@ -111,17 +111,15 @@ kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
 kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ```
 
-### Applying Manifest Edits & Restarting the Gateway
-If Kubernetes pod templates or memory limits (`k8s/deploy/distributed-fft-timeslice/*.yaml`) are updated, apply the manifests and perform a rolling restart on the gateway deployment so future workers spawn with the updated configurations:
+### Applying Manifest Edits & Restarting the Gateway (Dev Mode)
+Since this is a development-only mode, formal rolling updates (which include waiting for rollout status) are not necessary. Simply apply the manifests and delete the active gateway pod to trigger an immediate, fast recreation:
 ```bash
 kubectl apply -f k8s/deploy/distributed-fft-timeslice/
-kubectl rollout restart deployment open-rl-gateway
-kubectl rollout status deployment open-rl-gateway
+kubectl delete pods -l app=open-rl-gateway
 ```
 
-### Resetting the Time-Slicer DaemonSet
-If worker pods crash or lose their TCP connection (`9753`) to the time-slicer daemon, clean up old worker pods first, perform a clean restart of the time-slicer daemonset across all nodes, and wait for rollout completion before launching new jobs:
+### Resetting the Time-Slicer DaemonSet (Dev Mode)
+If worker pods crash or lose their TCP connection (`9753`) to the time-slicer daemon, clean up old worker pods and force-delete the daemonset pods directly to speed up recovery:
 ```bash
-kubectl rollout restart daemonset open-rl-accel-timeslicer
-kubectl rollout status daemonset open-rl-accel-timeslicer
+kubectl delete pods -l app=open-rl-accel-timeslicer --grace-period=0 --force
 ```

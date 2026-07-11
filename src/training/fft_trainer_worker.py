@@ -42,6 +42,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
+    self._prev_weights_shadow: dict[str, torch.Tensor] = {}
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -57,6 +58,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
+    self._prev_weights_shadow = {
+      name: param.data.detach().cpu().clone()
+      for name, param in self.model.named_parameters()
+      if param.requires_grad
+    }
     print("Successfully loaded full fine-tuning model.")
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
@@ -131,6 +137,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
 
+    if kind == "sampler" and self._prev_weights_shadow:
+      return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
+
     os.makedirs(state_path, exist_ok=True)
     was_offloaded = self._prepare_for_save()
     try:
@@ -156,6 +165,65 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     print(f"Saved full fine-tuning state to {state_path}")
     return {"path": state_path}
+
+  def save_state_delta(self, model_id: str, state_path: str, kind: str = "sampler") -> dict[str, Any]:
+    assert self.model is not None, "Model must be loaded first."
+
+    os.makedirs(state_path, exist_ok=True)
+    was_offloaded = self._prepare_for_save()
+    delta_tensors: dict[str, torch.Tensor] = {}
+    total_changed = 0
+    total_elements = 0
+
+    try:
+      if hasattr(self, "_latest_delta_tensors") and self._latest_delta_tensors:
+        delta_tensors = self._latest_delta_tensors
+        total_changed = getattr(self, "_latest_total_changed", 0)
+        total_elements = getattr(self, "_latest_total_elements", 0)
+        self._latest_delta_tensors = {}
+      else:
+        for name, param in self.model.named_parameters():
+          if not param.requires_grad:
+            continue
+          if name not in self._prev_weights_shadow:
+            self._prev_weights_shadow[name] = param.data.detach().cpu().clone()
+            continue
+
+          prev_data = self._prev_weights_shadow[name].to(param.device)
+          flat_param = param.data.view(-1)
+          flat_prev = prev_data.view(-1)
+          diff_mask = flat_param.ne(flat_prev)
+          indices = diff_mask.nonzero(as_tuple=True)[0]
+          if indices.numel() > 0:
+            delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
+            delta_tensors[f"{name}.values"] = flat_param[diff_mask].contiguous().cpu()
+            total_changed += int(indices.numel())
+            self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = delta_tensors[f"{name}.values"]
+
+          total_elements += int(param.numel())
+    finally:
+      self._cleanup_after_save(was_offloaded)
+
+    import safetensors.torch
+    delta_path = os.path.join(state_path, "delta.safetensors")
+    safetensors.torch.save_file(delta_tensors, delta_path)
+
+    metadata = {
+      "base_model": self.base_model_name,
+      "created_at": datetime.now().isoformat(),
+      "format": "sparse_delta",
+      "kind": kind,
+      "model_id": model_id,
+      "changed_elements": total_changed,
+      "total_elements": total_elements,
+      "density_pct": round(100.0 * total_changed / max(1, total_elements), 3),
+      "timestamp": time.time(),
+    }
+    with open(os.path.join(state_path, "metadata.json"), "w") as f:
+      json.dump(metadata, f)
+
+    print(f"Saved sparse delta ({metadata['density_pct']}% changed elements, {total_changed}/{total_elements}) to {state_path}")
+    return {"path": state_path, "density_pct": metadata["density_pct"]}
 
   def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
     metadata_path = os.path.join(state_path, "metadata.json")
@@ -261,6 +329,29 @@ class FFTTrainingWorker(BaseTrainerWorker):
     ):
       return
     start_t = time.perf_counter()
+
+    # 1-CPU-Copy (15.26 GB) Offload-Time Sparse Delta Diffing:
+    # Compare live GPU W_{t+1} against existing CPU _param_shadow (holding W_t) before overwriting
+    if hasattr(self, "_latest_delta_tensors"):
+      self._latest_delta_tensors.clear()
+    else:
+      self._latest_delta_tensors = {}
+    self._latest_total_changed = 0
+    self._latest_total_elements = 0
+
+    for name, param in self.model.named_parameters():
+      if not param.requires_grad:
+        continue
+      if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+        prev_cpu = self._param_shadow[param][1]
+        prev_gpu = prev_cpu.to(param.device, non_blocking=True)
+        diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
+        indices = diff_mask.nonzero(as_tuple=True)[0]
+        if indices.numel() > 0:
+          self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
+          self._latest_delta_tensors[f"{name}.values"] = param.data.view(-1)[diff_mask].contiguous().cpu()
+          self._latest_total_changed += int(indices.numel())
+      self._latest_total_elements += int(param.numel())
 
     # Phase 1: Launch Batched Asynchronous DMA copies WITHOUT freeing GPU tensors!
     for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):

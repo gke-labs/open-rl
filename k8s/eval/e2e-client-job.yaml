@@ -31,6 +31,7 @@ spec:
         - "scenario=E2E-SCENARIO"
         - "uv_extra=cpu"
         - "base_url=http://open-rl-gateway-service:8000"
+        - "log_dir=/mnt/shared/open-rl/runs/E2E-SCENARIO"
         - "E2E-EXTRA-ARGS"
         env:
         - name: PYTHONUNBUFFERED

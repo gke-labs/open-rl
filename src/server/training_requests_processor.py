@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import json
 import os
 import threading
 import traceback
@@ -420,6 +421,12 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
     local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
     await asyncio.to_thread(self.worker.save_state, model_id, local_path, False, "sampler")
+    if hasattr(self.store, "redis"):
+      num_subs = await self.store.redis.publish(
+          f"open_rl:weight_update:{model_id}",
+          json.dumps({"weights_path": local_path}),
+      )
+      print(f"[Trainer] Published weight update signal to {num_subs} subscribers for version path: {local_path}")
     return {
       "path": payload.get("path"),
       "sampling_session_id": payload.get("sampling_session_id"),

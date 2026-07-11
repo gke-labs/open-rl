@@ -4,3 +4,10 @@
 **/*.pyc
 .ruff_cache
 .pytest_cache
+runs/
+build/
+dist/
+scratch/
+*.pt
+*.bin
+*.safetensors

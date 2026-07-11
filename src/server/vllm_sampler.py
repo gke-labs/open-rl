@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import json
+import redis.asyncio as redis
 import hashlib
 import os
 import sys
@@ -45,6 +47,7 @@ tracer = trace.get_tracer("vllm.inference.worker")
 
 engine: Any = None
 CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
+IS_ENGINE_SLEEPING: bool = True
 reload_lock = asyncio.Lock()
 
 
@@ -58,6 +61,128 @@ if is_fft_enabled():
   from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, workload_job_id
 
   time_slicer = time_slicer_client_from_env()
+
+
+def patch_vllm_worker_for_delta_sync():
+  try:
+    from vllm.v1.worker.gpu_worker import Worker
+  except ImportError:
+    return
+
+  original_reload = getattr(Worker, "reload_weights", None)
+  if not original_reload or getattr(Worker, "_openrl_delta_patched", False):
+    return
+
+  def custom_cache_prefetch_weights(self, *args, **kwargs):
+    import json
+    import os
+    weights_path = kwargs.get("weights_path") or (args[0] if args else None)
+    if not weights_path:
+      return
+
+    if not hasattr(self, "_prefetch_cache"):
+      self._prefetch_cache = {}
+
+    # Avoid reloading if already cached
+    if weights_path in self._prefetch_cache:
+      return
+
+    if os.path.exists(os.path.join(weights_path, "metadata.json")):
+      with open(os.path.join(weights_path, "metadata.json")) as f:
+        meta = json.load(f)
+      if meta.get("format") == "sparse_delta":
+        delta_file = os.path.join(weights_path, "delta.safetensors")
+        if os.path.exists(delta_file):
+          import safetensors.torch
+          print(f"[vLLM Worker] Pre-loading weights delta to CPU cache: {delta_file}")
+          # Load strictly to CPU
+          sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
+          # Keep only the latest prefetched version to prevent leaks
+          self._prefetch_cache.clear()
+          self._prefetch_cache[weights_path] = sparse_delta
+          print(f"[vLLM Worker] Pre-loaded weights delta to CPU cache successfully.")
+
+  def custom_reload_weights(self, *args, **kwargs):
+    import json
+    import os
+    import torch
+    import time
+    
+    # Save the base model path at the very first reload attempt
+    if not hasattr(self, "_base_model_path"):
+      self._base_model_path = self.model_config.model
+
+    weights_path = kwargs.get("weights_path") or (args[0] if args else None)
+    if not weights_path:
+      return original_reload(self, *args, **kwargs)
+
+    sparse_delta = None
+    if hasattr(self, "_prefetch_cache") and weights_path in self._prefetch_cache:
+      print(f"[Open-RL Delta Sync] Using pre-cached CPU delta weights for {weights_path}")
+      sparse_delta = self._prefetch_cache.pop(weights_path)
+
+    if sparse_delta is None and os.path.exists(os.path.join(weights_path, "metadata.json")):
+      with open(os.path.join(weights_path, "metadata.json")) as f:
+        meta = json.load(f)
+      if meta.get("format") == "sparse_delta":
+        delta_file = os.path.join(weights_path, "delta.safetensors")
+        if os.path.exists(delta_file):
+          import safetensors.torch
+          sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
+
+    if sparse_delta is not None:
+      t0 = time.perf_counter()
+      
+      # 1. Initialize CPU weights snapshot if not present
+      if not hasattr(self, "_bf16_snapshot") or not self._bf16_snapshot:
+        print(f"[Open-RL Delta Sync] Initializing CPU weights snapshot from base model: {self._base_model_path}")
+        self._bf16_snapshot = {}
+        from vllm.model_executor.model_loader import get_model_loader
+        model_loader = get_model_loader(self.load_config)
+        model = self.model_runner.get_model()
+        
+        orig_model = self.model_config.model
+        self.model_config.model = self._base_model_path
+        base_iterator = model_loader.get_all_weights(self.model_config, model)
+        for name, tensor in base_iterator:
+          # Pin memory for faster PCIe transfers
+          self._bf16_snapshot[name] = tensor.cpu().pin_memory() if torch.cuda.is_available() else tensor.cpu()
+        self.model_config.model = orig_model
+        print(f"[Open-RL Delta Sync] CPU weights snapshot initialized with {len(self._bf16_snapshot)} tensors.")
+
+      # 2. Extract changed parameter names
+      changed_params = set()
+      for key in sparse_delta.keys():
+        if key.endswith(".indices"):
+          changed_params.add(key[:-8])
+
+      # 3. Apply sparse delta to CPU snapshot
+      for name in changed_params:
+        indices = sparse_delta[f"{name}.indices"].to(torch.int64)
+        values = sparse_delta[f"{name}.values"]
+        
+        snap_flat = self._bf16_snapshot[name].view(-1)
+        snap_flat[indices] = values
+
+      t_apply_ms = (time.perf_counter() - t0) * 1000.0
+      print(f"[Open-RL Delta Sync] Applied sparse delta to CPU snapshot in {t_apply_ms:.2f} ms")
+
+      # 4. Trigger standard reload using our CPU snapshot as weights iterator
+      t_reload_start = time.perf_counter()
+      original_reload(
+          self,
+          weights_iterator=self._bf16_snapshot.items(),
+          is_checkpoint_format=True,
+      )
+      t_reload_ms = (time.perf_counter() - t_reload_start) * 1000.0
+      print(f"[Open-RL Delta Sync] Transferred snapshot to GPU in {t_reload_ms:.2f} ms")
+      return
+
+    return original_reload(self, *args, **kwargs)
+
+  Worker.cache_prefetch_weights = custom_cache_prefetch_weights
+  Worker.reload_weights = custom_reload_weights
+  Worker._openrl_delta_patched = True
 
 
 def init_engine():
@@ -99,6 +224,7 @@ def init_engine():
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
+    patch_vllm_worker_for_delta_sync()
     engine_args = AsyncEngineArgs(**engine_kwargs)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
 
@@ -200,6 +326,7 @@ async def run_generation_backend(
 async def process_sampling_request(req: dict, store: Any) -> None:
   global engine
   global CURRENT_LOADED_SAMPLER_WEIGHTS
+  global IS_ENGINE_SLEEPING
 
   request_id = req["request_id"]
   trace_context = req.get("trace_context", {})
@@ -214,14 +341,15 @@ async def process_sampling_request(req: dict, store: Any) -> None:
           if weights_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
             print(f"[vLLM Worker] Weight change detected. Current: {CURRENT_LOADED_SAMPLER_WEIGHTS}, Target: {weights_path}")
             if engine is not None:
-              print("[vLLM Worker] Triggering sleep level 2...")
-              await engine.sleep(level=2)
+              print("[vLLM Worker] Triggering sleep level 1 (CPU offload weights)...")
+              await engine.sleep(level=1)
               print("[vLLM Worker] Waking up weights...")
               await engine.wake_up(tags=["weights"])
               print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
               await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
               print("[vLLM Worker] Waking up KV cache...")
               await engine.wake_up(tags=["kv_cache"])
+              IS_ENGINE_SLEEPING = False
             CURRENT_LOADED_SAMPLER_WEIGHTS = weights_path
             print("[vLLM Worker] Weights reload completed successfully!")
 
@@ -260,14 +388,79 @@ async def process_sampling_request(req: dict, store: Any) -> None:
       await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
 
 
+async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
+  global engine
+  global CURRENT_LOADED_SAMPLER_WEIGHTS
+  global IS_ENGINE_SLEEPING
+
+  try:
+    if not hasattr(store, "redis"):
+      return
+
+    redis_url = os.getenv("REDIS_URL")
+    if not redis_url:
+      return
+    client = redis.from_url(redis_url, decode_responses=True, socket_timeout=None, socket_connect_timeout=None)
+    pubsub = client.pubsub()
+    channel_key = f"open_rl:weight_update:{model_id}"
+    await pubsub.subscribe(channel_key)
+    print(f"[vLLM Worker] Weight prefetcher listening on channel: {channel_key}...")
+
+    while True:
+      try:
+        async for message in pubsub.listen():
+          if message["type"] != "message":
+            continue
+          try:
+            data = json.loads(message["data"])
+            target_path = data.get("weights_path")
+            if target_path and target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
+              print(f"[vLLM Worker] Prefetch signal received. Target weights path: {target_path}")
+              async with reload_lock:
+                if target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
+                  print(f"[vLLM Worker] Prefetching delta weights to CPU cache in background...")
+                  t0 = asyncio.get_event_loop().time()
+                  await engine.collective_rpc("cache_prefetch_weights", kwargs={"weights_path": target_path})
+                  dt = (asyncio.get_event_loop().time() - t0) * 1000.0
+                  print(f"[vLLM Worker] Background weights prefetch to CPU cache completed in {dt:.2f} ms!")
+          except Exception as e:
+            print(f"[vLLM Worker] Error in prefetch message processing: {e}")
+            traceback.print_exc()
+      except redis.exceptions.TimeoutError:
+        continue
+      except Exception as e:
+        print(f"[vLLM Worker] Pub/Sub connection error: {e}. Retrying subscription...")
+        await asyncio.sleep(2)
+        try:
+          await pubsub.subscribe(channel_key)
+        except Exception:
+          pass
+  except Exception as e:
+    print(f"[vLLM Worker] CRITICAL: Weight prefetcher loop crashed: {e}")
+    traceback.print_exc()
+  except asyncio.CancelledError:
+    print("[vLLM Worker] Weight prefetcher loop cancelled.")
+  finally:
+    try:
+      await pubsub.unsubscribe(channel_key)
+    except Exception:
+      pass
+    try:
+      await client.aclose()
+    except Exception:
+      pass
+
+
 async def run_sampling_worker(model_id: str) -> None:
   global engine
   global CURRENT_LOADED_SAMPLER_WEIGHTS
+  global IS_ENGINE_SLEEPING
   from server.store import get_store
 
   store = get_store()
   snapshot_registered = False
   workload = None
+  prefetch_task = None
   if time_slicer is not None:
     workload = workload_from_env(os.getpid(), job_id=workload_job_id("sampler", model_id), group=SAMPLER_TIME_SLICE_GROUP)
 
@@ -282,8 +475,9 @@ async def run_sampling_worker(model_id: str) -> None:
         init_engine()
         print("[vLLM Worker] Engine initialized successfully.")
         if engine is not None:
-          print("[vLLM Worker] Sleeping engine after init to yield GPU memory...")
-          await engine.sleep(level=2)
+          print("[vLLM Worker] Sleeping engine after init to yield GPU memory (CPU offload)...")
+          await engine.sleep(level=1)
+          IS_ENGINE_SLEEPING = True
     except Exception as exc:
       print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
       traceback.print_exc()
@@ -295,6 +489,11 @@ async def run_sampling_worker(model_id: str) -> None:
   async def exit_gracefully() -> None:
     print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
     nonlocal snapshot_registered
+    if prefetch_task is not None:
+      try:
+        prefetch_task.cancel()
+      except Exception:
+        pass
     if snapshot_registered and time_slicer is not None:
       assert workload is not None
       try:
@@ -328,6 +527,7 @@ async def run_sampling_worker(model_id: str) -> None:
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
 
   print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
+  prefetch_task = asyncio.create_task(weight_prefetcher_loop(model_id, store))
   try:
     while True:
       try:
@@ -348,15 +548,23 @@ async def run_sampling_worker(model_id: str) -> None:
           if time_slicer is not None:
             assert workload is not None
             async with time_slicer.acquire(workload):
+              if engine is not None and IS_ENGINE_SLEEPING:
+                print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
+                await engine.wake_up(tags=["weights", "kv_cache"])
+                IS_ENGINE_SLEEPING = False
               tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
               await asyncio.gather(*tasks)
               if has_shutdown:
                 await exit_gracefully()
               if engine is not None:
-                print("[vLLM Worker] Exiting batch: sleeping engine to yield GPU memory...")
-                await engine.sleep(level=2)
-                CURRENT_LOADED_SAMPLER_WEIGHTS = None
+                print("[vLLM Worker] Exiting batch: sleeping engine (CPU offload weights) to yield GPU memory...")
+                await engine.sleep(level=1)
+                IS_ENGINE_SLEEPING = True
           else:
+            if engine is not None and IS_ENGINE_SLEEPING:
+              print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
+              await engine.wake_up(tags=["weights", "kv_cache"])
+              IS_ENGINE_SLEEPING = False
             tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
             await asyncio.gather(*tasks)
 
