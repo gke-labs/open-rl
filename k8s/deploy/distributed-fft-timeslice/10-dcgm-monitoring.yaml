@@ -126,3 +126,8 @@ spec:
   endpoints:
   - port: metrics
     interval: 10s
+  targetLabels:
+    metadata:
+    - pod
+    - container
+    - node
