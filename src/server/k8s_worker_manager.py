@@ -133,6 +133,9 @@ class KubernetesFFTWorkerManager:
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
+    weight_sync = os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY")
+    if weight_sync:
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync)
     return pod
 
   def read_pod(self, pod_name: str) -> Any | None:

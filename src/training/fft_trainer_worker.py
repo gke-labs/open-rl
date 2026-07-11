@@ -39,7 +39,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.trainable_params: list[torch.nn.Parameter] = []
     self.optimizer: torch.optim.Optimizer | None = None
     self.cpu_offload: bool = True
-    self.weight_sync_strategy: str = "delta"
+    self.weight_sync_strategy: str = os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower()
     self._is_offloaded: bool = False
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
@@ -76,6 +76,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     """Load the per-job model if needed, then prepare it for full fine-tuning."""
     if config is not None:
       self.cpu_offload = config.cpu_offload
+      if hasattr(config, "weight_sync_strategy") and config.weight_sync_strategy:
+        self.set_weight_sync_strategy(config.weight_sync_strategy)
     self.load_base_model(base_model_name)
     if config is not None and config.seed is not None:
       torch.manual_seed(config.seed)

@@ -321,13 +321,16 @@ async def create_model(req: dict):
   meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="full")
   await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
   await s.set_value(f"open_rl:model_base:{model_id}", base_model)
+  full_config = dict(req.get("full_config") or {})
+  if "weight_sync_strategy" in req:
+    full_config["weight_sync_strategy"] = req["weight_sync_strategy"]
   command = make_training_request(
     "create_model",
     model_id,
     {
       "base_model": base_model,
       "lora_config": req.get("lora_config") or {},
-      "full_config": req.get("full_config") or {},
+      "full_config": full_config,
     },
     request_id=model_id,
   )
