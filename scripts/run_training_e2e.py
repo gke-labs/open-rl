@@ -65,6 +65,7 @@ class RunConfig:
     "fft-gsm8k-x2",
     "fft-gsm8k-rl",
     "fft-gsm8k-rl-x2",
+    "fft-gsm8k-rl-x2-compare",
     "fft-gsm8k-rl-x3",
     "fft-gsm8k-rl-hetero",
     "fft-textsql-rl",
