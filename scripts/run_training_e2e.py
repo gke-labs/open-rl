@@ -322,9 +322,8 @@ def examples_env(config: RunConfig) -> dict[str, str]:
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
   env["PYTHONUNBUFFERED"] = "1"
   env.setdefault("TINKER_API_KEY", "tml-dummy-key")
-  # Keep examples isolated from the root server/eval venv. This also avoids
-  # creating examples/.venv on workspace mounts with tight file quotas.
-  env["UV_PROJECT_ENVIRONMENT"] = os.environ.get("OPEN_RL_EXAMPLES_UV_PROJECT_ENVIRONMENT", str(open_rl_tmp_dir(config) / "examples-venv"))
+  existing_path = env.get("PYTHONPATH", "")
+  env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env
 
 
