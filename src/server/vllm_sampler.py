@@ -156,26 +156,31 @@ def patch_vllm_worker_for_delta_sync():
         if key.endswith(".indices"):
           changed_params.add(key[:-8])
 
+      if len(changed_params) == 0:
+        print("[Open-RL Delta Sync] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
+        return
+
       # 3. Apply sparse delta to CPU snapshot
       for name in changed_params:
         indices = sparse_delta[f"{name}.indices"].to(torch.int64)
         values = sparse_delta[f"{name}.values"]
-        
+
         snap_flat = self._bf16_snapshot[name].view(-1)
         snap_flat[indices] = values
 
       t_apply_ms = (time.perf_counter() - t0) * 1000.0
-      print(f"[Open-RL Delta Sync] Applied sparse delta to CPU snapshot in {t_apply_ms:.2f} ms")
+      print(f"[Open-RL Delta Sync] Applied sparse delta ({len(changed_params)} tensors) to CPU snapshot in {t_apply_ms:.2f} ms")
 
-      # 4. Trigger standard reload using our CPU snapshot as weights iterator
+      # 4. Trigger standard reload passing ONLY genuinely modified parameter tensors
+      changed_tuples = [(name, self._bf16_snapshot[name]) for name in changed_params]
       t_reload_start = time.perf_counter()
       original_reload(
           self,
-          weights_iterator=self._bf16_snapshot.items(),
+          weights_iterator=changed_tuples,
           is_checkpoint_format=True,
       )
       t_reload_ms = (time.perf_counter() - t_reload_start) * 1000.0
-      print(f"[Open-RL Delta Sync] Transferred snapshot to GPU in {t_reload_ms:.2f} ms")
+      print(f"[Open-RL Delta Sync] Transferred {len(changed_tuples)} modified tensor(s) to GPU in {t_reload_ms:.2f} ms")
       return
 
     return original_reload(self, *args, **kwargs)
