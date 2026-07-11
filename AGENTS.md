@@ -33,15 +33,40 @@ make test
 
 ## 3. Running End-to-End (E2E) GPU Integration Tests
 
-E2E tests boot up a local backend and run actual SFT/RL training against it. Run them using the `gpu` extra environment (making sure `uv` is in your `PATH` first):
+E2E tests boot up a client harness and run actual SFT/RL training workflows against the Open-RL backend.
+
+### Option A: Running In-Cluster via Kubernetes (`Preferred`)
+When testing against a Kubernetes GPU cluster (e.g., GKE), the preferred and most reliable way to execute E2E integration benchmarks is using the `make cluster-e2e` target. This deploys an in-cluster client job (`open-rl-e2e-client`) that communicates directly with `open-rl-gateway-service:8000`:
+
 ```bash
-make test e2e <scenario_name>
-```
-An example command for running end to end test:
-```
-pkill -9 -f port-forward 2>/dev/null; nohup sh -c '\''while true; do kubectl port-forward svc/open-rl-gateway-service 8000:8000 >/dev/null 2>&1; sleep 1; done'\'' >/dev/null 2>&1 & make test e2e fft-gsm8k-rl BASE_URL=http://127.0.0.1:8000
+make cluster-e2e IMAGE_TAG=$(cat VERSION 2>/dev/null || echo latest) \
+  E2E_SCENARIO=<scenario_name> \
+  E2E_ARGS="<optional_key_val_args>"
 ```
 
+**Examples:**
+* Run a 5-step `Qwen2.5-0.5B-Instruct` RL test:
+  ```bash
+  make cluster-e2e IMAGE_TAG=0.1.45 E2E_SCENARIO=fft-gsm8k-rl E2E_ARGS="base_model=Qwen/Qwen2.5-0.5B-Instruct steps=5"
+  ```
+* Run a 30-step `Qwen3-8B` RL benchmark with 192 batch size (`groups_per_batch=24 × group_size=8`):
+  ```bash
+  make cluster-e2e IMAGE_TAG=0.1.45 E2E_SCENARIO=fft-gsm8k-rl E2E_ARGS="base_model=Qwen/Qwen3-8B steps=30 group_size=8 groups_per_batch=24 max_tokens=512"
+  ```
+
+Before launching a new cluster run, always clean up any stale client jobs or previous dynamic worker pods:
+```bash
+kubectl delete job -l app=open-rl-client-job --ignore-not-found
+kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
+kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
+```
+
+### Option B: Local Port-Forward Execution (`Alternative / Local Dev`)
+If running a client script on a local machine against a remote Kubernetes cluster, use port-forwarding:
+```bash
+pkill -9 -f port-forward 2>/dev/null; nohup sh -c 'while true; do kubectl port-forward svc/open-rl-gateway-service 8000:8000 >/dev/null 2>&1; sleep 1; done' >/dev/null 2>&1 &
+make test e2e <scenario_name> BASE_URL=http://127.0.0.1:8000
+```
 
 ### Supported Scenarios:
 - **`tiny-lora`**: Minimal overfit test using LoRA (asserts that loss drops).
@@ -49,7 +74,8 @@ pkill -9 -f port-forward 2>/dev/null; nohup sh -c '\''while true; do kubectl por
 - **`tiny-rl`**: Simple sample -> reward -> train policy update loop.
 - **`lora-textsql`**: A trimmed version of a real Reinforcement Learning recipe for Text-to-SQL.
 - **`fft-gsm8k`**: Full fine-tuning SFT training + vLLM evaluation on 100 math problems (*requires `redis-server`*).
-- **`fft-gsm8k-x2`**: Runs two concurrent `fft-gsm8k` jobs sharing a single GPU via the Accelerator Time-Slicer (which layers on llm-d's physical checkpoint/restore snapshot agent).
+- **`fft-gsm8k-rl`**: Reinforcement Learning recipe for GSM8K math problems (supports `Qwen/Qwen2.5-0.5B-Instruct`, `Qwen/Qwen3-8B`, etc.).
+- **`fft-gsm8k-x2`**: Runs two concurrent `fft-gsm8k` jobs sharing a single GPU via the Accelerator Time-Slicer.
 
 ---
 
