@@ -149,3 +149,36 @@ If worker pods crash or lose their TCP connection (`9753`) to the time-slicer da
 ```bash
 kubectl delete pods -l app=open-rl-accel-timeslicer --grace-period=0 --force
 ```
+
+### Monitoring Live Training Progression inside Gateway Pod
+When a cluster benchmark job (`make cluster-e2e ...`) is running, live step-by-step metrics (`metrics.jsonl`) are written to shared NFS storage (`/mnt/shared/open-rl/runs/fft-gsm8k-rl/open-rl-tmp/...`). To inspect a clean progression table of live metrics (`Step | Accuracy | Reward | Sampling | Train Step | Save Delta | Total Step Time`) directly inside the Gateway pod:
+```bash
+kubectl exec deployment/open-rl-gateway -- python3 -c '
+import json, os
+metrics_path = "/mnt/shared/open-rl/runs/fft-gsm8k-rl/open-rl-tmp/fft_gsm8k_rl/metrics.jsonl"
+if os.path.exists(metrics_path):
+    with open(metrics_path) as f:
+        rows = [json.loads(line) for line in f if line.strip()]
+    print("Step | Accuracy | Reward | Sampling | Train Step | Save Delta | Total Step Time")
+    print("-" * 80)
+    for row in rows:
+        if "env/all/correct" in row:
+            step = row.get("progress/batch", "?")
+            corr = row.get("env/all/correct", 0.0)
+            rew = row.get("env/all/reward/total", 0.0)
+            t_samp = row.get("time/sampling", 0.0)
+            t_train = row.get("time/train_step", 0.0)
+            t_save = row.get("time/save_checkpoint", 0.0)
+            t_total = row.get("time/total", 0.0)
+            print(f"{str(step):>4} | {corr:>7.2%}  | {rew:>6.4f} | {t_samp:>7.1f}s | {t_train:>9.1f}s | {t_save:>9.1f}s | {t_total:>14.1f}s")
+'
+```
+*(For `fft-gsm8k-rl-x2` concurrent dual jobs, iterate over `fft_gsm8k_rl_job-a` and `fft_gsm8k_rl_job-b` directories).*
+
+### Standard Benchmark Run Archive Convention (`runs/` Directory)
+When an end-to-end benchmark campaign completes, always archive the results into the repository's `runs/` directory using standard `<date>_<scenario>_<details>` naming (`e.g. runs/2026-07-11_qwen8b_fft_rl_x2_192batch_30steps/`):
+1. Save raw telemetry logs (`metrics.jsonl`) from the Gateway pod:
+   ```bash
+   kubectl exec deployment/open-rl-gateway -- cat /mnt/shared/open-rl/runs/fft-gsm8k-rl/open-rl-tmp/fft_gsm8k_rl/metrics.jsonl > runs/<run_dir>/metrics.jsonl
+   ```
+2. Write a comprehensive markdown benchmark report (`benchmark_report.md`) inside `runs/<run_dir>/` documenting executive findings, full step-by-step progression tables, timing breakdown, and hardware/concurrency performance.

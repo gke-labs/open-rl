@@ -15,6 +15,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -72,7 +73,13 @@ def main() -> None:
   if args.no_follow:
     print(f"[cluster-e2e] launched job/{JOB}; follow it with: {' '.join(kubectl)} logs -f job/{JOB}")
     return
-  subprocess.run(commands[2], check=True)
+  for _ in range(10):
+    res = subprocess.run(commands[2])
+    if res.returncode == 0:
+      break
+    time.sleep(2)
+  else:
+    raise RuntimeError(f"Timed out waiting for pod job-name={JOB}")
   subprocess.run(commands[3], check=True)
   done = subprocess.run(kubectl + ["wait", "--for=condition=Complete", f"job/{JOB}", "--timeout=30s"], capture_output=True, text=True)
   if done.returncode != 0:
