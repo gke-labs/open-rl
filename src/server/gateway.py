@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -316,8 +316,16 @@ async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
 
 
+from typing import Any
+
+def _get_request(request: Request) -> Request:
+  return request
+
+
 @app.post("/api/v1/create_model")
-async def create_model(req: dict, request: Request):
+async def create_model(
+    req: dict[str, Any], request: Request | None = Depends(_get_request)
+) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
   base_model = req.get("base_model")
   if not base_model:
@@ -332,13 +340,10 @@ async def create_model(req: dict, request: Request):
   await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   full_config = dict(req.get("full_config") or {})
   user_meta = dict(req.get("user_metadata") or {})
-  strategy = (
-    request.headers.get("cf-access-client-id")
-    or request.headers.get("x-open-rl-weight-sync-strategy")
-    or req.get("weight_sync_strategy")
-    or full_config.get("weight_sync_strategy")
-    or user_meta.get("weight_sync_strategy")
-  )
+  header_strategy = None
+  if request and hasattr(request, "headers"):
+    header_strategy = request.headers.get("cf-access-client-id") or request.headers.get("x-open-rl-weight-sync-strategy")
+  strategy = header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
   if strategy in ("full", "delta"):
     full_config["weight_sync_strategy"] = strategy
   command = make_training_request(
