@@ -171,8 +171,19 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Saved full fine-tuning state to {state_path}")
     return {"path": state_path}
 
-  def save_state_delta(self, model_id: str, state_path: str, kind: str = "sampler") -> dict[str, Any]:
+  def save_state_delta(
+    self,
+    model_id: str,
+    state_path: str,
+    kind: str = "sampler",
+    diffing_device: str | None = None,
+  ) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+
+    if diffing_device is None:
+      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "gpu").lower()
+    else:
+      diffing_device = diffing_device.lower()
 
     os.makedirs(state_path, exist_ok=True)
     was_offloaded = self._prepare_for_save()
@@ -194,16 +205,48 @@ class FFTTrainingWorker(BaseTrainerWorker):
             self._prev_weights_shadow[name] = param.data.detach().cpu().clone()
             continue
 
-          prev_data = self._prev_weights_shadow[name].to(param.device)
-          flat_param = param.data.view(-1)
-          flat_prev = prev_data.view(-1)
-          diff_mask = flat_param.ne(flat_prev)
-          indices = diff_mask.nonzero(as_tuple=True)[0]
-          if indices.numel() > 0:
-            delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
-            delta_tensors[f"{name}.values"] = flat_param[diff_mask].contiguous().cpu()
-            total_changed += int(indices.numel())
-            self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = delta_tensors[f"{name}.values"]
+          if diffing_device == "cpu":
+            cur_cpu = param.data.detach().cpu().view(-1)
+            prev_cpu = self._prev_weights_shadow[name].view(-1)
+            diff_mask = cur_cpu.ne(prev_cpu)
+            indices = diff_mask.nonzero(as_tuple=True)[0]
+            if indices.numel() > 0:
+              delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous()
+              delta_tensors[f"{name}.values"] = cur_cpu[diff_mask].contiguous()
+              total_changed += int(indices.numel())
+              prev_cpu[indices.to(torch.int64)] = delta_tensors[f"{name}.values"]
+          elif diffing_device == "benchmark":
+            cur_cpu = param.data.detach().cpu().view(-1)
+            prev_cpu = self._prev_weights_shadow[name].view(-1)
+            cpu_mask = cur_cpu.ne(prev_cpu)
+            cpu_indices = cpu_mask.nonzero(as_tuple=True)[0]
+            cpu_values = cur_cpu[cpu_mask].contiguous()
+
+            prev_gpu = self._prev_weights_shadow[name].to(param.device).view(-1)
+            flat_param = param.data.view(-1)
+            gpu_mask = flat_param.ne(prev_gpu)
+            gpu_indices = gpu_mask.nonzero(as_tuple=True)[0].cpu()
+            gpu_values = flat_param[gpu_mask].contiguous().cpu()
+
+            assert torch.equal(cpu_indices, gpu_indices), f"Diffing mismatch on indices for {name}"
+            assert torch.equal(cpu_values, gpu_values), f"Diffing mismatch on values for {name}"
+
+            if cpu_indices.numel() > 0:
+              delta_tensors[f"{name}.indices"] = cpu_indices.to(torch.int32).contiguous()
+              delta_tensors[f"{name}.values"] = cpu_values
+              total_changed += int(cpu_indices.numel())
+              prev_cpu[cpu_indices.to(torch.int64)] = delta_tensors[f"{name}.values"]
+          else:
+            prev_data = self._prev_weights_shadow[name].to(param.device)
+            flat_param = param.data.view(-1)
+            flat_prev = prev_data.view(-1)
+            diff_mask = flat_param.ne(flat_prev)
+            indices = diff_mask.nonzero(as_tuple=True)[0]
+            if indices.numel() > 0:
+              delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
+              delta_tensors[f"{name}.values"] = flat_param[diff_mask].contiguous().cpu()
+              total_changed += int(indices.numel())
+              self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = delta_tensors[f"{name}.values"]
 
           total_elements += int(param.numel())
     finally:

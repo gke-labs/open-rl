@@ -9,6 +9,7 @@ import traceback
 import uuid
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
+from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, Request
@@ -316,15 +317,14 @@ async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
 
 
-from typing import Any
-
 def _get_request(request: Request) -> Request:
   return request
 
 
 @app.post("/api/v1/create_model")
 async def create_model(
-    req: dict[str, Any], request: Request | None = Depends(_get_request)
+  req: dict[str, Any],
+  request: Request | None = Depends(_get_request),  # noqa: B008
 ) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
   base_model = req.get("base_model")
