@@ -181,7 +181,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     assert self.model is not None, "Model must be loaded first."
 
     if diffing_device is None:
-      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "gpu").lower()
+      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
     else:
       diffing_device = diffing_device.lower()
 
