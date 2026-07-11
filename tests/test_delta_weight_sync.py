@@ -83,6 +83,14 @@ class DeltaWeightSyncTest(unittest.TestCase):
       "Worker shadow must be updated after delta save",
     )
 
+  def test_weight_sync_strategy_selection(self):
+    worker = FFTTrainingWorker()
+    self.assertEqual(worker.weight_sync_strategy, "delta")
+    worker.set_weight_sync_strategy("full")
+    self.assertEqual(worker.weight_sync_strategy, "full")
+    with self.assertRaises(ValueError):
+      worker.set_weight_sync_strategy("invalid_strategy")
+
 
 if __name__ == "__main__":
   unittest.main()

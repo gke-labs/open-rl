@@ -21,6 +21,7 @@ ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") 
 class FFTConfig(BaseModel):
   seed: int | None = None
   cpu_offload: bool = True
+  weight_sync_strategy: str = "delta"
 
 
 def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Parameter]:
@@ -38,11 +39,17 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.trainable_params: list[torch.nn.Parameter] = []
     self.optimizer: torch.optim.Optimizer | None = None
     self.cpu_offload: bool = True
+    self.weight_sync_strategy: str = "delta"
     self._is_offloaded: bool = False
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
     self._prev_weights_shadow: dict[str, torch.Tensor] = {}
+
+  def set_weight_sync_strategy(self, strategy: str) -> None:
+    if strategy not in ("full", "delta"):
+      raise ValueError(f"Invalid weight_sync_strategy '{strategy}'. Must be 'full' or 'delta'.")
+    self.weight_sync_strategy = strategy
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -137,7 +144,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
 
-    if kind == "sampler" and self._prev_weights_shadow:
+    if kind == "sampler" and self.weight_sync_strategy == "delta" and self._prev_weights_shadow:
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
 
     os.makedirs(state_path, exist_ok=True)
