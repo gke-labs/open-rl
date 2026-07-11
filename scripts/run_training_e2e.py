@@ -614,6 +614,69 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
   finally:
     cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
 
+
+def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Run two concurrent FFT RL jobs on GSM8K: Job A (Full Sync) vs Job B (Delta Sync)."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, strategy: str) -> None:
+    try:
+      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_compare_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      args = [
+        "env=gsm8k",
+        f"model_name={config.base_model}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 30}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        f"group_size={config.group_size}",
+        f"groups_per_batch={config.groups_per_batch}",
+        f"max_tokens={config.max_tokens}",
+        "learning_rate=1e-5",
+        "temperature=1.0",
+        "eval_every=0",
+        "save_every=0",
+        *shlex.split(config.extra),
+      ]
+      env = examples_env(config)
+      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = strategy
+      results[job] = run_command(
+        [
+          "uv",
+          "--project",
+          "examples",
+          "run",
+          "python",
+          "-m",
+          module_name,
+          *args,
+        ],
+        env=env,
+        watch=watch,
+        prefix=f"[{job.upper()} ({strategy.upper()} SYNC)] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  threads = [
+    threading.Thread(target=train, args=("job-a", "full")),
+    threading.Thread(target=train, args=("job-b", "delta")),
+  ]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"fft-gsm8k-rl-x2-compare {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
   check_snapshot_interleaving(config)
 
 
@@ -894,6 +957,8 @@ def main() -> None:
       run_gsm8k_rl(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2":
       run_gsm8k_rl_x2(config, base_url, processes)
+    elif config.scenario == "fft-gsm8k-rl-x2-compare":
+      run_gsm8k_rl_x2_compare(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x3":
       run_gsm8k_rl_x3(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-hetero":

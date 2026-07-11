@@ -155,9 +155,15 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   assert fft_worker_manager is not None, "FFT worker manager is initialized by the app lifespan when FFT is enabled"
   request_id = request["request_id"]
   base_model = request.get("payload", {}).get("base_model")
+  strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
   await store.set_future(request_id, {"status": "pending"})
   try:
-    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"], base_model)
+    await asyncio.to_thread(
+      fft_worker_manager.launch_trainer,
+      request["model_id"],
+      base_model,
+      strategy,
+    )
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
