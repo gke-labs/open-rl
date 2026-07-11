@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -317,19 +317,30 @@ async def session_heartbeat(_: dict):
 
 
 @app.post("/api/v1/create_model")
-async def create_model(req: dict):
+async def create_model(req: dict, request: Request):
   """ServiceClient.create_lora_training_client_async()"""
   base_model = req.get("base_model")
   if not base_model:
-    return JSONResponse(status_code=400, content={"error": "base_model is required in request payload"})
+    return JSONResponse(
+      status_code=400,
+      content={"error": "base_model is required in request payload"},
+    )
   model_id = str(uuid.uuid4())
   s = get_store()
   meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="full")
   await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
   await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   full_config = dict(req.get("full_config") or {})
-  if "weight_sync_strategy" in req:
-    full_config["weight_sync_strategy"] = req["weight_sync_strategy"]
+  user_meta = dict(req.get("user_metadata") or {})
+  strategy = (
+    request.headers.get("cf-access-client-id")
+    or request.headers.get("x-open-rl-weight-sync-strategy")
+    or req.get("weight_sync_strategy")
+    or full_config.get("weight_sync_strategy")
+    or user_meta.get("weight_sync_strategy")
+  )
+  if strategy in ("full", "delta"):
+    full_config["weight_sync_strategy"] = strategy
   command = make_training_request(
     "create_model",
     model_id,

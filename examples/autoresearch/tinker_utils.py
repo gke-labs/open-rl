@@ -38,6 +38,23 @@ def force_rich_log_colors() -> None:
   ml_log._rich_console_use_logger = rich_console_use_logger
 
 
+def patch_tinker_default_headers() -> None:
+  """Monkeypatch tinker ServiceClient._get_default_headers to propagate Open-RL strategy headers."""
+  import tinker.lib.public_interfaces.service_client as _sc
+
+  _orig_get_default_headers = _sc._get_default_headers
+
+  def _patched_get_default_headers() -> dict[str, str]:
+    headers = _orig_get_default_headers()
+    if strategy := os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY"):
+      headers["X-Open-RL-Weight-Sync-Strategy"] = strategy
+    if ft_type := os.getenv("OPEN_RL_FINE_TUNING_TYPE"):
+      headers["X-Open-RL-Fine-Tuning-Type"] = ft_type
+    return headers
+
+  _sc._get_default_headers = _patched_get_default_headers
+
+
 def resolve_base_url(cli_base_url: str | None) -> str:
   base_url = cli_base_url or os.getenv("TINKER_BASE_URL") or os.getenv("BASE_URL") or DEFAULT_BASE_URL
   os.environ["TINKER_BASE_URL"] = base_url
