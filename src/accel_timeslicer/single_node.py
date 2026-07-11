@@ -61,7 +61,8 @@ class SingleNodeTimeSlicer(TimeSlicer):
       key = workload.key
       state = self.workloads.get(key)
       if state is None:
-        return {"ok": False, "error": f"workload {key} is not registered"}
+        state = WorkloadState(connection_id=None, workload=workload)
+        self.workloads[key] = state
       if state.failed:
         return {"ok": False, "error": f"workload {key} is failed"}
       if key in self.waiting_workloads or self.active_workload == key:
@@ -101,7 +102,8 @@ class SingleNodeTimeSlicer(TimeSlicer):
       key = workload.key
       state = self.workloads.get(key)
       if state is None:
-        return {"ok": False, "error": f"workload {key} is not registered"}
+        state = WorkloadState(connection_id=None, workload=workload)
+        self.workloads[key] = state
       if self.active_workload != key:
         return {"ok": False, "error": f"workload {key} does not hold an active acquire"}
 
