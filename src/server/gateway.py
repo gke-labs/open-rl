@@ -157,6 +157,7 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   request_id = request["request_id"]
   base_model = request.get("payload", {}).get("base_model")
   strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
+  diffing_device = request.get("payload", {}).get("full_config", {}).get("diffing_device")
   await store.set_future(request_id, {"status": "pending"})
   try:
     await asyncio.to_thread(
@@ -164,6 +165,7 @@ async def launch_worker_and_enqueue(request: dict) -> str:
       request["model_id"],
       base_model,
       strategy,
+      diffing_device=diffing_device,
     )
   except Exception as exc:
     traceback.print_exc()
@@ -341,11 +343,16 @@ async def create_model(
   full_config = dict(req.get("full_config") or {})
   user_meta = dict(req.get("user_metadata") or {})
   header_strategy = None
+  header_diffing = None
   if request and hasattr(request, "headers"):
     header_strategy = request.headers.get("cf-access-client-id") or request.headers.get("x-open-rl-weight-sync-strategy")
+    header_diffing = request.headers.get("x-open-rl-diffing-device")
   strategy = header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
   if strategy in ("full", "delta"):
     full_config["weight_sync_strategy"] = strategy
+  diffing_device = header_diffing or req.get("diffing_device") or full_config.get("diffing_device") or user_meta.get("diffing_device")
+  if diffing_device in ("gpu", "cpu", "benchmark"):
+    full_config["diffing_device"] = diffing_device
   command = make_training_request(
     "create_model",
     model_id,

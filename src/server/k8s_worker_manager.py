@@ -63,16 +63,53 @@ class KubernetesFFTWorkerManager:
       core_api = client.CoreV1Api()
     self.core_api = core_api
 
-  def launch(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
-    self.launch_trainer(model_id, base_model, strategy=strategy)
+  def launch(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
+    self.launch_trainer(model_id, base_model, strategy=strategy, diffing_device=diffing_device)
 
-  def launch_trainer(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
-    self._launch_pod(model_id, role="trainer", base_model=base_model, strategy=strategy)
+  def launch_trainer(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
+    self._launch_pod(
+      model_id,
+      role="trainer",
+      base_model=base_model,
+      strategy=strategy,
+      diffing_device=diffing_device,
+    )
 
-  def launch_sampler(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
-    self._launch_pod(model_id, role="sampler", base_model=base_model, strategy=strategy)
+  def launch_sampler(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
+    self._launch_pod(
+      model_id,
+      role="sampler",
+      base_model=base_model,
+      strategy=strategy,
+      diffing_device=diffing_device,
+    )
 
-  def _launch_pod(self, model_id: str, role: str, base_model: str | None = None, strategy: str | None = None) -> None:
+  def _launch_pod(
+    self,
+    model_id: str,
+    role: str,
+    base_model: str | None = None,
+    strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     job_id = sanitize_job_id(model_id)
     prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
     pod_name = prefix + job_id
@@ -84,7 +121,7 @@ class KubernetesFFTWorkerManager:
       self.delete_pod_and_wait(pod_name)
 
     try:
-      pod_body = self.render_pod(pod_name, model_id, job_id, role=role, base_model=base_model, strategy=strategy)
+      pod_body = self.render_pod(pod_name, model_id, job_id, role=role, base_model=base_model, strategy=strategy, diffing_device=diffing_device)
       self.core_api.create_namespaced_pod(namespace=self.namespace, body=pod_body)
     except Exception as exc:
       if getattr(exc, "status", None) != 409:
@@ -104,7 +141,14 @@ class KubernetesFFTWorkerManager:
     pass
 
   def render_pod(
-    self, pod_name: str, model_id: str, job_id: str, role: str = "trainer", base_model: str | None = None, strategy: str | None = None
+    self,
+    pod_name: str,
+    model_id: str,
+    job_id: str,
+    role: str = "trainer",
+    base_model: str | None = None,
+    strategy: str | None = None,
+    diffing_device: str | None = None,
   ) -> dict[str, Any]:
     base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
     pod = copy.deepcopy(base_tmpl)
@@ -138,6 +182,9 @@ class KubernetesFFTWorkerManager:
     weight_sync = strategy or os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY")
     if weight_sync:
       set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync)
+    diffing = diffing_device or os.getenv("OPEN_RL_DIFFING_DEVICE")
+    if diffing:
+      set_env(container, "OPEN_RL_DIFFING_DEVICE", diffing)
     return pod
 
   def read_pod(self, pod_name: str) -> Any | None:

@@ -23,16 +23,16 @@ class WorkerManagerStub:
     self.launched_model_ids = []
     self.shutdown_model_ids = []
 
-  def launch(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
+  def launch(self, model_id: str, base_model: str | None = None, strategy: str | None = None, diffing_device: str | None = None) -> None:
     self.launched_model_ids.append(model_id)
     if self.error is not None:
       raise self.error
 
-  def launch_trainer(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
-    self.launch(model_id, base_model, strategy)
+  def launch_trainer(self, model_id: str, base_model: str | None = None, strategy: str | None = None, diffing_device: str | None = None) -> None:
+    self.launch(model_id, base_model, strategy, diffing_device)
 
-  def launch_sampler(self, model_id: str, base_model: str | None = None, strategy: str | None = None) -> None:
-    self.launch(model_id, base_model, strategy)
+  def launch_sampler(self, model_id: str, base_model: str | None = None, strategy: str | None = None, diffing_device: str | None = None) -> None:
+    self.launch(model_id, base_model, strategy, diffing_device)
 
   def shutdown(self, model_id: str) -> None:
     self.shutdown_model_ids.append(model_id)

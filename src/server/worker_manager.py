@@ -58,10 +58,10 @@ class FFTWorkerManager:
     self.train_processes: dict[str, subprocess.Popen] = {}
     self.sampler_processes: dict[str, subprocess.Popen] = {}
 
-  def launch(self, model_id: str, base_model: str | None = None) -> None:
-    self.launch_trainer(model_id, base_model)
+  def launch(self, model_id: str, base_model: str | None = None, diffing_device: str | None = None) -> None:
+    self.launch_trainer(model_id, base_model, diffing_device=diffing_device)
 
-  def launch_trainer(self, model_id: str, base_model: str | None = None) -> None:
+  def launch_trainer(self, model_id: str, base_model: str | None = None, diffing_device: str | None = None) -> None:
     proc = self.train_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
@@ -74,6 +74,8 @@ class FFTWorkerManager:
     }
     if base_model:
       env["BASE_MODEL"] = base_model
+    if diffing_device:
+      env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
