@@ -209,9 +209,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
             continue
 
           if diffing_device == "cpu":
-            if was_offloaded and param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+            if was_offloaded and param in self._param_shadow and self._param_shadow[param][1].numel() == self._prev_weights_shadow[name].numel():
               cur_cpu = self._param_shadow[param][1].view(-1)
             else:
+              if param.numel() != self._prev_weights_shadow[name].numel():
+                expected_n = self._prev_weights_shadow[name].numel()
+                raise RuntimeError(
+                  f"Parameter '{name}' has numel {param.numel()} which does not match "
+                  f"previous weights numel {expected_n}. Is the model offloaded without a shadow buffer?"
+                )
               cur_cpu = param.data.detach().cpu().view(-1)
             prev_cpu = self._prev_weights_shadow[name].view(-1)
             diff_mask = cur_cpu.ne(prev_cpu)
@@ -398,7 +404,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     for name, param in self.model.named_parameters():
       if not param.requires_grad:
         continue
-      if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+      if param in self._param_shadow and param.numel() > 0 and self._param_shadow[param][1].shape == param.shape:
         prev_cpu = self._param_shadow[param][1]
         prev_gpu = prev_cpu.to(param.device, non_blocking=True)
         diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
