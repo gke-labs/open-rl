@@ -28,6 +28,8 @@ class TrainingModelMetadata:
   base_model: str
   created_at: float
   training_kind: str
+  strategy: str | None = None
+  diffing_device: str | None = None
 
 
 store = get_store()
@@ -176,17 +178,23 @@ async def launch_worker_and_enqueue(request: dict) -> str:
 
 async def ensure_sampler_launched(model_id: str, base_model: str | None = None) -> None:
   if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
-    if not base_model:
-      s = get_store()
-      val = await s.get_value(f"open_rl:model_meta:{model_id}") or await s.get_value(f"open_rl:model_base:{model_id}")
-      if val:
-        try:
-          meta = json.loads(val)
-          base_model = meta.get("base_model") if isinstance(meta, dict) else val
-        except Exception:
+    strategy = None
+    diffing_device = None
+    s = get_store()
+    val = await s.get_value(f"open_rl:model_meta:{model_id}") or await s.get_value(f"open_rl:model_base:{model_id}")
+    if val:
+      try:
+        meta = json.loads(val) if isinstance(val, str) else val
+        if isinstance(meta, dict):
+          if not base_model:
+            base_model = meta.get("base_model")
+          strategy = meta.get("strategy") or meta.get("weight_sync_strategy")
+          diffing_device = meta.get("diffing_device")
+      except Exception:
+        if not base_model and isinstance(val, str):
           base_model = val
     try:
-      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id, base_model)
+      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id, base_model, strategy, diffing_device)
     except Exception:
       traceback.print_exc()
 
@@ -337,9 +345,6 @@ async def create_model(
     )
   model_id = str(uuid.uuid4())
   s = get_store()
-  meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="full")
-  await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
-  await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   full_config = dict(req.get("full_config") or {})
   user_meta = dict(req.get("user_metadata") or {})
   header_strategy = None
@@ -353,6 +358,15 @@ async def create_model(
   diffing_device = header_diffing or req.get("diffing_device") or full_config.get("diffing_device") or user_meta.get("diffing_device")
   if diffing_device in ("gpu", "cpu", "benchmark"):
     full_config["diffing_device"] = diffing_device
+  meta_obj = TrainingModelMetadata(
+    base_model=base_model,
+    created_at=time.time(),
+    training_kind="full",
+    strategy=strategy,
+    diffing_device=diffing_device,
+  )
+  await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
+  await s.set_value(f"open_rl:model_base:{model_id}", base_model)
   command = make_training_request(
     "create_model",
     model_id,
