@@ -27,6 +27,11 @@ except ImportError:
   RequestOutputKind = None
   VLLM_AVAILABLE = False
 
+try:
+  import server.delta_weight_transfer_engine  # noqa: F401
+except ImportError:
+  pass
+
 from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor

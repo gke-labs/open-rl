@@ -52,6 +52,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # TODO: this is a hack until vllm is fixed upstream
 # Apply Gemma 4 LoRA deduplication patch
 RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
+# Apply Open-RL delta sync weight transfer config and factory patch
+RUN uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
 
 # Expose ports (Gateway: 8000, vLLM Worker: 8001)
 EXPOSE 8000
