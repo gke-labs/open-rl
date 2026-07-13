@@ -73,6 +73,43 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
 
+  @staticmethod
+  def _get_real_tensor(model: torch.nn.Module, name: str, tensor: torch.Tensor) -> torch.Tensor:
+    if not getattr(tensor, "is_meta", False) and not getattr(tensor.data, "is_meta", False):
+      return tensor
+    try:
+      from vllm.model_executor.model_loader.reload.layerwise import LAYERWISE_INFO
+
+      if "." in name:
+        mod_name, p_name = name.rsplit(".", 1)
+      else:
+        mod_name, p_name = "", name
+      modules = dict(model.named_modules())
+      mod = modules.get(mod_name)
+      if mod is not None and mod in LAYERWISE_INFO:
+        info = LAYERWISE_INFO[mod]
+        if hasattr(info, "kernel_tensors") and info.kernel_tensors is not None:
+          params, buffers = info.kernel_tensors
+          if p_name in params:
+            return params[p_name]
+          if p_name in buffers:
+            return buffers[p_name]
+    except Exception:
+      pass
+    return tensor
+
+  def _ensure_cpu_snapshot(self, model: torch.nn.Module | None) -> None:
+    if self._cpu_snapshot or model is None:
+      return
+    print("[DeltaSnapshotEngine] Initializing CPU weights snapshot from active vLLM model for sparse delta patching...")
+    for name, param in model.named_parameters():
+      real_t = self._get_real_tensor(model, name, param)
+      self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+    for name, buf in model.named_buffers():
+      real_t = self._get_real_tensor(model, name, buf)
+      self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+    print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} tensors.")
+
   def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
     """Initialize the delta transfer engine on the inference worker."""
     pass
@@ -119,7 +156,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
       # Initialize base CPU snapshot if not yet populated
       if not self._cpu_snapshot:
-        print("[DeltaSnapshotEngine] Initializing CPU weights snapshot from active vLLM model for sparse delta patching...")
         model = getattr(load_weights, "__self__", None)
         if model is None and getattr(load_weights, "__closure__", None):
           for cell in load_weights.__closure__:
@@ -127,11 +163,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
               model = cell.cell_contents
               break
         if model is not None:
-          for name, param in model.named_parameters():
-            self._cpu_snapshot[name] = param.data.cpu().pin_memory() if torch.cuda.is_available() else param.data.cpu().clone()
-          for name, buf in model.named_buffers():
-            self._cpu_snapshot[name] = buf.data.cpu().pin_memory() if torch.cuda.is_available() else buf.data.cpu().clone()
-          print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} tensors.")
+          self._ensure_cpu_snapshot(model)
         else:
           raise RuntimeError("Failed to obtain active vLLM model instance to initialize CPU weights snapshot for sparse delta.")
 
