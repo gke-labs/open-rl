@@ -13,9 +13,9 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.tinker_utils import force_rich_log_colors, patch_tinker_default_headers, resolve_base_url
 from tinker import types
 from tinker_cookbook.utils import ml_log
-from tinker_utils import force_rich_log_colors, resolve_base_url
 from transformers import AutoTokenizer
 
 from recipes.text_sql import prepare
@@ -294,6 +294,7 @@ def run(args: RunConfig) -> Path:
 
 def main() -> None:
   force_rich_log_colors()
+  patch_tinker_default_headers()
   run(chz.entrypoint(RunConfig, allow_hyphens=True))
 
 
