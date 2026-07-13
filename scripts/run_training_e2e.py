@@ -318,11 +318,23 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   return base_url
 
 
+def clean_cli_extra(extra: str) -> list[str]:
+  """Filter out open-rl specific strategy/diffing key-value options from CLI extras."""
+  return [
+    token for token in shlex.split(extra) if not (token.startswith("strategy=") or token.startswith("diffing=") or token.startswith("jitter_sec="))
+  ]
+
+
 def examples_env(config: RunConfig) -> dict[str, str]:
   env = os.environ.copy()
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
   env["PYTHONUNBUFFERED"] = "1"
   env.setdefault("TINKER_API_KEY", "tml-dummy-key")
+  for token in shlex.split(config.extra):
+    if token.startswith("strategy="):
+      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
+    elif token.startswith("diffing="):
+      env["OPEN_RL_DIFFING_DEVICE"] = token.split("=", 1)[1]
   # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
   # and recipes.* cleanly. We deliberately do NOT set UV_PROJECT_ENVIRONMENT
   # here so that container runs utilize the pre-built /app/examples/.venv
@@ -556,7 +568,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     "temperature=1.0",
     "eval_every=0",
     "save_every=0",
-    *shlex.split(config.extra),
+    *clean_cli_extra(config.extra),
   ]
   out = None
   try:
@@ -595,7 +607,7 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         f"temperature={temp}",
         "eval_every=0",
         "save_every=0",
-        *shlex.split(config.extra),
+        *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
         ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
@@ -644,7 +656,7 @@ def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[Manage
         "temperature=1.0",
         "eval_every=0",
         "save_every=0",
-        *shlex.split(config.extra),
+        *clean_cli_extra(config.extra),
       ]
       env = examples_env(config)
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = strategy
@@ -709,7 +721,7 @@ def run_gsm8k_rl_x2_diffing_compare(config: RunConfig, base_url: str, watch: lis
         "temperature=1.0",
         "eval_every=0",
         "save_every=0",
-        *shlex.split(config.extra),
+        *clean_cli_extra(config.extra),
       ]
       env = examples_env(config)
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = "delta"
@@ -778,7 +790,7 @@ def run_gsm8k_rl_x3(config: RunConfig, base_url: str, watch: list[ManagedProcess
         f"temperature={temp}",
         "eval_every=0",
         "save_every=0",
-        *shlex.split(config.extra),
+        *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
         ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
@@ -837,7 +849,7 @@ def run_gsm8k_rl_hetero(config: RunConfig, base_url: str, watch: list[ManagedPro
         f"temperature={temp}",
         "eval_every=0",
         "save_every=0",
-        *shlex.split(config.extra),
+        *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
         ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
