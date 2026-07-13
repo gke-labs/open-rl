@@ -103,7 +103,7 @@ def init_engine():
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
-    if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "").lower() == "delta":
+    if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
       try:
         from vllm.config.weight_transfer import WeightTransferConfig
 

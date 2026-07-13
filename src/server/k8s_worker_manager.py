@@ -179,10 +179,10 @@ class KubernetesFFTWorkerManager:
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
-    weight_sync = strategy or os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY")
+    weight_sync = strategy or os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta")
     if weight_sync:
       set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync)
-    diffing = diffing_device or os.getenv("OPEN_RL_DIFFING_DEVICE")
+    diffing = diffing_device or os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu")
     if diffing:
       set_env(container, "OPEN_RL_DIFFING_DEVICE", diffing)
     return pod
