@@ -139,6 +139,58 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       self.assertEqual(loaded_calls[0][0], "layer.1.weight")
       self.assertTrue(torch.equal(loaded_calls[0][1], torch.full((4, 4), 2.5)))
 
+  def test_receive_weights_sparse_delta_patching(self):
+    """Test that receive_weights parses sparse_delta metadata, applies indices to CPU snapshot, and passes full reconstructed layer tensor."""
+    import json
+
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      # Create metadata specifying sparse_delta format
+      with open(os.path.join(tmpdir, "metadata.json"), "w") as f:
+        json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
+
+      # Create sparse coordinate arrays in delta.safetensors
+      sparse_dict = {
+        "layer.0.weight.indices": torch.tensor([5], dtype=torch.int32),
+        "layer.0.weight.values": torch.tensor([99.0], dtype=torch.float32),
+      }
+      save_file(sparse_dict, os.path.join(tmpdir, "delta.safetensors"))
+
+      engine = DeltaSnapshotWeightTransferEngine(
+        config=None,
+        parallel_config=None,  # type: ignore
+      )
+
+      # Mock active vLLM model holding initial weights (all zeros)
+      class DummyModel:
+        def named_parameters(self):
+          return [("layer.0.weight", torch.nn.Parameter(torch.zeros(4, 4)))]
+
+        def named_buffers(self):
+          return []
+
+      dummy_model = DummyModel()
+
+      loaded_calls: list[tuple[str, torch.Tensor]] = []
+
+      # Bind load_weights callback to dummy_model exactly as vLLM does
+      class BoundLoader:
+        def __init__(self, model):
+          self.__self__ = model
+
+        def __call__(self, weights):
+          loaded_calls.extend(weights)
+
+      mock_loader = BoundLoader(dummy_model)
+      engine.receive_weights(DeltaSnapshotUpdateInfo(target_weights_path=tmpdir), mock_loader)
+
+      # Assert mock_loader received only the full reconstructed 2D layer tensor, NOT .indices / .values
+      self.assertEqual(len(loaded_calls), 1)
+      self.assertEqual(loaded_calls[0][0], "layer.0.weight")
+      self.assertEqual(loaded_calls[0][1].shape, (4, 4))
+      self.assertEqual(loaded_calls[0][1].view(-1)[5].item(), 99.0)
+
 
 if __name__ == "__main__":
   unittest.main()

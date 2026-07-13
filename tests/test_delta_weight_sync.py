@@ -88,6 +88,37 @@ class DeltaWeightSyncTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       worker.set_weight_sync_strategy("invalid_strategy")
 
+  def test_save_state_delta_with_cpu_diffing_and_offloading(self):
+    """Test that save_state_delta(diffing_device='cpu') succeeds cleanly when model is offloaded (_is_offloaded=True and param.data size 0)."""
+    worker = FFTTrainingWorker()
+    worker.base_model_name = "test-offload-model"
+    worker.model = SimpleModel()
+
+    # Initialize shadow with base weights W0
+    worker._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in worker.model.named_parameters() if param.requires_grad}
+
+    # Simulate active weight modification W1 stored in pinned CPU shadow buffer during offloading
+    w1_fc = worker.model.fc.weight.data.detach().cpu().clone()
+    w1_fc[1, 1] = 77.7
+    worker._param_shadow[worker.model.fc.weight] = (torch.device("cuda" if torch.cuda.is_available() else "cpu"), w1_fc)
+
+    # Simulate offload state where GPU param.data is set to 0-size tensor
+    worker._is_offloaded = True
+    worker.model.fc.weight.data = torch.empty(0, dtype=worker.model.fc.weight.dtype, device="cpu")
+
+    state_path = os.path.join(self.test_dir, "step_offload")
+    worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler", diffing_device="cpu")
+
+    # Verify that delta.safetensors was cleanly saved from offloaded CPU buffer
+    delta_file = os.path.join(state_path, "delta.safetensors")
+    self.assertTrue(os.path.exists(delta_file))
+    import safetensors.torch
+
+    sparse_delta = safetensors.torch.load_file(delta_file)
+    self.assertIn("fc.weight.indices", sparse_delta)
+    self.assertEqual(sparse_delta["fc.weight.indices"].numel(), 1)
+    self.assertAlmostEqual(sparse_delta["fc.weight.values"][0].item(), 77.7, places=4)
+
 
 if __name__ == "__main__":
   unittest.main()
