@@ -323,6 +323,10 @@ def examples_env(config: RunConfig) -> dict[str, str]:
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
   env["PYTHONUNBUFFERED"] = "1"
   env.setdefault("TINKER_API_KEY", "tml-dummy-key")
+  # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
+  # and recipes.* cleanly. We deliberately do NOT set UV_PROJECT_ENVIRONMENT
+  # here so that container runs utilize the pre-built /app/examples/.venv
+  # instead of re-resolving/re-compiling from scratch on shared network mounts.
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env
