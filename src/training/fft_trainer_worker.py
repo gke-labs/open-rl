@@ -186,7 +186,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
       diffing_device = diffing_device.lower()
 
     os.makedirs(state_path, exist_ok=True)
-    was_offloaded = self._prepare_for_save()
+    if diffing_device == "cpu":
+      was_offloaded = getattr(self, "_is_offloaded", False)
+    else:
+      was_offloaded = self._prepare_for_save()
     delta_tensors: dict[str, torch.Tensor] = {}
     total_changed = 0
     total_elements = 0
@@ -206,7 +209,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
             continue
 
           if diffing_device == "cpu":
-            cur_cpu = param.data.detach().cpu().view(-1)
+            if was_offloaded and param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+              cur_cpu = self._param_shadow[param][1].view(-1)
+            else:
+              cur_cpu = param.data.detach().cpu().view(-1)
             prev_cpu = self._prev_weights_shadow[name].view(-1)
             diff_mask = cur_cpu.ne(prev_cpu)
             indices = diff_mask.nonzero(as_tuple=True)[0]
@@ -250,7 +256,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
           total_elements += int(param.numel())
     finally:
-      self._cleanup_after_save(was_offloaded)
+      if diffing_device != "cpu":
+        self._cleanup_after_save(was_offloaded)
 
     import safetensors.torch
 

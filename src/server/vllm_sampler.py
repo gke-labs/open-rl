@@ -231,8 +231,19 @@ async def process_sampling_request(req: dict, store: Any) -> None:
               await engine.sleep(level=1)
               print("[vLLM Worker] Waking up weights...")
               await engine.wake_up(tags=["weights"])
-              print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
-              await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
+              if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
+                print(f"[vLLM Worker] Receiving incremental delta weights from {weights_path} via native WeightTransferEngine...")
+                try:
+                  await engine.collective_rpc(
+                    "update_weights",
+                    kwargs={"update_info": {"target_weights_path": weights_path, "is_checkpoint_format": True}},
+                  )
+                except Exception as exc:
+                  print(f"[vLLM Worker] Native update_weights collective_rpc failed ({exc}); falling back to standard disk reload...")
+                  await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
+              else:
+                print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
+                await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
               print("[vLLM Worker] Waking up KV cache...")
               await engine.wake_up(tags=["kv_cache"])
               IS_ENGINE_SLEEPING = False
