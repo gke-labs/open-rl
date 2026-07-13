@@ -157,3 +157,14 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   ) -> None:
     """Static trainer-side hook for push engines (no-op for pull engines)."""
     pass
+
+
+try:
+  from vllm.distributed.weight_transfer.factory import WeightTransferEngineFactory
+
+  WeightTransferEngineFactory.register_engine(
+    "delta_snapshot",
+    DeltaSnapshotWeightTransferEngine,
+  )
+except (ImportError, ValueError):
+  pass

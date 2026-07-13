@@ -64,138 +64,6 @@ if is_fft_enabled():
   time_slicer = time_slicer_client_from_env()
 
 
-def patch_vllm_worker_for_delta_sync():
-  try:
-    from vllm.v1.worker.gpu_worker import Worker
-  except ImportError:
-    return
-
-  original_reload = getattr(Worker, "reload_weights", None)
-  if not original_reload or getattr(Worker, "_openrl_delta_patched", False):
-    return
-
-  def custom_cache_prefetch_weights(self, *args, **kwargs):
-    import json
-    import os
-
-    weights_path = kwargs.get("weights_path") or (args[0] if args else None)
-    if not weights_path:
-      return
-
-    if not hasattr(self, "_prefetch_cache"):
-      self._prefetch_cache = {}
-
-    # Avoid reloading if already cached
-    if weights_path in self._prefetch_cache:
-      return
-
-    if os.path.exists(os.path.join(weights_path, "metadata.json")):
-      with open(os.path.join(weights_path, "metadata.json")) as f:
-        meta = json.load(f)
-      if meta.get("format") == "sparse_delta":
-        delta_file = os.path.join(weights_path, "delta.safetensors")
-        if os.path.exists(delta_file):
-          import safetensors.torch
-
-          print(f"[vLLM Worker] Pre-loading weights delta to CPU cache: {delta_file}")
-          # Load strictly to CPU
-          sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
-          # Keep only the latest prefetched version to prevent leaks
-          self._prefetch_cache.clear()
-          self._prefetch_cache[weights_path] = sparse_delta
-          print("[vLLM Worker] Pre-loaded weights delta to CPU cache successfully.")
-
-  def custom_reload_weights(self, *args, **kwargs):
-    import json
-    import os
-    import time
-
-    import torch
-
-    # Save the base model path at the very first reload attempt
-    if not hasattr(self, "_base_model_path"):
-      self._base_model_path = self.model_config.model
-
-    weights_path = kwargs.get("weights_path") or (args[0] if args else None)
-    if not weights_path:
-      return original_reload(self, *args, **kwargs)
-
-    sparse_delta = None
-    if hasattr(self, "_prefetch_cache") and weights_path in self._prefetch_cache:
-      print(f"[Open-RL Delta Sync] Using pre-cached CPU delta weights for {weights_path}")
-      sparse_delta = self._prefetch_cache.pop(weights_path)
-
-    if sparse_delta is None and os.path.exists(os.path.join(weights_path, "metadata.json")):
-      with open(os.path.join(weights_path, "metadata.json")) as f:
-        meta = json.load(f)
-      if meta.get("format") == "sparse_delta":
-        delta_file = os.path.join(weights_path, "delta.safetensors")
-        if os.path.exists(delta_file):
-          import safetensors.torch
-
-          sparse_delta = safetensors.torch.load_file(delta_file, device="cpu")
-
-    if sparse_delta is not None:
-      t0 = time.perf_counter()
-
-      # 1. Initialize CPU weights snapshot if not present
-      if not hasattr(self, "_bf16_snapshot") or not self._bf16_snapshot:
-        print(f"[Open-RL Delta Sync] Initializing CPU weights snapshot from base model: {self._base_model_path}")
-        self._bf16_snapshot = {}
-        from vllm.model_executor.model_loader import get_model_loader
-
-        model_loader = get_model_loader(self.load_config)
-        model = self.model_runner.get_model()
-
-        orig_model = self.model_config.model
-        self.model_config.model = self._base_model_path
-        base_iterator = model_loader.get_all_weights(self.model_config, model)
-        for name, tensor in base_iterator:
-          # Pin memory for faster PCIe transfers
-          self._bf16_snapshot[name] = tensor.cpu().pin_memory() if torch.cuda.is_available() else tensor.cpu()
-        self.model_config.model = orig_model
-        print(f"[Open-RL Delta Sync] CPU weights snapshot initialized with {len(self._bf16_snapshot)} tensors.")
-
-      # 2. Extract changed parameter names
-      changed_params = set()
-      for key in sparse_delta:
-        if key.endswith(".indices"):
-          changed_params.add(key[:-8])
-
-      if len(changed_params) == 0:
-        print("[Open-RL Delta Sync] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
-        return
-
-      # 3. Apply sparse delta to CPU snapshot
-      for name in changed_params:
-        indices = sparse_delta[f"{name}.indices"].to(torch.int64)
-        values = sparse_delta[f"{name}.values"]
-
-        snap_flat = self._bf16_snapshot[name].view(-1)
-        snap_flat[indices] = values
-
-      t_apply_ms = (time.perf_counter() - t0) * 1000.0
-      print(f"[Open-RL Delta Sync] Applied sparse delta ({len(changed_params)} tensors) to CPU snapshot in {t_apply_ms:.2f} ms")
-
-      # 4. Trigger standard reload passing ONLY genuinely modified parameter tensors
-      changed_tuples = [(name, self._bf16_snapshot[name]) for name in changed_params]
-      t_reload_start = time.perf_counter()
-      original_reload(
-        self,
-        weights_iterator=changed_tuples,
-        is_checkpoint_format=True,
-      )
-      t_reload_ms = (time.perf_counter() - t_reload_start) * 1000.0
-      print(f"[Open-RL Delta Sync] Transferred {len(changed_tuples)} modified tensor(s) to GPU in {t_reload_ms:.2f} ms")
-      return
-
-    return original_reload(self, *args, **kwargs)
-
-  Worker.cache_prefetch_weights = custom_cache_prefetch_weights
-  Worker.reload_weights = custom_reload_weights
-  Worker._openrl_delta_patched = True
-
-
 def init_engine():
   global engine
 
@@ -235,7 +103,14 @@ def init_engine():
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
-    patch_vllm_worker_for_delta_sync()
+    if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "").lower() == "delta":
+      try:
+        from vllm.config.weight_transfer import WeightTransferConfig
+
+        engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
+      except (ImportError, ValueError):
+        pass
+
     engine_args = AsyncEngineArgs(**engine_kwargs)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
 
