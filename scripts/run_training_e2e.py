@@ -87,6 +87,8 @@ class RunConfig:
   # still failing a lobotomized checkpoint; eval costs ~15s in vLLM.
   eval_examples: int = 100
   min_accuracy: float = 0.05
+  strategy: str = ""
+  diffing: str = ""
   extra: str = ""
   host: str = "127.0.0.1"
   port: int | None = None
@@ -335,6 +337,10 @@ def examples_env(config: RunConfig) -> dict[str, str]:
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
     elif token.startswith("diffing="):
       env["OPEN_RL_DIFFING_DEVICE"] = token.split("=", 1)[1]
+  if config.strategy:
+    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.strategy
+  if config.diffing:
+    env["OPEN_RL_DIFFING_DEVICE"] = config.diffing
   # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
   # and recipes.* cleanly. We deliberately do NOT set UV_PROJECT_ENVIRONMENT
   # here so that container runs utilize the pre-built /app/examples/.venv
