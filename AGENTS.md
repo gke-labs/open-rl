@@ -21,8 +21,15 @@ Always run tasks using the appropriate Makefile targets (such as `make server`, 
 
 ---
 
-## 2. Running Unit Tests
+## 2. Fast Syntax Validation & Running Unit Tests
 
+### Fast Python Compilation Check (`Tip`)
+Whenever you add or modify Python files (`.py`), run `py_compile` on the modified files to catch syntax and indentation errors instantly before running slower test suites or container builds:
+```bash
+python3 -m py_compile path/to/file1.py path/to/file2.py
+```
+
+### Running the Standard Unit Test Suite
 To run the standard unit test suite:
 ```bash
 make test
