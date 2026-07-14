@@ -175,6 +175,12 @@ class KubernetesFFTWorkerManager:
     container.setdefault("args", []).extend(["--model-id", model_id])
     if base_model:
       set_env(container, "BASE_MODEL", base_model)
+      set_env(container, "OPEN_RL_BASE_MODEL", base_model)
+      if "gemma-4" in base_model.lower() or "gemma4" in base_model.lower():
+        set_env(container, "VLLM_ARCHITECTURE_OVERRIDE", "Gemma4ForCausalLM")
+    arch_override = os.getenv("VLLM_ARCHITECTURE_OVERRIDE")
+    if arch_override:
+      set_env(container, "VLLM_ARCHITECTURE_OVERRIDE", arch_override)
     # Keep env aligned with labels so process discovery and llm-d target the
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)

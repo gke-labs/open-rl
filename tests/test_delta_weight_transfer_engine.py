@@ -191,6 +191,86 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       self.assertEqual(loaded_calls[0][1].shape, (4, 4))
       self.assertEqual(loaded_calls[0][1].view(-1)[5].item(), 99.0)
 
+  def test_receive_weights_base_model_directory_loading(self):
+    """Test that receive_weights directly populates CPU snapshot from base_model_path when provided."""
+    import json
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      base_dir = os.path.join(tmpdir, "base_model")
+      os.makedirs(base_dir)
+      base_weights = {"layer.0.weight": torch.zeros(4, 4)}
+      save_file(base_weights, os.path.join(base_dir, "model.safetensors"))
+
+      step_dir = os.path.join(tmpdir, "step_1")
+      os.makedirs(step_dir)
+      with open(os.path.join(step_dir, "metadata.json"), "w") as f:
+        json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
+
+      sparse_dict = {
+        "layer.0.weight.indices": torch.tensor([2], dtype=torch.int32),
+        "layer.0.weight.values": torch.tensor([42.0], dtype=torch.float32),
+      }
+      save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
+
+      engine = DeltaSnapshotWeightTransferEngine(
+        config=None,
+        parallel_config=None,  # type: ignore
+      )
+
+      loaded_calls: list[tuple[str, torch.Tensor]] = []
+      engine.receive_weights(
+        DeltaSnapshotUpdateInfo(target_weights_path=step_dir, base_model_path=base_dir),
+        lambda w: loaded_calls.extend(w),
+      )
+
+      self.assertEqual(len(loaded_calls), 1)
+      self.assertEqual(loaded_calls[0][0], "layer.0.weight")
+      self.assertEqual(loaded_calls[0][1].shape, (4, 4))
+      self.assertEqual(loaded_calls[0][1].view(-1)[2].item(), 42.0)
+
+  def test_receive_weights_hf_cache_and_env_loading(self):
+    """Test that _ensure_cpu_snapshot resolves HF model IDs from OPEN_RL_BASE_MODEL (e.g. Qwen/Test-4B -> models--Qwen--Test-4B)."""
+    import json
+    from unittest.mock import patch
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      # Mock HF hub cache structure: ~/.cache/huggingface/hub/models--Qwen--Test-4B/snapshots/commit123/
+      hf_folder = os.path.join(tmpdir, "models--Qwen--Test-4B", "snapshots", "commit123")
+      os.makedirs(hf_folder)
+      save_file({"layer.0.weight": torch.zeros(3, 3)}, os.path.join(hf_folder, "model-00001-of-00001.safetensors"))
+
+      step_dir = os.path.join(tmpdir, "step_1")
+      os.makedirs(step_dir)
+      with open(os.path.join(step_dir, "metadata.json"), "w") as f:
+        json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
+
+      sparse_dict = {
+        "layer.0.weight.indices": torch.tensor([4], dtype=torch.int32),
+        "layer.0.weight.values": torch.tensor([88.0], dtype=torch.float32),
+      }
+      save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
+
+      # Patch os.path.expanduser so ~/.cache/huggingface/hub/ maps to our tmpdir
+      with patch.dict(os.environ, {"OPEN_RL_BASE_MODEL": "Qwen/Test-4B"}), \
+           patch("os.path.expanduser", lambda path: path.replace("~/.cache/huggingface/hub", tmpdir) if path.startswith("~") else path):
+        engine = DeltaSnapshotWeightTransferEngine(
+          config=None,
+          parallel_config=None,  # type: ignore
+        )
+
+        loaded_calls: list[tuple[str, torch.Tensor]] = []
+        engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=step_dir),
+          lambda w: loaded_calls.extend(w),
+        )
+
+        self.assertEqual(len(loaded_calls), 1)
+        self.assertEqual(loaded_calls[0][0], "layer.0.weight")
+        self.assertEqual(loaded_calls[0][1].shape, (3, 3))
+        self.assertEqual(loaded_calls[0][1].view(-1)[4].item(), 88.0)
+
 
 if __name__ == "__main__":
   unittest.main()

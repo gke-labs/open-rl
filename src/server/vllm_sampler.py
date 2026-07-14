@@ -241,7 +241,13 @@ async def process_sampling_request(req: dict, store: Any) -> None:
                 try:
                   await engine.collective_rpc(
                     "update_weights",
-                    kwargs={"update_info": {"target_weights_path": weights_path, "is_checkpoint_format": True}},
+                    kwargs={
+                      "update_info": {
+                        "target_weights_path": weights_path,
+                        "is_checkpoint_format": True,
+                        "base_model_path": os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", getattr(engine_args, "model", ""))),
+                      }
+                    },
                   )
                 except Exception as exc:
                   print(f"[vLLM Worker] Native update_weights collective_rpc failed ({exc}); falling back to standard disk reload...")

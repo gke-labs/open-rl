@@ -55,6 +55,7 @@ class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
 
   target_weights_path: str = ""
   is_checkpoint_format: bool = True
+  base_model_path: str = ""
 
 
 class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
@@ -72,6 +73,9 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     super().__init__(*args, **kwargs)
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
+    self._base_model: str = os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
+    if args and hasattr(args[0], "model"):
+      self._base_model = args[0].model
 
   @staticmethod
   def _get_real_tensor(model: torch.nn.Module, name: str, tensor: torch.Tensor) -> torch.Tensor:
@@ -98,31 +102,32 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       pass
     return tensor
 
-  def _ensure_cpu_snapshot(self, target_path: str, model: torch.nn.Module | None) -> None:
+  def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None) -> None:
     if self._cpu_snapshot:
       return
-    print("[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching...")
+    base_model = base_model or self._base_model or os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
+    print(
+      f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')..."
+    )
     import glob
-
     from safetensors.torch import load_file
 
     candidate_dirs = []
-    if self.current_weights_path and os.path.exists(self.current_weights_path):
-      candidate_dirs.append(self.current_weights_path)
-    if target_path:
-      parent_dir = os.path.dirname(target_path.rstrip("/"))
-      if parent_dir and os.path.exists(parent_dir):
-        for d in sorted(glob.glob(os.path.join(parent_dir, "sampler-*")), key=os.path.getmtime):
-          if d != target_path and os.path.isdir(d):
-            candidate_dirs.append(d)
-
-    hf_cache_dirs = sorted(
-      glob.glob(os.path.expanduser("~/.cache/huggingface/hub/models--*/snapshots/*"))
-      + glob.glob("/mnt/shared/open-rl/huggingface/hub/models--*/snapshots/*"),
-      key=os.path.getmtime,
-      reverse=True,
-    )
-    candidate_dirs.extend(hf_cache_dirs)
+    if base_model and os.path.isdir(base_model):
+      candidate_dirs.append(base_model)
+    elif base_model:
+      hf_folder_name = "models--" + base_model.replace("/", "--")
+      local_cache = sorted(
+        glob.glob(os.path.expanduser(f"~/.cache/huggingface/hub/{hf_folder_name}/snapshots/*")),
+        key=os.path.getmtime,
+        reverse=True,
+      )
+      nfs_cache = sorted(
+        glob.glob(f"/mnt/shared/open-rl/huggingface/hub/{hf_folder_name}/snapshots/*"),
+        key=os.path.getmtime,
+        reverse=True,
+      )
+      candidate_dirs.extend(local_cache + nfs_cache)
 
     for base_dir in candidate_dirs:
       if not os.path.isdir(base_dir):
@@ -145,7 +150,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         elapsed = (time.perf_counter() - start_t) * 1000.0
         print(
           f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} "
-          f"HuggingFace tensors from {base_dir} in {elapsed:.2f} ms."
+          f"HuggingFace tensors from base model directory {base_dir} in {elapsed:.2f} ms."
         )
         return
 
@@ -153,13 +158,21 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if model is not None:
       for name, param in model.named_parameters():
         real_t = self._get_real_tensor(model, name, param)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        self._cpu_snapshot[name] = (
+          real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        )
       for name, buf in model.named_buffers():
         real_t = self._get_real_tensor(model, name, buf)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model.")
+        self._cpu_snapshot[name] = (
+          real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        )
+      print(
+        f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model."
+      )
     else:
-      raise RuntimeError("Failed to initialize CPU weights snapshot: neither base safetensors directory nor model instance available.")
+      raise RuntimeError(
+        f"Failed to initialize CPU weights snapshot: neither base safetensors for '{base_model}' nor model instance available."
+      )
 
   def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
     """Initialize the delta transfer engine on the inference worker."""
@@ -212,8 +225,8 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
           for cell in load_weights.__closure__:
             if hasattr(cell.cell_contents, "named_parameters"):
               model = cell.cell_contents
-              break
-        self._ensure_cpu_snapshot(target_path, model)
+        base_model = getattr(update_info, "base_model_path", "") or self._base_model
+        self._ensure_cpu_snapshot(base_model, model)
 
       # Extract modified parameter names from indices
       changed_params = set()
