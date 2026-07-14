@@ -1,50 +1,46 @@
-# Open-RL TODOs & Future Improvements
+# Open-RL Future Action Items (`TODOs.md`)
 
-## 1. Do Not Cache Worker Pod Templates in Memory
-- **Current Behavior:** `KubernetesFFTWorkerManager.__init__` reads and parses pod templates (`/etc/open-rl/trainer/trainer-worker-pod.yaml`) once at startup and stores them in memory (`self.trainer_template`).
-- **Improvement:** Read and parse the template file dynamically from disk on every `render_pod()` invocation so live ConfigMap updates take effect immediately without requiring a rolling restart of the gateway deployment (`kubectl rollout restart deployment open-rl-gateway`).
+## 1. HuggingFace Hub Token (`HF_TOKEN`) Injection via ConfigMap / Secret
 
-## 2. Implement Reliable Queue Acknowledgment for Training Steps
-- **Current Behavior:** The trainer requests processor pops training request items immediately from Redis upon picking up a step.
-- **Improvement:** Ensure that during a trainer worker crash or OOM kill, the queue item is dequeued / acknowledged only **after** the full completion of the training step (specifically, post saving the updated model checkpoint weights back to shared persistent storage). If interrupted earlier, the item should remain unacknowledged so another pod instance can safely retry the training step.
+### Background & Problem Statement
+When running models on Kubernetes that are either **gated** (`e.g., Google's Gemma 2 / Gemma 4 families, Meta's Llama 3 weights`) or **large unauthenticated checkpoints** (`e.g., 5.6+ GB safetensors via xet-core / xorbs CDN`), HuggingFace Hub enforces strict rate-limits and `403 Forbidden` throttling on unauthenticated requests (`user_id=public`). 
 
-## 3. [COMPLETED] High-Throughput Batched Async DMA PCIe Offloading (3-Phase Architecture)
-- **Status:** Implemented and verified in `src/training/fft_trainer_worker.py` (`FFTTrainingWorker.sleep()` and `wake_up()`). Added `self._opt_shadow` persistent dictionary to store pinned host buffers for AdamW optimizer states across training steps.
-- **Current Behavior:** `FFTTrainingWorker.sleep()` iterates serially over model parameters, gradients, and AdamW optimizer states using `param.data.to("cpu", non_blocking=False).pin_memory()` followed immediately by `param.data = torch.empty(0, ...)`. This synchronous loop blocks the CPU per-tensor and allocates OS page-locked memory on the fly, yielding ~1.34 GB/s on H100 PCIe Gen5 (~11.9s to offload ~16 GiB total). In contrast, reloading (`wake_up()`) from pinned memory over async PCIe DMA achieves ~14 GB/s (~1.15s).
-- **Improvement:** Eliminate the CPU offload bottleneck and prevent GPU memory corruption race conditions by restructuring `sleep()` into three distinct phases:
-  1. **Phase 1 (Launch Batched Async DMA):** Keep persistent pinned host CPU buffers (`_param_shadow`, `_grad_shadow`, `_opt_shadow`) alive across training steps so `.pin_memory()` is never called after Step 1. Launch 100% asynchronous DMA transfers using `cpu_buf.copy_(gpu_tensor, non_blocking=True)` across all tensors *without* deleting or modifying GPU VRAM buffers.
-  2. **Phase 2 (Single Barrier Synchronization):** Execute a single barrier (`torch.cuda.synchronize()`) at the end of the loop to wait once for all 16 GiB of concurrent DMA transfers to complete.
-  3. **Phase 3 (Safe VRAM Deallocation):** Only after `synchronize()` returns and verifies that every byte is safely residing in host RAM, deallocate GPU tensors (`param.data = torch.empty(0, ...)`) and release CUDA allocator cache. This targets >14 GB/s and ~1-second CPU offloads without race conditions.
+In multi-pod cluster setups (`make cluster-e2e`), this throttling causes `xet_client` to enter lengthy URL refresh/retry loops, increasing first-time model caching times from seconds to over 15+ minutes. Furthermore, gated models (`google/gemma-4-e2b`, `google/functiongemma-270m-it`) fail to download altogether without authentication.
 
-## 4. Automated Spot VM Preemption Resiliency in Worker Provisioner
-- **Current Behavior:** `KubernetesFFTWorkerManager` launches trainer and sampler workloads as bare Kubernetes `Pod` objects (`open-rl-trainer-...` and `open-rl-sampler-...`). When GCP Spot VM preemption reclaims an underlying GPU spot node, Kubernetes terminates the bare worker pod without respawning a replacement, causing the distributed E2E training job to hang indefinitely waiting for rollouts or gradient updates.
-- **Improvement:** Equip the worker provisioner with automated fault tolerance against spot preemption by either deploying worker workloads as lightweight Kubernetes `Deployment` or `ReplicaSet` controllers (with `replicas: 1`), or by implementing active pod lifecycle monitoring and automated recreation within `KubernetesFFTWorkerManager`. Upon spot preemption, Kubernetes or the provisioner will automatically schedule a replacement worker pod onto a fresh spot node. When the replacement pod boots, it will re-establish Redis tenant queue connections, re-acquire its time-slice registration lock, and seamlessly resume training directly from the latest serialized safetensors checkpoint preserved on shared persistent storage (`open-rl-shared-pvc` on 10 TiB Parallel Filestore).
+### Proposed Architecture & Action Items
 
-## 5. [COMPLETED] Proactive Checkpoint Staging & Atomic Rename in Request Processor
-- **Improvement:** In `optim_step`, immediately after the AdamW parameter update finishes—while the worker still holds the GPU time-slice lock and the updated weights are live in CUDA VRAM—the checkpoint is proactively serialized to a canonical staging folder on our shared 10 TiB filesystem (`/mnt/shared/open-rl/sampler_full/<model_id>_staging`). When the client subsequently calls `save_weights_for_sampler`, the processor executes an atomic OS rename (`os.rename(<staging_dir>, <requested_path>)`) in less than 1 millisecond. This completely eliminates redundant GPU memory reloading and snapshot agent context switching without requiring client-side request pipelining.
+#### A. Cluster-Level Secret / ConfigMap Creation
+1. Define a Kubernetes Secret (`or ConfigMap for non-sensitive environments`) inside the cluster namespaces (`default` / target E2E namespace):
+   ```bash
+   # Create via CLI or Kustomize secret generator
+   kubectl create secret generic open-rl-hf-secret \
+     --from-literal=HF_TOKEN=<your_huggingface_token> \
+     --from-literal=HUGGING_FACE_HUB_TOKEN=<your_huggingface_token> \
+     --dry-run=client -o yaml | kubectl apply -f -
+   ```
 
-## 6. Leverage Existing Tiered Memory & Storage Offloading Abstractions
-- **Current Behavior:** Open-RL currently implements custom, manual memory hierarchy management across GPU VRAM, pinned CPU DRAM, and persistent storage:
-  - In `fft_trainer_worker.py`, we manually iterate across model parameter dictionaries and AdamW momentum states (`exp_avg`, `exp_avg_sq`), moving them back and forth between VRAM and host RAM (`v.to("cpu").pin_memory()`) during cooperative `sleep()` and `wake_up()` handoffs.
-  - Checkpoint serialization is implemented as custom file I/O loops reading directly from host DRAM (`_param_shadow`) and serializing `.safetensors` shards to NFS.
-  - The vLLM Sampler worker relies on custom `sleep(level=2)` commands to discard prefix caches and back up model parameters.
-- **Improvement:** Adopt production-grade tiered storage libraries and abstractions to eliminate custom boilerplate, improve multi-threaded async I/O performance, and support cloud storage backends out-of-the-box:
-  1. **PyTorch FSDP & Distributed Checkpoint (`DCP`):**
-     - *AsyncCheckpointer:* Replace our custom `_param_shadow` disk serialization loop with native `torch.distributed.checkpoint.async_save`. DCP provides multi-threaded storage staging, zero-copy pinning, and backend-agnostic abstraction supporting NFS, AWS S3, and GCS out of the box without blocking PyTorch compute threads.
-     - *FSDP Native CPUOffload:* Instead of manually iterating across parameter momentum dictionaries in `sleep()` and `wake_up()`, leverage FSDP's native `CPUOffload(offload_params=False, offload_optimizer_states=True)`. This delegates momentum state residence to PyTorch's internal CUDA allocator, enabling async stream transfers without custom application-level loop iteration.
-  2. **vLLM / BlockSpaceManager Swapping Engine:**
-     - Tap into vLLM's existing C++/CUDA paging engine (`BlockSpaceManager`), which currently manages KV cache swapping (`swap_out` / `swap_in`). Unify model parameter offloading with this engine so that when the time-slicer sends `RELEASE`, vLLM executes a native asynchronous CUDA stream swap of model weights into its pinned host memory pool, avoiding full disk reloads on wakeup.
-  3. **TensorStore / DeepSpeed ZeRO Abstractions:**
-     - Evaluate TensorStore for transactional, multi-dimensional array streaming across network filesystems, or adopt ZeRO-Infinity style async NVMe memory-mapping (`aio`) if workloads scale beyond host DRAM capacity.
+#### B. Dynamic Worker Pod Injection (`k8s_worker_manager.py`)
+1. Update `render_pod()` inside `src/server/k8s_worker_manager.py` to optionally pull `open-rl-hf-secret` (or ConfigMap) into all dynamically spawned `Trainer` and `Sampler` worker containers via `envFrom`:
+   ```python
+   container.setdefault("envFrom", []).append({
+       "secretRef": {
+           "name": "open-rl-hf-secret",
+           "optional": True,  # Ensures open models (e.g. Qwen) still run without error if the secret is absent
+       }
+   })
+   ```
+2. Alternatively, if `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` is present in the Gateway pod's local environment, `render_pod()` should forward it explicitly down to the child worker containers using `set_env(container, "HF_TOKEN", os.getenv("HF_TOKEN", ""))`.
 
-## 7. Zero-PCIe-Overhead Host-CPU Sparse Delta Diffing (`Multi-GPU HBM Optimization`)
-- **Current Behavior:** `FFTTrainerWorker.save_state_delta` (`src/training/fft_trainer_worker.py:190-208`) copies 16.38 GB of historical shadow weights ($W_t$) from Host CPU RAM over PCIe (`H2D`) to GPU VRAM (`prev_data = self._prev_weights_shadow[name].to(param.device)`) every step just to run `.ne()` and `.nonzero()`, and then copies the resulting sparse indices and values back over PCIe (`D2H`). In multi-GPU training nodes (`8× H100 80GB`), this consumes ~16.7 GB of scarce HBM3 headroom per GPU and synchronizes/stalls all CUDA compute streams.
-- **Improvement:** Perform `.ne()` and `.nonzero()` diffing directly on Host CPU RAM against the detached host-side parameters (`cur_cpu` vs `_param_shadow`).
-  - *Multi-GPU HBM Scarcity Advantage:* While GPU HBM3 (`80 GB/GPU`) is heavily contested by FSDP shards, activations, and AdamW optimizer buffers, host nodes possess **1.5–2.0 TB of abundant DDR5 RAM** and 128+ multi-core CPU threads.
-  - *Parallel Shard Diffing:* In an $N$-GPU node, every GPU shard asynchronously hands off its parameter slice to an assigned Host CPU thread pool (`e.g. 16 CPU cores per GPU shard`). Host CPUs compute vectorized sparse diffs (`AVX-512 _mm512_cmp_ps_mask` / OpenMP) and serialize `delta.safetensors` in host memory, freeing 100% of GPU HBM3 for larger batch sizes/context lengths and allowing GPUs to immediately begin Step $t+1$ with zero CUDA pipeline stall.
+#### C. Static & Distributed Manifest Alignment (`k8s/deploy/`)
+1. Update standard static deployment manifests (`k8s/deploy/single-process-gke/`, `k8s/deploy/distributed-fft-timeslice/`) to include an optional `envFrom` block targeting `open-rl-hf-secret` on Gateway and Worker deployments:
+   ```yaml
+   envFrom:
+     - secretRef:
+         name: open-rl-hf-secret
+         optional: true
+   ```
 
-## 8. DCGM Exporter Startup Resiliency & NVML Liveness Probes
-- **Current Behavior:** When an `nvidia-dcgm-exporter` DaemonSet pod boots on a fresh GPU node before the GKE NVIDIA driver installer container (`gke-nvidia-installer` / `nvidia-driver-installer`) has finished installing the NVML driver library (`libnvidia-ml.so`), `dcgm-exporter` logs `ERROR: Cannot init NVML library; err: ERROR_LIBRARY_NOT_FOUND` and falls back to a dummy loop returning 0 metrics (`Content-Length: 0`). Because the exporter process does not crash or exit on NVML initialization failure, Kubernetes never restarts the pod, leaving the GPU node permanently unmonitored.
-- **Improvement:**
-  1. Add an `initContainer` (`or wait script`) to the `nvidia-dcgm-exporter` DaemonSet (`k8s/deploy/distributed-fft-timeslice/10-dcgm-monitoring.yaml`) that verifies `/usr/local/nvidia/lib64/libnvidia-ml.so` (`or runs nvidia-smi`) is available before starting the main `dcgm-exporter` container.
-  2. Configure an explicit liveness/readiness probe on `dcgm-exporter` checking for non-empty Prometheus metric responses (`or verifying NVML initialization`) so that if NVML fails to initialize at startup, Kubernetes automatically restarts the pod once the host GPU driver installation completes.
+### Expected Impact
+- **Zero Rate-Limiting**: Bypasses public `xorbs` CDN rate limits completely.
+- **Fast Cold-Start Download**: Reduces first-time download times for multi-gigabyte models from ~15+ minutes to `<20 seconds` at full gigabit cluster bandwidth.
+- **Universal Model Compatibility**: Unlocks immediate cluster E2E testing for all gated HuggingFace checkpoints (`Gemma 2, Gemma 4, Llama 3.1`).
