@@ -28,15 +28,33 @@ def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
 
 
 class WorkerManager(Protocol):
-  def launch(self, model_id: str, base_model: str | None = None) -> None:
+  def launch(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     """Ensure the model's worker exists; idempotent per model_id."""
     ...
 
-  def launch_trainer(self, model_id: str, base_model: str | None = None) -> None:
+  def launch_trainer(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     """Ensure the trainer worker exists."""
     ...
 
-  def launch_sampler(self, model_id: str, base_model: str | None = None) -> None:
+  def launch_sampler(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     """Ensure the sampler worker exists."""
     ...
 
@@ -58,10 +76,22 @@ class FFTWorkerManager:
     self.train_processes: dict[str, subprocess.Popen] = {}
     self.sampler_processes: dict[str, subprocess.Popen] = {}
 
-  def launch(self, model_id: str, base_model: str | None = None, diffing_device: str | None = None) -> None:
-    self.launch_trainer(model_id, base_model, diffing_device=diffing_device)
+  def launch(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
+    self.launch_trainer(model_id, base_model, weight_sync_strategy=weight_sync_strategy, diffing_device=diffing_device)
 
-  def launch_trainer(self, model_id: str, base_model: str | None = None, diffing_device: str | None = None) -> None:
+  def launch_trainer(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     proc = self.train_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
@@ -74,6 +104,8 @@ class FFTWorkerManager:
     }
     if base_model:
       env["BASE_MODEL"] = base_model
+    if weight_sync_strategy:
+      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
     if diffing_device:
       env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
     self.train_processes[model_id] = subprocess.Popen(
@@ -83,7 +115,13 @@ class FFTWorkerManager:
       start_new_session=True,
     )
 
-  def launch_sampler(self, model_id: str, base_model: str | None = None) -> None:
+  def launch_sampler(
+    self,
+    model_id: str,
+    base_model: str | None = None,
+    weight_sync_strategy: str | None = None,
+    diffing_device: str | None = None,
+  ) -> None:
     proc = self.sampler_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
@@ -97,6 +135,10 @@ class FFTWorkerManager:
       sampler_env["OPEN_RL_MODEL_ID"] = model_id
       sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", model_id)
       sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
+      if weight_sync_strategy:
+        sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
+      if diffing_device:
+        sampler_env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu

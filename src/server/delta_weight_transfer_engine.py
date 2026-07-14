@@ -107,49 +107,21 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       return
     base_model = base_model or self._base_model or os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
     print(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
-    import glob
 
-    from safetensors.torch import load_file
-
-    candidate_dirs = []
-    if base_model and os.path.isdir(base_model):
-      candidate_dirs.append(base_model)
-    elif base_model:
-      hf_folder_name = "models--" + base_model.replace("/", "--")
-      local_cache = sorted(
-        glob.glob(os.path.expanduser(f"~/.cache/huggingface/hub/{hf_folder_name}/snapshots/*")),
-        key=os.path.getmtime,
-        reverse=True,
-      )
-      nfs_cache = sorted(
-        glob.glob(f"/mnt/shared/open-rl/huggingface/hub/{hf_folder_name}/snapshots/*"),
-        key=os.path.getmtime,
-        reverse=True,
-      )
-      candidate_dirs.extend(local_cache + nfs_cache)
-
-    for base_dir in candidate_dirs:
-      if not os.path.isdir(base_dir):
-        continue
-      sf_files = sorted(glob.glob(os.path.join(base_dir, "*.safetensors")))
-      sf_files = [f for f in sf_files if "delta" not in os.path.basename(f)]
-      if not sf_files:
-        continue
-
+    if base_model:
       start_t = time.perf_counter()
-      for sf in sf_files:
-        try:
-          t_dict = load_file(sf, device="cpu")
-          for k, v in t_dict.items():
-            if not k.endswith(".indices"):
-              self._cpu_snapshot[k] = v.pin_memory() if torch.cuda.is_available() else v.clone()
-        except Exception as e:
-          print(f"[DeltaSnapshotEngine] Warning: failed to read {sf} for CPU snapshot: {e}")
+      from vllm.config import LoadConfig
+      from vllm.model_executor.model_loader.weight_utils import safetensors_weights_iterator
+
+      load_config = LoadConfig(load_format="safetensors")
+      for name, tensor in safetensors_weights_iterator(base_model, load_config=load_config):
+        if not name.endswith(".indices") and "delta" not in name:
+          self._cpu_snapshot[name] = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
       if self._cpu_snapshot:
         elapsed = (time.perf_counter() - start_t) * 1000.0
         print(
           f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} "
-          f"HuggingFace tensors from base model directory {base_dir} in {elapsed:.2f} ms."
+          f"HuggingFace tensors from base model '{base_model}' via vLLM weight iterator in {elapsed:.2f} ms."
         )
         return
 

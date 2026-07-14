@@ -28,7 +28,7 @@ class TrainingModelMetadata:
   base_model: str
   created_at: float
   training_kind: str
-  strategy: str | None = None
+  weight_sync_strategy: str | None = None
   diffing_device: str | None = None
 
 
@@ -158,13 +158,13 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   assert fft_worker_manager is not None, "FFT worker manager is initialized by the app lifespan when FFT is enabled"
   request_id = request["request_id"]
   base_model = request.get("payload", {}).get("base_model")
-  strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
+  weight_sync_strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
   diffing_device = request.get("payload", {}).get("full_config", {}).get("diffing_device")
   await store.set_future(request_id, {"status": "pending"})
   if base_model:
     await store.set_value(
       f"open_rl:model_meta:{request['model_id']}",
-      json.dumps({"base_model": base_model, "strategy": strategy, "diffing_device": diffing_device}),
+      json.dumps({"base_model": base_model, "weight_sync_strategy": weight_sync_strategy, "diffing_device": diffing_device}),
     )
     await store.set_value(f"open_rl:model_base:{request['model_id']}", base_model)
   try:
@@ -172,7 +172,7 @@ async def launch_worker_and_enqueue(request: dict) -> str:
       fft_worker_manager.launch_trainer,
       request["model_id"],
       base_model,
-      strategy,
+      weight_sync_strategy=weight_sync_strategy,
       diffing_device=diffing_device,
     )
   except Exception as exc:
@@ -184,7 +184,7 @@ async def launch_worker_and_enqueue(request: dict) -> str:
 
 async def ensure_sampler_launched(model_id: str, base_model: str | None = None) -> None:
   if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
-    strategy = None
+    weight_sync_strategy = None
     diffing_device = None
     s = get_store()
     val = await s.get_value(f"open_rl:model_meta:{model_id}") or await s.get_value(f"open_rl:model_base:{model_id}")
@@ -194,13 +194,19 @@ async def ensure_sampler_launched(model_id: str, base_model: str | None = None) 
         if isinstance(meta, dict):
           if not base_model:
             base_model = meta.get("base_model")
-          strategy = meta.get("strategy") or meta.get("weight_sync_strategy")
+          weight_sync_strategy = meta.get("weight_sync_strategy")
           diffing_device = meta.get("diffing_device")
       except Exception:
         if not base_model and isinstance(val, str):
           base_model = val
     try:
-      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id, base_model, strategy, diffing_device)
+      await asyncio.to_thread(
+        fft_worker_manager.launch_sampler,
+        model_id,
+        base_model,
+        weight_sync_strategy=weight_sync_strategy,
+        diffing_device=diffing_device,
+      )
     except Exception:
       traceback.print_exc()
 
@@ -356,11 +362,13 @@ async def create_model(
   header_strategy = None
   header_diffing = None
   if request and hasattr(request, "headers"):
-    header_strategy = request.headers.get("cf-access-client-id") or request.headers.get("x-open-rl-weight-sync-strategy")
+    header_strategy = request.headers.get("x-open-rl-weight-sync-strategy")
     header_diffing = request.headers.get("x-open-rl-diffing-device")
-  strategy = header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
-  if strategy in ("full", "delta"):
-    full_config["weight_sync_strategy"] = strategy
+  weight_sync_strategy = (
+    header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
+  )
+  if weight_sync_strategy in ("full", "delta"):
+    full_config["weight_sync_strategy"] = weight_sync_strategy
   diffing_device = header_diffing or req.get("diffing_device") or full_config.get("diffing_device") or user_meta.get("diffing_device")
   if diffing_device in ("gpu", "cpu", "benchmark"):
     full_config["diffing_device"] = diffing_device
@@ -368,7 +376,7 @@ async def create_model(
     base_model=base_model,
     created_at=time.time(),
     training_kind="full",
-    strategy=strategy,
+    weight_sync_strategy=weight_sync_strategy,
     diffing_device=diffing_device,
   )
   await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))

@@ -87,7 +87,7 @@ class RunConfig:
   # still failing a lobotomized checkpoint; eval costs ~15s in vLLM.
   eval_examples: int = 100
   min_accuracy: float = 0.05
-  strategy: str = ""
+  weight_sync_strategy: str = ""
   diffing: str = ""
   extra: str = ""
   host: str = "127.0.0.1"
@@ -321,9 +321,11 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
 
 
 def clean_cli_extra(extra: str) -> list[str]:
-  """Filter out open-rl specific strategy/diffing key-value options from CLI extras."""
+  """Filter out open-rl specific weight_sync_strategy/diffing key-value options from CLI extras."""
   return [
-    token for token in shlex.split(extra) if not (token.startswith("strategy=") or token.startswith("diffing=") or token.startswith("jitter_sec="))
+    token
+    for token in shlex.split(extra)
+    if not (token.startswith("weight_sync_strategy=") or token.startswith("diffing=") or token.startswith("jitter_sec="))
   ]
 
 
@@ -333,12 +335,12 @@ def examples_env(config: RunConfig) -> dict[str, str]:
   env["PYTHONUNBUFFERED"] = "1"
   env.setdefault("TINKER_API_KEY", "tml-dummy-key")
   for token in shlex.split(config.extra):
-    if token.startswith("strategy="):
+    if token.startswith("weight_sync_strategy="):
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
     elif token.startswith("diffing="):
       env["OPEN_RL_DIFFING_DEVICE"] = token.split("=", 1)[1]
-  if config.strategy:
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.strategy
+  if config.weight_sync_strategy:
+    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
   if config.diffing:
     env["OPEN_RL_DIFFING_DEVICE"] = config.diffing
   # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
@@ -642,7 +644,7 @@ def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[Manage
   """Run two concurrent FFT RL jobs on GSM8K: Job A (Full Sync) vs Job B (Delta Sync)."""
   results: dict[str, str | BaseException] = {}
 
-  def train(job: str, strategy: str) -> None:
+  def train(job: str, weight_sync_strategy: str) -> None:
     try:
       log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_compare_{job}")
       if os.path.exists(log_path):
@@ -665,7 +667,7 @@ def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[Manage
         *clean_cli_extra(config.extra),
       ]
       env = examples_env(config)
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = strategy
+      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
       results[job] = run_command(
         [
           "uv",
@@ -679,7 +681,7 @@ def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[Manage
         ],
         env=env,
         watch=watch,
-        prefix=f"[{job.upper()} ({strategy.upper()} SYNC)] ",
+        prefix=f"[{job.upper()} ({weight_sync_strategy.upper()} SYNC)] ",
       )
     except BaseException as exc:
       results[job] = exc
