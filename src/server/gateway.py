@@ -161,6 +161,12 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
   diffing_device = request.get("payload", {}).get("full_config", {}).get("diffing_device")
   await store.set_future(request_id, {"status": "pending"})
+  if base_model:
+    await store.set_value(
+      f"open_rl:model_meta:{request['model_id']}",
+      json.dumps({"base_model": base_model, "strategy": strategy, "diffing_device": diffing_device}),
+    )
+    await store.set_value(f"open_rl:model_base:{request['model_id']}", base_model)
   try:
     await asyncio.to_thread(
       fft_worker_manager.launch_trainer,

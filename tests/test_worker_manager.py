@@ -16,6 +16,12 @@ class StoreStub:
   async def set_future(self, req_id: str, result: dict) -> None:
     self.futures[req_id] = result
 
+  async def set_value(self, key: str, value: str) -> None:
+    pass
+
+  async def get_value(self, key: str) -> str | None:
+    return None
+
 
 class WorkerManagerStub:
   def __init__(self, error: Exception | None = None):
