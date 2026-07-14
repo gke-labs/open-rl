@@ -98,17 +98,59 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       pass
     return tensor
 
-  def _ensure_cpu_snapshot(self, model: torch.nn.Module | None) -> None:
-    if self._cpu_snapshot or model is None:
+  def _ensure_cpu_snapshot(self, target_path: str, model: torch.nn.Module | None) -> None:
+    if self._cpu_snapshot:
       return
-    print("[DeltaSnapshotEngine] Initializing CPU weights snapshot from active vLLM model for sparse delta patching...")
-    for name, param in model.named_parameters():
-      real_t = self._get_real_tensor(model, name, param)
-      self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-    for name, buf in model.named_buffers():
-      real_t = self._get_real_tensor(model, name, buf)
-      self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-    print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} tensors.")
+    print("[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching...")
+    # First, try to initialize from base HuggingFace safetensors checkpoint directory
+    # (either current_weights_path or any sampler-* directory in target_path parent)
+    base_dir = self.current_weights_path
+    if not base_dir or not os.path.exists(base_dir):
+      parent_dir = os.path.dirname(target_path.rstrip("/")) if target_path else ""
+      if parent_dir and os.path.exists(parent_dir):
+        import glob
+
+        candidates = sorted(glob.glob(os.path.join(parent_dir, "sampler-*")), key=os.path.getmtime)
+        for c in candidates:
+          if c != target_path and os.path.isdir(c):
+            base_dir = c
+            break
+
+    if base_dir and os.path.isdir(base_dir):
+      import glob
+
+      from safetensors.torch import load_file
+
+      start_t = time.perf_counter()
+      for sf in glob.glob(os.path.join(base_dir, "*.safetensors")):
+        if "delta.safetensors" in sf:
+          continue
+        try:
+          t_dict = load_file(sf, device="cpu")
+          for k, v in t_dict.items():
+            if not k.endswith(".indices"):
+              self._cpu_snapshot[k] = v.pin_memory() if torch.cuda.is_available() else v.clone()
+        except Exception as e:
+          print(f"[DeltaSnapshotEngine] Warning: failed to read {sf} for CPU snapshot: {e}")
+      if self._cpu_snapshot:
+        elapsed = (time.perf_counter() - start_t) * 1000.0
+        print(
+          f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} "
+          f"HuggingFace tensors from {base_dir} in {elapsed:.2f} ms."
+        )
+        return
+
+    # Fallback to model parameters (if base directory safetensors not available)
+    if model is not None:
+      for name, param in model.named_parameters():
+        real_t = self._get_real_tensor(model, name, param)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      for name, buf in model.named_buffers():
+        real_t = self._get_real_tensor(model, name, buf)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model.")
+    else:
+      raise RuntimeError("Failed to initialize CPU weights snapshot: neither base safetensors directory nor model instance available.")
 
   def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
     """Initialize the delta transfer engine on the inference worker."""
@@ -162,10 +204,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
             if hasattr(cell.cell_contents, "named_parameters"):
               model = cell.cell_contents
               break
-        if model is not None:
-          self._ensure_cpu_snapshot(model)
-        else:
-          raise RuntimeError("Failed to obtain active vLLM model instance to initialize CPU weights snapshot for sparse delta.")
+        self._ensure_cpu_snapshot(target_path, model)
 
       # Extract modified parameter names from indices
       changed_params = set()
