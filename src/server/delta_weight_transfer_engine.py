@@ -118,7 +118,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
 
       hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
-      for name, tensor in safetensors_weights_iterator(hf_weights_files):
+      for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
         if not name.endswith(".indices") and "delta" not in name:
           self._cpu_snapshot[name] = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
       if self._cpu_snapshot:
