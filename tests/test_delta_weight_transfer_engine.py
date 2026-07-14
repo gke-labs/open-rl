@@ -194,6 +194,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
   def test_receive_weights_base_model_directory_loading(self):
     """Test that receive_weights directly populates CPU snapshot from base_model_path when provided."""
     import json
+
     from safetensors.torch import save_file
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -233,6 +234,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
     """Test that _ensure_cpu_snapshot resolves HF model IDs from OPEN_RL_BASE_MODEL (e.g. Qwen/Test-4B -> models--Qwen--Test-4B)."""
     import json
     from unittest.mock import patch
+
     from safetensors.torch import save_file
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -253,8 +255,10 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
 
       # Patch os.path.expanduser so ~/.cache/huggingface/hub/ maps to our tmpdir
-      with patch.dict(os.environ, {"OPEN_RL_BASE_MODEL": "Qwen/Test-4B"}), \
-           patch("os.path.expanduser", lambda path: path.replace("~/.cache/huggingface/hub", tmpdir) if path.startswith("~") else path):
+      with (
+        patch.dict(os.environ, {"OPEN_RL_BASE_MODEL": "Qwen/Test-4B"}),
+        patch("os.path.expanduser", lambda path: path.replace("~/.cache/huggingface/hub", tmpdir) if path.startswith("~") else path),
+      ):
         engine = DeltaSnapshotWeightTransferEngine(
           config=None,
           parallel_config=None,  # type: ignore

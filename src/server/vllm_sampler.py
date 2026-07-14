@@ -244,7 +244,9 @@ async def process_sampling_request(req: dict, store: Any) -> None:
                     kwargs={
                       "update_info": {
                         "target_weights_path": weights_path,
-                        "base_model_path": os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("BASE_MODEL") or getattr(getattr(engine, "engine_args", None), "model", ""),
+                        "base_model_path": (
+                          os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("BASE_MODEL") or getattr(getattr(engine, "engine_args", None), "model", "")
+                        ),
                       }
                     },
                   )
