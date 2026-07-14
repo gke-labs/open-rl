@@ -110,11 +110,15 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     if base_model:
       start_t = time.perf_counter()
-      from vllm.config import LoadConfig
-      from vllm.model_executor.model_loader.weight_utils import safetensors_weights_iterator
+      from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf, safetensors_weights_iterator
 
-      load_config = LoadConfig(load_format="safetensors")
-      for name, tensor in safetensors_weights_iterator(base_model, load_config=load_config):
+      if os.path.isdir(base_model):
+        hf_folder = base_model
+      else:
+        hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
+
+      hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
+      for name, tensor in safetensors_weights_iterator(hf_weights_files):
         if not name.endswith(".indices") and "delta" not in name:
           self._cpu_snapshot[name] = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
       if self._cpu_snapshot:
