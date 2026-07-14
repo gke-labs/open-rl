@@ -41,6 +41,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.cpu_offload: bool = True
     self.weight_sync_strategy: str = os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower()
     self._is_offloaded: bool = False
+    self._latest_delta_tensors: dict[str, torch.Tensor] = {}
+    self._latest_total_changed: int = 0
+    self._latest_total_elements: int = 0
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
@@ -97,7 +100,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.model.train()
 
   def _prepare_for_save(self) -> bool:
-    was_offloaded = getattr(self, "_is_offloaded", False)
+    was_offloaded = self._is_offloaded
     if was_offloaded and self.model is not None:
       for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
         if tensor in self._param_shadow:
@@ -187,7 +190,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     os.makedirs(state_path, exist_ok=True)
     if diffing_device == "cpu":
-      was_offloaded = getattr(self, "_is_offloaded", False)
+      was_offloaded = self._is_offloaded
     else:
       was_offloaded = self._prepare_for_save()
     delta_tensors: dict[str, torch.Tensor] = {}
@@ -195,10 +198,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     total_elements = 0
 
     try:
-      if hasattr(self, "_latest_delta_tensors") and self._latest_delta_tensors:
+      if self._latest_delta_tensors:
         delta_tensors = self._latest_delta_tensors
-        total_changed = getattr(self, "_latest_total_changed", 0)
-        total_elements = getattr(self, "_latest_total_elements", 0)
+        total_changed = self._latest_total_changed
+        total_elements = self._latest_total_elements
         self._latest_delta_tensors = {}
       else:
         for name, param in self.model.named_parameters():
@@ -383,21 +386,13 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def sleep(self) -> None:
     """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""
-    if (
-      not getattr(self, "cpu_offload", False)
-      or getattr(self, "model", None) is None
-      or getattr(self, "_is_offloaded", False)
-      or not torch.cuda.is_available()
-    ):
+    if not self.cpu_offload or self.model is None or self._is_offloaded or not torch.cuda.is_available():
       return
     start_t = time.perf_counter()
 
     # 1-CPU-Copy (15.26 GB) Offload-Time Sparse Delta Diffing:
     # Compare live GPU W_{t+1} against existing CPU _param_shadow (holding W_t) before overwriting
-    if hasattr(self, "_latest_delta_tensors"):
-      self._latest_delta_tensors.clear()
-    else:
-      self._latest_delta_tensors = {}
+    self._latest_delta_tensors.clear()
     self._latest_total_changed = 0
     self._latest_total_elements = 0
 
@@ -481,12 +476,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def wake_up(self) -> None:
     """Reload pinned CPU shadow tensors back to CUDA VRAM without destroying host shadow buffers."""
-    if (
-      not getattr(self, "cpu_offload", False)
-      or getattr(self, "model", None) is None
-      or not getattr(self, "_is_offloaded", False)
-      or not torch.cuda.is_available()
-    ):
+    if not self.cpu_offload or self.model is None or not self._is_offloaded or not torch.cuda.is_available():
       return
     start_t = time.perf_counter()
 
