@@ -108,18 +108,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     base_model = base_model or self._base_model or os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
     print(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
 
-    if model is not None:
-      start_t = time.perf_counter()
-      for name, param in model.named_parameters():
-        real_t = self._get_real_tensor(model, name, param)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      for name, buf in model.named_buffers():
-        real_t = self._get_real_tensor(model, name, buf)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      elapsed = (time.perf_counter() - start_t) * 1000.0
-      print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms.")
-      return
-
     if base_model:
       start_t = time.perf_counter()
       from vllm.config import LoadConfig
@@ -137,7 +125,19 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         )
         return
 
-    raise RuntimeError(f"Failed to initialize CPU weights snapshot: neither model instance nor base safetensors for '{base_model}' available.")
+    if model is not None:
+      start_t = time.perf_counter()
+      for name, param in model.named_parameters():
+        real_t = self._get_real_tensor(model, name, param)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      for name, buf in model.named_buffers():
+        real_t = self._get_real_tensor(model, name, buf)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      elapsed = (time.perf_counter() - start_t) * 1000.0
+      print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms.")
+      return
+
+    raise RuntimeError(f"Failed to initialize CPU weights snapshot: neither base safetensors for '{base_model}' nor model instance available.")
 
   def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
     """Initialize the delta transfer engine on the inference worker."""
@@ -217,7 +217,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       t_apply_ms = (time.perf_counter() - t0_apply) * 1000.0
       print(f"[DeltaSnapshotEngine] Applied sparse delta ({len(changed_params)} tensors) to CPU snapshot in {t_apply_ms:.2f} ms")
 
-      changed_weights = [(name, self._cpu_snapshot[name]) for name in changed_params]
+      weights_to_load = list(self._cpu_snapshot.items())
     else:
       # Full snapshot safetensors path
       weights: list[tuple[str, torch.Tensor]] = []
@@ -260,13 +260,14 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         return
 
       print(f"[DeltaSnapshotEngine] Verified patch: {len(changed_weights)}/{len(weights)} tensors changed ({no_op_tensors} no-op tensors skipped)")
+      weights_to_load = changed_weights
 
     # Feed genuinely changed parameter tensors directly into vLLM's internal layer loader
     start_load = time.perf_counter()
-    load_weights(changed_weights)
+    load_weights(weights_to_load)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
     self.current_weights_path = target_path
-    print(f"[DeltaSnapshotEngine] Incremental load_weights completed ({len(changed_weights)} tensors) in {elapsed_load:.2f} ms")
+    print(f"[DeltaSnapshotEngine] Incremental load_weights completed ({len(weights_to_load)} tensors) in {elapsed_load:.2f} ms")
 
   def finish_weight_update(self) -> None:
     """Finalize layerwise reload."""
