@@ -29,6 +29,11 @@ Whenever you add or modify Python files (`.py`), run `py_compile` on the modifie
 python3 -m py_compile path/to/file1.py path/to/file2.py
 ```
 
+### Python Class Attribute Best Practice (`Tip`)
+When defining or refactoring classes, **always explicitly initialize all instance attributes inside `__init__`** and use direct property access (`self.property`) rather than defensive `hasattr(self, ...)` or `getattr(self, ...)` checks. Avoid writing overly defensive code that obscures uninitialized attribute bugs:
+- **Correct**: `self._my_flag = False` in `__init__`, then `if self._my_flag:` later.
+- **Avoid**: `if getattr(self, "_my_flag", False):` without explicit initialization.
+
 ### Running the Standard Unit Test Suite
 To run the standard unit test suite:
 ```bash
