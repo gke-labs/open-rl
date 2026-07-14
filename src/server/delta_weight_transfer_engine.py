@@ -102,29 +102,38 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if self._cpu_snapshot:
       return
     print("[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching...")
-    # First, try to initialize from base HuggingFace safetensors checkpoint directory
-    # (either current_weights_path or any sampler-* directory in target_path parent)
-    base_dir = self.current_weights_path
-    if not base_dir or not os.path.exists(base_dir):
-      parent_dir = os.path.dirname(target_path.rstrip("/")) if target_path else ""
+    import glob
+
+    from safetensors.torch import load_file
+
+    candidate_dirs = []
+    if self.current_weights_path and os.path.exists(self.current_weights_path):
+      candidate_dirs.append(self.current_weights_path)
+    if target_path:
+      parent_dir = os.path.dirname(target_path.rstrip("/"))
       if parent_dir and os.path.exists(parent_dir):
-        import glob
+        for d in sorted(glob.glob(os.path.join(parent_dir, "sampler-*")), key=os.path.getmtime):
+          if d != target_path and os.path.isdir(d):
+            candidate_dirs.append(d)
 
-        candidates = sorted(glob.glob(os.path.join(parent_dir, "sampler-*")), key=os.path.getmtime)
-        for c in candidates:
-          if c != target_path and os.path.isdir(c):
-            base_dir = c
-            break
+    hf_cache_dirs = sorted(
+      glob.glob(os.path.expanduser("~/.cache/huggingface/hub/models--*/snapshots/*"))
+      + glob.glob("/mnt/shared/open-rl/huggingface/hub/models--*/snapshots/*"),
+      key=os.path.getmtime,
+      reverse=True,
+    )
+    candidate_dirs.extend(hf_cache_dirs)
 
-    if base_dir and os.path.isdir(base_dir):
-      import glob
-
-      from safetensors.torch import load_file
+    for base_dir in candidate_dirs:
+      if not os.path.isdir(base_dir):
+        continue
+      sf_files = sorted(glob.glob(os.path.join(base_dir, "*.safetensors")))
+      sf_files = [f for f in sf_files if "delta" not in os.path.basename(f)]
+      if not sf_files:
+        continue
 
       start_t = time.perf_counter()
-      for sf in glob.glob(os.path.join(base_dir, "*.safetensors")):
-        if "delta.safetensors" in sf:
-          continue
+      for sf in sf_files:
         try:
           t_dict = load_file(sf, device="cpu")
           for k, v in t_dict.items():
