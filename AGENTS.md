@@ -34,6 +34,17 @@ When defining or refactoring classes, **always explicitly initialize all instanc
 - **Correct**: `self._my_flag = False` in `__init__`, then `if self._my_flag:` later.
 - **Avoid**: `if getattr(self, "_my_flag", False):` without explicit initialization.
 
+### Linter & Formatting Checks (`Rule`)
+Before creating commits or opening pull requests, **always run linter and formatting checks across the repository from the root directory (`/open-rl`)**:
+```bash
+export PATH=$PATH:$HOME/.local/bin && make lint
+```
+To automatically fix import ordering (`isort / I001`) and formatting discrepancies (`e.g. before submitting pull requests`), run:
+```bash
+export PATH=$PATH:$HOME/.local/bin && make fmt
+```
+*Note: Keep `import ...` statements at the module top-level where possible and verify lines stay within the 150-character limit to ensure CI checks pass under `ruff check`.*
+
 ### Running the Standard Unit Test Suite
 To run the standard unit test suite:
 ```bash
@@ -149,10 +160,18 @@ kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
 kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ```
 
+### Kustomize Deployment & Base Manifest Best Practices (`Tip`)
+To prevent noisy container image tag diffs inside pull requests while ensuring clean deployments across Kubernetes environments, always follow this Kustomize pattern:
+1. **Deploy via Kustomize (`-k`)**: Always apply directory manifests via `kubectl apply -k <directory>` rather than `kubectl apply -f <directory>`.
+2. **Keep Base YAMLs at `:latest` or Placeholder**: In all base/rendered YAML template files (`04-gateway.yaml`, `05-worker-pod-template.yaml`, `07-accel-timeslicer-daemonset.yaml`, `09-sampler-pod-template.yaml`, `04-deployment.yaml`, etc.), keep container image tags permanently set to a static placeholder (`e.g. image: ghcr.io/gke-labs/open-rl/server:latest` or `/gateway:latest`). **Never bump image tags inside these base template files.**
+3. **Single Source of Truth for Version Bumps**: When releasing or bumping image versions (`e.g. 0.1.75 -> 0.1.76`), modify **only**:
+   - `VERSION` (`at repository root`)
+   - The `newTag:` field inside the target environment's `kustomization.yaml` (`e.g. k8s/deploy/distributed-fft-timeslice/kustomization.yaml`)
+
 ### Applying Manifest Edits & Restarting the Gateway (Dev Mode)
-Since this is a development-only mode, formal rolling updates (which include waiting for rollout status) are not necessary. Simply apply the manifests and delete the active gateway pod to trigger an immediate, fast recreation:
+Since this is a development-only mode, formal rolling updates (which include waiting for rollout status) are not necessary. Simply apply the manifests via Kustomize and delete the active gateway pod to trigger an immediate, fast recreation:
 ```bash
-kubectl apply -f k8s/deploy/distributed-fft-timeslice/
+kubectl apply -k k8s/deploy/distributed-fft-timeslice/
 kubectl delete pods -l app=open-rl-gateway
 ```
 
