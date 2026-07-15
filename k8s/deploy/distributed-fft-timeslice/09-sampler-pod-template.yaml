@@ -15,7 +15,7 @@ data:
       restartPolicy: OnFailure
       containers:
       - name: sampler-worker
-        image: gcr.io/cdrollouts-sunilarora/open-rl-server:0.1.46
+        image: ghcr.io/gke-labs/open-rl/server:latest
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
         env:
