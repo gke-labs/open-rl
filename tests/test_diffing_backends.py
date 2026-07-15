@@ -5,7 +5,6 @@ import unittest
 
 import torch
 import torch.nn as nn
-from safetensors.torch import load_file
 
 from training.fft_trainer_worker import FFTTrainingWorker
 
@@ -31,9 +30,7 @@ class TestUniversalStreamedDiffing(unittest.TestCase):
     worker = FFTTrainingWorker()
     worker.base_model_name = "dummy"
     worker.model = model
-
-    # Initialize shadow weights via first save step
-    worker.save_state_delta("dummy", os.path.join(self.temp_dir, "init"), kind="sampler")
+    worker.prepare_model_for_training()
 
     # Modify specific elements
     with torch.no_grad():
@@ -43,30 +40,31 @@ class TestUniversalStreamedDiffing(unittest.TestCase):
 
     return worker
 
-  def test_streamed_diffing_standalone_vs_optim_step_equivalence(self):
-    """Verifies standalone save_state_delta and optim_step + save_state_delta produce identical 1D Flat Packed deltas."""
-    worker_standalone = self._create_worker_and_modify()
-    standalone_dir = os.path.join(self.temp_dir, "save_standalone")
-    meta_standalone = worker_standalone.save_state_delta("dummy", standalone_dir, kind="sampler")
+  def test_streamed_diffing_optim_step_and_multi_save_idempotency(self):
+    """Verifies optim_step streams diff to _latest_delta_tensors and multiple saves read it non-destructively."""
+    worker = self._create_worker_and_modify()
+    worker.weight_sync_strategy = "delta"
+    worker.optim_step({})
 
-    worker_optim = self._create_worker_and_modify()
-    worker_optim.weight_sync_strategy = "delta"
-    worker_optim.optim_step({})
-    optim_dir = os.path.join(self.temp_dir, "save_optim")
-    meta_optim = worker_optim.save_state_delta("dummy", optim_dir, kind="sampler")
+    save_dir_1 = os.path.join(self.temp_dir, "save_optim_1")
+    meta_1 = worker.save_state_delta("dummy", save_dir_1, kind="sampler")
 
-    self.assertEqual(meta_standalone["changed_elements"], meta_optim["changed_elements"])
-    self.assertEqual(meta_standalone["layer_names"], meta_optim["layer_names"])
+    save_dir_2 = os.path.join(self.temp_dir, "save_optim_2")
+    meta_2 = worker.save_state_delta("dummy", save_dir_2, kind="state")
 
-    standalone_tensors = load_file(os.path.join(standalone_dir, "delta.safetensors"))
-    optim_tensors = load_file(os.path.join(optim_dir, "delta.safetensors"))
+    self.assertEqual(meta_1["changed_elements"], 3)
+    self.assertEqual(meta_1["changed_elements"], meta_2["changed_elements"])
+    self.assertEqual(meta_1["layer_names"], meta_2["layer_names"])
 
-    self.assertEqual(set(standalone_tensors.keys()), set(optim_tensors.keys()))
-    for key in standalone_tensors:
-      self.assertTrue(
-        torch.equal(standalone_tensors[key], optim_tensors[key]),
-        f"Mismatch on {key} between standalone and optim_step diffing paths",
-      )
+  def test_streamed_diffing_empty_delta_fallback(self):
+    """Verifies save_state_delta before optim_step emits an exact O(1) empty delta."""
+    worker = self._create_worker_and_modify()
+    save_dir = os.path.join(self.temp_dir, "save_empty")
+    meta = worker.save_state_delta("dummy", save_dir, kind="sampler")
+
+    self.assertEqual(meta["changed_elements"], 0)
+    self.assertEqual(meta["total_elements"], worker.total_model_elements)
+    self.assertEqual(meta["layer_names"], worker.model_layer_names)
 
 
 if __name__ == "__main__":

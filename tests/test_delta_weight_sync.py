@@ -31,15 +31,14 @@ class DeltaWeightSyncTest(unittest.TestCase):
     worker.cpu_offload = False
     worker.base_model_name = "test-simple-model"
     worker.model = SimpleModel()
-
-    # Initialize shadow with base weights W0
-    worker._param_shadow = {param: (param.device, param.data.detach().cpu().clone()) for param in worker.model.parameters() if param.requires_grad}
+    worker.prepare_model_for_training()
 
     # Simulate an Adam update where 2 out of 100 elements change (2% sparsity)
     orig_w0 = worker.model.fc.weight.data.clone()
     worker.model.fc.weight.data[0, 2] = 42.0
     worker.model.fc.weight.data[5, 7] = -13.37
 
+    worker.optim_step({})
     state_path = os.path.join(self.test_dir, "step_1")
     worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler")
 
