@@ -6,7 +6,6 @@ without external sleep/wake workarounds.
 """
 
 import os
-from pathlib import Path
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass

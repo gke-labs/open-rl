@@ -193,7 +193,6 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
 
   def test_receive_weights_base_model_directory_loading(self):
     """Test that receive_weights directly populates CPU snapshot from base_model_path when provided."""
-    import contextlib
     import json
     import sys
     from unittest.mock import MagicMock, patch
@@ -220,20 +219,25 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
 
       mock_utils = MagicMock()
       mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: bm
+
       def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
         for p in hf_weights_files:
           if os.path.exists(p):
             with safetensors.safe_open(p, framework="pt", device="cpu") as f:
-              for key in f.keys():
+              for key in f:
                 yield key, f.get_tensor(key)
+
       mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
 
-      with patch.dict(sys.modules, {
-        "vllm": MagicMock(),
-        "vllm.model_executor": MagicMock(),
-        "vllm.model_executor.model_loader": MagicMock(),
-        "vllm.model_executor.model_loader.weight_utils": mock_utils,
-      }):
+      with patch.dict(
+        sys.modules,
+        {
+          "vllm": MagicMock(),
+          "vllm.model_executor": MagicMock(),
+          "vllm.model_executor.model_loader": MagicMock(),
+          "vllm.model_executor.model_loader.weight_utils": mock_utils,
+        },
+      ):
         engine = DeltaSnapshotWeightTransferEngine(
           config=None,
           parallel_config=None,  # type: ignore
@@ -278,24 +282,29 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
 
       mock_utils = MagicMock()
       mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: hf_folder
+
       def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
         for p in hf_weights_files:
           if os.path.exists(p):
             with safetensors.safe_open(p, framework="pt", device="cpu") as f:
-              for key in f.keys():
+              for key in f:
                 yield key, f.get_tensor(key)
+
       mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
 
       # Patch os.path.expanduser and sys.modules for vllm
       with (
         patch.dict(os.environ, {"OPEN_RL_BASE_MODEL": "Qwen/Test-4B"}),
         patch("os.path.expanduser", lambda path: path.replace("~/.cache/huggingface/hub", tmpdir) if path.startswith("~") else path),
-        patch.dict(sys.modules, {
-          "vllm": MagicMock(),
-          "vllm.model_executor": MagicMock(),
-          "vllm.model_executor.model_loader": MagicMock(),
-          "vllm.model_executor.model_loader.weight_utils": mock_utils,
-        }),
+        patch.dict(
+          sys.modules,
+          {
+            "vllm": MagicMock(),
+            "vllm.model_executor": MagicMock(),
+            "vllm.model_executor.model_loader": MagicMock(),
+            "vllm.model_executor.model_loader.weight_utils": mock_utils,
+          },
+        ),
       ):
         engine = DeltaSnapshotWeightTransferEngine(
           config=None,

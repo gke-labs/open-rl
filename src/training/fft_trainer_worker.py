@@ -63,7 +63,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
       return self._param_shadow[param][1]
     return self._prev_weights_shadow.get(name)
 
-  def _update_prev_cpu_weight(self, name: str, param: torch.nn.Parameter, indices: torch.Tensor, values: torch.Tensor, for_optim_step: bool = False) -> None:
+  def _update_prev_cpu_weight(
+    self, name: str, param: torch.nn.Parameter, indices: torch.Tensor, values: torch.Tensor, for_optim_step: bool = False
+  ) -> None:
     if for_optim_step and self.cpu_offload and param in self._param_shadow:
       self._param_shadow[param][1].view(-1)[indices.to(torch.int64).cpu()] = values
     elif name in self._prev_weights_shadow:
@@ -142,7 +144,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
   def save_model(self, alias: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if self.cpu_offload and not self._is_offloaded:
-      raise RuntimeError("Cannot save model while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
+      raise RuntimeError(
+        "Cannot save model while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
+        "GPU time-slicer lock is not held during save operations."
+      )
 
     tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
     name = alias or "fft-model"
@@ -173,7 +178,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if self.cpu_offload and not self._is_offloaded:
-      raise RuntimeError("Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
+      raise RuntimeError(
+        "Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
+        "GPU time-slicer lock is not held during save operations."
+      )
 
     if kind == "sampler" and self.weight_sync_strategy == "delta" and self._prev_weights_shadow:
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
@@ -213,7 +221,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
   ) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if self.cpu_offload and not self._is_offloaded:
-      raise RuntimeError("Cannot save state delta while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
+      raise RuntimeError(
+        "Cannot save state delta while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
+        "GPU time-slicer lock is not held during save operations."
+      )
 
     if diffing_device is None:
       diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
