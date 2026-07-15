@@ -53,6 +53,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if strategy not in ("full", "delta"):
       raise ValueError(f"Invalid weight_sync_strategy '{strategy}'. Must be 'full' or 'delta'.")
     self.weight_sync_strategy = strategy
+    if strategy == "full":
+      self._prev_weights_shadow.clear()
+    elif strategy == "delta" and self.model is not None and not self._prev_weights_shadow:
+      self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -68,7 +72,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
-    self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
     print("Successfully loaded full fine-tuning model.")
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
@@ -88,6 +91,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     for param in self.model.parameters():
       param.requires_grad_(True)
     self.trainable_params = trainable_model_parameters(self.model)
+    if self.weight_sync_strategy == "delta":
+      self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
+    else:
+      self._prev_weights_shadow.clear()
 
     if ENABLE_GRADIENT_CHECKPOINTING:
       try:
@@ -115,6 +122,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def save_model(self, alias: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    if self.cpu_offload and not self._is_offloaded:
+      raise RuntimeError("Cannot save model while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
 
     tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
     name = alias or "fft-model"
@@ -144,6 +153,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    if self.cpu_offload and not self._is_offloaded:
+      raise RuntimeError("Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
 
     if kind == "sampler" and self.weight_sync_strategy == "delta" and self._prev_weights_shadow:
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
@@ -182,6 +193,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     diffing_device: str | None = None,
   ) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    if self.cpu_offload and not self._is_offloaded:
+      raise RuntimeError("Cannot save state delta while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. GPU time-slicer lock is not held during save operations.")
 
     if diffing_device is None:
       diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
@@ -367,6 +380,43 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.optimizer.step()
     self.optimizer.zero_grad()
 
+    if self.weight_sync_strategy == "delta" and self.model is not None:
+      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
+      self._latest_delta_tensors.clear()
+      self._latest_total_changed = 0
+      self._latest_total_elements = 0
+
+      for name, param in self.model.named_parameters():
+        if not param.requires_grad:
+          continue
+        if name not in self._prev_weights_shadow:
+          self._prev_weights_shadow[name] = param.data.detach().cpu().clone()
+          continue
+
+        if diffing_device == "cpu":
+          cur_cpu = param.data.detach().cpu().view(-1)
+          prev_cpu = self._prev_weights_shadow[name].view(-1)
+          diff_mask = cur_cpu.ne(prev_cpu)
+          indices = diff_mask.nonzero(as_tuple=True)[0]
+          if indices.numel() > 0:
+            self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous()
+            self._latest_delta_tensors[f"{name}.values"] = cur_cpu[diff_mask].contiguous()
+            self._latest_total_changed += int(indices.numel())
+            prev_cpu[indices.to(torch.int64)] = self._latest_delta_tensors[f"{name}.values"]
+        else:
+          if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
+            prev_gpu = self._param_shadow[param][1].to(param.device, non_blocking=True)
+          else:
+            prev_gpu = self._prev_weights_shadow[name].to(param.device, non_blocking=True)
+          diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
+          indices = diff_mask.nonzero(as_tuple=True)[0]
+          if indices.numel() > 0:
+            self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
+            self._latest_delta_tensors[f"{name}.values"] = param.data.view(-1)[diff_mask].contiguous().cpu()
+            self._latest_total_changed += int(indices.numel())
+            self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = self._latest_delta_tensors[f"{name}.values"]
+        self._latest_total_elements += int(param.numel())
+
     return {
       "metrics": {
         "grad_norm:mean": self.sanitize_float(total_norm.item()),
@@ -389,26 +439,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if not self.cpu_offload or self.model is None or self._is_offloaded or not torch.cuda.is_available():
       return
     start_t = time.perf_counter()
-
-    # 1-CPU-Copy (15.26 GB) Offload-Time Sparse Delta Diffing:
-    # Compare live GPU W_{t+1} against existing CPU _param_shadow (holding W_t) before overwriting
-    self._latest_delta_tensors.clear()
-    self._latest_total_changed = 0
-    self._latest_total_elements = 0
-
-    for name, param in self.model.named_parameters():
-      if not param.requires_grad:
-        continue
-      if param in self._param_shadow and param.numel() > 0 and self._param_shadow[param][1].shape == param.shape:
-        prev_cpu = self._param_shadow[param][1]
-        prev_gpu = prev_cpu.to(param.device, non_blocking=True)
-        diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
-        indices = diff_mask.nonzero(as_tuple=True)[0]
-        if indices.numel() > 0:
-          self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
-          self._latest_delta_tensors[f"{name}.values"] = param.data.view(-1)[diff_mask].contiguous().cpu()
-          self._latest_total_changed += int(indices.numel())
-      self._latest_total_elements += int(param.numel())
 
     # Phase 1: Launch Batched Asynchronous DMA copies WITHOUT freeing GPU tensors!
     for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):

@@ -6,6 +6,7 @@ without external sleep/wake workarounds.
 """
 
 import os
+from pathlib import Path
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -110,7 +111,10 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     if base_model:
       start_t = time.perf_counter()
-      from vllm.model_executor.model_loader.weight_utils import download_weights_from_hf, safetensors_weights_iterator
+      from vllm.model_executor.model_loader.weight_utils import (
+        download_weights_from_hf,
+        safetensors_weights_iterator,
+      )
 
       if os.path.isdir(base_model):
         hf_folder = base_model

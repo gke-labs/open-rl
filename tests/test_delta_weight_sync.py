@@ -28,6 +28,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
 
   def test_sparse_delta_encoding_and_lossless_overwrite(self):
     worker = FFTTrainingWorker()
+    worker.cpu_offload = False
     worker.base_model_name = "test-simple-model"
     worker.model = SimpleModel()
 

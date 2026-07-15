@@ -193,8 +193,12 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
 
   def test_receive_weights_base_model_directory_loading(self):
     """Test that receive_weights directly populates CPU snapshot from base_model_path when provided."""
+    import contextlib
     import json
+    import sys
+    from unittest.mock import MagicMock, patch
 
+    import safetensors
     from safetensors.torch import save_file
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -214,27 +218,45 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       }
       save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        parallel_config=None,  # type: ignore
-      )
+      mock_utils = MagicMock()
+      mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: bm
+      def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
+        for p in hf_weights_files:
+          if os.path.exists(p):
+            with safetensors.safe_open(p, framework="pt", device="cpu") as f:
+              for key in f.keys():
+                yield key, f.get_tensor(key)
+      mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
 
-      loaded_calls: list[tuple[str, torch.Tensor]] = []
-      engine.receive_weights(
-        DeltaSnapshotUpdateInfo(target_weights_path=step_dir, base_model_path=base_dir),
-        lambda w: loaded_calls.extend(w),
-      )
+      with patch.dict(sys.modules, {
+        "vllm": MagicMock(),
+        "vllm.model_executor": MagicMock(),
+        "vllm.model_executor.model_loader": MagicMock(),
+        "vllm.model_executor.model_loader.weight_utils": mock_utils,
+      }):
+        engine = DeltaSnapshotWeightTransferEngine(
+          config=None,
+          parallel_config=None,  # type: ignore
+        )
 
-      self.assertEqual(len(loaded_calls), 1)
-      self.assertEqual(loaded_calls[0][0], "layer.0.weight")
-      self.assertEqual(loaded_calls[0][1].shape, (4, 4))
-      self.assertEqual(loaded_calls[0][1].view(-1)[2].item(), 42.0)
+        loaded_calls: list[tuple[str, torch.Tensor]] = []
+        engine.receive_weights(
+          DeltaSnapshotUpdateInfo(target_weights_path=step_dir, base_model_path=base_dir),
+          lambda w: loaded_calls.extend(w),
+        )
+
+        self.assertEqual(len(loaded_calls), 1)
+        self.assertEqual(loaded_calls[0][0], "layer.0.weight")
+        self.assertEqual(loaded_calls[0][1].shape, (4, 4))
+        self.assertEqual(loaded_calls[0][1].view(-1)[2].item(), 42.0)
 
   def test_receive_weights_hf_cache_and_env_loading(self):
     """Test that _ensure_cpu_snapshot resolves HF model IDs from OPEN_RL_BASE_MODEL (e.g. Qwen/Test-4B -> models--Qwen--Test-4B)."""
     import json
-    from unittest.mock import patch
+    import sys
+    from unittest.mock import MagicMock, patch
 
+    import safetensors
     from safetensors.torch import save_file
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -254,10 +276,26 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       }
       save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
 
-      # Patch os.path.expanduser so ~/.cache/huggingface/hub/ maps to our tmpdir
+      mock_utils = MagicMock()
+      mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: hf_folder
+      def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
+        for p in hf_weights_files:
+          if os.path.exists(p):
+            with safetensors.safe_open(p, framework="pt", device="cpu") as f:
+              for key in f.keys():
+                yield key, f.get_tensor(key)
+      mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
+
+      # Patch os.path.expanduser and sys.modules for vllm
       with (
         patch.dict(os.environ, {"OPEN_RL_BASE_MODEL": "Qwen/Test-4B"}),
         patch("os.path.expanduser", lambda path: path.replace("~/.cache/huggingface/hub", tmpdir) if path.startswith("~") else path),
+        patch.dict(sys.modules, {
+          "vllm": MagicMock(),
+          "vllm.model_executor": MagicMock(),
+          "vllm.model_executor.model_loader": MagicMock(),
+          "vllm.model_executor.model_loader.weight_utils": mock_utils,
+        }),
       ):
         engine = DeltaSnapshotWeightTransferEngine(
           config=None,

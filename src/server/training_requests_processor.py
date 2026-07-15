@@ -330,8 +330,13 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
               if hasattr(self.worker, "sleep"):
                 await asyncio.to_thread(self.worker.sleep)
 
-        for request in save_reqs:
-          results.append(await self.handle_request(request, self.model_id))
+        if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
+          async with self.time_slicer.acquire(self.workload):
+            for request in save_reqs:
+              results.append(await self.handle_request(request, self.model_id))
+        else:
+          for request in save_reqs:
+            results.append(await self.handle_request(request, self.model_id))
 
         for request_id, result in results:
           if request_id is not None:
