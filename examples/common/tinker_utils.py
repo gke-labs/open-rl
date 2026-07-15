@@ -48,8 +48,6 @@ def patch_tinker_default_headers() -> None:
     headers = _orig_get_default_headers()
     if strategy := os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY"):
       headers["X-Open-RL-Weight-Sync-Strategy"] = strategy
-    if diffing_device := os.getenv("OPEN_RL_DIFFING_DEVICE"):
-      headers["X-Open-RL-Diffing-Device"] = diffing_device
     if ft_type := os.getenv("OPEN_RL_FINE_TUNING_TYPE"):
       headers["X-Open-RL-Fine-Tuning-Type"] = ft_type
     return headers

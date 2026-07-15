@@ -3,11 +3,14 @@
 import gc
 import itertools
 import json
+import logging
 import math
 import os
 import time
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import torch
 from pydantic import BaseModel
@@ -53,23 +56,17 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if strategy not in ("full", "delta"):
       raise ValueError(f"Invalid weight_sync_strategy '{strategy}'. Must be 'full' or 'delta'.")
     self.weight_sync_strategy = strategy
-    if strategy == "full":
-      self._prev_weights_shadow.clear()
-    elif strategy == "delta" and self.model is not None and not self._prev_weights_shadow and not self.cpu_offload:
-      self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
 
   def _get_prev_cpu_weight(self, name: str, param: torch.nn.Parameter, for_optim_step: bool = False) -> torch.Tensor | None:
-    if for_optim_step and self.cpu_offload and param in self._param_shadow:
+    if param in self._param_shadow:
       return self._param_shadow[param][1]
-    return self._prev_weights_shadow.get(name)
+    return None
 
   def _update_prev_cpu_weight(
     self, name: str, param: torch.nn.Parameter, indices: torch.Tensor, values: torch.Tensor, for_optim_step: bool = False
   ) -> None:
-    if for_optim_step and self.cpu_offload and param in self._param_shadow:
+    if param in self._param_shadow:
       self._param_shadow[param][1].view(-1)[indices.to(torch.int64).cpu()] = values
-    elif name in self._prev_weights_shadow:
-      self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = values
 
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
@@ -105,17 +102,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
       param.requires_grad_(True)
     self.trainable_params = trainable_model_parameters(self.model)
     if self.weight_sync_strategy == "delta":
-      if self.cpu_offload:
-        for param in self.model.parameters():
-          if param.requires_grad and param not in self._param_shadow:
-            cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=True)
-            cpu_buf.copy_(param.data, non_blocking=True)
-            self._param_shadow[param] = (param.device, cpu_buf)
-        self._prev_weights_shadow.clear()
-      else:
-        self._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in self.model.named_parameters() if param.requires_grad}
-    else:
-      self._prev_weights_shadow.clear()
+      for param in self.model.parameters():
+        if param.requires_grad and param not in self._param_shadow:
+          cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=torch.cuda.is_available())
+          cpu_buf.copy_(param.data, non_blocking=True)
+          self._param_shadow[param] = (param.device, cpu_buf)
 
     if ENABLE_GRADIENT_CHECKPOINTING:
       try:
@@ -183,7 +174,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
         "GPU time-slicer lock is not held during save operations."
       )
 
-    if kind == "sampler" and self.weight_sync_strategy == "delta" and self._prev_weights_shadow:
+    if self.weight_sync_strategy == "delta" and not include_optimizer:
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
 
     os.makedirs(state_path, exist_ok=True)
@@ -217,7 +208,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
     model_id: str,
     state_path: str,
     kind: str = "sampler",
-    diffing_device: str | None = None,
   ) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if self.cpu_offload and not self._is_offloaded:
@@ -226,96 +216,90 @@ class FFTTrainingWorker(BaseTrainerWorker):
         "GPU time-slicer lock is not held during save operations."
       )
 
-    if diffing_device is None:
-      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
-    else:
-      diffing_device = diffing_device.lower()
-
     os.makedirs(state_path, exist_ok=True)
-    if diffing_device == "cpu":
-      was_offloaded = self._is_offloaded
-    else:
-      was_offloaded = self._prepare_for_save()
-    delta_tensors: dict[str, torch.Tensor] = {}
     total_changed = 0
     total_elements = 0
+    layer_names_list: list[str] = []
+    indices_list: list[torch.Tensor] = []
+    values_list: list[torch.Tensor] = []
+    layer_lengths_list: list[int] = []
 
-    try:
-      if self._latest_delta_tensors:
-        delta_tensors = self._latest_delta_tensors
-        total_changed = self._latest_total_changed
-        total_elements = self._latest_total_elements
-        self._latest_delta_tensors = {}
-      else:
-        for name, param in self.model.named_parameters():
-          if not param.requires_grad:
-            continue
-          prev_tensor = self._get_prev_cpu_weight(name, param)
-          if prev_tensor is None:
-            self._prev_weights_shadow[name] = param.data.detach().cpu().clone()
-            prev_tensor = self._prev_weights_shadow[name]
+    t_collect_start = time.perf_counter()
+    if self._latest_delta_tensors and "names" in self._latest_delta_tensors:
+      layer_names_list = self._latest_delta_tensors["names"]
+      indices_list = self._latest_delta_tensors["indices_list"]
+      values_list = self._latest_delta_tensors["values_list"]
+      layer_lengths_list = self._latest_delta_tensors["layer_lengths_list"]
+      total_changed = self._latest_total_changed
+      total_elements = self._latest_total_elements
+      self._latest_delta_tensors = {}
+    else:
+      for name, param in self.model.named_parameters():
+        if not param.requires_grad:
+          continue
+        if param in self._param_shadow and self._param_shadow[param][1].numel() > 0 and param.numel() == 0:
+          cur_t = self._param_shadow[param][1]
+        else:
+          cur_t = param.data
 
-          if diffing_device == "cpu":
-            if was_offloaded and param in self._param_shadow and self._param_shadow[param][1].numel() == prev_tensor.numel():
-              cur_cpu = self._param_shadow[param][1].view(-1)
-            else:
-              if param.numel() != prev_tensor.numel():
-                expected_n = prev_tensor.numel()
-                raise RuntimeError(
-                  f"Parameter '{name}' has numel {param.numel()} which does not match "
-                  f"previous weights numel {expected_n}. Is the model offloaded without a shadow buffer?"
-                )
-              cur_cpu = param.data.detach().cpu().view(-1)
-            prev_cpu = prev_tensor.view(-1)
-            diff_mask = cur_cpu.ne(prev_cpu)
-            indices = diff_mask.nonzero(as_tuple=True)[0]
-            if indices.numel() > 0:
-              delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous()
-              delta_tensors[f"{name}.values"] = cur_cpu[diff_mask].contiguous()
-              total_changed += int(indices.numel())
-              self._update_prev_cpu_weight(name, param, indices, delta_tensors[f"{name}.values"])
-          elif diffing_device == "benchmark":
-            cur_cpu = param.data.detach().cpu().view(-1)
-            prev_cpu = prev_tensor.view(-1)
-            cpu_mask = cur_cpu.ne(prev_cpu)
-            cpu_indices = cpu_mask.nonzero(as_tuple=True)[0]
-            cpu_values = cur_cpu[cpu_mask].contiguous()
+        prev_tensor = self._get_prev_cpu_weight(name, param)
+        if prev_tensor is None:
+          cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=torch.cuda.is_available())
+          cpu_buf.copy_(cur_t, non_blocking=True)
+          self._param_shadow[param] = (cur_t.device, cpu_buf)
+          prev_tensor = cpu_buf
 
-            prev_gpu = prev_tensor.to(param.device).view(-1)
-            flat_param = param.data.view(-1)
-            gpu_mask = flat_param.ne(prev_gpu)
-            gpu_indices = gpu_mask.nonzero(as_tuple=True)[0].cpu()
-            gpu_values = flat_param[gpu_mask].contiguous().cpu()
+        prev_gpu = prev_tensor.to(cur_t.device, non_blocking=True)
+        diff_mask = cur_t.view(-1).ne(prev_gpu.view(-1))
+        indices = diff_mask.nonzero(as_tuple=True)[0]
+        if indices.numel() > 0:
+          idx_cpu = indices.to(torch.int32).contiguous().cpu()
+          val_cpu = cur_t.view(-1)[diff_mask].contiguous().cpu()
+          layer_names_list.append(name)
+          indices_list.append(idx_cpu)
+          values_list.append(val_cpu)
+          layer_lengths_list.append(int(idx_cpu.numel()))
+          total_changed += int(idx_cpu.numel())
+          self._update_prev_cpu_weight(name, param, idx_cpu, val_cpu)
+        total_elements += int(cur_t.numel())
+        del prev_gpu, diff_mask, indices
 
-            assert torch.equal(cpu_indices, gpu_indices), f"Diffing mismatch on indices for {name}"
-            assert torch.equal(cpu_values, gpu_values), f"Diffing mismatch on values for {name}"
+    if indices_list:
+      indices_flat = torch.cat(indices_list).to(torch.int32).contiguous()
+      values_flat = torch.cat(values_list).contiguous()
+    else:
+      indices_flat = torch.empty(0, dtype=torch.int32, device="cpu")
+      values_flat = torch.empty(0, dtype=torch.float32, device="cpu")
 
-            if cpu_indices.numel() > 0:
-              delta_tensors[f"{name}.indices"] = cpu_indices.to(torch.int32).contiguous()
-              delta_tensors[f"{name}.values"] = cpu_values
-              total_changed += int(cpu_indices.numel())
-              self._update_prev_cpu_weight(name, param, cpu_indices, delta_tensors[f"{name}.values"])
-          else:
-            prev_data = self._prev_weights_shadow[name].to(param.device)
-            flat_param = param.data.view(-1)
-            flat_prev = prev_data.view(-1)
-            diff_mask = flat_param.ne(flat_prev)
-            indices = diff_mask.nonzero(as_tuple=True)[0]
-            if indices.numel() > 0:
-              delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
-              delta_tensors[f"{name}.values"] = flat_param[diff_mask].contiguous().cpu()
-              total_changed += int(indices.numel())
-              self._prev_weights_shadow[name].view(-1)[indices.to(torch.int64).cpu()] = delta_tensors[f"{name}.values"]
+    layer_lengths_tensor = torch.tensor(layer_lengths_list, dtype=torch.int64, device="cpu")
+    packed_delta = {
+      "delta.indices_flat": indices_flat,
+      "delta.values_flat": values_flat,
+      "delta.layer_lengths": layer_lengths_tensor,
+    }
 
-          total_elements += int(param.numel())
-    finally:
-      if diffing_device != "cpu":
-        self._cleanup_after_save(was_offloaded)
+    t_collect_end = time.perf_counter()
+    collect_time = t_collect_end - t_collect_start
 
     import safetensors.torch
 
     delta_path = os.path.join(state_path, "delta.safetensors")
-    safetensors.torch.save_file(delta_tensors, delta_path)
+    t_save_start = time.perf_counter()
+    safetensors.torch.save_file(
+      packed_delta,
+      delta_path,
+      metadata={"layer_names": json.dumps(layer_names_list)},
+    )
+    t_save_end = time.perf_counter()
+    save_file_time = t_save_end - t_save_start
+
+    logger.info(
+      f"[SAVE_STATE_DELTA] model_id={model_id} kind={kind} | "
+      f"collect_time={collect_time:.4f}s | "
+      f"safetensors_save_time={save_file_time:.4f}s | "
+      f"total_delta_save_time={collect_time + save_file_time:.4f}s | "
+      f"changed={total_changed}/{total_elements} ({100.0 * total_changed / max(1, total_elements):.2f}%) across {len(layer_names_list)} layers"
+    )
 
     metadata = {
       "base_model": self.base_model_name,
@@ -325,6 +309,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
       "model_id": model_id,
       "changed_elements": total_changed,
       "total_elements": total_elements,
+      "layer_names": layer_names_list,
       "density_pct": round(100.0 * total_changed / max(1, total_elements), 3),
       "timestamp": time.time(),
     }
@@ -403,63 +388,85 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if max_grad_norm <= 0.0:
       max_grad_norm = math.inf
 
+    t_clip_start = time.perf_counter()
     total_norm = torch.nn.utils.clip_grad_norm_(
       self.trainable_params,
       max_grad_norm,
     )
+    t_clip_end = time.perf_counter()
+    clip_time = t_clip_end - t_clip_start
 
+    t_step_start = time.perf_counter()
     self.optimizer.step()
     self.optimizer.zero_grad()
+    t_step_end = time.perf_counter()
+    step_time = t_step_end - t_step_start
 
+    delta_compute_time = 0.0
     if self.weight_sync_strategy == "delta" and self.model is not None and hasattr(self.model, "named_parameters"):
-      diffing_device = os.getenv("OPEN_RL_DIFFING_DEVICE", "cpu").lower()
+      t_delta_start = time.perf_counter()
       self._latest_delta_tensors.clear()
       self._latest_total_changed = 0
       self._latest_total_elements = 0
+
+      layer_names_list: list[str] = []
+      indices_list: list[torch.Tensor] = []
+      values_list: list[torch.Tensor] = []
+      layer_lengths_list: list[int] = []
 
       for name, param in self.model.named_parameters():
         if not param.requires_grad:
           continue
         prev_tensor = self._get_prev_cpu_weight(name, param, for_optim_step=True)
         if prev_tensor is None:
-          if self.cpu_offload:
-            cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=True)
-            cpu_buf.copy_(param.data, non_blocking=True)
-            self._param_shadow[param] = (param.device, cpu_buf)
-            prev_tensor = cpu_buf
-          else:
-            self._prev_weights_shadow[name] = param.data.detach().cpu().clone()
-            prev_tensor = self._prev_weights_shadow[name]
+          cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=torch.cuda.is_available())
+          cpu_buf.copy_(param.data, non_blocking=True)
+          self._param_shadow[param] = (param.device, cpu_buf)
+          prev_tensor = cpu_buf
 
-        if diffing_device == "cpu":
-          cur_cpu = param.data.detach().cpu().view(-1)
-          prev_cpu = prev_tensor.view(-1)
-          diff_mask = cur_cpu.ne(prev_cpu)
-          indices = diff_mask.nonzero(as_tuple=True)[0]
-          if indices.numel() > 0:
-            self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous()
-            self._latest_delta_tensors[f"{name}.values"] = cur_cpu[diff_mask].contiguous()
-            self._latest_total_changed += int(indices.numel())
-            self._update_prev_cpu_weight(name, param, indices, self._latest_delta_tensors[f"{name}.values"], for_optim_step=True)
-        else:
-          if param in self._param_shadow and self._param_shadow[param][1].shape == param.shape:
-            prev_gpu = self._param_shadow[param][1].to(param.device, non_blocking=True)
-          elif name in self._prev_weights_shadow:
-            prev_gpu = self._prev_weights_shadow[name].to(param.device, non_blocking=True)
-          else:
-            prev_gpu = prev_tensor.to(param.device, non_blocking=True)
-          diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
-          indices = diff_mask.nonzero(as_tuple=True)[0]
-          if indices.numel() > 0:
-            self._latest_delta_tensors[f"{name}.indices"] = indices.to(torch.int32).contiguous().cpu()
-            self._latest_delta_tensors[f"{name}.values"] = param.data.view(-1)[diff_mask].contiguous().cpu()
-            self._latest_total_changed += int(indices.numel())
-            self._update_prev_cpu_weight(name, param, indices, self._latest_delta_tensors[f"{name}.values"], for_optim_step=True)
+        prev_gpu = prev_tensor.to(param.device, non_blocking=True)
+
+        diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
+        indices = diff_mask.nonzero(as_tuple=True)[0]
+        if indices.numel() > 0:
+          idx_cpu = indices.to(torch.int32).contiguous().cpu()
+          val_cpu = param.data.view(-1)[diff_mask].contiguous().cpu()
+          layer_names_list.append(name)
+          indices_list.append(idx_cpu)
+          values_list.append(val_cpu)
+          layer_lengths_list.append(int(idx_cpu.numel()))
+          self._latest_total_changed += int(idx_cpu.numel())
+          self._update_prev_cpu_weight(name, param, idx_cpu, val_cpu, for_optim_step=True)
         self._latest_total_elements += int(param.numel())
+        del prev_gpu, diff_mask, indices
+
+      self._latest_delta_tensors = {
+        "names": layer_names_list,
+        "indices_list": indices_list,
+        "values_list": values_list,
+        "layer_lengths_list": layer_lengths_list,
+      }
+
+      t_delta_end = time.perf_counter()
+      delta_compute_time = t_delta_end - t_delta_start
+      logger.info(
+        f"[OPTIM_STEP] model_id={model_id} | delta_compute_time={delta_compute_time:.4f}s | "
+        f"changed={self._latest_total_changed}/{self._latest_total_elements} "
+        f"({100.0 * self._latest_total_changed / max(1, self._latest_total_elements):.2f}%) across {len(layer_names_list)} layers"
+      )
+
+    logger.info(
+      f"[OPTIM_STEP] model_id={model_id} | clip_grad_time={clip_time:.4f}s | "
+      f"optimizer_step_time={step_time:.4f}s | delta_compute_time={delta_compute_time:.4f}s | "
+      f"total_optim_time={clip_time + step_time + delta_compute_time:.4f}s"
+    )
 
     return {
       "metrics": {
         "grad_norm:mean": self.sanitize_float(total_norm.item()),
+        "time/compute_delta_diff": self.sanitize_float(delta_compute_time),
+        "time/optimizer_step": self.sanitize_float(step_time),
+        "time/clip_grad_norm": self.sanitize_float(clip_time),
       },
     }
 
@@ -487,7 +494,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
         if tensor in self._param_shadow and self._param_shadow[tensor][1].shape == tensor.shape:
           cpu_buf = self._param_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=True)
+          cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=torch.cuda.is_available())
           self._param_shadow[tensor] = (orig_device, cpu_buf)
         cpu_buf.copy_(tensor.data, non_blocking=True)
       if isinstance(tensor, torch.nn.Parameter) and tensor.grad is not None and tensor.grad.device.type == "cuda":
@@ -495,7 +502,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
         if tensor in self._grad_shadow and self._grad_shadow[tensor][1].shape == tensor.grad.shape:
           cpu_buf = self._grad_shadow[tensor][1]
         else:
-          cpu_buf = torch.empty(tensor.grad.shape, dtype=tensor.grad.dtype, device="cpu", pin_memory=True)
+          cpu_buf = torch.empty(tensor.grad.shape, dtype=tensor.grad.dtype, device="cpu", pin_memory=torch.cuda.is_available())
           self._grad_shadow[tensor] = (orig_device, cpu_buf)
         cpu_buf.copy_(tensor.grad.data, non_blocking=True)
 
@@ -509,7 +516,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
               if opt_key in self._opt_shadow and self._opt_shadow[opt_key][1].shape == v.shape:
                 cpu_buf = self._opt_shadow[opt_key][1]
               else:
-                cpu_buf = torch.empty(v.shape, dtype=v.dtype, device="cpu", pin_memory=True)
+                cpu_buf = torch.empty(v.shape, dtype=v.dtype, device="cpu", pin_memory=torch.cuda.is_available())
                 self._opt_shadow[opt_key] = (orig_device, cpu_buf)
               cpu_buf.copy_(v, non_blocking=True)
 

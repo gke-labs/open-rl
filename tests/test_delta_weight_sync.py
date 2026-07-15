@@ -33,7 +33,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
     worker.model = SimpleModel()
 
     # Initialize shadow with base weights W0
-    worker._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in worker.model.named_parameters() if param.requires_grad}
+    worker._param_shadow = {param: (param.device, param.data.detach().cpu().clone()) for param in worker.model.parameters() if param.requires_grad}
 
     # Simulate an Adam update where 2 out of 100 elements change (2% sparsity)
     orig_w0 = worker.model.fc.weight.data.clone()
@@ -59,15 +59,15 @@ class DeltaWeightSyncTest(unittest.TestCase):
 
     sparse_delta = safetensors.torch.load_file(delta_file)
 
-    self.assertIn("fc.weight.indices", sparse_delta)
-    self.assertIn("fc.weight.values", sparse_delta)
-    self.assertEqual(sparse_delta["fc.weight.indices"].numel(), 2)
-    self.assertEqual(sparse_delta["fc.weight.indices"].dtype, torch.int32)
+    self.assertIn("delta.indices_flat", sparse_delta)
+    self.assertIn("delta.values_flat", sparse_delta)
+    self.assertEqual(sparse_delta["delta.indices_flat"].numel(), 2)
+    self.assertEqual(sparse_delta["delta.indices_flat"].dtype, torch.int32)
 
     # 3. Verify Lossless Selective Overwrite reproduces exact target W1
     simulated_sampler_weight = orig_w0.clone()
-    indices = sparse_delta["fc.weight.indices"]
-    values = sparse_delta["fc.weight.values"]
+    indices = sparse_delta["delta.indices_flat"]
+    values = sparse_delta["delta.values_flat"]
     simulated_sampler_weight.view(-1)[indices.to(torch.int64)] = values
 
     self.assertTrue(
@@ -77,7 +77,7 @@ class DeltaWeightSyncTest(unittest.TestCase):
 
     # 4. Verify worker's CPU shadow was updated to W1 so next step diffs correctly
     self.assertTrue(
-      torch.equal(worker._prev_weights_shadow["fc.weight"], worker.model.fc.weight.data.cpu()),
+      torch.equal(worker._param_shadow[worker.model.fc.weight][1], worker.model.fc.weight.data.cpu()),
       "Worker shadow must be updated after delta save",
     )
 
@@ -89,26 +89,34 @@ class DeltaWeightSyncTest(unittest.TestCase):
     with self.assertRaises(ValueError):
       worker.set_weight_sync_strategy("invalid_strategy")
 
-  def test_save_state_delta_with_cpu_diffing_and_offloading(self):
-    """Test that save_state_delta(diffing_device='cpu') succeeds cleanly when model is offloaded (_is_offloaded=True and param.data size 0)."""
+  def test_save_state_delta_with_offloading(self):
+    """Test that save_state_delta() succeeds cleanly when model is offloaded (_is_offloaded=True and param.data size 0)."""
     worker = FFTTrainingWorker()
     worker.base_model_name = "test-offload-model"
     worker.model = SimpleModel()
 
     # Initialize shadow with base weights W0
-    worker._prev_weights_shadow = {name: param.data.detach().cpu().clone() for name, param in worker.model.named_parameters() if param.requires_grad}
+    worker._param_shadow = {param: (param.device, param.data.detach().cpu().clone()) for param in worker.model.parameters() if param.requires_grad}
 
-    # Simulate active weight modification W1 stored in pinned CPU shadow buffer during offloading
+    # Simulate what optim_step() produces on GPU before offload_to_cpu() moves weights and sets _is_offloaded=True
     w1_fc = worker.model.fc.weight.data.detach().cpu().clone()
     w1_fc[1, 1] = 77.7
     worker._param_shadow[worker.model.fc.weight] = (torch.device("cuda" if torch.cuda.is_available() else "cpu"), w1_fc)
+    worker._latest_delta_tensors = {
+      "names": ["fc.weight"],
+      "indices_list": [torch.tensor([1 * 10 + 1], dtype=torch.int32)],
+      "values_list": [torch.tensor([77.7], dtype=torch.float32)],
+      "layer_lengths_list": [1],
+    }
+    worker._latest_total_changed = 1
+    worker._latest_total_elements = 100
 
     # Simulate offload state where GPU param.data is set to 0-size tensor
     worker._is_offloaded = True
     worker.model.fc.weight.data = torch.empty(0, dtype=worker.model.fc.weight.dtype, device="cpu")
 
     state_path = os.path.join(self.test_dir, "step_offload")
-    worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler", diffing_device="cpu")
+    worker.save_state_delta(model_id="test-model", state_path=state_path, kind="sampler")
 
     # Verify that delta.safetensors was cleanly saved from offloaded CPU buffer
     delta_file = os.path.join(state_path, "delta.safetensors")
@@ -116,9 +124,9 @@ class DeltaWeightSyncTest(unittest.TestCase):
     import safetensors.torch
 
     sparse_delta = safetensors.torch.load_file(delta_file)
-    self.assertIn("fc.weight.indices", sparse_delta)
-    self.assertEqual(sparse_delta["fc.weight.indices"].numel(), 1)
-    self.assertAlmostEqual(sparse_delta["fc.weight.values"][0].item(), 77.7, places=4)
+    self.assertIn("delta.indices_flat", sparse_delta)
+    self.assertEqual(sparse_delta["delta.indices_flat"].numel(), 1)
+    self.assertAlmostEqual(sparse_delta["delta.values_flat"][0].item(), 77.7, places=4)
 
 
 if __name__ == "__main__":

@@ -10,4 +10,4 @@ resources:
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.1.75
+    newTag: 0.1.85

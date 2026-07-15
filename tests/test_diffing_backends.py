@@ -17,7 +17,7 @@ class DummyModel(nn.Module):
     self.fc2 = nn.Linear(16, 16, bias=False)
 
 
-class TestDiffingBackends(unittest.TestCase):
+class TestUniversalStreamedDiffing(unittest.TestCase):
   def setUp(self):
     self.temp_dir = tempfile.mkdtemp()
     self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
@@ -25,14 +25,14 @@ class TestDiffingBackends(unittest.TestCase):
   def tearDown(self):
     shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-  def _create_worker_and_modify(self) -> tuple[FFTTrainingWorker, dict[str, torch.Tensor]]:
+  def _create_worker_and_modify(self) -> FFTTrainingWorker:
     torch.manual_seed(42)
     model = DummyModel().to(self.device)
     worker = FFTTrainingWorker()
     worker.base_model_name = "dummy"
     worker.model = model
 
-    # Initialize shadow weights via first save step (0 changed elements expected on first call)
+    # Initialize shadow weights via first save step
     worker.save_state_delta("dummy", os.path.join(self.temp_dir, "init"), kind="sampler")
 
     # Modify specific elements
@@ -41,43 +41,31 @@ class TestDiffingBackends(unittest.TestCase):
       model.fc1.weight[3, 5] -= 0.75
       model.fc2.weight[2, 2] += 2.0
 
-    return worker, {
-      "fc1": model.fc1.weight.detach().cpu().clone(),
-      "fc2": model.fc2.weight.detach().cpu().clone(),
-    }
+    return worker
 
-  def test_cpu_gpu_and_benchmark_backends_equivalence(self):
-    """Verifies CPU, GPU, and Benchmark backends produce 100% identical sparse deltas."""
-    worker_gpu, _ = self._create_worker_and_modify()
-    gpu_dir = os.path.join(self.temp_dir, "save_gpu")
-    gpu_meta = worker_gpu.save_state_delta("dummy", gpu_dir, kind="sampler", diffing_device="gpu")
+  def test_streamed_diffing_standalone_vs_optim_step_equivalence(self):
+    """Verifies standalone save_state_delta and optim_step + save_state_delta produce identical 1D Flat Packed deltas."""
+    worker_standalone = self._create_worker_and_modify()
+    standalone_dir = os.path.join(self.temp_dir, "save_standalone")
+    meta_standalone = worker_standalone.save_state_delta("dummy", standalone_dir, kind="sampler")
 
-    worker_cpu, _ = self._create_worker_and_modify()
-    cpu_dir = os.path.join(self.temp_dir, "save_cpu")
-    cpu_meta = worker_cpu.save_state_delta("dummy", cpu_dir, kind="sampler", diffing_device="cpu")
+    worker_optim = self._create_worker_and_modify()
+    worker_optim.weight_sync_strategy = "delta"
+    worker_optim.optim_step({})
+    optim_dir = os.path.join(self.temp_dir, "save_optim")
+    meta_optim = worker_optim.save_state_delta("dummy", optim_dir, kind="sampler")
 
-    worker_bench, _ = self._create_worker_and_modify()
-    bench_dir = os.path.join(self.temp_dir, "save_bench")
-    bench_meta = worker_bench.save_state_delta("dummy", bench_dir, kind="sampler", diffing_device="benchmark")
+    self.assertEqual(meta_standalone["changed_elements"], meta_optim["changed_elements"])
+    self.assertEqual(meta_standalone["layer_names"], meta_optim["layer_names"])
 
-    # 1. Assert metadata match
-    self.assertEqual(gpu_meta["density_pct"], cpu_meta["density_pct"])
-    self.assertEqual(cpu_meta["density_pct"], bench_meta["density_pct"])
+    standalone_tensors = load_file(os.path.join(standalone_dir, "delta.safetensors"))
+    optim_tensors = load_file(os.path.join(optim_dir, "delta.safetensors"))
 
-    # 2. Assert saved delta.safetensors contain identical indices and values
-    gpu_tensors = load_file(os.path.join(gpu_dir, "delta.safetensors"))
-    cpu_tensors = load_file(os.path.join(cpu_dir, "delta.safetensors"))
-    bench_tensors = load_file(os.path.join(bench_dir, "delta.safetensors"))
-
-    self.assertEqual(set(gpu_tensors.keys()), set(cpu_tensors.keys()))
-    for key in gpu_tensors:
+    self.assertEqual(set(standalone_tensors.keys()), set(optim_tensors.keys()))
+    for key in standalone_tensors:
       self.assertTrue(
-        torch.equal(gpu_tensors[key], cpu_tensors[key]),
-        f"Mismatch on {key} between GPU and CPU backends",
-      )
-      self.assertTrue(
-        torch.equal(cpu_tensors[key], bench_tensors[key]),
-        f"Mismatch on {key} between CPU and Benchmark backends",
+        torch.equal(standalone_tensors[key], optim_tensors[key]),
+        f"Mismatch on {key} between standalone and optim_step diffing paths",
       )
 
 

@@ -200,29 +200,46 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         base_model = getattr(update_info, "base_model_path", "") or self._base_model
         self._ensure_cpu_snapshot(base_model, model)
 
-      # Extract modified parameter names from indices
-      changed_params = set()
-      for key in sparse_delta:
-        if key.endswith(".indices"):
-          changed_params.add(key[:-8])
+      meta_names: list[str] | None = None
+      if metadata_path and os.path.exists(metadata_path):
+        try:
+          with open(metadata_path) as f:
+            meta = json.load(f)
+          if "layer_names" in meta:
+            meta_names = json.loads(meta["layer_names"]) if isinstance(meta["layer_names"], str) else meta["layer_names"]
+        except Exception:
+          pass
 
-      if len(changed_params) == 0:
+      if meta_names is None:
+        raise ValueError("Missing 'layer_names' metadata in sparse delta directory.")
+
+      indices_flat = sparse_delta["delta.indices_flat"].to(torch.int64)
+      values_flat = sparse_delta["delta.values_flat"]
+      layer_lengths = sparse_delta["delta.layer_lengths"].tolist()
+
+      if len(meta_names) != len(layer_lengths):
+        raise ValueError(f"Mismatch between layer_names ({len(meta_names)}) and layer_lengths ({len(layer_lengths)}) in sparse delta.")
+
+      if len(meta_names) == 0 or sum(layer_lengths) == 0 or indices_flat.numel() == 0:
         self.current_weights_path = target_path
         print("[DeltaSnapshotEngine] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
         return
 
-      # Apply sparse coordinate values to in-memory CPU tensors
       t0_apply = time.perf_counter()
-      for name in changed_params:
+      split_indices = torch.split(indices_flat, layer_lengths)
+      split_values = torch.split(values_flat, layer_lengths)
+
+      for i, name in enumerate(meta_names):
         if name not in self._cpu_snapshot:
           raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot.")
-        indices = sparse_delta[f"{name}.indices"].to(torch.int64)
-        values = sparse_delta[f"{name}.values"]
         snap_flat = self._cpu_snapshot[name].view(-1)
-        snap_flat[indices] = values
+        snap_flat[split_indices[i]] = split_values[i]
 
       t_apply_ms = (time.perf_counter() - t0_apply) * 1000.0
-      print(f"[DeltaSnapshotEngine] Applied sparse delta ({len(changed_params)} tensors) to CPU snapshot in {t_apply_ms:.2f} ms")
+      print(
+        f"[DeltaSnapshotEngine] Applied packed 1D sparse delta ({len(meta_names)} layers, "
+        f"{indices_flat.numel()} total elements) to CPU snapshot in {t_apply_ms:.2f} ms"
+      )
 
       weights_to_load = list(self._cpu_snapshot.items())
     else:

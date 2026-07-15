@@ -33,7 +33,6 @@ class WorkerManager(Protocol):
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     """Ensure the model's worker exists; idempotent per model_id."""
     ...
@@ -43,7 +42,6 @@ class WorkerManager(Protocol):
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     """Ensure the trainer worker exists."""
     ...
@@ -53,7 +51,6 @@ class WorkerManager(Protocol):
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     """Ensure the sampler worker exists."""
     ...
@@ -81,16 +78,14 @@ class FFTWorkerManager:
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
-    self.launch_trainer(model_id, base_model, weight_sync_strategy=weight_sync_strategy, diffing_device=diffing_device)
+    self.launch_trainer(model_id, base_model, weight_sync_strategy=weight_sync_strategy)
 
   def launch_trainer(
     self,
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     proc = self.train_processes.get(model_id)
     if proc is not None and proc.poll() is None:
@@ -106,8 +101,6 @@ class FFTWorkerManager:
       env["BASE_MODEL"] = base_model
     if weight_sync_strategy:
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
-    if diffing_device:
-      env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
@@ -120,7 +113,6 @@ class FFTWorkerManager:
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     proc = self.sampler_processes.get(model_id)
     if proc is not None and proc.poll() is None:
@@ -137,8 +129,6 @@ class FFTWorkerManager:
       sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
       if weight_sync_strategy:
         sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
-      if diffing_device:
-        sampler_env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu

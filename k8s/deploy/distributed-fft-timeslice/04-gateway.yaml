@@ -70,6 +70,8 @@ spec:
           value: "/etc/open-rl/sampler/sampler-worker-pod.yaml"
         - name: OPEN_RL_WORKER_POD_TEMPLATE
           value: "/etc/open-rl/trainer/trainer-worker-pod.yaml"
+        - name: OPEN_RL_WORKER_IMAGE
+          value: "ghcr.io/gke-labs/open-rl/server:latest"
         resources:
           limits:
             memory: "2Gi"

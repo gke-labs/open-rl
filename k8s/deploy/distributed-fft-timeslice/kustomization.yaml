@@ -28,7 +28,19 @@ configMapGenerator:
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.1.75
+    newTag: 0.1.85
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.1.75
+    newTag: 0.1.85
+
+replacements:
+  - source:
+      kind: DaemonSet
+      name: open-rl-accel-timeslicer
+      fieldPath: spec.template.spec.containers.[name=accel-timeslicer].image
+    targets:
+      - select:
+          kind: Deployment
+          name: open-rl-gateway
+        fieldPaths:
+          - spec.template.spec.containers.[name=gateway].env.[name=OPEN_RL_WORKER_IMAGE].value

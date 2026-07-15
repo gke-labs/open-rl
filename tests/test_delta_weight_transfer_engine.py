@@ -146,14 +146,15 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
     from safetensors.torch import save_file
 
     with tempfile.TemporaryDirectory() as tmpdir:
-      # Create metadata specifying sparse_delta format
+      # Create metadata specifying sparse_delta format and layer_names
       with open(os.path.join(tmpdir, "metadata.json"), "w") as f:
-        json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
+        json.dump({"format": "sparse_delta", "changed_elements": 1, "layer_names": ["layer.0.weight"]}, f)
 
-      # Create sparse coordinate arrays in delta.safetensors
+      # Create sparse coordinate arrays in 1D flat packed format
       sparse_dict = {
-        "layer.0.weight.indices": torch.tensor([5], dtype=torch.int32),
-        "layer.0.weight.values": torch.tensor([99.0], dtype=torch.float32),
+        "delta.indices_flat": torch.tensor([5], dtype=torch.int32),
+        "delta.values_flat": torch.tensor([99.0], dtype=torch.float32),
+        "delta.layer_lengths": torch.tensor([1], dtype=torch.int64),
       }
       save_file(sparse_dict, os.path.join(tmpdir, "delta.safetensors"))
 

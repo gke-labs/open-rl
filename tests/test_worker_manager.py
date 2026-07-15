@@ -34,7 +34,6 @@ class WorkerManagerStub:
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
     self.launched_model_ids.append(model_id)
     if self.error is not None:
@@ -45,18 +44,16 @@ class WorkerManagerStub:
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
-    self.launch(model_id, base_model, weight_sync_strategy, diffing_device)
+    self.launch(model_id, base_model, weight_sync_strategy)
 
   def launch_sampler(
     self,
     model_id: str,
     base_model: str | None = None,
     weight_sync_strategy: str | None = None,
-    diffing_device: str | None = None,
   ) -> None:
-    self.launch(model_id, base_model, weight_sync_strategy, diffing_device)
+    self.launch(model_id, base_model, weight_sync_strategy)
 
   def shutdown(self, model_id: str) -> None:
     self.shutdown_model_ids.append(model_id)

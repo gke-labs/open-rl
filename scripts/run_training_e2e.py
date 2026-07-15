@@ -88,7 +88,6 @@ class RunConfig:
   eval_examples: int = 100
   min_accuracy: float = 0.05
   weight_sync_strategy: str = ""
-  diffing: str = ""
   extra: str = ""
   host: str = "127.0.0.1"
   port: int | None = None
@@ -322,11 +321,7 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
 
 def clean_cli_extra(extra: str) -> list[str]:
   """Filter out open-rl specific weight_sync_strategy/diffing key-value options from CLI extras."""
-  return [
-    token
-    for token in shlex.split(extra)
-    if not (token.startswith("weight_sync_strategy=") or token.startswith("diffing=") or token.startswith("jitter_sec="))
-  ]
+  return [token for token in shlex.split(extra) if not (token.startswith("weight_sync_strategy=") or token.startswith("jitter_sec="))]
 
 
 def examples_env(config: RunConfig) -> dict[str, str]:
@@ -337,12 +332,8 @@ def examples_env(config: RunConfig) -> dict[str, str]:
   for token in shlex.split(config.extra):
     if token.startswith("weight_sync_strategy="):
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
-    elif token.startswith("diffing="):
-      env["OPEN_RL_DIFFING_DEVICE"] = token.split("=", 1)[1]
   if config.weight_sync_strategy:
     env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
-  if config.diffing:
-    env["OPEN_RL_DIFFING_DEVICE"] = config.diffing
   # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
   # and recipes.* cleanly. We deliberately do NOT set UV_PROJECT_ENVIRONMENT
   # here so that container runs utilize the pre-built /app/examples/.venv
@@ -705,72 +696,6 @@ def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[Manage
   check_snapshot_interleaving(config)
 
 
-def run_gsm8k_rl_x2_diffing_compare(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Concurrent side-by-side comparison of GPU Diffing (Job A) vs. Host-CPU Diffing (Job B) under delta weight sync."""
-  results: dict[str, str | BaseException] = {}
-  log_dir = Path(config.log_dir) / "fft_gsm8k_rl_diffing_compare"
-
-  def train(job: str, diffing_device: str) -> None:
-    job_log_dir = log_dir / job
-    steps = config.steps if config.steps is not None else 15
-    try:
-      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
-      args = [
-        "env=gsm8k",
-        f"model_name={config.base_model}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={steps}",
-        f"base_url={base_url}",
-        f"log_path={job_log_dir}",
-        f"group_size={config.group_size}",
-        f"groups_per_batch={config.groups_per_batch}",
-        f"max_tokens={config.max_tokens}",
-        "learning_rate=1e-5",
-        "temperature=1.0",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      env = examples_env(config)
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = "delta"
-      env["OPEN_RL_DIFFING_DEVICE"] = diffing_device
-      results[job] = run_command(
-        [
-          "uv",
-          "--project",
-          "examples",
-          "run",
-          "python",
-          "-m",
-          module_name,
-          *args,
-        ],
-        env=env,
-        watch=watch,
-        prefix=f"[{job.upper()} ({diffing_device.upper()} DIFFING)] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  threads = [
-    threading.Thread(target=train, args=("job-a", "gpu")),
-    threading.Thread(target=train, args=("job-b", "cpu")),
-  ]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-x2-diffing-compare {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-  check_snapshot_interleaving(config)
-
-
 def run_gsm8k_rl_x3(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Three concurrent FFT RL jobs against the same backend with startup jitter to stagger execution."""
   results: dict[str, str | BaseException] = {}
@@ -1050,8 +975,6 @@ def main() -> None:
       run_gsm8k_rl_x2(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2-compare":
       run_gsm8k_rl_x2_compare(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-x2-diffing-compare":
-      run_gsm8k_rl_x2_diffing_compare(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x3":
       run_gsm8k_rl_x3(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-hetero":

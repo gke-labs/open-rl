@@ -43,17 +43,16 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra gpu --extra vllm --extra cluster
 
+# Copy and apply third-party upstream patches BEFORE copying local code so .venv stays immutable
+COPY src/server/scripts/patch_vllm_*.py /app/src/server/scripts/
+RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py \
+    && uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
+
 # Copy source code
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --extra gpu --extra vllm --extra cluster
-
-# TODO: this is a hack until vllm is fixed upstream
-# Apply Gemma 4 LoRA deduplication patch
-RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
-# Apply Open-RL delta sync weight transfer config and factory patch
-RUN uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
+# Expose source directory via PYTHONPATH instead of re-running uv sync on .venv
+ENV PYTHONPATH="/app/src:/app:$PYTHONPATH"
 
 # Expose ports (Gateway: 8000, vLLM Worker: 8001)
 EXPOSE 8000
