@@ -25,10 +25,12 @@ from server.worker_manager import WorkerManager, create_fft_worker_manager
 
 @dataclass
 class TrainingModelMetadata:
-  base_model: str
+  base_model: str | None
   created_at: float
   training_kind: str
   weight_sync_strategy: str | None = None
+  full_config: dict[str, Any] | None = None
+  lora_config: dict[str, Any] | None = None
 
 
 store = get_store()
@@ -120,6 +122,43 @@ def is_sampler_weights_ref(model_id: str | None) -> bool:
   return len(parts) >= 3 and parts[1] == "sampler_weights"
 
 
+async def _extract_and_persist_model_metadata(
+  req: dict[str, Any],
+  request: Request | None = None,
+  default_training_kind: str = "full",
+) -> str:
+  """Extract and normalize model configuration from headers and payload, persisting TrainingModelMetadata exactly once."""
+  base_model = req.get("base_model")
+  if not base_model and default_training_kind != "restored":
+    raise ValueError("base_model is required in request payload")
+
+  full_config = dict(req.get("full_config") or {})
+  lora_config = dict(req.get("lora_config") or {})
+
+  weight_sync_strategy = None
+  training_kind = default_training_kind
+  if request and hasattr(request, "headers"):
+    weight_sync_strategy = request.headers.get("x-open-rl-weight-sync-strategy")
+    if "x-open-rl-training-kind" in request.headers:
+      training_kind = request.headers.get("x-open-rl-training-kind", default_training_kind)
+
+  if weight_sync_strategy in ("full", "delta"):
+    full_config["weight_sync_strategy"] = weight_sync_strategy
+
+  model_id = str(uuid.uuid4())
+  meta_obj = TrainingModelMetadata(
+    base_model=base_model,
+    created_at=time.time(),
+    training_kind=training_kind,
+    weight_sync_strategy=weight_sync_strategy,
+    full_config=full_config,
+    lora_config=lora_config,
+  )
+  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
+
+  return model_id
+
+
 def make_training_request(
   op: str,
   model_id: str | None,
@@ -156,22 +195,9 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   """
   assert fft_worker_manager is not None, "FFT worker manager is initialized by the app lifespan when FFT is enabled"
   request_id = request["request_id"]
-  base_model = request.get("payload", {}).get("base_model")
-  weight_sync_strategy = request.get("payload", {}).get("full_config", {}).get("weight_sync_strategy")
   await store.set_future(request_id, {"status": "pending"})
-  if base_model:
-    await store.set_value(
-      f"open_rl:model_meta:{request['model_id']}",
-      json.dumps({"base_model": base_model, "weight_sync_strategy": weight_sync_strategy}),
-    )
-    await store.set_value(f"open_rl:model_base:{request['model_id']}", base_model)
   try:
-    await asyncio.to_thread(
-      fft_worker_manager.launch_trainer,
-      request["model_id"],
-      base_model,
-      weight_sync_strategy=weight_sync_strategy,
-    )
+    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"])
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
@@ -179,28 +205,10 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   return await enqueue(request)
 
 
-async def ensure_sampler_launched(model_id: str, base_model: str | None = None) -> None:
+async def ensure_sampler_launched(model_id: str) -> None:
   if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
-    weight_sync_strategy = None
-    s = get_store()
-    val = await s.get_value(f"open_rl:model_meta:{model_id}") or await s.get_value(f"open_rl:model_base:{model_id}")
-    if val:
-      try:
-        meta = json.loads(val) if isinstance(val, str) else val
-        if isinstance(meta, dict):
-          if not base_model:
-            base_model = meta.get("base_model")
-          weight_sync_strategy = meta.get("weight_sync_strategy")
-      except Exception:
-        if not base_model and isinstance(val, str):
-          base_model = val
     try:
-      await asyncio.to_thread(
-        fft_worker_manager.launch_sampler,
-        model_id,
-        base_model,
-        weight_sync_strategy=weight_sync_strategy,
-      )
+      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id)
     except Exception:
       traceback.print_exc()
 
@@ -343,40 +351,15 @@ async def create_model(
   request: Request | None = Depends(_get_request),  # noqa: B008
 ) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
-  base_model = req.get("base_model")
-  if not base_model:
-    return JSONResponse(
-      status_code=400,
-      content={"error": "base_model is required in request payload"},
-    )
-  model_id = str(uuid.uuid4())
-  s = get_store()
-  full_config = dict(req.get("full_config") or {})
-  user_meta = dict(req.get("user_metadata") or {})
-  header_strategy = None
-  if request and hasattr(request, "headers"):
-    header_strategy = request.headers.get("x-open-rl-weight-sync-strategy")
-  weight_sync_strategy = (
-    header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
-  )
-  if weight_sync_strategy in ("full", "delta"):
-    full_config["weight_sync_strategy"] = weight_sync_strategy
-  meta_obj = TrainingModelMetadata(
-    base_model=base_model,
-    created_at=time.time(),
-    training_kind="full",
-    weight_sync_strategy=weight_sync_strategy,
-  )
-  await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
-  await s.set_value(f"open_rl:model_base:{model_id}", base_model)
+  try:
+    model_id = await _extract_and_persist_model_metadata(req, request, default_training_kind="full")
+  except ValueError as exc:
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+
   command = make_training_request(
     "create_model",
     model_id,
-    {
-      "base_model": base_model,
-      "lora_config": req.get("lora_config") or {},
-      "full_config": full_config,
-    },
+    {},
     request_id=model_id,
   )
   req_id = await launch_worker_and_enqueue(command) if is_fft_enabled() else await enqueue(command)
@@ -392,25 +375,26 @@ async def delete_model(req: dict):
     print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
     await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
-  await store.delete_values(f"open_rl:model_meta:{model_id}", f"open_rl:model_base:{model_id}")
+  await store.delete_values(f"open_rl:model_meta:{model_id}")
   return {"status": "ok"}
 
 
 @app.post("/api/v1/create_model_from_state")
-async def create_model_from_state(req: dict):
+async def create_model_from_state(
+  req: dict[str, Any],
+  request: Request | None = Depends(_get_request),  # noqa: B008
+) -> dict[str, Any]:
   """ServiceClient.create_training_client_from_state_async()"""
   state_path = req.get("state_path")
   if not state_path:
     return JSONResponse(status_code=400, content={"error": "state_path is required"})
   # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
   resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
-  model_id = str(uuid.uuid4())
-  base_model = req.get("base_model")
-  s = get_store()
-  if base_model:
-    meta_obj = TrainingModelMetadata(base_model=base_model, created_at=time.time(), training_kind="restored")
-    await s.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
-    await s.set_value(f"open_rl:model_base:{model_id}", base_model)
+  try:
+    model_id = await _extract_and_persist_model_metadata(req, request, default_training_kind="restored")
+  except ValueError as exc:
+    return JSONResponse(status_code=400, content={"error": str(exc)})
+
   command = make_training_request(
     "create_model_from_state",
     model_id,
@@ -620,7 +604,7 @@ async def create_sampling_session(req: dict):
 
   if get_sampler_backend() == "vllm" and target_model_id:
     if is_fft_enabled():
-      await ensure_sampler_launched(target_model_id, base_model)
+      await ensure_sampler_launched(target_model_id)
     s = get_store()
     if hasattr(s, "redis"):
       print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")

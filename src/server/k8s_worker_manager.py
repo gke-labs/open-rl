@@ -63,47 +63,16 @@ class KubernetesFFTWorkerManager:
       core_api = client.CoreV1Api()
     self.core_api = core_api
 
-  def launch(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self.launch_trainer(model_id, base_model, weight_sync_strategy=weight_sync_strategy)
+  def launch(self, model_id: str) -> None:
+    self.launch_trainer(model_id)
 
-  def launch_trainer(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self._launch_pod(
-      model_id,
-      role="trainer",
-      base_model=base_model,
-      weight_sync_strategy=weight_sync_strategy,
-    )
+  def launch_trainer(self, model_id: str) -> None:
+    self._launch_pod(model_id, role="trainer")
 
-  def launch_sampler(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self._launch_pod(
-      model_id,
-      role="sampler",
-      base_model=base_model,
-      weight_sync_strategy=weight_sync_strategy,
-    )
+  def launch_sampler(self, model_id: str) -> None:
+    self._launch_pod(model_id, role="sampler")
 
-  def _launch_pod(
-    self,
-    model_id: str,
-    role: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def _launch_pod(self, model_id: str, role: str) -> None:
     job_id = sanitize_job_id(model_id)
     prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
     pod_name = prefix + job_id
@@ -115,14 +84,7 @@ class KubernetesFFTWorkerManager:
       self.delete_pod_and_wait(pod_name)
 
     try:
-      pod_body = self.render_pod(
-        pod_name,
-        model_id,
-        job_id,
-        role=role,
-        base_model=base_model,
-        weight_sync_strategy=weight_sync_strategy,
-      )
+      pod_body = self.render_pod(pod_name, model_id, job_id, role=role)
       self.core_api.create_namespaced_pod(namespace=self.namespace, body=pod_body)
     except Exception as exc:
       if getattr(exc, "status", None) != 409:
@@ -147,9 +109,10 @@ class KubernetesFFTWorkerManager:
     model_id: str,
     job_id: str,
     role: str = "trainer",
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
   ) -> dict[str, Any]:
+    from server.worker_manager import _fetch_metadata_from_store
+
+    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
     base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
     pod = copy.deepcopy(base_tmpl)
     metadata = pod.setdefault("metadata", {})

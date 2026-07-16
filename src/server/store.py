@@ -68,6 +68,11 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
+  def get_value_sync(self, key: str) -> str | None:
+    """Synchronously fetch a string value by key."""
+    pass
+
+  @abstractmethod
   async def delete_values(self, *keys: str) -> None:
     """Delete one or more keys."""
     pass
@@ -163,6 +168,9 @@ class InMemoryStore(RequestStore):
   async def get_value(self, key: str) -> str | None:
     return self.kv_store.get(key)
 
+  def get_value_sync(self, key: str) -> str | None:
+    return self.kv_store.get(key)
+
   async def delete_values(self, *keys: str) -> None:
     for k in keys:
       self.kv_store.pop(k, None)
@@ -171,6 +179,9 @@ class InMemoryStore(RequestStore):
 class RedisStore(RequestStore):
   def __init__(self, redis_url: str):
     self.redis = redis.from_url(redis_url, decode_responses=True, health_check_interval=2)
+    import redis as sync_redis_mod
+
+    self.sync_redis = sync_redis_mod.Redis.from_url(redis_url, decode_responses=True)
     self.active_list = "open_rl:active_tenants"
     # We also keep a set to guarantee O(1) deduplication before RPushing
     self.active_set = "open_rl:active_tenants_set"
@@ -333,6 +344,12 @@ class RedisStore(RequestStore):
 
   async def get_value(self, key: str) -> str | None:
     return await self.redis.get(key)
+
+  def get_value_sync(self, key: str) -> str | None:
+    try:
+      return self.sync_redis.get(key)
+    except Exception:
+      return None
 
   async def delete_values(self, *keys: str) -> None:
     if keys:

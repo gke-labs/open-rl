@@ -27,31 +27,33 @@ def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
   return [sys.executable, "-u", "-m", module, "--model-id", model_id]
 
 
+def _fetch_metadata_from_store(model_id: str) -> tuple[str | None, str | None]:
+  """Retrieve base_model and weight_sync_strategy from canonical open_rl:model_meta:<model_id>."""
+  import json
+
+  from server.store import get_store
+
+  try:
+    val = get_store().get_value_sync(f"open_rl:model_meta:{model_id}")
+    if val:
+      meta = json.loads(val) if isinstance(val, str) else val
+      if isinstance(meta, dict):
+        return meta.get("base_model"), meta.get("weight_sync_strategy")
+  except Exception:
+    pass
+  return None, None
+
+
 class WorkerManager(Protocol):
-  def launch(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch(self, model_id: str) -> None:
     """Ensure the model's worker exists; idempotent per model_id."""
     ...
 
-  def launch_trainer(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch_trainer(self, model_id: str) -> None:
     """Ensure the trainer worker exists."""
     ...
 
-  def launch_sampler(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch_sampler(self, model_id: str) -> None:
     """Ensure the sampler worker exists."""
     ...
 
@@ -73,24 +75,15 @@ class FFTWorkerManager:
     self.train_processes: dict[str, subprocess.Popen] = {}
     self.sampler_processes: dict[str, subprocess.Popen] = {}
 
-  def launch(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self.launch_trainer(model_id, base_model, weight_sync_strategy=weight_sync_strategy)
+  def launch(self, model_id: str) -> None:
+    self.launch_trainer(model_id)
 
-  def launch_trainer(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch_trainer(self, model_id: str) -> None:
     proc = self.train_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
 
+    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
     env = {
       **os.environ,
       "OPEN_RL_ENABLE_FFT": "true",
@@ -108,16 +101,12 @@ class FFTWorkerManager:
       start_new_session=True,
     )
 
-  def launch_sampler(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch_sampler(self, model_id: str) -> None:
     proc = self.sampler_processes.get(model_id)
     if proc is not None and proc.poll() is None:
       return
 
+    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
     if base_model:
       env["BASE_MODEL"] = base_model

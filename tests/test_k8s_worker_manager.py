@@ -148,6 +148,35 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
     with self.assertRaises(_ApiError):
       self._manager(api).launch("model-a")
 
+  def test_launch_queries_model_metadata_for_pod_env(self) -> None:
+    import json
+
+    from server.store import InMemoryStore
+
+    s = InMemoryStore()
+    s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps(
+      {
+        "base_model": "gemma-4-k8s",
+        "weight_sync_strategy": "full",
+        "training_kind": "full",
+      }
+    )
+    api = _FakeCoreApi()
+
+    with patch("server.store.get_store", return_value=s):
+      self._manager(api).launch("Model_A.1")
+      self._manager(api).launch_sampler("Model_A.1")
+
+    trainer_container = api.created[0][1]["spec"]["containers"][0]
+    trainer_env = {item["name"]: item["value"] for item in trainer_container["env"] if "value" in item}
+    self.assertEqual(trainer_env.get("BASE_MODEL"), "gemma-4-k8s")
+    self.assertEqual(trainer_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
+
+    sampler_container = api.created[1][1]["spec"]["containers"][0]
+    sampler_env = {item["name"]: item["value"] for item in sampler_container["env"] if "value" in item}
+    self.assertEqual(sampler_env.get("BASE_MODEL"), "gemma-4-k8s")
+    self.assertEqual(sampler_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
+
   def test_requires_template_and_redis(self) -> None:
     with patch.dict(os.environ, {"REDIS_URL": "redis://r:6379"}, clear=True), self.assertRaisesRegex(RuntimeError, "POD_TEMPLATE"):
       KubernetesFFTWorkerManager(core_api=_FakeCoreApi())

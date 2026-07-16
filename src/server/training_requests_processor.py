@@ -116,6 +116,37 @@ class TrainingRequestsProcessor(Protocol):
   async def save_weights(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]: ...
 
 
+async def _fetch_model_meta(
+  store: RequestStore,
+  model_id: str,
+  payload: dict[str, Any],
+  default_kind: str = "full",
+) -> tuple[str, dict[str, Any], dict[str, Any], str]:
+  val = None
+  if hasattr(store, "get_value"):
+    try:
+      val = await store.get_value(f"open_rl:model_meta:{model_id}")
+    except Exception:
+      pass
+  if val:
+    try:
+      meta = json.loads(val) if isinstance(val, str) else val
+      if isinstance(meta, dict):
+        base_model = meta.get("base_model") or payload.get("base_model") or ""
+        full_config = meta.get("full_config") or payload.get("full_config") or {}
+        lora_config = meta.get("lora_config") or payload.get("lora_config") or {}
+        training_kind = meta.get("training_kind") or ("lora" if "lora_config" in meta or "lora_config" in payload else default_kind)
+        return base_model, full_config, lora_config, training_kind
+    except Exception:
+      pass
+  return (
+    payload.get("base_model", ""),
+    payload.get("full_config") or {},
+    payload.get("lora_config") or {},
+    "lora" if "lora_config" in payload or default_kind == "lora" else "full",
+  )
+
+
 class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
   def __init__(self, store: RequestStore, worker: LoraTrainingWorker):
     self.store = store
@@ -151,18 +182,19 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
         await self.process_request(request, model_id)
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    raw_config = payload.get("lora_config") or {}
+    base_model, _, raw_config, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
     lora_config = LoraConfig(**{k: v for k, v in raw_config.items() if k in LoraConfig.model_fields})
-    await asyncio.to_thread(self.worker.create_model, payload["base_model"], model_id, lora_config)
+    await asyncio.to_thread(self.worker.create_model, base_model, model_id, lora_config)
     return {
-      "base_model": payload["base_model"],
+      "base_model": base_model,
       "model_id": model_id,
       "rank": lora_config.rank,
-      "training_kind": "lora",
+      "training_kind": training_kind,
       "type": "model_created",
     }
 
   async def create_model_from_state(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
+    base_model, _, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
     result = await asyncio.to_thread(
       self.worker.load_from_state,
       model_id,
@@ -170,9 +202,9 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
       bool(payload.get("restore_optimizer", False)),
     )
     return {
-      "base_model": result.get("base_model"),
+      "base_model": result.get("base_model") or base_model,
       "model_id": result.get("model_id", model_id),
-      "training_kind": "lora",
+      "training_kind": training_kind,
       "type": "model_loaded_from_state",
     }
 
@@ -346,17 +378,18 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       await self.exit_gracefully()
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    raw_config = payload.get("full_config") or {}
+    base_model, raw_config, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
     full_config = FFTConfig(**{k: v for k, v in raw_config.items() if k in FFTConfig.model_fields})
-    await asyncio.to_thread(self.worker.create_model, payload["base_model"], model_id, full_config)
+    await asyncio.to_thread(self.worker.create_model, base_model, model_id, full_config)
     return {
-      "base_model": payload["base_model"],
+      "base_model": base_model,
       "model_id": model_id,
-      "training_kind": "full",
+      "training_kind": training_kind,
       "type": "model_created",
     }
 
   async def create_model_from_state(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
+    base_model, _, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
     result = await asyncio.to_thread(
       self.worker.load_from_state,
       model_id,
@@ -364,9 +397,9 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
       bool(payload.get("restore_optimizer", False)),
     )
     return {
-      "base_model": result.get("base_model"),
+      "base_model": result.get("base_model") or base_model,
       "model_id": result.get("model_id", model_id),
-      "training_kind": "full",
+      "training_kind": training_kind,
       "type": "model_loaded_from_state",
     }
 

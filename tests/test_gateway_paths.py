@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import tempfile
 import unittest
@@ -36,7 +37,9 @@ class GetInfoTest(unittest.TestCase):
     model_id = created["request_id"]
     queued = asyncio.run(gateway.store.get_requests())
     self.assertEqual(queued[0]["model_id"], model_id)
-    self.assertEqual(queued[0]["payload"]["base_model"], "my-model")
+    self.assertEqual(queued[0]["payload"], {})
+    meta = json.loads(gateway.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+    self.assertEqual(meta["base_model"], "my-model")
 
 
 class GatewayPathTest(unittest.TestCase):

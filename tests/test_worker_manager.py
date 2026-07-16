@@ -9,6 +9,7 @@ class StoreStub:
   def __init__(self):
     self.forwarded_requests = []
     self.futures = {}
+    self.kv_store = {}
 
   async def put_request(self, req_data: dict) -> None:
     self.forwarded_requests.append(req_data)
@@ -17,43 +18,35 @@ class StoreStub:
     self.futures[req_id] = result
 
   async def set_value(self, key: str, value: str) -> None:
-    pass
+    self.kv_store[key] = value
 
   async def get_value(self, key: str) -> str | None:
-    return None
+    return self.kv_store.get(key)
+
+  def get_value_sync(self, key: str) -> str | None:
+    return self.kv_store.get(key)
 
 
 class WorkerManagerStub:
   def __init__(self, error: Exception | None = None):
     self.error = error
     self.launched_model_ids = []
+    self.launched_trainer_model_ids = []
+    self.launched_sampler_model_ids = []
     self.shutdown_model_ids = []
 
-  def launch(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
+  def launch(self, model_id: str) -> None:
     self.launched_model_ids.append(model_id)
     if self.error is not None:
       raise self.error
 
-  def launch_trainer(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self.launch(model_id, base_model, weight_sync_strategy)
+  def launch_trainer(self, model_id: str) -> None:
+    self.launched_trainer_model_ids.append(model_id)
+    self.launch(model_id)
 
-  def launch_sampler(
-    self,
-    model_id: str,
-    base_model: str | None = None,
-    weight_sync_strategy: str | None = None,
-  ) -> None:
-    self.launch(model_id, base_model, weight_sync_strategy)
+  def launch_sampler(self, model_id: str) -> None:
+    self.launched_sampler_model_ids.append(model_id)
+    self.launch(model_id)
 
   def shutdown(self, model_id: str) -> None:
     self.shutdown_model_ids.append(model_id)
@@ -80,6 +73,8 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     gateway.fft_worker_manager = self.old_manager
 
   async def test_create_model_launches_worker_then_enqueues(self) -> None:
+    import json
+
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
       result = await gateway.create_model({"base_model": "base-model"})
 
@@ -89,7 +84,9 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     request = self.store.forwarded_requests[0]
     self.assertEqual(request["op"], "create_model")
     self.assertEqual(request["model_id"], model_id)
-    self.assertEqual(request["payload"]["base_model"], "base-model")
+    self.assertEqual(request["payload"], {})
+    meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+    self.assertEqual(meta["base_model"], "base-model")
 
   async def test_create_model_failed_launch_fails_future_and_enqueues_nothing(self) -> None:
     self.worker_manager.error = RuntimeError("boom")
@@ -103,13 +100,49 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(self.store.futures[model_id], {"type": "RequestFailedResponse", "error_message": "boom"})
 
   async def test_create_model_from_state_launches_worker_then_enqueues(self) -> None:
+    import json
+
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
-      result = await gateway.create_model_from_state({"state_path": "/tmp/checkpoint"})
+      result = await gateway.create_model_from_state(
+        {
+          "state_path": "/tmp/checkpoint",
+          "base_model": "restored-base",
+          "full_config": {"weight_sync_strategy": "delta"},
+          "restore_optimizer": True,
+        }
+      )
 
     model_id = result["request_id"]
     self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
     self.assertEqual(len(self.store.forwarded_requests), 1)
-    self.assertEqual(self.store.forwarded_requests[0]["op"], "create_model_from_state")
+    req_forwarded = self.store.forwarded_requests[0]
+    self.assertEqual(req_forwarded["op"], "create_model_from_state")
+    self.assertEqual(req_forwarded["payload"]["state_path"], "/tmp/checkpoint")
+    self.assertTrue(req_forwarded["payload"]["restore_optimizer"])
+
+    # Assert canonical metadata persistence:
+    meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+    self.assertEqual(meta["base_model"], "restored-base")
+    self.assertEqual(meta["training_kind"], "restored")
+    self.assertEqual(meta["full_config"]["weight_sync_strategy"], "delta")
+
+    # Assert no dual-key writing:
+    self.assertIsNone(self.store.get_value_sync(f"open_rl:model_base:{model_id}"))
+
+  async def test_ensure_sampler_launched_delegates_to_worker_manager_with_model_id(self) -> None:
+    import json
+
+    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}):
+      self.store.kv_store["open_rl:model_meta:model-x"] = json.dumps(
+        {
+          "base_model": "base-vllm",
+          "weight_sync_strategy": "delta",
+          "training_kind": "full",
+        }
+      )
+      await gateway.ensure_sampler_launched("model-x")
+
+    self.assertEqual(self.worker_manager.launched_sampler_model_ids, ["model-x"])
 
   async def test_create_model_without_fft_skips_launcher(self) -> None:
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "false"}):
@@ -159,6 +192,73 @@ class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(kwargs["env"]["OPEN_RL_MODEL_ID"], "Model_A.1")
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "sampler-Model_A.1")
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "samplers")
+
+  async def test_launch_fetches_metadata_from_store(self) -> None:
+    import json
+
+    from server.store import InMemoryStore
+
+    s = InMemoryStore()
+    s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps(
+      {
+        "base_model": "base-model-a",
+        "weight_sync_strategy": "delta",
+        "training_kind": "full",
+      }
+    )
+
+    with (
+      patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm"}, clear=True),
+      patch("server.store.get_store", return_value=s),
+      patch("server.worker_manager.subprocess.Popen") as popen,
+    ):
+      manager = FFTWorkerManager()
+      manager.launch_trainer("Model_A.1")
+      _, kwargs = popen.call_args
+      self.assertEqual(kwargs["env"].get("BASE_MODEL"), "base-model-a")
+      self.assertEqual(kwargs["env"].get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "delta")
+
+      manager.launch_sampler("Model_A.1")
+      _, kwargs_s = popen.call_args
+      self.assertEqual(kwargs_s["env"].get("BASE_MODEL"), "base-model-a")
+      self.assertEqual(kwargs_s["env"].get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "delta")
+
+
+class GatewayMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
+  def setUp(self) -> None:
+    self.store = StoreStub()
+    self.old_store = gateway.store
+    gateway.store = self.store
+    self.addCleanup(self._restore)
+
+  def _restore(self) -> None:
+    gateway.store = self.old_store
+
+  async def test_extract_and_persist_metadata_from_headers(self) -> None:
+    import json
+
+    from fastapi import Request
+
+    scope = {
+      "type": "http",
+      "headers": [
+        (b"x-open-rl-weight-sync-strategy", b"delta"),
+        (b"x-open-rl-training-kind", b"lora"),
+      ],
+    }
+    request = Request(scope)
+    model_id = await gateway._extract_and_persist_model_metadata(
+      {"base_model": "Qwen/Qwen2.5-0.5B"},
+      request,
+      default_training_kind="full",
+    )
+
+    meta_val = self.store.kv_store.get(f"open_rl:model_meta:{model_id}")
+    self.assertIsNotNone(meta_val)
+    meta_dict = json.loads(meta_val)
+    self.assertEqual(meta_dict["base_model"], "Qwen/Qwen2.5-0.5B")
+    self.assertEqual(meta_dict["training_kind"], "lora")
+    self.assertEqual(meta_dict["weight_sync_strategy"], "delta")
 
 
 class GatewayFutureTranslationTest(unittest.TestCase):

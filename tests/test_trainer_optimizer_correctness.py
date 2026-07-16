@@ -179,6 +179,12 @@ class _TrainingRequestsStoreStub(_FutureStoreStub):
       return self.batches.pop(0)
     raise asyncio.CancelledError()
 
+  async def get_value(self, key: str) -> str | None:
+    return None
+
+  def get_value_sync(self, key: str) -> str | None:
+    return None
+
 
 class _TimeSlicerStub:
   def __init__(self, events=None):
