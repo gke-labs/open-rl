@@ -105,6 +105,15 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       pass
     return tensor
 
+  def _store_tensor_with_aliases(self, name: str, tensor: torch.Tensor) -> None:
+    """Store tensor in CPU snapshot along with key variations (with/without 'model.' prefix)."""
+    t_data = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
+    self._cpu_snapshot[name] = t_data
+    if not name.startswith("model."):
+      self._cpu_snapshot[f"model.{name}"] = t_data
+    else:
+      self._cpu_snapshot[name[6:]] = t_data
+
   def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None) -> None:
     if self._cpu_snapshot:
       return
@@ -127,12 +136,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
         for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
           if not name.endswith(".indices") and "delta" not in name:
-            t_data = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
-            self._cpu_snapshot[name] = t_data
-            if not name.startswith("model."):
-              self._cpu_snapshot[f"model.{name}"] = t_data
-            elif name.startswith("model."):
-              self._cpu_snapshot[name[6:]] = t_data
+            self._store_tensor_with_aliases(name, tensor)
         if self._cpu_snapshot:
           elapsed = (time.perf_counter() - start_t) * 1000.0
           print(
@@ -146,26 +150,12 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     if model is not None:
       start_t = time.perf_counter()
-      for name, param in model.named_parameters():
-        real_t = self._get_real_tensor(model, name, param)
+      for name, item in list(model.named_parameters()) + list(model.named_buffers()):
+        real_t = self._get_real_tensor(model, name, item)
         if getattr(real_t, "is_meta", False) or getattr(real_t.data, "is_meta", False):
           continue
-        t_data = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-        self._cpu_snapshot[name] = t_data
-        if not name.startswith("model."):
-          self._cpu_snapshot[f"model.{name}"] = t_data
-        elif name.startswith("model."):
-          self._cpu_snapshot[name[6:]] = t_data
-      for name, buf in model.named_buffers():
-        real_t = self._get_real_tensor(model, name, buf)
-        if getattr(real_t, "is_meta", False) or getattr(real_t.data, "is_meta", False):
-          continue
-        t_data = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-        self._cpu_snapshot[name] = t_data
-        if not name.startswith("model."):
-          self._cpu_snapshot[f"model.{name}"] = t_data
-        elif name.startswith("model."):
-          self._cpu_snapshot[name[6:]] = t_data
+        self._store_tensor_with_aliases(name, real_t.data.cpu())
+
       if len(self._cpu_snapshot) > 50:
         elapsed = (time.perf_counter() - start_t) * 1000.0
         print(
@@ -185,6 +175,16 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   def start_weight_update(self) -> None:
     """Prepare for an upcoming weight update."""
     pass
+
+  def _resolve_target_key(self, name: str) -> str | None:
+    """Resolve key variations (with or without 'model.' prefix) in CPU snapshot."""
+    if name in self._cpu_snapshot:
+      return name
+    if name.startswith("model.") and name[6:] in self._cpu_snapshot:
+      return name[6:]
+    if f"model.{name}" in self._cpu_snapshot:
+      return f"model.{name}"
+    return None
 
   def receive_weights(
     self,
@@ -270,14 +270,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       split_values = torch.split(values_flat, layer_lengths)
 
       for i, name in enumerate(meta_names):
-        target_key = None
-        if name in self._cpu_snapshot:
-          target_key = name
-        elif name.startswith("model.") and name[6:] in self._cpu_snapshot:
-          target_key = name[6:]
-        elif f"model.{name}" in self._cpu_snapshot:
-          target_key = f"model.{name}"
-
+        target_key = self._resolve_target_key(name)
         if target_key is None:
           raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot (available keys: {len(self._cpu_snapshot)}).")
         snap_flat = self._cpu_snapshot[target_key].view(-1)
