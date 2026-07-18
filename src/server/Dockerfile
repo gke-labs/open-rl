@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA base image
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04
+# Use NVIDIA CUDA 12.9.0 devel base image for PyTorch/vLLM runtime compilation
+FROM nvidia/cuda:12.9.0-devel-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -13,6 +13,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
     build-essential \
+    python3-dev \
+    ninja-build \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -43,16 +45,20 @@ ENV UV_COMPILE_BYTECODE=1 \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra gpu --extra vllm --extra cluster
 
-# Copy and apply third-party upstream patches BEFORE copying local code so .venv stays immutable
-COPY src/server/scripts/patch_vllm_*.py /app/src/server/scripts/
-RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py \
-    && uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
-
 # Copy source code
 COPY . .
 
-# Expose source directory via PYTHONPATH instead of re-running uv sync on .venv
-ENV PYTHONPATH="/app/src:/app:$PYTHONPATH"
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra gpu --extra vllm --extra cluster
+
+# Apply vLLM patches (Gemma 4 LoRA dedup, GPU worker memory profiling, & delta weight transfer)
+RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py \
+    && uv run python /app/src/server/scripts/patch_vllm_gpu_worker.py \
+    && uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
+
+ENV PATH="/usr/local/cuda/bin:$PATH" \
+    CUDA_HOME="/usr/local/cuda" \
+    PYTHONPATH="/app/src:/app:$PYTHONPATH"
 
 # Expose ports (Gateway: 8000, vLLM Worker: 8001)
 EXPOSE 8000

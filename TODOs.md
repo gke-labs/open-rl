@@ -23,3 +23,6 @@
 ## 5. HuggingFace Hub Token (`HF_TOKEN`) Injection via Kubernetes Secret / ConfigMap
 - **Current Behavior:** Dynamically spawned `Trainer` and `Sampler` worker containers run without authentication (`user_id=public`), causing strict HuggingFace Hub CDN throttling (`403 Forbidden` / lengthy retry loops on `xet_client` during first-time model caching) and failing on gated models (`e.g., Gemma 2, Gemma 4, Llama 3`).
 - **Improvement:** Update `k8s_worker_manager.py` (`render_pod()`) and static Kubernetes manifests to inject an optional `open-rl-hf-secret` (`or ConfigMap via envFrom / set_env`) into all worker containers, ensuring authenticated, high-bandwidth model downloads without rate-limiting across multi-pod cluster setups.
+## 6. Dockerfile Layer Cache Optimization for Patch Scripts
+- **Current Behavior:** `src/server/Dockerfile` executes `patch_vllm_lora_dedup.py` and `sed` patching after `COPY . .`. Modifying local Python files invalidates the patch step cache, taking ~28s to re-verify during container rebuilds.
+- **Improvement:** Move `COPY src/server/scripts/patch_vllm_lora_dedup.py /tmp/` and third-party `.venv` site-packages patch steps before `COPY . .`. This keeps the patch layer cached across local source code edits and reduces local rebuild times to <3 seconds.

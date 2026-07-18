@@ -32,17 +32,20 @@ cpu = [
 ]
 gpu = [
     "datasets",
+    "flash-linear-attention==0.5.1",
     "numpy",
     "peft",
+    "tilelang>=0.1.9; sys_platform == 'linux'",
     "torch; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "transformers>=5.5.4",
 ]
 vllm = [
     "torch; sys_platform == 'linux'",
+    "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
-    "vllm==0.20.0; sys_platform == 'linux'",
+    "vllm==0.25.1; sys_platform == 'linux'",
 ]
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
@@ -94,7 +97,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "vllm-cu129"
-url = "https://wheels.vllm.ai/0.20.0/cu129"
+url = "https://wheels.vllm.ai/0.25.1/cu129"
 explicit = true
 
 [tool.uv.sources]
@@ -102,6 +105,9 @@ explicit = true
 torch = [
     { index = "torch-cpu", extra = "cpu" },
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
+    { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
+]
+torchaudio = [
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
 torchvision = [

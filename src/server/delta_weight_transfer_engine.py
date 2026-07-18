@@ -70,7 +70,10 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   update_info_cls = DeltaSnapshotUpdateInfo
 
   def __init__(self, *args, **kwargs) -> None:
-    super().__init__(*args, **kwargs)
+    try:
+      super().__init__(*args, **kwargs)
+    except TypeError:
+      pass
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
     self._base_model: str = os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
@@ -115,40 +118,69 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         safetensors_weights_iterator,
       )
 
-      if os.path.isdir(base_model):
-        hf_folder = base_model
-      else:
-        hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
+      try:
+        if os.path.isdir(base_model):
+          hf_folder = base_model
+        else:
+          hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
 
-      hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
-      for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
-        if not name.endswith(".indices") and "delta" not in name:
-          self._cpu_snapshot[name] = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
-      if self._cpu_snapshot:
-        elapsed = (time.perf_counter() - start_t) * 1000.0
-        print(
-          f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} "
-          f"HuggingFace tensors from base model '{base_model}' via vLLM weight iterator in {elapsed:.2f} ms."
-        )
-        return
+        hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
+        for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
+          if not name.endswith(".indices") and "delta" not in name:
+            t_data = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
+            self._cpu_snapshot[name] = t_data
+            if not name.startswith("model."):
+              self._cpu_snapshot[f"model.{name}"] = t_data
+            elif name.startswith("model."):
+              self._cpu_snapshot[name[6:]] = t_data
+        if self._cpu_snapshot:
+          elapsed = (time.perf_counter() - start_t) * 1000.0
+          print(
+            f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} tensors "
+            f"from HF base model '{base_model}' in {elapsed:.2f} ms."
+          )
+          return
+      except Exception as e:
+        print(f"[DeltaSnapshotEngine] Failed to load snapshot from base_model HF safetensors: {e}. Falling back to in-memory model.")
+        self._cpu_snapshot.clear()
 
     if model is not None:
       start_t = time.perf_counter()
       for name, param in model.named_parameters():
         real_t = self._get_real_tensor(model, name, param)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        if getattr(real_t, "is_meta", False) or getattr(real_t.data, "is_meta", False):
+          continue
+        t_data = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        self._cpu_snapshot[name] = t_data
+        if not name.startswith("model."):
+          self._cpu_snapshot[f"model.{name}"] = t_data
+        elif name.startswith("model."):
+          self._cpu_snapshot[name[6:]] = t_data
       for name, buf in model.named_buffers():
         real_t = self._get_real_tensor(model, name, buf)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      elapsed = (time.perf_counter() - start_t) * 1000.0
-      print(f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms.")
-      return
+        if getattr(real_t, "is_meta", False) or getattr(real_t.data, "is_meta", False):
+          continue
+        t_data = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        self._cpu_snapshot[name] = t_data
+        if not name.startswith("model."):
+          self._cpu_snapshot[f"model.{name}"] = t_data
+        elif name.startswith("model."):
+          self._cpu_snapshot[name[6:]] = t_data
+      if len(self._cpu_snapshot) > 50:
+        elapsed = (time.perf_counter() - start_t) * 1000.0
+        print(
+          f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from active model in {elapsed:.2f} ms."
+        )
+        return
+      self._cpu_snapshot.clear()
 
-    raise RuntimeError(f"Failed to initialize CPU weights snapshot: neither base safetensors for '{base_model}' nor model instance available.")
+    raise RuntimeError(f"Failed to initialize CPU weights snapshot: neither base safetensors for '{base_model}' nor active model instance available.")
 
-  def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo) -> None:
-    """Initialize the delta transfer engine on the inference worker."""
-    pass
+  def init_transfer_engine(self, init_info: DeltaSnapshotInitInfo | None = None) -> None:
+    """Initialize the delta transfer engine on the inference worker at startup."""
+    model = getattr(self, "model", None)
+    if model is not None:
+      self._ensure_cpu_snapshot("", model)
 
   def start_weight_update(self) -> None:
     """Prepare for an upcoming weight update."""
@@ -158,11 +190,19 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     self,
     update_info: DeltaSnapshotUpdateInfo,
     load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
+    *args,
+    **kwargs,
   ) -> None:
     """Receive/patch sparse delta weights in host CPU RAM and pass to load_weights."""
     import json
 
-    target_path = update_info.target_weights_path
+    if isinstance(update_info, str):
+      target_path = update_info
+    elif isinstance(update_info, dict):
+      target_path = update_info.get("target_weights_path", "")
+    else:
+      target_path = getattr(update_info, "target_weights_path", "")
+
     if not target_path or not os.path.exists(target_path):
       raise ValueError(f"Target weights path does not exist: {target_path}")
 
@@ -230,9 +270,17 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       split_values = torch.split(values_flat, layer_lengths)
 
       for i, name in enumerate(meta_names):
-        if name not in self._cpu_snapshot:
-          raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot.")
-        snap_flat = self._cpu_snapshot[name].view(-1)
+        target_key = None
+        if name in self._cpu_snapshot:
+          target_key = name
+        elif name.startswith("model.") and name[6:] in self._cpu_snapshot:
+          target_key = name[6:]
+        elif f"model.{name}" in self._cpu_snapshot:
+          target_key = f"model.{name}"
+
+        if target_key is None:
+          raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot (available keys: {len(self._cpu_snapshot)}).")
+        snap_flat = self._cpu_snapshot[target_key].view(-1)
         snap_flat[split_indices[i]] = split_values[i]
 
       t_apply_ms = (time.perf_counter() - t0_apply) * 1000.0
@@ -241,7 +289,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         f"{indices_flat.numel()} total elements) to CPU snapshot in {t_apply_ms:.2f} ms"
       )
 
-      weights_to_load = list(self._cpu_snapshot.items())
+      weights_to_load = [(k, v) for k, v in self._cpu_snapshot.items() if "delta" not in k.lower() and not k.endswith(".indices")]
     else:
       # Full snapshot safetensors path
       weights: list[tuple[str, torch.Tensor]] = []
@@ -267,6 +315,8 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       changed_weights = []
       no_op_tensors = 0
       for name, incoming_tensor in weights:
+        if "delta" in name.lower() or name.endswith(".indices"):
+          continue
         if (
           name in self._cpu_snapshot
           and self._cpu_snapshot[name].shape == incoming_tensor.shape
@@ -287,8 +337,22 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       weights_to_load = changed_weights
 
     # Feed genuinely changed parameter tensors directly into vLLM's internal layer loader
+    valid_param_keys = set(self._cpu_snapshot.keys())
+    weights_to_load = [(k, v) for k, v in weights_to_load if k in valid_param_keys and "delta" not in k.lower() and not k.endswith(".indices")]
     start_load = time.perf_counter()
-    load_weights(weights_to_load)
+    load_weights_fn = load_weights or self.load_weights
+    if load_weights_fn is not None:
+      try:
+        load_weights_fn(weights_to_load)
+      except Exception as exc:
+        print(f"[DeltaSnapshotEngine] load_weights callback failed ({exc}); copying parameters directly via PyTorch named_parameters...")
+        model = getattr(load_weights_fn, "__self__", None)
+        if model is not None and hasattr(model, "named_parameters"):
+          named_params = dict(model.named_parameters())
+          with torch.no_grad():
+            for name, tensor in weights_to_load:
+              if name in named_params:
+                named_params[name].copy_(tensor)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
     self.current_weights_path = target_path
     print(f"[DeltaSnapshotEngine] Incremental load_weights completed ({len(weights_to_load)} tensors) in {elapsed_load:.2f} ms")

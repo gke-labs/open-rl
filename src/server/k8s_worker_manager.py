@@ -80,7 +80,10 @@ class KubernetesFFTWorkerManager:
     existing = self.read_pod(pod_name)
     if existing is not None:
       if existing.status.phase not in TERMINAL_POD_PHASES:
-        return
+        # Auto-recover unscheduled Pending pods (e.g. after DRA claim recreation or node preemption)
+        stuck_pending = existing.status.phase == "Pending" and not getattr(existing.spec, "node_name", None)
+        if not stuck_pending:
+          return
       self.delete_pod_and_wait(pod_name)
 
     try:
