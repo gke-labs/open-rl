@@ -235,6 +235,11 @@ async def process_sampling_request(req: dict, store: Any) -> None:
           if weights_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
             print(f"[vLLM Worker] Weight change detected. Current: {CURRENT_LOADED_SAMPLER_WEIGHTS}, Target: {weights_path}")
             if engine is not None:
+              print("[vLLM Worker] Triggering sleep level 1 (CPU offload weights)...")
+              await engine.sleep(level=1)
+              print("[vLLM Worker] Waking up weights...")
+              await engine.wake_up(tags=["weights"])
+
               if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
                 print(f"[vLLM Worker] Receiving incremental delta weights from {weights_path} via native WeightTransferEngine...")
                 await engine.collective_rpc(
@@ -249,11 +254,13 @@ async def process_sampling_request(req: dict, store: Any) -> None:
                     }
                   },
                 )
-                print("[vLLM Worker] Remapping updated host CPU weights to GPU VRAM...")
-                await engine.wake_up(tags=["weights"])
               else:
-                print(f"[vLLM Worker] Reloading weights from {weights_path} directly to GPU...")
+                print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
                 await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
+
+              print("[vLLM Worker] Waking up KV cache...")
+              await engine.wake_up(tags=["kv_cache"])
+              IS_ENGINE_SLEEPING = False
             CURRENT_LOADED_SAMPLER_WEIGHTS = weights_path
             print("[vLLM Worker] Weights reload completed successfully!")
 
