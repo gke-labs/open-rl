@@ -72,6 +72,9 @@ spec:
           value: "/etc/open-rl/trainer/trainer-worker-pod.yaml"
         - name: OPEN_RL_WORKER_IMAGE
           value: "ghcr.io/gke-labs/open-rl/server:latest"
+        - name: OPEN_RL_WEIGHT_SYNC_STRATEGY
+          value: "delta"
+
         resources:
           limits:
             memory: "2Gi"

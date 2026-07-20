@@ -404,8 +404,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
           prev_tensor = cpu_buf
 
         prev_gpu = prev_tensor.to(param.device, non_blocking=True)
+        if torch.cuda.is_available():
+          torch.cuda.synchronize()
 
         diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
+
         indices = diff_mask.nonzero(as_tuple=True)[0]
         if indices.numel() > 0:
           idx_cpu = indices.to(torch.int32).contiguous().cpu()

@@ -22,6 +22,36 @@ from vllm.sampling_params import RequestOutputKind
 
 import server.delta_weight_transfer_engine  # noqa: F401
 
+
+def _apply_vllm_in_memory_patches() -> None:
+  """Apply runtime in-memory patches for vLLM GPUWorker memory profiling under time-slicing."""
+  try:
+    import torch
+    from vllm.v1.worker.gpu_worker import GPUWorker
+
+    _orig_determine = getattr(GPUWorker, "determine_num_available_blocks", None)
+    if _orig_determine is not None and not getattr(GPUWorker, "_open_rl_patched", False):
+
+      def _safe_determine_num_available_blocks(self):
+        if hasattr(self, "init_snapshot") and self.init_snapshot is not None:
+          try:
+            free_gpu_memory, _ = torch.cuda.mem_get_info()
+            if free_gpu_memory > self.init_snapshot.free_memory:
+              self.init_snapshot.free_memory = free_gpu_memory
+          except Exception:
+            pass
+        return _orig_determine(self)
+
+      GPUWorker.determine_num_available_blocks = _safe_determine_num_available_blocks
+      GPUWorker._open_rl_patched = True
+      print("[vLLM Worker] In-memory GPUWorker memory profiling assertion patch active.")
+  except (ImportError, AttributeError):
+    pass
+
+
+_apply_vllm_in_memory_patches()
+
+
 provider = TracerProvider()
 trace.set_tracer_provider(provider)
 

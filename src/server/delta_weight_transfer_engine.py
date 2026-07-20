@@ -106,13 +106,21 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     return tensor
 
   def _store_tensor_with_aliases(self, name: str, tensor: torch.Tensor) -> None:
-    """Store tensor in CPU snapshot along with key variations (with/without 'model.' prefix)."""
+    """Store tensor in CPU snapshot along with key variations (with/without 'model.' prefix) and tied embedding aliases."""
     t_data = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
     self._cpu_snapshot[name] = t_data
     if not name.startswith("model."):
       self._cpu_snapshot[f"model.{name}"] = t_data
     else:
       self._cpu_snapshot[name[6:]] = t_data
+
+    # Bi-directionally synchronize tied word embedding aliases (embed_tokens <-> lm_head)
+    if "embed_tokens" in name:
+      lm_key = name.replace("embed_tokens", "lm_head")
+      self._cpu_snapshot[lm_key] = t_data
+    elif "lm_head" in name:
+      emb_key = name.replace("lm_head", "embed_tokens")
+      self._cpu_snapshot[emb_key] = t_data
 
   def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None) -> None:
     if self._cpu_snapshot:
