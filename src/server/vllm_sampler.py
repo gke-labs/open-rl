@@ -11,31 +11,16 @@ from typing import Any
 
 import redis
 import redis.asyncio as redis_asyncio
-
-try:
-  from vllm import SamplingParams
-  from vllm.engine.arg_utils import AsyncEngineArgs
-  from vllm.engine.async_llm_engine import AsyncLLMEngine
-  from vllm.lora.request import LoRARequest
-  from vllm.sampling_params import RequestOutputKind
-
-  VLLM_AVAILABLE = True
-except ImportError:
-  SamplingParams = None
-  AsyncEngineArgs = None
-  AsyncLLMEngine = None
-  LoRARequest = None
-  RequestOutputKind = None
-  VLLM_AVAILABLE = False
-
-try:
-  import server.delta_weight_transfer_engine  # noqa: F401
-except ImportError:
-  pass
-
 from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
+from vllm import SamplingParams
+from vllm.engine.arg_utils import AsyncEngineArgs
+from vllm.engine.async_llm_engine import AsyncLLMEngine
+from vllm.lora.request import LoRARequest
+from vllm.sampling_params import RequestOutputKind
+
+import server.delta_weight_transfer_engine  # noqa: F401
 
 provider = TracerProvider()
 trace.set_tracer_provider(provider)
@@ -84,8 +69,8 @@ def init_engine():
   print(f"-> Model        : {model_name or 'Not Set'}\n")
 
   mock_vllm = os.getenv("MOCK_VLLM", "0") == "1"
-  if mock_vllm or not VLLM_AVAILABLE:
-    print("[vLLM Worker] MOCK_VLLM=1 or vllm not installed, bypassing real engine init for local dev.")
+  if mock_vllm:
+    print("[vLLM Worker] MOCK_VLLM=1, bypassing real engine init for local dev.")
   elif not model_name:
     print("[vLLM Worker] Error: BASE_MODEL environment variable is required.")
     sys.exit(1)
@@ -242,11 +227,11 @@ async def process_sampling_request(req: dict, store: Any) -> None:
 
               if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
                 print(f"[vLLM Worker] Receiving incremental delta weights from {weights_path} via native WeightTransferEngine...")
+                await engine.collective_rpc("start_weight_update")
                 await engine.collective_rpc(
                   "update_weights",
                   kwargs={
                     "update_info": {
-                      "kind": "delta_snapshot",
                       "target_weights_path": weights_path,
                       "base_model_path": (
                         os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("BASE_MODEL") or getattr(getattr(engine, "engine_args", None), "model", "")
@@ -254,6 +239,7 @@ async def process_sampling_request(req: dict, store: Any) -> None:
                     }
                   },
                 )
+                await engine.collective_rpc("finish_weight_update")
               else:
                 print(f"[vLLM Worker] Reloading weights from {weights_path} in-place...")
                 await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
@@ -332,11 +318,11 @@ async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
                   print("[vLLM Worker] Prefetching delta weights to CPU cache in background...")
                   t0 = asyncio.get_event_loop().time()
                   if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
+                    await engine.collective_rpc("start_weight_update")
                     await engine.collective_rpc(
                       "update_weights",
                       kwargs={
                         "update_info": {
-                          "kind": "delta_snapshot",
                           "target_weights_path": target_path,
                           "base_model_path": (
                             os.getenv("OPEN_RL_BASE_MODEL") or os.getenv("BASE_MODEL") or getattr(getattr(engine, "engine_args", None), "model", "")
@@ -344,6 +330,7 @@ async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
                         }
                       },
                     )
+                    await engine.collective_rpc("finish_weight_update")
                   else:
                     await engine.collective_rpc("reload_weights", kwargs={"weights_path": target_path})
                   dt = (asyncio.get_event_loop().time() - t0) * 1000.0

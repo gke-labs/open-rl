@@ -51,10 +51,9 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --extra gpu --extra vllm --extra cluster
 
-# Apply vLLM patches (Gemma 4 LoRA dedup, GPU worker memory profiling, & delta weight transfer)
+# Apply vLLM patches (Gemma 4 LoRA dedup & GPU worker memory profiling)
 RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py \
-    && uv run python /app/src/server/scripts/patch_vllm_gpu_worker.py \
-    && uv run python /app/src/server/scripts/patch_vllm_weight_transfer.py
+    && uv run python /app/src/server/scripts/patch_vllm_gpu_worker.py
 
 ENV PATH="/usr/local/cuda/bin:$PATH" \
     CUDA_HOME="/usr/local/cuda" \

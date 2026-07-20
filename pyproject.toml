@@ -24,9 +24,17 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
+    "cachetools",
+    "cbor2",
     "datasets",
+    "einops",
     "numpy",
+    "openai",
+    "openai_harmony",
     "peft",
+    "pillow",
+    "pybase64",
+    "pyzmq",
     "torch",
     "transformers>=5.5.4",
 ]

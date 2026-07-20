@@ -1,123 +1,100 @@
-import json
-import os
-import shutil
-import sys
-import tempfile
-import unittest
-from unittest.mock import MagicMock
+"""Zero-GPU CPU Unit Test for vLLM Sampler Parameter Fusion & Weight Loading."""
 
-# Add src to path so we can import server.vllm_sampler and training.fft_trainer_worker
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
+import os
+import sys
+import unittest
 
 import torch
 
-# Mock vllm modules before importing the sampler patch
-sys.modules["vllm"] = MagicMock()
-sys.modules["vllm.v1"] = MagicMock()
-sys.modules["vllm.v1.worker"] = MagicMock()
-gpu_worker_mock = MagicMock()
-sys.modules["vllm.v1.worker.gpu_worker"] = gpu_worker_mock
+# Add src to path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 
-class MockWorkerBase:
-  def __init__(self, vllm_config=None, local_rank=0, rank=0, distributed_init_method="", is_driver_worker=False):
-    self.model_config = MagicMock()
-    self.model_config.model = "mock-base-model-path"
-    self.load_config = MagicMock()
-    self.model_runner = MagicMock()
+try:
+  import vllm  # noqa: F401
+
+  HAS_VLLM = True
+except ImportError:
+  HAS_VLLM = False
 
 
-# Inject MockWorker into the mocked module
-class MockWorker(MockWorkerBase):
-  def reload_weights(self, *args, **kwargs):
-    pass
+@unittest.skipUnless(HAS_VLLM, "vLLM not installed in current environment")
+class TestSamplerWeightFusionCPU(unittest.TestCase):
+  """Tests parameter loading and unfused-to-fused parameter packing on CPU."""
 
+  def test_load_weights_unfused_to_fused_on_cpu(self):
+    """Test native load_weights packs unfused HF parameters into fused qkv_proj and gate_up_proj on CPU."""
+    from unittest.mock import MagicMock
 
-gpu_worker_mock.Worker = MockWorker
+    from transformers import Qwen3Config
+    from vllm.config import VllmConfig
+    from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 
-# Mock model loader
-model_loader_mock = MagicMock()
-sys.modules["vllm.model_executor.model_loader"] = model_loader_mock
+    hf_config = Qwen3Config(
+      hidden_size=256,
+      intermediate_size=512,
+      num_attention_heads=4,
+      num_key_value_heads=4,
+      head_dim=64,
+      num_hidden_layers=2,
+      vocab_size=1000,
+    )
+    import os
 
-# Now import the patching function
-from server.vllm_sampler import patch_vllm_worker_for_delta_sync
+    os.environ["VLLM_USE_BYTECODE_HOOK"] = "0"
 
+    from vllm.config.compilation import CompilationConfig, CompilationMode
 
-class SamplerPatchTest(unittest.TestCase):
-  def setUp(self):
-    self.test_dir = tempfile.mkdtemp()
-    # Reset mock worker state
-    if hasattr(MockWorker, "_openrl_delta_patched"):
-      delattr(MockWorker, "_openrl_delta_patched")
+    vllm_config = MagicMock(spec=VllmConfig)
+    vllm_config.model_config.hf_config = hf_config
+    vllm_config.quant_config = None
+    comp_config = CompilationConfig(mode=CompilationMode.NONE)
+    comp_config.custom_ops = ["all"]
+    vllm_config.compilation_config = comp_config
+    vllm_config.cache_config.cache_dtype = "auto"
 
-  def tearDown(self):
-    shutil.rmtree(self.test_dir, ignore_errors=True)
+    import vllm.distributed.parallel_state as ps
+    from vllm.config.vllm import set_current_vllm_config
 
-  def test_custom_reload_weights_correct_setup(self):
-    # Let's write the clean version here:
-    # Reset Worker class to original mock state
-    class CleanMockWorker(MockWorkerBase):
-      def reload_weights(self, *args, **kwargs):
-        self.original_reload_called = True
-        self.original_reload_args = args
-        self.original_reload_kwargs = kwargs
+    mock_group = MagicMock()
+    mock_group.is_first_rank = True
+    mock_group.is_last_rank = True
+    mock_group.rank_in_group = 0
+    mock_group.world_size = 1
 
-    gpu_worker_mock.Worker = CleanMockWorker
+    ps._TP = mock_group
+    ps._PP = mock_group
 
-    patch_vllm_worker_for_delta_sync()
+    from unittest.mock import patch
 
-    worker = CleanMockWorker()
+    from vllm.v1.attention.backends.cpu_attn import CPUAttentionBackend
 
-    # Mock base model iterator loading:
-    base_weight = torch.zeros(10, 10, dtype=torch.bfloat16)
-    mock_base_weights = [("fc.weight", base_weight.clone())]
+    with (
+      patch("vllm.v1.attention.selector._cached_get_attn_backend", return_value=CPUAttentionBackend),
+      set_current_vllm_config(vllm_config),
+    ):
+      model = Qwen3ForCausalLM(vllm_config=vllm_config)
 
-    mock_loader_instance = MagicMock()
-    mock_loader_instance.get_all_weights.return_value = mock_base_weights
-    model_loader_mock.get_model_loader.return_value = mock_loader_instance
+    unfused_weights = [
+      ("model.layers.0.self_attn.q_proj.weight", torch.ones(256, 256)),
+      ("model.layers.0.self_attn.k_proj.weight", torch.ones(256, 256) * 2),
+      ("model.layers.0.self_attn.v_proj.weight", torch.ones(256, 256) * 3),
+      ("model.layers.0.mlp.gate_proj.weight", torch.ones(512, 256) * 4),
+      ("model.layers.0.mlp.up_proj.weight", torch.ones(512, 256) * 5),
+    ]
 
-    mock_model = MagicMock()
-    worker.model_runner.get_model.return_value = mock_model
+    # Invoke native vLLM load_weights on CPU
+    model.load_weights(unfused_weights)
 
-    # Save a mock delta
-    delta_tensors = {
-      "fc.weight.indices": torch.tensor([2], dtype=torch.int32),  # flat index 2 = row 0, col 2
-      "fc.weight.values": torch.tensor([42.0], dtype=torch.bfloat16),
-    }
-    weights_path = os.path.join(self.test_dir, "step_1")
-    os.makedirs(weights_path, exist_ok=True)
-    import safetensors.torch
+    # Verify that fused qkv_proj and gate_up_proj received non-zero weight tensors on CPU
+    qkv_tensor = model.model.layers[0].self_attn.qkv_proj.weight
+    gate_up_tensor = model.model.layers[0].mlp.gate_up_proj.weight
 
-    safetensors.torch.save_file(delta_tensors, os.path.join(weights_path, "delta.safetensors"))
-    with open(os.path.join(weights_path, "metadata.json"), "w") as f:
-      json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
-
-    # Trigger reload
-    worker.reload_weights(weights_path=weights_path)
-
-    # Verify:
-    # 1. CPU snapshot initialized and updated
-    self.assertTrue(hasattr(worker, "_bf16_snapshot"))
-    self.assertIn("fc.weight", worker._bf16_snapshot)
-
-    # Value at index 2 should be updated to 42.0
-    self.assertEqual(float(worker._bf16_snapshot["fc.weight"].view(-1)[2]), 42.0)
-    # Value at index 0 should remain 0.0
-    self.assertEqual(float(worker._bf16_snapshot["fc.weight"].view(-1)[0]), 0.0)
-
-    # 2. original_reload was called with the snapshot iterator
-    self.assertTrue(getattr(worker, "original_reload_called", False))
-
-    # Check that weights_iterator kwargs contains the snapshot items
-    kwargs = worker.original_reload_kwargs
-    self.assertIn("weights_iterator", kwargs)
-    self.assertTrue(kwargs.get("is_checkpoint_format"))
-
-    iterator = list(kwargs["weights_iterator"])
-    self.assertEqual(len(iterator), 1)
-    self.assertEqual(iterator[0][0], "fc.weight")
-    # Verify the iterator yielded the updated snapshot tensor
-    self.assertEqual(float(iterator[0][1].view(-1)[2]), 42.0)
+    self.assertTrue(torch.all(qkv_tensor[0:256] == 1.0), "q_proj slice was not loaded correctly!")
+    self.assertTrue(torch.all(qkv_tensor[256:512] == 2.0), "k_proj slice was not loaded correctly!")
+    self.assertTrue(torch.all(qkv_tensor[512:768] == 3.0), "v_proj slice was not loaded correctly!")
+    self.assertTrue(torch.all(gate_up_tensor[0:512] == 4.0), "gate_proj slice was not loaded correctly!")
+    self.assertTrue(torch.all(gate_up_tensor[512:1024] == 5.0), "up_proj slice was not loaded correctly!")
 
 
 if __name__ == "__main__":

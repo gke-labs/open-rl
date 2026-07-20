@@ -124,7 +124,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       start_t = time.perf_counter()
       from vllm.model_executor.model_loader.weight_utils import (
         download_weights_from_hf,
-        safetensors_weights_iterator,
       )
 
       try:
@@ -133,10 +132,14 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         else:
           hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
 
+        import safetensors
+
         hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
-        for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
-          if not name.endswith(".indices") and "delta" not in name:
-            self._store_tensor_with_aliases(name, tensor)
+        for f_path in hf_weights_files:
+          with safetensors.safe_open(f_path, framework="pt", device="cpu") as f:
+            for name in f.keys():  # noqa: SIM118
+              if not name.endswith(".indices") and "delta" not in name:
+                self._store_tensor_with_aliases(name, f.get_tensor(name))
         if self._cpu_snapshot:
           elapsed = (time.perf_counter() - start_t) * 1000.0
           print(
@@ -145,7 +148,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
           )
           return
       except Exception as e:
-        print(f"[DeltaSnapshotEngine] Failed to load snapshot from base_model HF safetensors: {e}. Falling back to in-memory model.")
+        print(f"[DeltaSnapshotEngine] Failed to load snapshot from base_model HF safetensors: {e}.")
         self._cpu_snapshot.clear()
 
     if model is not None:
@@ -156,7 +159,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
           continue
         self._store_tensor_with_aliases(name, real_t.data.cpu())
 
-      if len(self._cpu_snapshot) > 50:
+      if self._cpu_snapshot:
         elapsed = (time.perf_counter() - start_t) * 1000.0
         print(
           f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from active model in {elapsed:.2f} ms."
@@ -172,7 +175,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if model is not None:
       self._ensure_cpu_snapshot("", model)
 
-  def start_weight_update(self) -> None:
+  def start_weight_update(self, engine_name: str | None = None) -> None:
     """Prepare for an upcoming weight update."""
     pass
 
@@ -189,7 +192,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   def receive_weights(
     self,
     update_info: DeltaSnapshotUpdateInfo,
-    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None] | None = None,
     *args,
     **kwargs,
   ) -> None:
@@ -208,16 +211,18 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     start_t = time.perf_counter()
 
-    # Check for sparse_delta metadata format
-    is_sparse_delta = False
     metadata_path = os.path.join(target_path, "metadata.json") if os.path.isdir(target_path) else ""
     if metadata_path and os.path.exists(metadata_path):
       try:
         with open(metadata_path) as f:
           meta = json.load(f)
-        is_sparse_delta = meta.get("format") == "sparse_delta"
+        is_sparse_delta = (
+          meta.get("format") == "sparse_delta" or meta.get("kind") == "sampler" or os.path.exists(os.path.join(target_path, "delta.safetensors"))
+        )
       except Exception:
         pass
+    else:
+      is_sparse_delta = os.path.exists(os.path.join(target_path, "delta.safetensors"))
 
     if is_sparse_delta:
       delta_file = os.path.join(target_path, "delta.safetensors")
@@ -333,13 +338,18 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     valid_param_keys = set(self._cpu_snapshot.keys())
     weights_to_load = [(k, v) for k, v in weights_to_load if k in valid_param_keys and "delta" not in k.lower() and not k.endswith(".indices")]
     start_load = time.perf_counter()
-    load_weights_fn = load_weights or self.load_weights
+    load_weights_fn = load_weights or getattr(self, "_load_weights", None) or getattr(self, "load_weights", None)
+    if load_weights_fn is None:
+      model_runner = getattr(self, "model_runner", None)
+      if model_runner is not None and hasattr(model_runner, "load_weights"):
+        load_weights_fn = model_runner.load_weights
+
     if load_weights_fn is not None:
       try:
         load_weights_fn(weights_to_load)
       except Exception as exc:
         print(f"[DeltaSnapshotEngine] load_weights callback failed ({exc}); copying parameters directly via PyTorch named_parameters...")
-        model = getattr(load_weights_fn, "__self__", None)
+        model = getattr(load_weights_fn, "__self__", None) or getattr(self, "model", None)
         if model is not None and hasattr(model, "named_parameters"):
           named_params = dict(model.named_parameters())
           with torch.no_grad():
@@ -374,5 +384,5 @@ try:
     "delta_snapshot",
     DeltaSnapshotWeightTransferEngine,
   )
-except (ImportError, ValueError):
+except ImportError:
   pass
