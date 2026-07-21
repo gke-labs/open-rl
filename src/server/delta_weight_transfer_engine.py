@@ -82,39 +82,50 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     super().__init__(*args, **kwargs)
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
-    self._base_model: str = os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
-    if args and hasattr(args[0], "model"):
-      self._base_model = args[0].model
+    self._base_model: str = ""
+    if hasattr(self, "model_config") and getattr(self.model_config, "model", None):
+      self._base_model = self.model_config.model
+    else:
+      self._base_model = os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
+
+    device_str = str(getattr(self, "device", "unknown"))
+    model_type = type(getattr(self, "model", None)).__name__
+    tp_size = getattr(getattr(self, "parallel_config", None), "tensor_parallel_size", 1)
+    pp_size = getattr(getattr(self, "parallel_config", None), "pipeline_parallel_size", 1)
+    logger.info(
+      f"[DeltaSnapshotEngine] Initialized DeltaSnapshotWeightTransferEngine | "
+      f"base_model='{self._base_model}' | device={device_str} | model={model_type} | "
+      f"parallel=(TP={tp_size}, PP={pp_size})"
+    )
 
   @staticmethod
   def _get_real_tensor(model: torch.nn.Module, name: str, tensor: torch.Tensor) -> torch.Tensor:
     if not getattr(tensor, "is_meta", False) and not getattr(tensor.data, "is_meta", False):
       return tensor
-    try:
-      from vllm.model_executor.model_loader.reload.layerwise import LAYERWISE_INFO
+    from vllm.model_executor.model_loader.reload.layerwise import LAYERWISE_INFO
 
-      if "." in name:
-        mod_name, p_name = name.rsplit(".", 1)
-      else:
-        mod_name, p_name = "", name
-      modules = dict(model.named_modules())
-      mod = modules.get(mod_name)
-      if mod is not None and mod in LAYERWISE_INFO:
-        info = LAYERWISE_INFO[mod]
-        if hasattr(info, "kernel_tensors") and info.kernel_tensors is not None:
-          params, buffers = info.kernel_tensors
-          if p_name in params:
-            return params[p_name]
-          if p_name in buffers:
-            return buffers[p_name]
-    except Exception:
-      pass
+    if "." in name:
+      mod_name, p_name = name.rsplit(".", 1)
+    else:
+      mod_name, p_name = "", name
+    modules = dict(model.named_modules())
+    mod = modules.get(mod_name)
+    if mod is not None and mod in LAYERWISE_INFO:
+      info = LAYERWISE_INFO[mod]
+      if hasattr(info, "kernel_tensors") and info.kernel_tensors is not None:
+        params, buffers = info.kernel_tensors
+        if p_name in params:
+          return params[p_name]
+        if p_name in buffers:
+          return buffers[p_name]
     return tensor
 
-  def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None) -> None:
+  def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None = None) -> None:
     if self._cpu_snapshot:
       return
+
     base_model = base_model or self._base_model or os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
+    model = model or getattr(self, "model", None)
     logger.info(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
 
     if base_model:
@@ -168,27 +179,33 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   def receive_weights(
     self,
     update_info: DeltaSnapshotUpdateInfo,
-    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None] | None = None,
   ) -> None:
     """Receive/patch sparse delta weights in host CPU RAM and pass to load_weights."""
     import json
+
+    if load_weights is None:
+      if hasattr(self, "model") and hasattr(self.model, "load_weights"):
+        load_weights = self.model.load_weights
+      else:
+        raise ValueError("load_weights callback was not provided and self.model does not have load_weights attribute.")
 
     target_path = update_info.target_weights_path
     if not target_path or not os.path.exists(target_path):
       raise ValueError(f"Target weights path does not exist: {target_path}")
 
     start_t = time.perf_counter()
+    logger.info(f"[DeltaSnapshotEngine] Starting weight update from target path: '{target_path}'")
 
-    # Check for sparse_delta metadata format
-    is_sparse_delta = False
+    # Read metadata once
     metadata_path = os.path.join(target_path, "metadata.json") if os.path.isdir(target_path) else ""
+    meta: dict[str, Any] = {}
     if metadata_path and os.path.exists(metadata_path):
-      try:
-        with open(metadata_path) as f:
-          meta = json.load(f)
-        is_sparse_delta = meta.get("format") == "sparse_delta"
-      except Exception:
-        pass
+      with open(metadata_path) as f:
+        meta = json.load(f)
+
+    is_sparse_delta = meta.get("format") == "sparse_delta"
+    logger.info(f"[DeltaSnapshotEngine] Weight update mode: {'sparse_delta' if is_sparse_delta else 'full_safetensors_snapshot'}")
 
     if is_sparse_delta:
       delta_file = os.path.join(target_path, "delta.safetensors")
@@ -199,30 +216,21 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
       sparse_delta = load_file(delta_file, device="cpu")
       elapsed_read = (time.perf_counter() - start_t) * 1000.0
-      logger.info(f"[DeltaSnapshotEngine] Loaded sparse delta from {delta_file} in {elapsed_read:.2f} ms")
+      logger.info(f"[DeltaSnapshotEngine] Loaded sparse delta file from {delta_file} in {elapsed_read:.2f} ms")
 
       # Initialize base CPU snapshot if not yet populated
       if not self._cpu_snapshot:
-        model = getattr(load_weights, "__self__", None)
-        if model is None and getattr(load_weights, "__closure__", None):
-          for cell in load_weights.__closure__:
-            if hasattr(cell.cell_contents, "named_parameters"):
-              model = cell.cell_contents
-        base_model = getattr(update_info, "base_model_path", "") or self._base_model
+        base_model = update_info.base_model_path or self._base_model
+        logger.info(f"[DeltaSnapshotEngine] CPU snapshot uninitialized. Populating base CPU snapshot for '{base_model}'...")
+        model = getattr(self, "model", None)
+        if model is None:
+          model = getattr(load_weights, "__self__", None)
         self._ensure_cpu_snapshot(base_model, model)
 
-      meta_names: list[str] | None = None
-      if metadata_path and os.path.exists(metadata_path):
-        try:
-          with open(metadata_path) as f:
-            meta = json.load(f)
-          if "layer_names" in meta:
-            meta_names = json.loads(meta["layer_names"]) if isinstance(meta["layer_names"], str) else meta["layer_names"]
-        except Exception:
-          pass
-
-      if meta_names is None:
+      raw_names = meta.get("layer_names")
+      if raw_names is None:
         raise ValueError("Missing 'layer_names' metadata in sparse delta directory.")
+      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else raw_names
 
       indices_flat = sparse_delta["delta.indices_flat"].to(torch.int64)
       values_flat = sparse_delta["delta.values_flat"]
@@ -236,6 +244,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         logger.info("[DeltaSnapshotEngine] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
         return
 
+      logger.info(f"[DeltaSnapshotEngine] Applying sparse delta patch across {len(meta_names)} layers ({indices_flat.numel()} changed elements)...")
       t0_apply = time.perf_counter()
       split_indices = torch.split(indices_flat, layer_lengths)
       split_values = torch.split(values_flat, layer_lengths)
@@ -303,6 +312,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       weights_to_load = changed_weights
 
     # Feed genuinely changed parameter tensors directly into vLLM's internal layer loader
+    logger.info(f"[DeltaSnapshotEngine] Feeding {len(weights_to_load)} tensors into load_weights callback...")
     start_load = time.perf_counter()
     load_weights(weights_to_load)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
