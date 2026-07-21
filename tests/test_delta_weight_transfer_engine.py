@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import MagicMock, patch
 
 import torch
 
@@ -196,7 +197,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
     """Test that receive_weights directly populates CPU snapshot from base_model_path when provided."""
     import json
     import sys
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     import safetensors
     from safetensors.torch import save_file
@@ -259,7 +260,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
     """Test that _ensure_cpu_snapshot resolves HF model IDs from OPEN_RL_BASE_MODEL (e.g. Qwen/Test-4B -> models--Qwen--Test-4B)."""
     import json
     import sys
-    from unittest.mock import MagicMock, patch
+    from unittest.mock import MagicMock
 
     import safetensors
     from safetensors.torch import save_file
@@ -322,6 +323,70 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
         self.assertEqual(loaded_calls[0][0], "layer.0.weight")
         self.assertEqual(loaded_calls[0][1].shape, (3, 3))
         self.assertEqual(loaded_calls[0][1].view(-1)[4].item(), 88.0)
+
+  def test_in_place_gpu_weight_patching(self):
+    """Test that direct in-place GPU patching updates model parameters in-place without load_weights callback."""
+    import json
+
+    from safetensors.torch import save_file
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+      # Mock vLLM model holding parameters directly
+      qkv_param = torch.nn.Parameter(torch.zeros(1152, 896), requires_grad=False)
+
+      class MockModel(torch.nn.Module):
+        def get_parameter(self, name):
+          if "qkv_proj" in name:
+            return qkv_param
+          raise KeyError(name)
+
+      model = MockModel()
+
+      # Mock hf_config for offset resolution
+      mock_config = MagicMock()
+      mock_config.hidden_size = 896
+      mock_config.num_attention_heads = 14
+      mock_config.num_key_value_heads = 2
+      mock_config.head_dim = 64
+      mock_config.intermediate_size = 4864
+      mock_hf_config = MagicMock()
+      mock_hf_config.get_text_config.return_value = mock_config
+
+      vllm_config = MagicMock()
+      vllm_config.model_config.hf_config = mock_hf_config
+      vllm_config.model_config.model = "Qwen/Qwen2.5-0.5B-Instruct"
+
+      engine = DeltaSnapshotWeightTransferEngine(
+        config=None,
+        vllm_config=vllm_config,
+        device=torch.device("cpu"),
+        model=model,
+      )
+
+      # Create sparse delta patch targeting k_proj (which maps to qkv_proj with offset)
+      sparse_dict = {
+        "delta.indices_flat": torch.tensor([10, 20], dtype=torch.int32),
+        "delta.values_flat": torch.tensor([42.0, 99.0], dtype=torch.float32),
+        "delta.layer_lengths": torch.tensor([2], dtype=torch.int64),
+      }
+      save_file(sparse_dict, os.path.join(tmpdir, "delta.safetensors"))
+
+      meta = {
+        "format": "sparse_delta",
+        "layer_names": ["model.layers.0.self_attn.k_proj.weight"],
+      }
+      with open(os.path.join(tmpdir, "metadata.json"), "w") as f:
+        json.dump(meta, f)
+
+      # Enable in-place GPU mode explicitly
+      with patch.dict(os.environ, {"OPEN_RL_IN_PLACE_DELTA": "1"}):
+        update_info = DeltaSnapshotUpdateInfo(target_weights_path=tmpdir)
+        engine.receive_weights(update_info)
+
+      q_numel = 14 * 64 * 896  # 802816
+      qkv_flat = qkv_param.data.view(-1)
+      self.assertEqual(qkv_flat[q_numel + 10].item(), 42.0)
+      self.assertEqual(qkv_flat[q_numel + 20].item(), 99.0)
 
 
 if __name__ == "__main__":

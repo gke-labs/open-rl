@@ -335,6 +335,55 @@ class FFTTrainingWorker(BaseTrainerWorker):
       torch.cuda.empty_cache()
     return res
 
+  def _remap_hf_to_vllm_fused(
+    self,
+    layer_names_list: list[str],
+    indices_list: list[torch.Tensor],
+  ) -> tuple[list[str], list[torch.Tensor]]:
+    """Optionally remaps HF layer names (q_proj, k_proj, v_proj, gate_proj, up_proj) and offsets indices to vLLM fused names."""
+    if os.getenv("OPEN_RL_EMIT_VLLM_FUSED_DELTAS", "0").lower() not in ("1", "true"):
+      return layer_names_list, indices_list
+
+    config = getattr(self.model, "config", None)
+    if config is None:
+      return layer_names_list, indices_list
+
+    hidden_size = getattr(config, "hidden_size", None)
+    num_heads = getattr(config, "num_attention_heads", None)
+    num_kv_heads = getattr(config, "num_key_value_heads", num_heads)
+    head_dim = getattr(config, "head_dim", None)
+    if head_dim is None and hidden_size is not None and num_heads is not None:
+      head_dim = hidden_size // num_heads
+
+    intermediate_size = getattr(config, "intermediate_size", None)
+
+    q_numel = (num_heads * head_dim * hidden_size) if (hidden_size and num_heads and head_dim) else None
+    k_numel = (num_kv_heads * head_dim * hidden_size) if (hidden_size and num_kv_heads and head_dim) else None
+    gate_numel = (intermediate_size * hidden_size) if (hidden_size and intermediate_size) else None
+
+    mapped_names: list[str] = []
+    mapped_indices: list[torch.Tensor] = []
+
+    for name, idx in zip(layer_names_list, indices_list):
+      if (".q_proj." in name or ".k_proj." in name or ".v_proj." in name) and q_numel is not None and k_numel is not None:
+        qkv_name = name.replace(".q_proj.", ".qkv_proj.").replace(".k_proj.", ".qkv_proj.").replace(".v_proj.", ".qkv_proj.")
+        offset = 0 if ".q_proj." in name else (q_numel if ".k_proj." in name else q_numel + k_numel)
+        mapped_names.append(qkv_name)
+        mapped_indices.append(idx + offset)
+        continue
+
+      if (".gate_proj." in name or ".up_proj." in name) and gate_numel is not None:
+        gate_up_name = name.replace(".gate_proj.", ".gate_up_proj.").replace(".up_proj.", ".gate_up_proj.")
+        offset = 0 if ".gate_proj." in name else gate_numel
+        mapped_names.append(gate_up_name)
+        mapped_indices.append(idx + offset)
+        continue
+
+      mapped_names.append(name)
+      mapped_indices.append(idx)
+
+    return mapped_names, mapped_indices
+
   def optim_step(self, adam_params: dict[str, Any], model_id: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if torch.cuda.is_available():
@@ -417,6 +466,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
           self._latest_total_changed += int(idx_cpu.numel())
           self._update_prev_cpu_weight(name, param, idx_cpu, val_cpu)
         del prev_gpu, diff_mask, indices
+
+      layer_names_list, indices_list = self._remap_hf_to_vllm_fused(layer_names_list, indices_list)
 
       self._latest_delta_tensors = {
         "names": layer_names_list,

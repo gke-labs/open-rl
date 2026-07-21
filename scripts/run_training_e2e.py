@@ -543,7 +543,9 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
 def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
   if "gemma" in base_model.lower():
     return "recipes.math_rl.train_gemma", "gemma4"
-  if "Instruct" in base_model or "Qwen2.5" in base_model or "Qwen3" in base_model:
+  if "Qwen3" in base_model and "Instruct" not in base_model:
+    return "recipes.math_rl.train_cli", "qwen3"
+  if "Instruct" in base_model or "Qwen2.5" in base_model:
     return "recipes.math_rl.train_cli", "qwen3_instruct"
   return "recipes.math_rl.train_cli", "qwen3"
 

@@ -28,6 +28,10 @@ data:
               key: BASE_MODEL
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
+        - name: OPEN_RL_IN_PLACE_DELTA
+          value: "1"
+        - name: OPEN_RL_WEIGHT_SYNC_STRATEGY
+          value: "in_place_delta"
         - name: VLLM_GPU_MEMORY_UTILIZATION
           value: "0.70"
         - name: VLLM_SERVER_DEV_MODE

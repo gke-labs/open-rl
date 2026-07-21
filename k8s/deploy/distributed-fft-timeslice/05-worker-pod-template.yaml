@@ -34,6 +34,10 @@ data:
               key: BASE_MODEL
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
+        - name: OPEN_RL_EMIT_VLLM_FUSED_DELTAS
+          value: "1"
+        - name: OPEN_RL_IN_PLACE_DELTA
+          value: "1"
         - name: PYTORCH_CUDA_ALLOC_CONF
           value: "expandable_segments:True"
         - name: OPEN_RL_TMP_DIR

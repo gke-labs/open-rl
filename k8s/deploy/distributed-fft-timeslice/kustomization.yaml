@@ -24,14 +24,16 @@ configMapGenerator:
     literals:
       - BASE_MODEL="Qwen/Qwen2.5-0.5B"
       - ENABLE_GCP_TRACE="1"
+      - OPEN_RL_IN_PLACE_DELTA="1"
+      - OPEN_RL_EMIT_VLLM_FUSED_DELTAS="1"
 
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.3.3
+    newTag: 0.3.7
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.3.3
+    newTag: 0.3.7
 
 replacements:
   - source:

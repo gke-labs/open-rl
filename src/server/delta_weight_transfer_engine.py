@@ -176,6 +176,142 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     """Prepare for an upcoming weight update."""
     pass
 
+  def _resolve_gpu_param_and_offset(self, hf_name: str) -> tuple[torch.Tensor, int]:
+    """Resolves a HuggingFace parameter name to (gpu_param, 1d_element_offset) on self.model."""
+    if self.model is None:
+      raise RuntimeError("[InPlaceGPU] self.model is not available for in-place GPU parameter resolution.")
+
+    # 1. Direct match on self.model
+    try:
+      param = self.model.get_parameter(hf_name)
+      return param, 0
+    except (AttributeError, KeyError):
+      pass
+
+    # Extract model config for dimension calculation
+    hf_config = getattr(getattr(self, "model_config", None), "hf_config", None)
+    if hf_config is not None and hasattr(hf_config, "get_text_config"):
+      hf_config = hf_config.get_text_config()
+
+    hidden_size = getattr(hf_config, "hidden_size", None)
+    num_heads = getattr(hf_config, "num_attention_heads", None)
+    num_kv_heads = getattr(hf_config, "num_key_value_heads", num_heads)
+    head_dim = getattr(hf_config, "head_dim", None)
+    if head_dim is None and hidden_size is not None and num_heads is not None:
+      head_dim = hidden_size // num_heads
+
+    intermediate_size = getattr(hf_config, "intermediate_size", None)
+
+    # 2. Packed QKV attention mapping (q_proj, k_proj, v_proj -> qkv_proj)
+    if ".q_proj." in hf_name or ".k_proj." in hf_name or ".v_proj." in hf_name:
+      qkv_name = hf_name.replace(".q_proj.", ".qkv_proj.").replace(".k_proj.", ".qkv_proj.").replace(".v_proj.", ".qkv_proj.")
+      try:
+        qkv_param = self.model.get_parameter(qkv_name)
+        if hidden_size is not None and num_heads is not None and head_dim is not None:
+          q_numel = num_heads * head_dim * hidden_size
+          k_numel = num_kv_heads * head_dim * hidden_size
+          if ".q_proj." in hf_name:
+            return qkv_param, 0
+          elif ".k_proj." in hf_name:
+            return qkv_param, q_numel
+          elif ".v_proj." in hf_name:
+            return qkv_param, q_numel + k_numel
+      except (AttributeError, KeyError):
+        pass
+
+    # 3. Packed MLP mapping (gate_proj, up_proj -> gate_up_proj)
+    if ".gate_proj." in hf_name or ".up_proj." in hf_name:
+      gate_up_name = hf_name.replace(".gate_proj.", ".gate_up_proj.").replace(".up_proj.", ".gate_up_proj.")
+      try:
+        gate_up_param = self.model.get_parameter(gate_up_name)
+        if hidden_size is not None and intermediate_size is not None:
+          gate_numel = intermediate_size * hidden_size
+          if ".gate_proj." in hf_name:
+            return gate_up_param, 0
+          elif ".up_proj." in hf_name:
+            return gate_up_param, gate_numel
+      except (AttributeError, KeyError):
+        pass
+
+    raise KeyError(f"[InPlaceGPU] Unable to resolve HuggingFace parameter name '{hf_name}' to a GPU parameter on model {type(self.model).__name__}.")
+
+  def _apply_gpu_in_place(
+    self,
+    meta_names: list[str],
+    split_indices: tuple[torch.Tensor, ...],
+    split_values: tuple[torch.Tensor, ...],
+    target_path: str,
+  ) -> None:
+    """Applies sparse 1D patches directly to GPU parameters in-place in VRAM without CPU snapshot or load_weights."""
+    t0_start = time.perf_counter()
+    changed_elements = sum(idx.numel() for idx in split_indices)
+    logger.info(
+      f"[DeltaSnapshotEngine] [IN_PLACE_GPU] Starting direct in-place GPU weight patch across "
+      f"{len(meta_names)} layers ({changed_elements} total changed elements)..."
+    )
+
+    if changed_elements == 0:
+      self.current_weights_path = target_path
+      return
+
+    t0_resolve = time.perf_counter()
+    resolved_ops = []
+    for i, name in enumerate(meta_names):
+      if split_indices[i].numel() == 0:
+        continue
+      gpu_param, offset = self._resolve_gpu_param_and_offset(name)
+      resolved_ops.append((gpu_param, offset, split_indices[i], split_values[i]))
+
+    t_resolve_ms = (time.perf_counter() - t0_resolve) * 1000.0
+
+    t0_copy = time.perf_counter()
+    if resolved_ops:
+      target_device = getattr(self, "device", None) or resolved_ops[0][0].device
+      param_dtype = resolved_ops[0][0].dtype
+
+      # Preallocate bulk CPU index and value tensors
+      bulk_indices_cpu = torch.empty(changed_elements, dtype=torch.long)
+      bulk_values_cpu = torch.empty(changed_elements, dtype=param_dtype)
+
+      curr_offset = 0
+      op_slices = []
+      for gpu_param, offset, idx_cpu, val_cpu in resolved_ops:
+        n = idx_cpu.numel()
+        end_offset = curr_offset + n
+        bulk_indices_cpu[curr_offset:end_offset] = idx_cpu.to(dtype=torch.long) + offset
+        bulk_values_cpu[curr_offset:end_offset] = val_cpu.to(dtype=param_dtype)
+        op_slices.append((gpu_param, curr_offset, end_offset))
+        curr_offset = end_offset
+
+      # Pin host CPU memory for fast PCIe DMA transfer if CUDA is available
+      if torch.cuda.is_available() and target_device.type == "cuda":
+        bulk_indices_cpu = bulk_indices_cpu.pin_memory()
+        bulk_values_cpu = bulk_values_cpu.pin_memory()
+
+      # Single bulk Host-to-Device transfer across PCIe
+      bulk_indices_gpu = bulk_indices_cpu.to(device=target_device, non_blocking=True)
+      bulk_values_gpu = bulk_values_cpu.to(device=target_device, non_blocking=True)
+
+      # Mutate VRAM in-place using slices from the bulk GPU tensors
+      for gpu_param, start_idx, end_idx in op_slices:
+        flat_param = gpu_param.data.view(-1)
+        idx_slice = bulk_indices_gpu[start_idx:end_idx]
+        val_slice = bulk_values_gpu[start_idx:end_idx]
+        flat_param.index_copy_(0, idx_slice, val_slice)
+
+      if torch.cuda.is_available() and target_device.type == "cuda":
+        torch.cuda.synchronize(target_device)
+
+    t_copy_ms = (time.perf_counter() - t0_copy) * 1000.0
+    t_total_ms = (time.perf_counter() - t0_start) * 1000.0
+
+    self.current_weights_path = target_path
+    logger.info(
+      f"[DeltaSnapshotEngine] [IN_PLACE_GPU] Successfully applied in-place GPU patch ({len(meta_names)} layers, "
+      f"{changed_elements} elements mutated directly in VRAM) in {t_total_ms:.2f} ms "
+      f"(Resolve: {t_resolve_ms:.2f} ms, GPU Copy: {t_copy_ms:.2f} ms)."
+    )
+
   def receive_weights(
     self,
     update_info: DeltaSnapshotUpdateInfo,
@@ -205,7 +341,17 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         meta = json.load(f)
 
     is_sparse_delta = meta.get("format") == "sparse_delta"
-    logger.info(f"[DeltaSnapshotEngine] Weight update mode: {'sparse_delta' if is_sparse_delta else 'full_safetensors_snapshot'}")
+    use_in_place_gpu = os.getenv("OPEN_RL_IN_PLACE_DELTA", "0").lower() in ("1", "true") or (
+      os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "").lower() == "in_place_delta"
+    )
+
+    if is_sparse_delta and use_in_place_gpu:
+      mode_str = "in_place_gpu_delta"
+    elif is_sparse_delta:
+      mode_str = "sparse_delta"
+    else:
+      mode_str = "full_safetensors_snapshot"
+    logger.info(f"[DeltaSnapshotEngine] Weight update mode: {mode_str}")
 
     if is_sparse_delta:
       delta_file = os.path.join(target_path, "delta.safetensors")
@@ -217,15 +363,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       sparse_delta = load_file(delta_file, device="cpu")
       elapsed_read = (time.perf_counter() - start_t) * 1000.0
       logger.info(f"[DeltaSnapshotEngine] Loaded sparse delta file from {delta_file} in {elapsed_read:.2f} ms")
-
-      # Initialize base CPU snapshot if not yet populated
-      if not self._cpu_snapshot:
-        base_model = update_info.base_model_path or self._base_model
-        logger.info(f"[DeltaSnapshotEngine] CPU snapshot uninitialized. Populating base CPU snapshot for '{base_model}'...")
-        model = getattr(self, "model", None)
-        if model is None:
-          model = getattr(load_weights, "__self__", None)
-        self._ensure_cpu_snapshot(base_model, model)
 
       raw_names = meta.get("layer_names")
       if raw_names is None:
@@ -243,6 +380,22 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         self.current_weights_path = target_path
         logger.info("[DeltaSnapshotEngine] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
         return
+
+      split_indices = torch.split(indices_flat, layer_lengths)
+      split_values = torch.split(values_flat, layer_lengths)
+
+      if use_in_place_gpu:
+        self._apply_gpu_in_place(meta_names, split_indices, split_values, target_path)
+        return
+
+      # Initialize base CPU snapshot if not yet populated
+      if not self._cpu_snapshot:
+        base_model = update_info.base_model_path or self._base_model
+        logger.info(f"[DeltaSnapshotEngine] CPU snapshot uninitialized. Populating base CPU snapshot for '{base_model}'...")
+        model = getattr(self, "model", None)
+        if model is None:
+          model = getattr(load_weights, "__self__", None)
+        self._ensure_cpu_snapshot(base_model, model)
 
       logger.info(f"[DeltaSnapshotEngine] Applying sparse delta patch across {len(meta_names)} layers ({indices_flat.numel()} changed elements)...")
       t0_apply = time.perf_counter()
