@@ -6,6 +6,7 @@ without external sleep/wake workarounds.
 """
 
 import os
+import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -83,6 +84,8 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
     self._base_model: str = ""
+    self._staged_delta_lock = threading.Lock()
+    self._staged_delta: tuple[str, torch.Tensor | None, torch.Tensor | None, list[Any], int, int] | None = None
     if hasattr(self, "model_config") and getattr(self.model_config, "model", None):
       self._base_model = self.model_config.model
     else:
@@ -235,6 +238,99 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     raise KeyError(f"[InPlaceGPU] Unable to resolve HuggingFace parameter name '{hf_name}' to a GPU parameter on model {type(self.model).__name__}.")
 
+  def preload_delta_to_dram(self, target_path: str) -> None:
+    """Asynchronously pre-loads and stages delta weights into pinned CPU DRAM before sampling begins."""
+    import json
+
+    delta_file = os.path.join(target_path, "delta.safetensors")
+    metadata_path = os.path.join(target_path, "metadata.json")
+
+    # Poll for NFS propagation (up to 10s)
+    start_wait = time.perf_counter()
+    while not (os.path.exists(delta_file) and os.path.exists(metadata_path)):
+      if time.perf_counter() - start_wait > 10.0:
+        logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Target files missing after wait: '{target_path}'")
+        return
+      time.sleep(0.2)
+
+    try:
+      t0 = time.perf_counter()
+      with open(metadata_path) as f:
+        meta = json.load(f)
+
+      if meta.get("format") != "sparse_delta":
+        return
+
+      raw_names = meta.get("layer_names")
+      if raw_names is None:
+        return
+      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else raw_names
+
+      from safetensors.torch import load_file
+
+      sparse_delta = load_file(delta_file, device="cpu")
+
+      indices_flat = sparse_delta.get("indices")
+      values_flat = sparse_delta.get("values")
+      layer_lengths = sparse_delta.get("layer_lengths")
+      if indices_flat is None or values_flat is None or layer_lengths is None:
+        return
+
+      changed_elements = indices_flat.numel()
+      if changed_elements == 0:
+        with self._staged_delta_lock:
+          self._staged_delta = (target_path, None, None, [], len(meta_names), 0)
+        return
+
+      split_indices = torch.split(indices_flat, layer_lengths.tolist())
+      split_values = torch.split(values_flat, layer_lengths.tolist())
+
+      resolved_ops = []
+      for i, name in enumerate(meta_names):
+        if split_indices[i].numel() == 0:
+          continue
+        gpu_param, offset = self._resolve_gpu_param_and_offset(name)
+        resolved_ops.append((gpu_param, offset, split_indices[i], split_values[i]))
+
+      if not resolved_ops:
+        return
+
+      param_dtype = resolved_ops[0][0].dtype
+      bulk_indices_cpu = torch.empty(changed_elements, dtype=torch.long)
+      bulk_values_cpu = torch.empty(changed_elements, dtype=param_dtype)
+
+      curr_offset = 0
+      op_slices = []
+      for gpu_param, offset, idx_cpu, val_cpu in resolved_ops:
+        n = idx_cpu.numel()
+        end_offset = curr_offset + n
+        bulk_indices_cpu[curr_offset:end_offset] = idx_cpu.to(dtype=torch.long) + offset
+        bulk_values_cpu[curr_offset:end_offset] = val_cpu.to(dtype=param_dtype)
+        op_slices.append((gpu_param, curr_offset, end_offset))
+        curr_offset = end_offset
+
+      if torch.cuda.is_available() and getattr(self, "device", None) and self.device.type == "cuda":
+        bulk_indices_cpu = bulk_indices_cpu.pin_memory()
+        bulk_values_cpu = bulk_values_cpu.pin_memory()
+
+      t_ms = (time.perf_counter() - t0) * 1000.0
+      logger.info(
+        f"[DeltaSnapshotEngine] [PRELOAD] Successfully staged DRAM buffer for '{target_path}' "
+        f"({changed_elements} elements across {len(meta_names)} layers, pinned CPU RAM) in {t_ms:.2f} ms"
+      )
+
+      with self._staged_delta_lock:
+        self._staged_delta = (
+          target_path,
+          bulk_indices_cpu,
+          bulk_values_cpu,
+          op_slices,
+          len(meta_names),
+          changed_elements,
+        )
+    except Exception as exc:
+      logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Background preloading failed for '{target_path}': {exc}")
+
   def _apply_gpu_in_place(
     self,
     meta_names: list[str],
@@ -244,6 +340,47 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   ) -> None:
     """Applies sparse 1D patches directly to GPU parameters in-place in VRAM without CPU snapshot or load_weights."""
     t0_start = time.perf_counter()
+    staged_data = None
+    with self._staged_delta_lock:
+      if self._staged_delta and self._staged_delta[0] == target_path:
+        staged_data = self._staged_delta
+        self._staged_delta = None
+
+    if staged_data is not None:
+      _, bulk_indices_cpu, bulk_values_cpu, op_slices, num_layers, changed_elements = staged_data
+      logger.info(
+        f"[DeltaSnapshotEngine] [IN_PLACE_GPU] [PRELOAD HIT] Using background pre-staged DRAM buffer for "
+        f"'{target_path}' ({changed_elements} elements across {num_layers} layers)..."
+      )
+      if changed_elements == 0:
+        self.current_weights_path = target_path
+        return
+
+      target_device = getattr(self, "device", None) or (op_slices[0][0].device if op_slices else torch.device("cuda"))
+      t0_copy = time.perf_counter()
+
+      if op_slices and bulk_indices_cpu is not None and bulk_values_cpu is not None:
+        bulk_indices_gpu = bulk_indices_cpu.to(device=target_device, non_blocking=True)
+        bulk_values_gpu = bulk_values_cpu.to(device=target_device, non_blocking=True)
+
+        for gpu_param, start_idx, end_idx in op_slices:
+          flat_param = gpu_param.data.view(-1)
+          idx_slice = bulk_indices_gpu[start_idx:end_idx]
+          val_slice = bulk_values_gpu[start_idx:end_idx]
+          flat_param.index_copy_(0, idx_slice, val_slice)
+
+        if torch.cuda.is_available() and target_device.type == "cuda":
+          torch.cuda.synchronize(target_device)
+
+      t_copy_ms = (time.perf_counter() - t0_copy) * 1000.0
+      t_total_ms = (time.perf_counter() - t0_start) * 1000.0
+      self.current_weights_path = target_path
+      logger.info(
+        f"[DeltaSnapshotEngine] [IN_PLACE_GPU] [PRELOAD HIT] Successfully applied pre-staged GPU patch in {t_total_ms:.2f} ms "
+        f"(GPU Copy: {t_copy_ms:.2f} ms)."
+      )
+      return
+
     changed_elements = sum(idx.numel() for idx in split_indices)
     logger.info(
       f"[DeltaSnapshotEngine] [IN_PLACE_GPU] Starting direct in-place GPU weight patch across "

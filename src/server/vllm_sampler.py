@@ -323,9 +323,18 @@ async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
             target_path = data.get("weights_path")
             if target_path and target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
               print(f"[vLLM Worker] Prefetch signal received. Target weights path: {target_path}")
-              async with reload_lock:
-                if target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
-                  print(f"[vLLM Worker] Background prefetch signal registered for target: {target_path}")
+              print(f"[vLLM Worker] Background prefetch signal registered for target: {target_path}")
+              if engine is not None and hasattr(engine, "collective_rpc"):
+
+                def _preload(worker, path=target_path):
+                  wt = getattr(worker, "weight_transfer_engine", None)
+                  if wt is not None and hasattr(wt, "preload_delta_to_dram"):
+                    wt.preload_delta_to_dram(path)
+
+                try:
+                  await engine.collective_rpc(_preload)
+                except Exception as pe:
+                  print(f"[vLLM Worker] Background DRAM preloading failed: {pe}")
           except Exception as e:
             print(f"[vLLM Worker] Error in prefetch message processing: {e}")
             traceback.print_exc()
