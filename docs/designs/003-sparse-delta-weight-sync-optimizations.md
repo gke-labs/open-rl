@@ -13,8 +13,8 @@ In distributed Reinforcement Learning (RLHF / GRPO / PPO) for Large Language Mod
 Standard full model weight reloads across Network File Systems (NFS) demand **50–60+ seconds per step** for 8B models (e.g., `Qwen/Qwen3-8B`), severely bottlenecking training throughput.
 
 This design document specifies the architecture and optimizations implemented on this branch:
-1. **Sparse Delta Patching**: Computing sparse parameter diffs (~12–15% changed parameters) instead of full weight checkpoints.
-2. **Direct In-Place GPU Memory Mutation (`v0.3.7`)**: Direct PCIe DMA transfers into existing VRAM addresses using pinned host CPU memory arrays (`.pin_memory()`), reducing weight update latency from **12.5s to 4.4s** (> 2.8x speedup).
+1. **Sparse Delta Patching**: Computing sparse parameter diffs (~6–13% changed parameters) instead of full weight checkpoints.
+2. **Direct In-Place GPU Memory Mutation (`v0.3.7`)**: Direct PCIe DMA transfers into existing VRAM addresses using pinned host CPU memory arrays (`.pin_memory()`), reducing weight update latency from **12.5s to 4.2s** (> 2.8x speedup over simple delta).
 3. **Asynchronous Background DRAM Pre-Staging (`v0.3.8`–`v0.3.11`)**: Decoupling disk I/O and DRAM memory allocations from the critical path by staging pinned CPU host arrays off-path upon receiving Redis Pub/Sub weight update signals.
 4. **NFS Propagation Polling & Lock-Free Prefetching (`v0.3.10`–`v0.3.11`)**: Polling for NFS directory propagation and executing preloading concurrently without thread lock contention while Sampler workers are in sleep mode under Accelerator Time-Slicing.
 
@@ -126,25 +126,27 @@ In naive implementations:
 
 ---
 
-## 5. Performance Benchmarks & Results
+## 5. Detailed `sparse_delta` Benchmarks & Profiling Data
 
-| Optimization Milestone | Weight Transfer Strategy | Latency / Time per Step | Speedup vs Naive |
-| :--- | :--- | :---: | :---: |
-| **Baseline** | Full Safetensors Reload over NFS | 57,180 ms | 1.0x |
-| **`v0.3.6`** | Sparse Delta Snapshot (Simple) | 12,493 ms | 4.5x |
-| **`v0.3.7`** | Direct In-Place GPU Patching | 4,465 ms | 12.8x |
-| **`v0.3.11`** | In-Place GPU + Lock-Free DRAM Pre-Staging | **950–1,200 ms** (DMA only) | **> 47x** |
+### 5.1 Step-by-Step `sparse_delta` Telemetry (`Qwen/Qwen3-8B`)
 
-### Live RL Benchmark Results (`Qwen/Qwen3-8B`, 192 Batch Size)
-```text
-Step | Accuracy | Reward | Sampling | Train Step | Save Delta | Total Step Time
---------------------------------------------------------------------------------
-   0 |   8.85%  | -0.0063 |   206.7s |      75.1s |      27.5s |          309.5s
-   1 |  37.50%  |  0.3031 |    45.1s |      66.5s |      19.2s |          131.0s
-   2 |  44.79%  |  0.3755 |    40.1s |      54.0s |      24.5s |          118.8s
-```
-* Overall step latency reduced from **309.5s to 118.8s** (> 2.6x overall RL step speedup).
-* Model accuracy improved from **8.85% to 44.79%** over 2 training steps.
+| Step | Mutated Layers | Mutated Parameter Elements | % of Total Weights (8.19B) | Safetensors Read Time | Pointer Resolve Time | Direct GPU DMA Copy Time | Total In-Place GPU Patch Time |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **0** | 0 layers | 0 / 8,190,735,360 | **0.000%** *(No-Op)* | 25.77 ms | 0.00 ms | 0.00 ms | **0.00 ms** |
+| **1** | 348 layers | 1,057,194,125 / 8,190,735,360 | **12.907%** | 7.08 ms | 3.07 ms | 9,508.11 ms | **9,511.38 ms** (9.51s) |
+| **2** | 340 layers | 742,303,161 / 8,190,735,360 | **9.063%** | 5.67 ms | 2.53 ms | 5,334.15 ms | **5,336.86 ms** (5.34s) |
+| **3** | 338 layers | 608,374,959 / 8,190,735,360 | **7.428%** | 9.54 ms | 2.85 ms | 4,805.46 ms | **4,808.51 ms** (4.81s) |
+| **4** | 332 layers | 543,984,802 / 8,190,735,360 | **6.641%** | 8.05 ms | 2.81 ms | 4,234.45 ms | **4,237.45 ms** (4.24s) |
+
+### 5.2 Overall RL Step Performance Progress
+
+| Step | Math Accuracy | Total Reward | Sampling Time | Train Step Time | Save Delta Time | Total Step Time |
+| :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **0** | 9.38% | -0.0016 | 197.1s | 78.6s | 36.7s | **312.7s** |
+| **1** | 22.40% | +0.1411 | 44.7s | 67.4s | 19.2s | **131.5s** |
+| **2** | 36.46% | +0.2859 | 39.5s | 67.6s | 16.8s | **124.1s** |
+| **3** | 33.33% | +0.2505 | 38.3s | 65.0s | 14.0s | **117.5s** |
+| **4** | **49.48%** | **+0.4245** | **37.3s** | **57.2s** | **16.5s** | **111.2s** |
 
 ---
 
