@@ -20,19 +20,14 @@ This design document specifies the architecture and optimizations implemented on
 
 ---
 
-## 2. Problem Statement & Bottlenecks
+## 2. Comprehensive Comparison of Weight Transfer Schemes
 
-### 2.1 The RL Weight Synchronization Loop
-During distributed RL training, the workload alternates between:
-1. **Rollout Generation (Sampler)**: vLLM generates trajectories from current prompt batches.
-2. **Policy Gradient Step (Trainer)**: Trainer computes loss, backpropagation, and updates policy parameters with AdamW.
-3. **Weight Transfer**: Updated weights must be transferred to Sampler before the next rollout.
-
-### 2.2 Critical Path Bottlenecks
-In naive implementations:
-- **Full Model Reload**: 15.26 GiB safetensors reloaded over NFS took **57.18 seconds**.
-- **CPU Host Allocation & Copy Overhead**: Creating unpinned CPU numpy/torch arrays on every step caused CPU thrashing and garbage collection pauses.
-- **Synchronous Disk I/O on Request Arrival**: The Sampler waited until the HTTP rollout request arrived to start reading delta files from disk, keeping the GPU idle.
+| Scheme | Architecture & Mechanics | Measured Update Latency (8B Model) | Pros | Cons |
+| :--- | :--- | :---: | :--- | :--- |
+| **Scheme A: Full Model Reloading** *(Naive Baseline)* | Re-reads full 15.26 GiB safetensors checkpoint files over NFS on every step via vLLM loader. | **57.18 s** (57,180 ms) | • Standard vLLM implementation<br>• Zero custom patching code | • Severe bottleneck (~50% of step time)<br>• Heavy NFS network/disk I/O thrashing<br>• Re-instantiates engine objects every step |
+| **Scheme B: Naive Sparse Delta Patching** *(`v0.3.0`–`v0.3.6`)* | Compares weights against CPU baseline; saves ~12.9% changed tensors (`delta.safetensors`). Uses unpinned CPU arrays & temporary GPU allocations. | **12.49 s** (12,493 ms) | • 4.5x faster than full reload<br>• Reduced transfer payload (1.05 GB vs 15.26 GB) | • Unpinned memory causes GC pauses<br>• Temporary GPU allocations cause VRAM fragmentation<br>• Runs synchronously on critical path |
+| **Scheme C: Direct In-Place GPU Patching** *(`v0.3.7`)* | Pinned CPU host arrays (`.pin_memory()`) copied directly into existing VRAM addresses via non-blocking PCIe DMA (`_apply_gpu_in_place`). | **4.46 s** (4,465 ms) | • > 12.8x speedup vs naive<br>• Zero VRAM reallocation or graph rebuild<br>• Direct pointer mutation in GPU memory | • Disk I/O & host allocations still run synchronously inside HTTP rollout request path (~0.5–1.2s overhead) |
+| **Scheme D: In-Place GPU + Lock-Free DRAM Pre-Staging** *(`v0.3.11` - Final Best)* | Redis Pub/Sub triggers lock-free background DRAM staging (`preload_delta_to_dram`) while Sampler sleeps under Time-Slicing. 10s NFS polling wait loop. | **Critical Path: ~950 ms**<br>*(Total GPU DMA: 4.23 s)* | • **> 47x speedup vs full reload**<br>• Disk I/O & host allocations 100% off critical path<br>• Lock-free & thread-safe under Time-Slicing | • Slightly higher peak host DRAM usage (~1–2 GB pinned DRAM buffer per active model) |
 
 ---
 
