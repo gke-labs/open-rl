@@ -13,6 +13,8 @@ os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
 
 import redis.asyncio as redis
 
+from server.model_metadata import WeightSyncConfig
+
 try:
   from vllm import SamplingParams
   from vllm.engine.arg_utils import AsyncEngineArgs
@@ -110,7 +112,10 @@ def init_engine():
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
-    if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
+    from server.model_metadata import WeightSyncConfig
+
+    weight_sync_cfg = WeightSyncConfig.from_env()
+    if weight_sync_cfg.strategy == "delta":
       try:
         from vllm.config.weight_transfer import WeightTransferConfig
 
@@ -238,7 +243,7 @@ async def process_sampling_request(req: dict, store: Any) -> None:
               await engine.sleep(level=1)
               print("[vLLM Worker] Waking up weights...")
               await engine.wake_up(tags=["weights"])
-              if os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower() == "delta":
+              if WeightSyncConfig.from_env().strategy == "delta":
 
                 def _trigger_wt(worker, path=weights_path):
                   worker.start_weight_update()

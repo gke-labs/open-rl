@@ -82,9 +82,9 @@ class DeltaWeightSyncTest(unittest.TestCase):
 
   def test_weight_sync_strategy_selection(self):
     worker = FFTTrainingWorker()
-    self.assertEqual(worker.weight_sync_strategy, "delta")
+    self.assertEqual(worker.weight_sync_cfg.strategy, "delta")
     worker.set_weight_sync_strategy("full")
-    self.assertEqual(worker.weight_sync_strategy, "full")
+    self.assertEqual(worker.weight_sync_cfg.strategy, "full")
     with self.assertRaises(ValueError):
       worker.set_weight_sync_strategy("invalid_strategy")
 

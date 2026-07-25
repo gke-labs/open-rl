@@ -48,6 +48,12 @@ def patch_tinker_default_headers() -> None:
     headers = _orig_get_default_headers()
     if strategy := os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY"):
       headers["X-Open-RL-Weight-Sync-Strategy"] = strategy
+    if fmt := os.getenv("OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"):
+      headers["X-Open-RL-Weight-Sync-Delta-Format"] = fmt
+    if apply_method := os.getenv("OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"):
+      headers["X-Open-RL-Weight-Sync-Delta-Apply-Method"] = apply_method
+    if prefetch := os.getenv("OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING"):
+      headers["X-Open-RL-Weight-Sync-Enable-Prefetching"] = prefetch
     if ft_type := os.getenv("OPEN_RL_FINE_TUNING_TYPE"):
       headers["X-Open-RL-Fine-Tuning-Type"] = ft_type
     return headers

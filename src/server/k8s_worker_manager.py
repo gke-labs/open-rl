@@ -112,7 +112,7 @@ class KubernetesFFTWorkerManager:
   ) -> dict[str, Any]:
     from server.worker_manager import _fetch_metadata_from_store
 
-    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
+    meta = _fetch_metadata_from_store(model_id)
     base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
     pod = copy.deepcopy(base_tmpl)
     metadata = pod.setdefault("metadata", {})
@@ -136,10 +136,10 @@ class KubernetesFFTWorkerManager:
     if role == "sampler":
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
     container.setdefault("args", []).extend(["--model-id", model_id])
-    if base_model:
-      set_env(container, "BASE_MODEL", base_model)
-      set_env(container, "OPEN_RL_BASE_MODEL", base_model)
-      if "gemma-4" in base_model.lower() or "gemma4" in base_model.lower():
+    if meta and meta.base_model:
+      set_env(container, "BASE_MODEL", meta.base_model)
+      set_env(container, "OPEN_RL_BASE_MODEL", meta.base_model)
+      if "gemma-4" in meta.base_model.lower() or "gemma4" in meta.base_model.lower():
         set_env(container, "VLLM_ARCHITECTURE_OVERRIDE", "Gemma4ForCausalLM")
     arch_override = os.getenv("VLLM_ARCHITECTURE_OVERRIDE")
     if arch_override:
@@ -148,9 +148,14 @@ class KubernetesFFTWorkerManager:
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
-    weight_sync = weight_sync_strategy or os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta")
-    if weight_sync:
-      set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync)
+    from server.model_metadata import WeightSyncConfig
+
+    weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
+    set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync_cfg.strategy)
+    if weight_sync_cfg.strategy == "delta":
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT", weight_sync_cfg.delta_format)
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", weight_sync_cfg.delta_apply_method)
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING", str(weight_sync_cfg.enable_prefetching).lower())
     return pod
 
   def read_pod(self, pod_name: str) -> Any | None:

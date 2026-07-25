@@ -8,7 +8,6 @@ import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import asdict, dataclass
 from typing import Any
 
 import httpx
@@ -19,19 +18,9 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_fft_worker_manager
-
-
-@dataclass
-class TrainingModelMetadata:
-  base_model: str | None
-  created_at: float
-  training_kind: str
-  weight_sync_strategy: str | None = None
-  full_config: dict[str, Any] | None = None
-  lora_config: dict[str, Any] | None = None
-
 
 store = get_store()
 fft_worker_manager: WorkerManager | None = None
@@ -135,26 +124,25 @@ async def _extract_and_persist_model_metadata(
   full_config = dict(req.get("full_config") or {})
   lora_config = dict(req.get("lora_config") or {})
 
-  weight_sync_strategy = None
-  training_kind = default_training_kind
-  if request and hasattr(request, "headers"):
-    weight_sync_strategy = request.headers.get("x-open-rl-weight-sync-strategy")
-    if "x-open-rl-training-kind" in request.headers:
-      training_kind = request.headers.get("x-open-rl-training-kind", default_training_kind)
+  headers = request.headers if (request and hasattr(request, "headers")) else {}
+  weight_sync_cfg = extract_weight_sync_config(headers)
 
-  if weight_sync_strategy in ("full", "delta"):
-    full_config["weight_sync_strategy"] = weight_sync_strategy
+  training_kind = default_training_kind
+  if request and hasattr(request, "headers") and "x-open-rl-training-kind" in request.headers:
+    training_kind = request.headers.get("x-open-rl-training-kind", default_training_kind)
+
+  full_config["weight_sync_strategy"] = weight_sync_cfg.strategy
 
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
     created_at=time.time(),
     training_kind=training_kind,
-    weight_sync_strategy=weight_sync_strategy,
+    weight_sync_config=weight_sync_cfg,
     full_config=full_config,
     lora_config=lora_config,
   )
-  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(asdict(meta_obj)))
+  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(meta_obj.to_dict()))
 
   return model_id
 

@@ -202,7 +202,7 @@ class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
     s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps(
       {
         "base_model": "base-model-a",
-        "weight_sync_strategy": "delta",
+        "weight_sync_config": {"strategy": "delta"},
         "training_kind": "full",
       }
     )
@@ -258,7 +258,7 @@ class GatewayMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
     meta_dict = json.loads(meta_val)
     self.assertEqual(meta_dict["base_model"], "Qwen/Qwen2.5-0.5B")
     self.assertEqual(meta_dict["training_kind"], "lora")
-    self.assertEqual(meta_dict["weight_sync_strategy"], "delta")
+    self.assertEqual(meta_dict["weight_sync_config"]["strategy"], "delta")
 
 
 class GatewayFutureTranslationTest(unittest.TestCase):

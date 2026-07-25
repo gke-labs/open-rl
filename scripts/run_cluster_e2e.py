@@ -17,13 +17,19 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = REPO_ROOT / "k8s" / "eval" / "e2e-client-job.yaml"
 JOB = "open-rl-e2e-client"
 
 
-def render_manifest(scenario: str, extra_args_str: str, image: str) -> str:
+def render_manifest(
+  scenario: str,
+  extra_args_str: str,
+  image: str,
+  weight_sync_cfg: dict[str, Any] | None = None,
+) -> str:
   manifest = MANIFEST.read_text(encoding="utf-8")
   for placeholder, value in [("E2E-IMAGE", image), ("E2E-SCENARIO", scenario)]:
     if placeholder not in manifest:
@@ -35,6 +41,22 @@ def render_manifest(scenario: str, extra_args_str: str, image: str) -> str:
   if '        - "E2E-EXTRA-ARGS"' not in manifest:
     raise RuntimeError(f"{MANIFEST} no longer contains the E2E-EXTRA-ARGS placeholder")
   manifest = manifest.replace('        - "E2E-EXTRA-ARGS"', args_yaml)
+
+  if weight_sync_cfg:
+    env_vars = []
+    if strategy := weight_sync_cfg.get("strategy"):
+      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_STRATEGY\n          value: "{strategy}"')
+    if delta_format := weight_sync_cfg.get("delta_format"):
+      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT\n          value: "{delta_format}"')
+    if delta_apply_method := weight_sync_cfg.get("delta_apply_method"):
+      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD\n          value: "{delta_apply_method}"')
+    if prefetching := weight_sync_cfg.get("enable_prefetching"):
+      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING\n          value: "{prefetching}"')
+
+    if env_vars:
+      env_yaml = "\n".join(env_vars)
+      manifest = manifest.replace("        env:", f"        env:\n{env_yaml}")
+
   return manifest
 
 
@@ -44,12 +66,43 @@ def main() -> None:
   parser.add_argument("--args", default="", help="Extra arguments to pass to run_training_e2e.py.")
   parser.add_argument("--image", required=True, help="Client container image to run.")
   parser.add_argument("--namespace", default="", help="Kubernetes namespace (defaults to the kubectl context's).")
+  parser.add_argument("--weight-sync-strategy", "--strategy", dest="strategy", default="", help="Weight sync strategy override (delta | full).")
+  parser.add_argument("--weight-sync-delta-format", "--delta-format", dest="delta_format", default="", help="Delta format override (vllm_fused | native).")
+  parser.add_argument(
+    "--weight-sync-delta-apply-method",
+    "--delta-apply-method",
+    dest="delta_apply_method",
+    default="",
+    help="Delta apply method override (patch_in_place | full_replace).",
+  )
+  parser.add_argument(
+    "--weight-sync-enable-prefetching",
+    "--enable-prefetching",
+    dest="enable_prefetching",
+    default="",
+    help="Enable background DRAM prefetching (true | false).",
+  )
   parser.add_argument("--no-follow", action="store_true", help="Launch the job but do not follow its logs.")
   parser.add_argument("--print-only", action="store_true", help="Print the kubectl commands and manifest; run nothing.")
   args = parser.parse_args()
 
+  weight_sync_cfg = {}
+  if args.strategy:
+    weight_sync_cfg["strategy"] = args.strategy
+  if args.delta_format:
+    weight_sync_cfg["delta_format"] = args.delta_format
+  if args.delta_apply_method:
+    weight_sync_cfg["delta_apply_method"] = args.delta_apply_method
+  if args.enable_prefetching:
+    weight_sync_cfg["enable_prefetching"] = args.enable_prefetching
+
   kubectl = ["kubectl"] + (["-n", args.namespace] if args.namespace else [])
-  manifest = render_manifest(args.scenario, args.args, args.image)
+  manifest = render_manifest(
+    args.scenario,
+    args.args,
+    args.image,
+    weight_sync_cfg=weight_sync_cfg if weight_sync_cfg else None,
+  )
   commands = [
     kubectl + ["delete", "job", JOB, "--ignore-not-found"],
     kubectl + ["apply", "-f", "<manifest>"],

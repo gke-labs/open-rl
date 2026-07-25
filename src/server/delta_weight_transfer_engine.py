@@ -477,18 +477,24 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       with open(metadata_path) as f:
         meta = json.load(f)
 
-    is_sparse_delta = meta.get("format") == "sparse_delta"
-    use_in_place_gpu = os.getenv("OPEN_RL_IN_PLACE_DELTA", "0").lower() in ("1", "true") or (
-      os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "").lower() == "in_place_delta"
-    )
+    from server.model_metadata import WeightSyncConfig
 
-    if is_sparse_delta and use_in_place_gpu:
-      mode_str = "in_place_gpu_delta"
-    elif is_sparse_delta:
-      mode_str = "sparse_delta"
+    is_sparse_delta = meta.get("format") == "sparse_delta"
+    weight_sync_cfg = WeightSyncConfig.from_env()
+    strategy = weight_sync_cfg.strategy
+    delta_apply_method = weight_sync_cfg.delta_apply_method
+
+    if strategy == "full" or not is_sparse_delta:
+      mode_str = "full"
+      use_in_place_gpu = False
+    elif delta_apply_method == "patch_in_place":
+      mode_str = "patch_in_place"
+      use_in_place_gpu = True
     else:
-      mode_str = "full_safetensors_snapshot"
-    logger.info(f"[DeltaSnapshotEngine] Weight update mode: {mode_str}")
+      mode_str = "full_replace"
+      use_in_place_gpu = False
+
+    logger.info(f"[DeltaSnapshotEngine] Weight update mode: strategy={strategy}, apply_method={mode_str}")
 
     if is_sparse_delta:
       delta_file = os.path.join(target_path, "delta.safetensors")

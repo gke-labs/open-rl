@@ -27,8 +27,11 @@ def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
   return [sys.executable, "-u", "-m", module, "--model-id", model_id]
 
 
-def _fetch_metadata_from_store(model_id: str) -> tuple[str | None, str | None]:
-  """Retrieve base_model and weight_sync_strategy from canonical open_rl:model_meta:<model_id>."""
+from server.model_metadata import TrainingModelMetadata, WeightSyncConfig
+
+
+def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
+  """Retrieve TrainingModelMetadata dataclass from canonical open_rl:model_meta:<model_id>."""
   import json
 
   from server.store import get_store
@@ -36,12 +39,12 @@ def _fetch_metadata_from_store(model_id: str) -> tuple[str | None, str | None]:
   try:
     val = get_store().get_value_sync(f"open_rl:model_meta:{model_id}")
     if val:
-      meta = json.loads(val) if isinstance(val, str) else val
-      if isinstance(meta, dict):
-        return meta.get("base_model"), meta.get("weight_sync_strategy")
+      meta_dict = json.loads(val) if isinstance(val, str) else val
+      if isinstance(meta_dict, dict):
+        return TrainingModelMetadata.from_dict(meta_dict)
   except Exception:
     pass
-  return None, None
+  return None
 
 
 class WorkerManager(Protocol):
@@ -83,17 +86,23 @@ class FFTWorkerManager:
     if proc is not None and proc.poll() is None:
       return
 
-    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
+    meta = _fetch_metadata_from_store(model_id)
     env = {
       **os.environ,
       "OPEN_RL_ENABLE_FFT": "true",
       "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", model_id),
       "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
     }
-    if base_model:
-      env["BASE_MODEL"] = base_model
-    if weight_sync_strategy:
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
+    weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
+    if meta and meta.base_model:
+      env["BASE_MODEL"] = meta.base_model
+
+    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_cfg.strategy
+    if weight_sync_cfg.strategy == "delta":
+      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
+      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
+      env["OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING"] = str(weight_sync_cfg.enable_prefetching).lower()
+
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
       cwd=self.project_dir,
@@ -106,18 +115,23 @@ class FFTWorkerManager:
     if proc is not None and proc.poll() is None:
       return
 
-    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
+    meta = _fetch_metadata_from_store(model_id)
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    if base_model:
-      env["BASE_MODEL"] = base_model
+    if meta and meta.base_model:
+      env["BASE_MODEL"] = meta.base_model
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
       sampler_env = env.copy()
       sampler_env["OPEN_RL_MODEL_ID"] = model_id
       sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", model_id)
       sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
-      if weight_sync_strategy:
-        sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
+
+      weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
+      sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_cfg.strategy
+      if weight_sync_cfg.strategy == "delta":
+        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
+        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
+        sampler_env["OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING"] = str(weight_sync_cfg.enable_prefetching).lower()
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu

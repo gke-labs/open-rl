@@ -34,6 +34,9 @@ def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Paramete
   return params
 
 
+from server.model_metadata import WeightSyncConfig
+
+
 class FFTTrainingWorker(BaseTrainerWorker):
   def __init__(self):
     super().__init__()
@@ -42,7 +45,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.trainable_params: list[torch.nn.Parameter] = []
     self.optimizer: torch.optim.Optimizer | None = None
     self.cpu_offload: bool = True
-    self.weight_sync_strategy: str = os.getenv("OPEN_RL_WEIGHT_SYNC_STRATEGY", "delta").lower()
+    self.weight_sync_cfg: WeightSyncConfig = WeightSyncConfig.from_env()
     self._is_offloaded: bool = False
     self._latest_delta_tensors: dict[str, torch.Tensor] = {}
     self._latest_total_changed: int = 0
@@ -57,7 +60,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
   def set_weight_sync_strategy(self, strategy: str) -> None:
     if strategy not in ("full", "delta"):
       raise ValueError(f"Invalid weight_sync_strategy '{strategy}'. Must be 'full' or 'delta'.")
-    self.weight_sync_strategy = strategy
+    self.weight_sync_cfg.strategy = strategy
 
   def _get_prev_cpu_weight(self, name: str, param: torch.nn.Parameter) -> torch.Tensor | None:
     if param in self._param_shadow:
@@ -103,7 +106,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.trainable_params = trainable_model_parameters(self.model)
     self.model_layer_names = [name for name, p in self.model.named_parameters() if p.requires_grad]
     self.total_model_elements = sum(p.numel() for p in self.model.parameters())
-    if self.weight_sync_strategy == "delta":
+    if self.weight_sync_cfg.strategy == "delta":
       for param in self.model.parameters():
         if param.requires_grad and param not in self._param_shadow:
           cpu_buf = torch.empty(param.shape, dtype=param.dtype, device="cpu", pin_memory=torch.cuda.is_available())
@@ -176,7 +179,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
         "GPU time-slicer lock is not held during save operations."
       )
 
-    if self.weight_sync_strategy == "delta" and not include_optimizer:
+    if self.weight_sync_cfg.strategy == "delta" and not include_optimizer:
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
 
     os.makedirs(state_path, exist_ok=True)
@@ -340,10 +343,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     layer_names_list: list[str],
     indices_list: list[torch.Tensor],
   ) -> tuple[list[str], list[torch.Tensor]]:
-    """Optionally remaps HF layer names (q_proj, k_proj, v_proj, gate_proj, up_proj) and offsets indices to vLLM fused names."""
-    if os.getenv("OPEN_RL_EMIT_VLLM_FUSED_DELTAS", "0").lower() not in ("1", "true"):
-      return layer_names_list, indices_list
-
+    """Remaps HF layer names (q_proj, k_proj, v_proj, gate_proj, up_proj) and offsets indices to vLLM fused names."""
     config = getattr(self.model, "config", None)
     if config is None:
       return layer_names_list, indices_list
@@ -431,7 +431,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     step_time = t_step_end - t_step_start
 
     delta_compute_time = 0.0
-    if self.weight_sync_strategy == "delta" and self.model is not None and hasattr(self.model, "named_parameters"):
+    if self.weight_sync_cfg.strategy == "delta" and self.model is not None and hasattr(self.model, "named_parameters"):
       t_delta_start = time.perf_counter()
       self._latest_delta_tensors.clear()
       self._latest_total_changed = 0
@@ -467,7 +467,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
           self._update_prev_cpu_weight(name, param, idx_cpu, val_cpu)
         del prev_gpu, diff_mask, indices
 
-      layer_names_list, indices_list = self._remap_hf_to_vllm_fused(layer_names_list, indices_list)
+      if self.weight_sync_cfg.delta_format == "vllm_fused":
+        layer_names_list, indices_list = self._remap_hf_to_vllm_fused(layer_names_list, indices_list)
 
       self._latest_delta_tensors = {
         "names": layer_names_list,

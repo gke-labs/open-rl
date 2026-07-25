@@ -24,16 +24,18 @@ configMapGenerator:
     literals:
       - BASE_MODEL="Qwen/Qwen2.5-0.5B"
       - ENABLE_GCP_TRACE="1"
-      - OPEN_RL_IN_PLACE_DELTA="1"
-      - OPEN_RL_EMIT_VLLM_FUSED_DELTAS="1"
+      - OPEN_RL_WEIGHT_SYNC_STRATEGY="delta"
+      - OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT="vllm_fused"
+      - OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD="patch_in_place"
+      - OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING="true"
 
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.3.11
+    newTag: 0.3.12
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.3.11
+    newTag: 0.3.12
 
 replacements:
   - source:

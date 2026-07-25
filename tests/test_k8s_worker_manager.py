@@ -157,7 +157,7 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
     s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps(
       {
         "base_model": "gemma-4-k8s",
-        "weight_sync_strategy": "full",
+        "weight_sync_config": {"strategy": "full"},
         "training_kind": "full",
       }
     )
