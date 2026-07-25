@@ -79,7 +79,7 @@ make cluster-e2e IMAGE_TAG=$(cat VERSION 2>/dev/null || echo latest) \
 
 Before launching a new cluster run, always clean up any stale client jobs or previous dynamic worker pods:
 ```bash
-kubectl delete job -l app=open-rl-client-job --ignore-not-found
+kubectl delete job -l app=open-rl-e2e-client --ignore-not-found
 kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
 kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ```
@@ -153,9 +153,13 @@ Kubernetes worker pods pull and execute Python code (`/app`) directly from the b
 make build-images push-images IMAGE_TAG=$(cat VERSION 2>/dev/null || echo latest)
 ```
 
+> [!IMPORTANT]
+> **Never Overwrite Tags or Rely on `Always` Pull Policies**: All dynamic worker pod templates intentionally employ `imagePullPolicy: IfNotPresent`. Re-pulling the massive 24GB image on every deployment takes upwards of 5+ minutes, which heavily throttles dev iterations. Consequently, if you rebuild an image without bumping the version, Kubernetes nodes will silently reuse the cached, stale local image. You **must always increment the tag** (e.g. `0.3.13` -> `0.3.14`) to guarantee a fresh layer download.
+
 ### Cleaning Up Stale Worker Pods & Background Tasks
 Aborting an E2E test harness (`make test e2e ...`) leaves background client tasks and active Kubernetes worker pods running. Always terminate stale client tasks and clean up worker pods cleanly by label before relaunching runs:
 ```bash
+kubectl delete job -l app=open-rl-e2e-client --ignore-not-found
 kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
 kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ```

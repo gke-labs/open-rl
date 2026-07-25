@@ -220,13 +220,13 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
 
       mock_utils = MagicMock()
-      mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: bm
+      mock_utils.download_weights_from_hf.side_effect = lambda bm, **kwargs: bm
 
       def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
         for p in hf_weights_files:
           if os.path.exists(p):
             with safetensors.safe_open(p, framework="pt", device="cpu") as f:
-              for key in f:
+              for key in f.keys():  # noqa: SIM118
                 yield key, f.get_tensor(key)
 
       mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
@@ -283,13 +283,13 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       save_file(sparse_dict, os.path.join(step_dir, "delta.safetensors"))
 
       mock_utils = MagicMock()
-      mock_utils.download_weights_from_hf.side_effect = lambda bm, cache_dir=None, allow_patterns=None: hf_folder
+      mock_utils.download_weights_from_hf.side_effect = lambda bm, **kwargs: hf_folder
 
       def fake_iterator(hf_weights_files, use_tqdm_on_load=False):
         for p in hf_weights_files:
           if os.path.exists(p):
             with safetensors.safe_open(p, framework="pt", device="cpu") as f:
-              for key in f:
+              for key in f.keys():  # noqa: SIM118
                 yield key, f.get_tensor(key)
 
       mock_utils.safetensors_weights_iterator.side_effect = fake_iterator
@@ -430,8 +430,8 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       # 1. Trigger background preloading
       engine.preload_delta_to_dram(tmpdir)
       self.assertIsNotNone(engine._staged_delta)
-      self.assertEqual(engine._staged_delta[0], tmpdir)
-      self.assertEqual(engine._staged_delta[5], 2)
+      self.assertEqual(engine._staged_delta.target_path, tmpdir)
+      self.assertEqual(engine._staged_delta.changed_elements, 2)
 
       # 2. Receive weights - should consume staged_delta via PRELOAD HIT
       with patch.dict(os.environ, {"OPEN_RL_IN_PLACE_DELTA": "1"}):

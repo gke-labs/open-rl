@@ -5,6 +5,7 @@ delta patching in host CPU RAM and reload tensors directly into GPU VRAM
 without external sleep/wake workarounds.
 """
 
+import json
 import os
 import threading
 import time
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from safetensors.torch import load_file
 
 try:
   from vllm.logger import init_logger
@@ -68,6 +70,27 @@ class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
   base_model_path: str = ""
 
 
+@dataclass
+class StagedDeltaSnapshot:
+  """Encapsulates pre-allocated bulk tensors and sliced GPU tensor maps for in-place patching."""
+
+  target_path: str
+  bulk_indices_cpu: torch.Tensor | None
+  bulk_values_cpu: torch.Tensor | None
+  op_slices: list[tuple[torch.Tensor, int, int]]  # (gpu_param, start_idx, end_idx)
+  num_layers: int
+  changed_elements: int
+
+
+@dataclass
+class SparseWeightPatch:
+  """A sparse in-place patch for one existing parameter."""
+
+  name: str
+  indices: torch.Tensor
+  values: torch.Tensor
+
+
 class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   """Pull-based Delta Snapshot Weight Transfer Engine for vLLM.
 
@@ -81,18 +104,35 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
   def __init__(self, *args, **kwargs) -> None:
     super().__init__(*args, **kwargs)
+
+    # Explicit instance attribute initializations
+    self.model: torch.nn.Module | None = kwargs.get("model", getattr(self, "model", None))
+    self.vllm_config: Any = kwargs.get("vllm_config", getattr(self, "vllm_config", None))
+    self.model_config: Any = kwargs.get(
+      "model_config",
+      getattr(self, "model_config", getattr(self.vllm_config, "model_config", None)),
+    )
+    self.device: torch.device | None = kwargs.get(
+      "device",
+      getattr(
+        self,
+        "device",
+        torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
+      ),
+    )
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
     self._base_model: str = ""
     self._staged_delta_lock = threading.Lock()
-    self._staged_delta: tuple[str, torch.Tensor | None, torch.Tensor | None, list[Any], int, int] | None = None
-    if hasattr(self, "model_config") and getattr(self.model_config, "model", None):
+    self._staged_delta: StagedDeltaSnapshot | None = None
+
+    if self.model_config is not None and getattr(self.model_config, "model", None):
       self._base_model = self.model_config.model
     else:
       self._base_model = os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
 
-    device_str = str(getattr(self, "device", "unknown"))
-    model_type = type(getattr(self, "model", None)).__name__
+    device_str = str(self.device) if self.device is not None else "unknown"
+    model_type = type(self.model).__name__ if self.model is not None else "None"
     tp_size = getattr(getattr(self, "parallel_config", None), "tensor_parallel_size", 1)
     pp_size = getattr(getattr(self, "parallel_config", None), "pipeline_parallel_size", 1)
     logger.info(
@@ -123,12 +163,23 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
           return buffers[p_name]
     return tensor
 
+  def _validate_patch(self, patch: SparseWeightPatch, param: torch.Tensor) -> None:
+    """Defensive pre-condition guards before executing VRAM mutations."""
+    if not param.data.is_contiguous():
+      raise NotImplementedError(f"Sparse weight updates require contiguous params: {patch.name}")
+    if patch.indices.ndim != 1 or patch.values.ndim != 1:
+      raise ValueError(f"Sparse weight patches must be 1D flattened updates: {patch.name}")
+    if patch.indices.numel() != patch.values.numel():
+      raise ValueError(f"`indices` and `values` must have matching lengths for {patch.name}")
+    if patch.values.dtype != param.dtype:
+      raise ValueError(f"Sparse values dtype {patch.values.dtype} does not match parameter dtype {param.dtype}")
+
   def _ensure_cpu_snapshot(self, base_model: str, model: torch.nn.Module | None = None) -> None:
     if self._cpu_snapshot:
       return
 
     base_model = base_model or self._base_model or os.getenv("OPEN_RL_BASE_MODEL", os.getenv("BASE_MODEL", ""))
-    model = model or getattr(self, "model", None)
+    model = model or self.model
     logger.info(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
 
     if base_model:
@@ -141,7 +192,20 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       if os.path.isdir(base_model):
         hf_folder = base_model
       else:
-        hf_folder = download_weights_from_hf(base_model, cache_dir=None, allow_patterns=["*.safetensors"])
+        try:
+          hf_folder = download_weights_from_hf(
+            base_model,
+            cache_dir=None,
+            allow_patterns=["*.safetensors"],
+            trust_remote_code=True,
+          )
+        except TypeError:
+          # Fallback if vLLM download_weights_from_hf does not accept trust_remote_code
+          hf_folder = download_weights_from_hf(
+            base_model,
+            cache_dir=None,
+            allow_patterns=["*.safetensors"],
+          )
 
       hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
       for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
@@ -176,7 +240,23 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     pass
 
   def start_weight_update(self) -> None:
-    """Prepare for an upcoming weight update."""
+    """No-op: sparse patches are applied in place; no dense layerwise reload required."""
+    pass
+
+  def finish_weight_update(self) -> None:
+    """Finalize layerwise reload."""
+    pass
+
+  def shutdown(self) -> None:
+    """Clean up engine resources."""
+    pass
+
+  @staticmethod
+  def trainer_send_weights(
+    iterator: Iterator[tuple[str, torch.Tensor]],
+    trainer_args: dict[str, Any] | Any,
+  ) -> None:
+    """Static trainer-side hook for push engines (no-op for pull engines)."""
     pass
 
   def _resolve_gpu_param_and_offset(self, hf_name: str) -> tuple[torch.Tensor, int]:
@@ -238,10 +318,30 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     raise KeyError(f"[InPlaceGPU] Unable to resolve HuggingFace parameter name '{hf_name}' to a GPU parameter on model {type(self.model).__name__}.")
 
+  def _build_bulk_tensor_slices(
+    self,
+    resolved_ops: list[tuple[torch.Tensor, int, torch.Tensor, torch.Tensor]],
+    changed_elements: int,
+    param_dtype: torch.dtype,
+  ) -> tuple[torch.Tensor, torch.Tensor, list[tuple[torch.Tensor, int, int]]]:
+    """Allocates flat bulk 1D CPU index & value tensors and computes GPU parameter slice offsets (DRY helper)."""
+    bulk_indices_cpu = torch.empty(changed_elements, dtype=torch.long)
+    bulk_values_cpu = torch.empty(changed_elements, dtype=param_dtype)
+
+    curr_offset = 0
+    op_slices: list[tuple[torch.Tensor, int, int]] = []
+    for gpu_param, offset, idx_cpu, val_cpu in resolved_ops:
+      n = idx_cpu.numel()
+      end_offset = curr_offset + n
+      bulk_indices_cpu[curr_offset:end_offset] = idx_cpu.to(dtype=torch.long) + offset
+      bulk_values_cpu[curr_offset:end_offset] = val_cpu.to(dtype=param_dtype)
+      op_slices.append((gpu_param, curr_offset, end_offset))
+      curr_offset = end_offset
+
+    return bulk_indices_cpu, bulk_values_cpu, op_slices
+
   def preload_delta_to_dram(self, target_path: str) -> None:
     """Asynchronously pre-loads and stages delta weights into pinned CPU DRAM before sampling begins."""
-    import json
-
     delta_file = os.path.join(target_path, "delta.safetensors")
     metadata_path = os.path.join(target_path, "metadata.json")
 
@@ -262,24 +362,34 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         return
 
       raw_names = meta.get("layer_names")
-      if raw_names is None:
-        return
-      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else raw_names
-
-      from safetensors.torch import load_file
+      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else (raw_names or [])
 
       sparse_delta = load_file(delta_file, device="cpu")
 
-      indices_flat = sparse_delta.get("indices")
-      values_flat = sparse_delta.get("values")
-      layer_lengths = sparse_delta.get("layer_lengths")
+      indices_flat = sparse_delta.get("delta.indices_flat")
+      if indices_flat is None:
+        indices_flat = sparse_delta.get("indices")
+      values_flat = sparse_delta.get("delta.values_flat")
+      if values_flat is None:
+        values_flat = sparse_delta.get("values")
+      layer_lengths = sparse_delta.get("delta.layer_lengths")
+      if layer_lengths is None:
+        layer_lengths = sparse_delta.get("layer_lengths")
+
       if indices_flat is None or values_flat is None or layer_lengths is None:
         return
 
       changed_elements = indices_flat.numel()
       if changed_elements == 0:
         with self._staged_delta_lock:
-          self._staged_delta = (target_path, None, None, [], len(meta_names), 0)
+          self._staged_delta = StagedDeltaSnapshot(
+            target_path=target_path,
+            bulk_indices_cpu=None,
+            bulk_values_cpu=None,
+            op_slices=[],
+            num_layers=len(meta_names),
+            changed_elements=0,
+          )
         return
 
       split_indices = torch.split(indices_flat, layer_lengths.tolist())
@@ -287,7 +397,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
       resolved_ops = []
       for i, name in enumerate(meta_names):
-        if split_indices[i].numel() == 0:
+        if i >= len(split_indices) or split_indices[i].numel() == 0:
           continue
         gpu_param, offset = self._resolve_gpu_param_and_offset(name)
         resolved_ops.append((gpu_param, offset, split_indices[i], split_values[i]))
@@ -296,20 +406,9 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         return
 
       param_dtype = resolved_ops[0][0].dtype
-      bulk_indices_cpu = torch.empty(changed_elements, dtype=torch.long)
-      bulk_values_cpu = torch.empty(changed_elements, dtype=param_dtype)
+      bulk_indices_cpu, bulk_values_cpu, op_slices = self._build_bulk_tensor_slices(resolved_ops, changed_elements, param_dtype)
 
-      curr_offset = 0
-      op_slices = []
-      for gpu_param, offset, idx_cpu, val_cpu in resolved_ops:
-        n = idx_cpu.numel()
-        end_offset = curr_offset + n
-        bulk_indices_cpu[curr_offset:end_offset] = idx_cpu.to(dtype=torch.long) + offset
-        bulk_values_cpu[curr_offset:end_offset] = val_cpu.to(dtype=param_dtype)
-        op_slices.append((gpu_param, curr_offset, end_offset))
-        curr_offset = end_offset
-
-      if torch.cuda.is_available() and getattr(self, "device", None) and self.device.type == "cuda":
+      if torch.cuda.is_available() and self.device is not None and self.device.type == "cuda":
         bulk_indices_cpu = bulk_indices_cpu.pin_memory()
         bulk_values_cpu = bulk_values_cpu.pin_memory()
 
@@ -320,13 +419,13 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       )
 
       with self._staged_delta_lock:
-        self._staged_delta = (
-          target_path,
-          bulk_indices_cpu,
-          bulk_values_cpu,
-          op_slices,
-          len(meta_names),
-          changed_elements,
+        self._staged_delta = StagedDeltaSnapshot(
+          target_path=target_path,
+          bulk_indices_cpu=bulk_indices_cpu,
+          bulk_values_cpu=bulk_values_cpu,
+          op_slices=op_slices,
+          num_layers=len(meta_names),
+          changed_elements=changed_elements,
         )
     except Exception as exc:
       logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Background preloading failed for '{target_path}': {exc}")
@@ -334,39 +433,40 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   def _apply_gpu_in_place(
     self,
     meta_names: list[str],
-    split_indices: tuple[torch.Tensor, ...],
-    split_values: tuple[torch.Tensor, ...],
+    split_indices: tuple[torch.Tensor, ...] | list[torch.Tensor],
+    split_values: tuple[torch.Tensor, ...] | list[torch.Tensor],
     target_path: str,
   ) -> None:
     """Applies sparse 1D patches directly to GPU parameters in-place in VRAM without CPU snapshot or load_weights."""
     t0_start = time.perf_counter()
-    staged_data = None
+    staged_snapshot: StagedDeltaSnapshot | None = None
     with self._staged_delta_lock:
-      if self._staged_delta and self._staged_delta[0] == target_path:
-        staged_data = self._staged_delta
+      if self._staged_delta is not None and self._staged_delta.target_path == target_path:
+        staged_snapshot = self._staged_delta
         self._staged_delta = None
 
-    if staged_data is not None:
-      _, bulk_indices_cpu, bulk_values_cpu, op_slices, num_layers, changed_elements = staged_data
+    if staged_snapshot is not None:
       logger.info(
         f"[DeltaSnapshotEngine] [IN_PLACE_GPU] [PRELOAD HIT] Using background pre-staged DRAM buffer for "
-        f"'{target_path}' ({changed_elements} elements across {num_layers} layers)..."
+        f"'{target_path}' ({staged_snapshot.changed_elements} elements across {staged_snapshot.num_layers} layers)..."
       )
-      if changed_elements == 0:
+      if staged_snapshot.changed_elements == 0:
         self.current_weights_path = target_path
         return
 
-      target_device = getattr(self, "device", None) or (op_slices[0][0].device if op_slices else torch.device("cuda"))
+      target_device = self.device or (staged_snapshot.op_slices[0][0].device if staged_snapshot.op_slices else torch.device("cuda"))
       t0_copy = time.perf_counter()
 
-      if op_slices and bulk_indices_cpu is not None and bulk_values_cpu is not None:
-        bulk_indices_gpu = bulk_indices_cpu.to(device=target_device, non_blocking=True)
-        bulk_values_gpu = bulk_values_cpu.to(device=target_device, non_blocking=True)
+      if staged_snapshot.op_slices and staged_snapshot.bulk_indices_cpu is not None and staged_snapshot.bulk_values_cpu is not None:
+        bulk_indices_gpu = staged_snapshot.bulk_indices_cpu.to(device=target_device, non_blocking=True)
+        bulk_values_gpu = staged_snapshot.bulk_values_cpu.to(device=target_device, non_blocking=True)
 
-        for gpu_param, start_idx, end_idx in op_slices:
+        for gpu_param, start_idx, end_idx in staged_snapshot.op_slices:
           flat_param = gpu_param.data.view(-1)
           idx_slice = bulk_indices_gpu[start_idx:end_idx]
           val_slice = bulk_values_gpu[start_idx:end_idx]
+          patch = SparseWeightPatch(name=str(gpu_param), indices=idx_slice, values=val_slice)
+          self._validate_patch(patch, flat_param)
           flat_param.index_copy_(0, idx_slice, val_slice)
 
         if torch.cuda.is_available() and target_device.type == "cuda":
@@ -403,22 +503,10 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     t0_copy = time.perf_counter()
     if resolved_ops:
-      target_device = getattr(self, "device", None) or resolved_ops[0][0].device
+      target_device = self.device or resolved_ops[0][0].device
       param_dtype = resolved_ops[0][0].dtype
 
-      # Preallocate bulk CPU index and value tensors
-      bulk_indices_cpu = torch.empty(changed_elements, dtype=torch.long)
-      bulk_values_cpu = torch.empty(changed_elements, dtype=param_dtype)
-
-      curr_offset = 0
-      op_slices = []
-      for gpu_param, offset, idx_cpu, val_cpu in resolved_ops:
-        n = idx_cpu.numel()
-        end_offset = curr_offset + n
-        bulk_indices_cpu[curr_offset:end_offset] = idx_cpu.to(dtype=torch.long) + offset
-        bulk_values_cpu[curr_offset:end_offset] = val_cpu.to(dtype=param_dtype)
-        op_slices.append((gpu_param, curr_offset, end_offset))
-        curr_offset = end_offset
+      bulk_indices_cpu, bulk_values_cpu, op_slices = self._build_bulk_tensor_slices(resolved_ops, changed_elements, param_dtype)
 
       # Pin host CPU memory for fast PCIe DMA transfer if CUDA is available
       if torch.cuda.is_available() and target_device.type == "cuda":
@@ -434,6 +522,8 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
         flat_param = gpu_param.data.view(-1)
         idx_slice = bulk_indices_gpu[start_idx:end_idx]
         val_slice = bulk_values_gpu[start_idx:end_idx]
+        patch = SparseWeightPatch(name=str(gpu_param), indices=idx_slice, values=val_slice)
+        self._validate_patch(patch, flat_param)
         flat_param.index_copy_(0, idx_slice, val_slice)
 
       if torch.cuda.is_available() and target_device.type == "cuda":
@@ -449,137 +539,192 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       f"(Resolve: {t_resolve_ms:.2f} ms, GPU Copy: {t_copy_ms:.2f} ms)."
     )
 
-  def receive_weights(
+  def _validate_receive_args(
     self,
     update_info: DeltaSnapshotUpdateInfo,
-    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None] | None = None,
-  ) -> None:
-    """Receive/patch sparse delta weights in host CPU RAM and pass to load_weights."""
-    import json
-
-    if load_weights is None:
-      if hasattr(self, "model") and hasattr(self.model, "load_weights"):
-        load_weights = self.model.load_weights
-      else:
-        raise ValueError("load_weights callback was not provided and self.model does not have load_weights attribute.")
-
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None] | None,
+  ) -> Callable[[list[tuple[str, torch.Tensor]]], None] | None:
+    """Validates update arguments and resolves load_weights callback."""
     target_path = update_info.target_weights_path
     if not target_path or not os.path.exists(target_path):
       raise ValueError(f"Target weights path does not exist: {target_path}")
 
-    start_t = time.perf_counter()
-    logger.info(f"[DeltaSnapshotEngine] Starting weight update from target path: '{target_path}'")
+    if load_weights is None and self.model is not None and hasattr(self.model, "load_weights"):
+      load_weights = self.model.load_weights
 
-    # Read metadata once
+    return load_weights
+
+  def _load_metadata(self, target_path: str) -> dict[str, Any]:
+    """Reads metadata.json from target weights path."""
     metadata_path = os.path.join(target_path, "metadata.json") if os.path.isdir(target_path) else ""
-    meta: dict[str, Any] = {}
     if metadata_path and os.path.exists(metadata_path):
       with open(metadata_path) as f:
-        meta = json.load(f)
+        return json.load(f)
+    return {}
 
+  def _determine_transfer_mode(self, meta: dict[str, Any]) -> tuple[str, bool]:
+    """Determines (mode_str, use_in_place_gpu) from WeightSyncConfig and metadata."""
     from server.model_metadata import WeightSyncConfig
 
     is_sparse_delta = meta.get("format") == "sparse_delta"
     weight_sync_cfg = WeightSyncConfig.from_env()
     strategy = weight_sync_cfg.strategy
     delta_apply_method = weight_sync_cfg.delta_apply_method
+    in_place_env = os.getenv("OPEN_RL_IN_PLACE_DELTA", "").lower() in ("1", "true", "yes")
 
     if strategy == "full" or not is_sparse_delta:
-      mode_str = "full"
-      use_in_place_gpu = False
-    elif delta_apply_method == "patch_in_place":
-      mode_str = "patch_in_place"
-      use_in_place_gpu = True
+      return "full", False
+    elif (delta_apply_method == "patch_in_place" or in_place_env) and self.model is not None:
+      return "patch_in_place", True
     else:
-      mode_str = "full_replace"
-      use_in_place_gpu = False
+      return "full_replace", False
 
-    logger.info(f"[DeltaSnapshotEngine] Weight update mode: strategy={strategy}, apply_method={mode_str}")
+  def _parse_sparse_delta_file(self, target_path: str, meta: dict[str, Any]) -> tuple[list[str], list[torch.Tensor], list[torch.Tensor], int]:
+    """Parses sparse safetensors file returning (meta_names, split_indices, split_values, changed_elements)."""
+    delta_file = os.path.join(target_path, "delta.safetensors")
+    if not os.path.exists(delta_file):
+      raise ValueError(f"Sparse delta metadata present but delta.safetensors not found at: {target_path}")
 
-    if is_sparse_delta:
-      delta_file = os.path.join(target_path, "delta.safetensors")
-      if not os.path.exists(delta_file):
-        raise ValueError(f"Sparse delta metadata present but delta.safetensors not found at: {target_path}")
+    sparse_delta = load_file(delta_file, device="cpu")
 
-      from safetensors.torch import load_file
+    raw_names = meta.get("layer_names")
+    meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else (raw_names or [])
 
-      sparse_delta = load_file(delta_file, device="cpu")
-      elapsed_read = (time.perf_counter() - start_t) * 1000.0
-      logger.info(f"[DeltaSnapshotEngine] Loaded sparse delta file from {delta_file} in {elapsed_read:.2f} ms")
+    indices_flat = sparse_delta.get("delta.indices_flat")
+    if indices_flat is None:
+      indices_flat = sparse_delta.get("indices")
 
-      raw_names = meta.get("layer_names")
-      if raw_names is None:
-        raise ValueError("Missing 'layer_names' metadata in sparse delta directory.")
-      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else raw_names
+    values_flat = sparse_delta.get("delta.values_flat")
+    if values_flat is None:
+      values_flat = sparse_delta.get("values")
 
-      indices_flat = sparse_delta["delta.indices_flat"].to(torch.int64)
-      values_flat = sparse_delta["delta.values_flat"]
-      layer_lengths = sparse_delta["delta.layer_lengths"].tolist()
+    layer_lengths_tensor = sparse_delta.get("delta.layer_lengths")
+    if layer_lengths_tensor is None:
+      layer_lengths_tensor = sparse_delta.get("layer_lengths")
 
-      if len(meta_names) != len(layer_lengths):
+    if indices_flat is not None and values_flat is not None and layer_lengths_tensor is not None:
+      indices_flat = indices_flat.to(torch.int64)
+      layer_lengths = layer_lengths_tensor.tolist()
+
+      if meta_names and len(meta_names) != len(layer_lengths):
         raise ValueError(f"Mismatch between layer_names ({len(meta_names)}) and layer_lengths ({len(layer_lengths)}) in sparse delta.")
 
-      if len(meta_names) == 0 or sum(layer_lengths) == 0 or indices_flat.numel() == 0:
+      split_indices = list(torch.split(indices_flat, layer_lengths))
+      split_values = list(torch.split(values_flat, layer_lengths))
+      changed_elements = indices_flat.numel()
+    else:
+      # Support legacy per-layer key format (e.g. layer.0.weight.indices / values)
+      layer_names_set = set()
+      for k in sparse_delta:
+        if k.endswith(".indices"):
+          layer_names_set.add(k[:-8])
+      if not meta_names:
+        meta_names = sorted(list(layer_names_set))
+
+      split_indices = []
+      split_values = []
+      for name in meta_names:
+        idx_key = f"{name}.indices"
+        val_key = f"{name}.values"
+        if idx_key in sparse_delta and val_key in sparse_delta:
+          split_indices.append(sparse_delta[idx_key].to(torch.int64))
+          split_values.append(sparse_delta[val_key])
+        else:
+          split_indices.append(torch.empty(0, dtype=torch.int64))
+          split_values.append(torch.empty(0, dtype=torch.float32))
+
+      changed_elements = sum(idx.numel() for idx in split_indices)
+
+    return meta_names, split_indices, split_values, changed_elements
+
+  def _apply_sparse_delta_to_cpu_snapshot(
+    self,
+    meta_names: list[str],
+    split_indices: list[torch.Tensor],
+    split_values: list[torch.Tensor],
+    changed_elements: int,
+    target_path: str,
+    update_info: DeltaSnapshotUpdateInfo,
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None],
+  ) -> list[tuple[str, torch.Tensor]]:
+    """Applies sparse delta tensors to host CPU snapshot and returns updated layer list."""
+    if not self._cpu_snapshot:
+      base_model = update_info.base_model_path or self._base_model
+      logger.info(f"[DeltaSnapshotEngine] CPU snapshot uninitialized. Populating base CPU snapshot for '{base_model}'...")
+      model = self.model or getattr(load_weights, "__self__", None)
+      self._ensure_cpu_snapshot(base_model, model)
+
+    logger.info(f"[DeltaSnapshotEngine] Applying sparse delta patch across {len(meta_names)} layers ({changed_elements} changed elements)...")
+    t0_apply = time.perf_counter()
+
+    for i, name in enumerate(meta_names):
+      if name not in self._cpu_snapshot:
+        raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot.")
+      if i < len(split_indices) and split_indices[i].numel() > 0:
+        snap_flat = self._cpu_snapshot[name].view(-1)
+        snap_flat[split_indices[i]] = split_values[i]
+
+    t_apply_ms = (time.perf_counter() - t0_apply) * 1000.0
+    total_numel = sum(t.numel() for t in self._cpu_snapshot.values())
+    pct_changed = (changed_elements / total_numel * 100.0) if total_numel > 0 else 0.0
+    logger.info(
+      f"[DeltaSnapshotEngine] Applied packed 1D sparse delta ({len(meta_names)} layers, "
+      f"{changed_elements}/{total_numel} elements [{pct_changed:.3f}% changed]) to CPU snapshot in {t_apply_ms:.2f} ms"
+    )
+
+    return list(self._cpu_snapshot.items())
+
+  def _read_full_weights_shards(self, target_path: str) -> list[tuple[str, torch.Tensor]]:
+    """Reads full dense safetensors shards from target_path."""
+    weights: list[tuple[str, torch.Tensor]] = []
+    if os.path.isdir(target_path):
+      for root, _, files in os.walk(target_path):
+        for f in sorted(files):
+          if f.endswith(".safetensors") and "delta" not in f:
+            shard_dict = load_file(os.path.join(root, f), device="cpu")
+            weights.extend(shard_dict.items())
+    elif target_path.endswith(".safetensors"):
+      shard_dict = load_file(target_path, device="cpu")
+      weights.extend(shard_dict.items())
+    else:
+      raise ValueError(f"Unsupported weight path format: {target_path}")
+
+    return weights
+
+  def receive_weights(
+    self,
+    update_info: DeltaSnapshotUpdateInfo,
+    load_weights: Callable[[list[tuple[str, torch.Tensor]]], None] | None = None,
+  ) -> None:
+    """Receive/patch sparse delta weights in host CPU RAM and pass to load_weights."""
+    resolved_loader = self._validate_receive_args(update_info, load_weights)
+    target_path = update_info.target_weights_path
+
+    start_t = time.perf_counter()
+    logger.info(f"[DeltaSnapshotEngine] Starting weight update from target path: '{target_path}'")
+
+    meta = self._load_metadata(target_path)
+    mode_str, use_in_place_gpu = self._determine_transfer_mode(meta)
+    logger.info(f"[DeltaSnapshotEngine] Weight update mode: apply_method={mode_str}")
+
+    is_sparse_delta = meta.get("format") == "sparse_delta"
+    if is_sparse_delta:
+      meta_names, split_indices, split_values, changed_elements = self._parse_sparse_delta_file(target_path, meta)
+
+      if changed_elements == 0:
         self.current_weights_path = target_path
         logger.info("[DeltaSnapshotEngine] Verified patch: 0 tensors changed (NO-OP PATCH DETECTED - Skipping GPU reload)")
         return
-
-      split_indices = torch.split(indices_flat, layer_lengths)
-      split_values = torch.split(values_flat, layer_lengths)
 
       if use_in_place_gpu:
         self._apply_gpu_in_place(meta_names, split_indices, split_values, target_path)
         return
 
-      # Initialize base CPU snapshot if not yet populated
-      if not self._cpu_snapshot:
-        base_model = update_info.base_model_path or self._base_model
-        logger.info(f"[DeltaSnapshotEngine] CPU snapshot uninitialized. Populating base CPU snapshot for '{base_model}'...")
-        model = getattr(self, "model", None)
-        if model is None:
-          model = getattr(load_weights, "__self__", None)
-        self._ensure_cpu_snapshot(base_model, model)
-
-      logger.info(f"[DeltaSnapshotEngine] Applying sparse delta patch across {len(meta_names)} layers ({indices_flat.numel()} changed elements)...")
-      t0_apply = time.perf_counter()
-      split_indices = torch.split(indices_flat, layer_lengths)
-      split_values = torch.split(values_flat, layer_lengths)
-
-      for i, name in enumerate(meta_names):
-        if name not in self._cpu_snapshot:
-          raise KeyError(f"Parameter '{name}' found in sparse delta but missing from CPU snapshot.")
-        snap_flat = self._cpu_snapshot[name].view(-1)
-        snap_flat[split_indices[i]] = split_values[i]
-
-      t_apply_ms = (time.perf_counter() - t0_apply) * 1000.0
-      total_numel = sum(t.numel() for t in self._cpu_snapshot.values())
-      changed_numel = indices_flat.numel()
-      pct_changed = (changed_numel / total_numel * 100.0) if total_numel > 0 else 0.0
-      logger.info(
-        f"[DeltaSnapshotEngine] Applied packed 1D sparse delta ({len(meta_names)} layers, "
-        f"{changed_numel}/{total_numel} elements [{pct_changed:.3f}% changed]) to CPU snapshot in {t_apply_ms:.2f} ms"
+      weights_to_load = self._apply_sparse_delta_to_cpu_snapshot(
+        meta_names, split_indices, split_values, changed_elements, target_path, update_info, resolved_loader
       )
-
-      weights_to_load = list(self._cpu_snapshot.items())
     else:
-      # Full snapshot safetensors path
-      weights: list[tuple[str, torch.Tensor]] = []
-      if os.path.isdir(target_path):
-        from safetensors.torch import load_file
-
-        for root, _, files in os.walk(target_path):
-          for f in sorted(files):
-            if f.endswith(".safetensors"):
-              shard_dict = load_file(os.path.join(root, f), device="cpu")
-              weights.extend(shard_dict.items())
-      elif target_path.endswith(".safetensors"):
-        from safetensors.torch import load_file
-
-        shard_dict = load_file(target_path, device="cpu")
-        weights.extend(shard_dict.items())
-      else:
-        raise ValueError(f"Unsupported weight path format: {target_path}")
-
+      weights = self._read_full_weights_shards(target_path)
       elapsed_read = (time.perf_counter() - start_t) * 1000.0
       logger.info(f"[DeltaSnapshotEngine] Loaded {len(weights)} parameter tensors from {target_path} in {elapsed_read:.2f} ms")
 
@@ -608,28 +753,14 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       weights_to_load = changed_weights
 
     # Feed genuinely changed parameter tensors directly into vLLM's internal layer loader
+    if resolved_loader is None:
+      raise ValueError("load_weights callback was not provided and self.model does not have load_weights attribute.")
     logger.info(f"[DeltaSnapshotEngine] Feeding {len(weights_to_load)} tensors into load_weights callback...")
     start_load = time.perf_counter()
-    load_weights(weights_to_load)
+    resolved_loader(weights_to_load)
     elapsed_load = (time.perf_counter() - start_load) * 1000.0
     self.current_weights_path = target_path
     logger.info(f"[DeltaSnapshotEngine] Incremental load_weights completed ({len(weights_to_load)} tensors) in {elapsed_load:.2f} ms")
-
-  def finish_weight_update(self) -> None:
-    """Finalize layerwise reload."""
-    pass
-
-  def shutdown(self) -> None:
-    """Clean up engine resources."""
-    pass
-
-  @staticmethod
-  def trainer_send_weights(
-    iterator: Iterator[tuple[str, torch.Tensor]],
-    trainer_args: dict[str, Any] | Any,
-  ) -> None:
-    """Static trainer-side hook for push engines (no-op for pull engines)."""
-    pass
 
 
 try:
