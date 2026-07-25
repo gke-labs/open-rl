@@ -178,6 +178,7 @@ def save_state_delta(
   }
 
   import safetensors.torch
+
   delta_path = os.path.join(state_path, "delta.safetensors")
   safetensors.torch.save_file(
     packed_delta,

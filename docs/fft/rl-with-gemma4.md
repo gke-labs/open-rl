@@ -18,23 +18,24 @@ from typing import Any
 import tinker_cookbook.renderers as renderers
 from transformers import PreTrainedTokenizerBase
 
+
 # 1. Define or import your Gemma 4 Renderer subclass
 class Gemma4Renderer(renderers.Renderer):
-    def __init__(self, tokenizer: PreTrainedTokenizerBase):
-        self.tokenizer = tokenizer
+  def __init__(self, tokenizer: PreTrainedTokenizerBase):
+    self.tokenizer = tokenizer
 
-    def build_generation_prompt(self, messages: list[dict[str, str]]) -> str:
-        # Utilize HuggingFace's official Gemma 4 chat template
-        return self.tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
+  def build_generation_prompt(self, messages: list[dict[str, str]]) -> str:
+    # Utilize HuggingFace's official Gemma 4 chat template
+    return self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # Implement remaining Renderer methods (build_supervised_example, parse_response, etc.)
-    ...
+  # Implement remaining Renderer methods (build_supervised_example, parse_response, etc.)
+  ...
+
 
 # 2. Define the factory function expected by the SDK
 def gemma4_renderer_factory(tokenizer: PreTrainedTokenizerBase, image_processor: Any = None) -> renderers.Renderer:
-    return Gemma4Renderer(tokenizer)
+  return Gemma4Renderer(tokenizer)
+
 
 # 3. Register into the SDK global lookup dictionary at script startup
 renderers.register_renderer("gemma4_instruct", gemma4_renderer_factory)

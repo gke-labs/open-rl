@@ -32,23 +32,18 @@ trainer = await client.create_lora_training_client_async(base_model="google/gemm
 
 # 2-3. Train: forward/backward pass, then optimizer step
 for step in range(25):
-    batch = get_next_batch(train_examples, batch_size=8)
-    datums = [example["datum"] for example in batch]
+  batch = get_next_batch(train_examples, batch_size=8)
+  datums = [example["datum"] for example in batch]
 
-    fwd = await trainer.forward_backward_async(datums, "cross_entropy")
-    opt = await trainer.optim_step_async(
-        types.AdamParams(learning_rate=1e-4, grad_clip_norm=0.3)
-    )
+  fwd = await trainer.forward_backward_async(datums, "cross_entropy")
+  opt = await trainer.optim_step_async(types.AdamParams(learning_rate=1e-4, grad_clip_norm=0.3))
 
-    await fwd 
-    await opt
+  await fwd
+  await opt
 
 # 4. Snapshot weights and evaluate
-sampler = client.create_sampling_client(
-  trainer.save_weights_for_sampler(name="step_25").result().path
-)
-result = sampler.sample(prompt_tokens, num_samples=1,
-    sampling_params=types.SamplingParams(max_tokens=256, temperature=0.0))
+sampler = client.create_sampling_client(trainer.save_weights_for_sampler(name="step_25").result().path)
+result = sampler.sample(prompt_tokens, num_samples=1, sampling_params=types.SamplingParams(max_tokens=256, temperature=0.0))
 ```
 
 That's the entire training loop. The Tinker SDK handles the rest — async request queuing, long-polling for results, weight snapshotting for evaluation. You focus on the training logic.

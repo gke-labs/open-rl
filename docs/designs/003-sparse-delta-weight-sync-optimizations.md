@@ -115,10 +115,7 @@ By contrast, **Scheme C & D (`in_place_gpu_delta`)** mutate GPU VRAM parameter t
   start_wait = time.perf_counter()
   while not (os.path.exists(delta_file) and os.path.exists(metadata_path)):
     if time.perf_counter() - start_wait > 10.0:
-      logger.warning(
-        "[DeltaSnapshotEngine] [PRELOAD] Target files missing after wait:"
-        f" '{target_path}'"
-      )
+      logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Target files missing after wait: '{target_path}'")
       return
     time.sleep(0.2)
   ```

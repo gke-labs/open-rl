@@ -88,10 +88,7 @@ async def _extract_and_persist_model_metadata(
       training_kind = request.headers.get("x-open-rl-training-kind", default_training_kind)
 
   weight_sync_strategy = (
-    header_strategy
-    or req.get("weight_sync_strategy")
-    or full_config.get("weight_sync_strategy")
-    or user_meta.get("weight_sync_strategy")
+    header_strategy or req.get("weight_sync_strategy") or full_config.get("weight_sync_strategy") or user_meta.get("weight_sync_strategy")
   )
   if weight_sync_strategy in ("full", "delta"):
     full_config["weight_sync_strategy"] = weight_sync_strategy
@@ -119,9 +116,7 @@ async def create_model(
   """ServiceClient.create_lora_training_client_async()"""
   model_id = str(uuid.uuid4())
   try:
-    base_model, full_config, training_kind = await _extract_and_persist_model_metadata(
-      model_id, req, request, default_training_kind="full"
-    )
+    base_model, full_config, training_kind = await _extract_and_persist_model_metadata(model_id, req, request, default_training_kind="full")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -155,9 +150,7 @@ async def create_model_from_state(
   resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
   model_id = str(uuid.uuid4())
   try:
-    base_model, full_config, training_kind = await _extract_and_persist_model_metadata(
-      model_id, req, request, default_training_kind="restored"
-    )
+    base_model, full_config, training_kind = await _extract_and_persist_model_metadata(model_id, req, request, default_training_kind="restored")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -260,6 +253,7 @@ We update `WorkerManager.launch_trainer(model_id: str)` and `WorkerManager.launc
 def _fetch_metadata_from_store(model_id: str) -> tuple[str | None, str | None]:
   """Retrieve base_model and weight_sync_strategy from canonical open_rl:model_meta:<model_id>."""
   from server.store import get_store
+
   s = get_store()
   try:
     val = s.get_value_sync(f"open_rl:model_meta:{model_id}")
@@ -282,56 +276,57 @@ class WorkerManager(Protocol):
 
 #### Refactored `FFTWorkerManager` (`src/server/worker_manager.py`)
 ```python
-  def launch_trainer(self, model_id: str) -> None:
-    proc = self.train_processes.get(model_id)
-    if proc is not None and proc.poll() is None:
-      return
+def launch_trainer(self, model_id: str) -> None:
+  proc = self.train_processes.get(model_id)
+  if proc is not None and proc.poll() is None:
+    return
 
-    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
-    env = {
-      **os.environ,
-      "OPEN_RL_ENABLE_FFT": "true",
-      "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", model_id),
-      "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
-    }
-    if base_model:
-      env["BASE_MODEL"] = base_model
+  base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
+  env = {
+    **os.environ,
+    "OPEN_RL_ENABLE_FFT": "true",
+    "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", model_id),
+    "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
+  }
+  if base_model:
+    env["BASE_MODEL"] = base_model
+  if weight_sync_strategy:
+    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
+  self.train_processes[model_id] = subprocess.Popen(
+    _py_cmd(["gpu"], "server.training_requests_processor", model_id),
+    cwd=self.project_dir,
+    env=env,
+    start_new_session=True,
+  )
+
+
+def launch_sampler(self, model_id: str) -> None:
+  proc = self.sampler_processes.get(model_id)
+  if proc is not None and proc.poll() is None:
+    return
+
+  base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
+  env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
+  if base_model:
+    env["BASE_MODEL"] = base_model
+  sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
+  if sampling_backend == "vllm":
+    sampler_env = env.copy()
+    sampler_env["OPEN_RL_MODEL_ID"] = model_id
+    sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", model_id)
+    sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
     if weight_sync_strategy:
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
-    self.train_processes[model_id] = subprocess.Popen(
-      _py_cmd(["gpu"], "server.training_requests_processor", model_id),
+      sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
+    sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
+    if sampler_gpu:
+      sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
+
+    self.sampler_processes[model_id] = subprocess.Popen(
+      _py_cmd(["gpu", "vllm"], "server.vllm_sampler", model_id),
       cwd=self.project_dir,
-      env=env,
+      env=sampler_env,
       start_new_session=True,
     )
-
-  def launch_sampler(self, model_id: str) -> None:
-    proc = self.sampler_processes.get(model_id)
-    if proc is not None and proc.poll() is None:
-      return
-
-    base_model, weight_sync_strategy = _fetch_metadata_from_store(model_id)
-    env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    if base_model:
-      env["BASE_MODEL"] = base_model
-    sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
-    if sampling_backend == "vllm":
-      sampler_env = env.copy()
-      sampler_env["OPEN_RL_MODEL_ID"] = model_id
-      sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", model_id)
-      sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
-      if weight_sync_strategy:
-        sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
-      sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
-      if sampler_gpu:
-        sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
-
-      self.sampler_processes[model_id] = subprocess.Popen(
-        _py_cmd(["gpu", "vllm"], "server.vllm_sampler", model_id),
-        cwd=self.project_dir,
-        env=sampler_env,
-        start_new_session=True,
-      )
 ```
 *(Note: `K8sWorkerManager` in `src/server/k8s_worker_manager.py` follows the exact same pattern: `launch_trainer(self, model_id: str)` and `launch_sampler(self, model_id: str)` fetch `(base_model, weight_sync_strategy) = _fetch_metadata_from_store(model_id)` before calling `self._launch_pod(model_id, role="...", base_model=base_model, weight_sync_strategy=weight_sync_strategy)`).*
 
@@ -395,6 +390,7 @@ Add `get_value_sync` to `StoreStub` to prevent inline gateway tests from crashin
 ```python
 class StoreStub:
   ...
+
   def get_value_sync(self, key: str) -> str | None:
     return self.kv_store.get(key)
 ```
@@ -402,78 +398,69 @@ class StoreStub:
 #### 2. Expand `test_create_model_from_state_launches_worker_then_enqueues` (`tests/test_worker_manager.py`)
 Verify that `create_model_from_state` unconditionally writes `open_rl:model_meta:<model_id>`, does **not** write `open_rl:model_base:<id>`, and forwards `base_model` / `full_config` inside `command["payload"]`:
 ```python
-  async def test_create_model_from_state_launches_worker_then_enqueues(self) -> None:
-    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
-      result = await gateway.create_model_from_state({
-        "state_path": "/tmp/checkpoint",
-        "base_model": "restored-base",
-        "weight_sync_strategy": "delta"
-      })
+async def test_create_model_from_state_launches_worker_then_enqueues(self) -> None:
+  with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
+    result = await gateway.create_model_from_state({"state_path": "/tmp/checkpoint", "base_model": "restored-base", "weight_sync_strategy": "delta"})
 
-    model_id = result["request_id"]
-    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
-    
-    # Assert canonical metadata persistence:
-    meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
-    self.assertEqual(meta["base_model"], "restored-base")
-    self.assertEqual(meta["training_kind"], "restored")
-    self.assertEqual(meta["weight_sync_strategy"], "delta")
-    
-    # Assert no dual-key writing:
-    self.assertIsNone(self.store.get_value_sync(f"open_rl:model_base:{model_id}"))
-    
-    # Assert forwarded request payload contains configuration:
-    req_payload = self.store.forwarded_requests[0]["payload"]
-    self.assertEqual(req_payload["base_model"], "restored-base")
-    self.assertEqual(req_payload["full_config"]["weight_sync_strategy"], "delta")
+  model_id = result["request_id"]
+  self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
+
+  # Assert canonical metadata persistence:
+  meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+  self.assertEqual(meta["base_model"], "restored-base")
+  self.assertEqual(meta["training_kind"], "restored")
+  self.assertEqual(meta["weight_sync_strategy"], "delta")
+
+  # Assert no dual-key writing:
+  self.assertIsNone(self.store.get_value_sync(f"open_rl:model_base:{model_id}"))
+
+  # Assert forwarded request payload contains configuration:
+  req_payload = self.store.forwarded_requests[0]["payload"]
+  self.assertEqual(req_payload["base_model"], "restored-base")
+  self.assertEqual(req_payload["full_config"]["weight_sync_strategy"], "delta")
 ```
 
 #### 3. Add Canonical Metadata Lookup Tests for `KubernetesFFTWorkerManager` (`tests/test_k8s_worker_manager.py`)
 Add a new test asserting that when `K8sWorkerManager.launch("Model_A.1")` or `launch_sampler("Model_A.1")` runs, it queries `open_rl:model_meta:Model_A.1` and populates the K8s pod container's environment variables:
 ```python
-  def test_launch_queries_model_metadata_for_pod_env(self) -> None:
-    import json
-    from server.store import InMemoryStore
-    
-    s = InMemoryStore()
-    s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps({
-      "base_model": "gemma-4-k8s",
-      "weight_sync_strategy": "full",
-      "training_kind": "full"
-    })
-    api = _FakeCoreApi()
-    
-    with patch("server.store.get_store", return_value=s):
-      self._manager(api).launch("Model_A.1")
-      self._manager(api).launch_sampler("Model_A.1")
+def test_launch_queries_model_metadata_for_pod_env(self) -> None:
+  import json
+  from server.store import InMemoryStore
 
-    # Verify Trainer Pod Env:
-    trainer_container = api.created[0][1]["spec"]["containers"][0]
-    trainer_env = {item["name"]: item["value"] for item in trainer_container["env"] if "value" in item}
-    self.assertEqual(trainer_env.get("BASE_MODEL"), "gemma-4-k8s")
-    self.assertEqual(trainer_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
+  s = InMemoryStore()
+  s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps({"base_model": "gemma-4-k8s", "weight_sync_strategy": "full", "training_kind": "full"})
+  api = _FakeCoreApi()
 
-    # Verify Sampler Pod Env:
-    sampler_container = api.created[1][1]["spec"]["containers"][0]
-    sampler_env = {item["name"]: item["value"] for item in sampler_container["env"] if "value" in item}
-    self.assertEqual(sampler_env.get("BASE_MODEL"), "gemma-4-k8s")
-    self.assertEqual(sampler_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
+  with patch("server.store.get_store", return_value=s):
+    self._manager(api).launch("Model_A.1")
+    self._manager(api).launch_sampler("Model_A.1")
+
+  # Verify Trainer Pod Env:
+  trainer_container = api.created[0][1]["spec"]["containers"][0]
+  trainer_env = {item["name"]: item["value"] for item in trainer_container["env"] if "value" in item}
+  self.assertEqual(trainer_env.get("BASE_MODEL"), "gemma-4-k8s")
+  self.assertEqual(trainer_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
+
+  # Verify Sampler Pod Env:
+  sampler_container = api.created[1][1]["spec"]["containers"][0]
+  sampler_env = {item["name"]: item["value"] for item in sampler_container["env"] if "value" in item}
+  self.assertEqual(sampler_env.get("BASE_MODEL"), "gemma-4-k8s")
+  self.assertEqual(sampler_env.get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "full")
 ```
 
 #### 4. Add `ensure_sampler_launched(model_id)` Canonical Lookup Test (`tests/test_worker_manager.py`)
 Assert that calling `ensure_sampler_launched(model_id)` passes solely `model_id` to `fft_worker_manager.launch_sampler(model_id)` and that the sampler process launcher retrieves the model configuration directly from Redis:
 ```python
-  async def test_ensure_sampler_launched_delegates_to_worker_manager_with_model_id(self) -> None:
-    import json
-    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}):
-      self.store.kv_store["open_rl:model_meta:model-x"] = json.dumps({
-        "base_model": "base-vllm",
-        "weight_sync_strategy": "delta",
-        "training_kind": "full"
-      })
-      await gateway.ensure_sampler_launched("model-x")
+async def test_ensure_sampler_launched_delegates_to_worker_manager_with_model_id(self) -> None:
+  import json
 
-    self.assertEqual(self.worker_manager.launched_model_ids, ["model-x"])
+  with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}):
+    self.store.kv_store["open_rl:model_meta:model-x"] = json.dumps(
+      {"base_model": "base-vllm", "weight_sync_strategy": "delta", "training_kind": "full"}
+    )
+    await gateway.ensure_sampler_launched("model-x")
+
+  self.assertEqual(self.worker_manager.launched_model_ids, ["model-x"])
 ```
 
 ---

@@ -57,12 +57,13 @@ The configuration is structured as a hierarchical tree:
 ```python
 from dataclasses import dataclass
 
+
 @dataclass
 class WeightSyncConfig:
-    strategy: str = "delta"                     # Options: "delta" | "full"
-    delta_format: str = "vllm_fused"            # Options: "vllm_fused" | "native"
-    delta_apply_method: str = "patch_in_place"  # Options: "patch_in_place" | "full_replace"
-    enable_prefetching: bool = True             # Options: True | False
+  strategy: str = "delta"  # Options: "delta" | "full"
+  delta_format: str = "vllm_fused"  # Options: "vllm_fused" | "native"
+  delta_apply_method: str = "patch_in_place"  # Options: "patch_in_place" | "full_replace"
+  enable_prefetching: bool = True  # Options: True | False
 ```
 
 ### 3.2 Field Specification & Defaulting Rules
@@ -98,36 +99,38 @@ Inside `src/server/gateway.py`, the Gateway server parses incoming HTTP headers,
 
 ```python
 def extract_weight_sync_config(headers: Any = None) -> WeightSyncConfig:
-    """Extract and normalize WeightSyncConfig from HTTP headers with single-location defaults."""
-    if not headers:
-        return WeightSyncConfig()
+  """Extract and normalize WeightSyncConfig from HTTP headers with single-location defaults."""
+  if not headers:
+    return WeightSyncConfig()
 
-    get_header = headers.get if hasattr(headers, "get") else (lambda k, default=None: default)
+  get_header = headers.get if hasattr(headers, "get") else (lambda k, default=None: default)
 
-    strategy = (get_header("x-open-rl-weight-sync-strategy") or "delta").lower()
-    if strategy not in ("delta", "full"):
-        strategy = "delta"
+  strategy = (get_header("x-open-rl-weight-sync-strategy") or "delta").lower()
+  if strategy not in ("delta", "full"):
+    strategy = "delta"
 
-    delta_fmt = (get_header("x-open-rl-weight-sync-delta-format") or get_header("x-open-rl-weight-sync-format") or "vllm_fused").lower()
-    if delta_fmt not in ("vllm_fused", "native"):
-        delta_fmt = "vllm_fused"
+  delta_fmt = (get_header("x-open-rl-weight-sync-delta-format") or get_header("x-open-rl-weight-sync-format") or "vllm_fused").lower()
+  if delta_fmt not in ("vllm_fused", "native"):
+    delta_fmt = "vllm_fused"
 
-    delta_apply_method = (get_header("x-open-rl-weight-sync-delta-apply-method") or get_header("x-open-rl-weight-sync-apply-method") or "patch_in_place").lower()
-    if delta_apply_method not in ("patch_in_place", "full_replace"):
-        delta_apply_method = "patch_in_place"
+  delta_apply_method = (
+    get_header("x-open-rl-weight-sync-delta-apply-method") or get_header("x-open-rl-weight-sync-apply-method") or "patch_in_place"
+  ).lower()
+  if delta_apply_method not in ("patch_in_place", "full_replace"):
+    delta_apply_method = "patch_in_place"
 
-    raw_prefetch = get_header("x-open-rl-weight-sync-enable-prefetching")
-    if raw_prefetch is not None:
-        enable_prefetching = str(raw_prefetch).lower() in ("true", "1", "yes")
-    else:
-        enable_prefetching = True
+  raw_prefetch = get_header("x-open-rl-weight-sync-enable-prefetching")
+  if raw_prefetch is not None:
+    enable_prefetching = str(raw_prefetch).lower() in ("true", "1", "yes")
+  else:
+    enable_prefetching = True
 
-    return WeightSyncConfig(
-        strategy=strategy,
-        delta_format=delta_fmt,
-        delta_apply_method=delta_apply_method,
-        enable_prefetching=enable_prefetching,
-    )
+  return WeightSyncConfig(
+    strategy=strategy,
+    delta_format=delta_fmt,
+    delta_apply_method=delta_apply_method,
+    enable_prefetching=enable_prefetching,
+  )
 ```
 
 ### 5.1 Canonical Redis Model Metadata Storage

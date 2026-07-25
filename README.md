@@ -20,54 +20,47 @@ import asyncio
 import tinker
 from tinker import types
 
+
 # Placeholder Environment & Reward Functions
 def generate_math_problem() -> str: ...
 def compute_advantages(rewards: list[float]) -> list[float]: ...
 def parse_and_score_response(text: str) -> float: ...
 
+
 async def rlvr_loop():
-    service_client = tinker.ServiceClient(base_url="http://localhost:8000")
+  service_client = tinker.ServiceClient(base_url="http://localhost:8000")
 
-    # 1. Create Model
-    training_client = await service_client.create_lora_training_client_async(
-        base_model="Qwen/Qwen3-4B-Instruct-2507", rank=16
-    )
+  # 1. Create Model
+  training_client = await service_client.create_lora_training_client_async(base_model="Qwen/Qwen3-4B-Instruct-2507", rank=16)
 
-    for epoch in range(10):
-        # 2A. Extract sampling client from current weights
-        sampling_client = training_client.save_weights_and_get_sampling_client(
-            name=f"rlvr_epoch_{epoch}"
-        )
-        
-        prompt_text = generate_math_problem()
-        
-        # 2B. Sample multiple rollouts (e.g. N=8) from the prompt
-        response = sampling_client.sample(
-            prompt=types.ModelInput.from_ints(tokens=[...]),
-            num_samples=8,
-            sampling_params=types.SamplingParams(max_tokens=100, temperature=0.9)
-        ).result()
-        
-        # 3. Score the rollouts using the environment
-        rewards = []
-        for seq in response.sequences:
-            text = decode(seq.tokens)
-            rewards.append(parse_and_score_response(text))
-            
-        advantages = compute_advantages(rewards)
-        
-        # ... package sequences, text, and advantages into datums ...
+  for epoch in range(10):
+    # 2A. Extract sampling client from current weights
+    sampling_client = training_client.save_weights_and_get_sampling_client(name=f"rlvr_epoch_{epoch}")
 
-        # 4. Forward-Backward Pass (Importance Sampling)
-        # We pass the advantages to RL objective function
-        await training_client.forward_backward_async(
-            datums, 
-            loss_fn="importance_sampling",
-            loss_fn_config={"clip_range": 0.2} 
-        )
-        
-        # 5. Optimizer Step
-        await training_client.optim_step_async(types.AdamParams(learning_rate=1e-5))
+    prompt_text = generate_math_problem()
+
+    # 2B. Sample multiple rollouts (e.g. N=8) from the prompt
+    response = sampling_client.sample(
+      prompt=types.ModelInput.from_ints(tokens=[...]), num_samples=8, sampling_params=types.SamplingParams(max_tokens=100, temperature=0.9)
+    ).result()
+
+    # 3. Score the rollouts using the environment
+    rewards = []
+    for seq in response.sequences:
+      text = decode(seq.tokens)
+      rewards.append(parse_and_score_response(text))
+
+    advantages = compute_advantages(rewards)
+
+    # ... package sequences, text, and advantages into datums ...
+
+    # 4. Forward-Backward Pass (Importance Sampling)
+    # We pass the advantages to RL objective function
+    await training_client.forward_backward_async(datums, loss_fn="importance_sampling", loss_fn_config={"clip_range": 0.2})
+
+    # 5. Optimizer Step
+    await training_client.optim_step_async(types.AdamParams(learning_rate=1e-5))
+
 
 asyncio.run(rlvr_loop())
 ```
