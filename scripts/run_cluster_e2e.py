@@ -66,8 +66,20 @@ def main() -> None:
   parser.add_argument("--args", default="", help="Extra arguments to pass to run_training_e2e.py.")
   parser.add_argument("--image", required=True, help="Client container image to run.")
   parser.add_argument("--namespace", default="", help="Kubernetes namespace (defaults to the kubectl context's).")
-  parser.add_argument("--weight-sync-strategy", "--strategy", dest="strategy", default="", help="Weight sync strategy override (delta | full).")
-  parser.add_argument("--weight-sync-delta-format", "--delta-format", dest="delta_format", default="", help="Delta format override (vllm_fused | native).")
+  parser.add_argument(
+    "--weight-sync-strategy",
+    "--strategy",
+    dest="strategy",
+    default="",
+    help="Weight sync strategy override (delta | full).",
+  )
+  parser.add_argument(
+    "--weight-sync-delta-format",
+    "--delta-format",
+    dest="delta_format",
+    default="",
+    help="Delta format override (vllm_fused | native).",
+  )
   parser.add_argument(
     "--weight-sync-delta-apply-method",
     "--delta-apply-method",

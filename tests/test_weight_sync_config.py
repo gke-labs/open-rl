@@ -8,7 +8,6 @@ from server.worker_manager import _fetch_metadata_from_store
 
 
 class TestWeightSyncConfig(unittest.TestCase):
-
   def test_default_header_parsing(self):
     """Test that missing headers apply single-location defaults correctly."""
     cfg = extract_weight_sync_config({})
@@ -67,12 +66,14 @@ class TestWeightSyncConfig(unittest.TestCase):
 
   def test_metadata_persistence_and_store_retrieval(self):
     """Test TrainingModelMetadata serialization and worker manager store retrieval."""
-    cfg = extract_weight_sync_config({
-      "x-open-rl-weight-sync-strategy": "delta",
-      "x-open-rl-weight-sync-delta-format": "vllm_fused",
-      "x-open-rl-weight-sync-delta-apply-method": "patch_in_place",
-      "x-open-rl-weight-sync-enable-prefetching": "true",
-    })
+    cfg = extract_weight_sync_config(
+      {
+        "x-open-rl-weight-sync-strategy": "delta",
+        "x-open-rl-weight-sync-delta-format": "vllm_fused",
+        "x-open-rl-weight-sync-delta-apply-method": "patch_in_place",
+        "x-open-rl-weight-sync-enable-prefetching": "true",
+      }
+    )
 
     meta = TrainingModelMetadata(
       base_model="Qwen/Qwen3-8B",

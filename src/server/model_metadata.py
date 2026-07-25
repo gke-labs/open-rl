@@ -57,9 +57,7 @@ def extract_weight_sync_config(headers: Any = None) -> WeightSyncConfig:
     delta_fmt = "vllm_fused"
 
   delta_apply_method = (
-    get_header("x-open-rl-weight-sync-delta-apply-method")
-    or get_header("x-open-rl-weight-sync-apply-method")
-    or "patch_in_place"
+    get_header("x-open-rl-weight-sync-delta-apply-method") or get_header("x-open-rl-weight-sync-apply-method") or "patch_in_place"
   ).lower()
   if delta_apply_method not in ("patch_in_place", "full_replace"):
     delta_apply_method = "patch_in_place"
