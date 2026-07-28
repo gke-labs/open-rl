@@ -78,16 +78,6 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
-  async def record_accel_usage_event(self, claim_id: str, event_data: dict[str, Any]) -> None:
-    """Record an accelerator usage time-slice event."""
-    pass
-
-  @abstractmethod
-  async def get_accel_usage_history(self, claim_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    """Retrieve accelerator usage time-slice history mapped by claim_id."""
-    pass
-
-  @abstractmethod
   async def record_job_request_event(self, model_id: str, request_id: str, data: dict[str, Any]) -> None:
     """Record or update a request lifecycle event in open_rl:job_requests:<model_id>."""
     pass
@@ -442,36 +432,6 @@ class RedisStore(RequestStore):
   async def delete_values(self, *keys: str) -> None:
     if keys:
       await self.redis.delete(*keys)
-
-  async def record_accel_usage_event(self, claim_id: str, event_data: dict[str, Any]) -> None:
-    key = f"open_rl:accel_usage_history:{claim_id}"
-    await self.redis.sadd("open_rl:accel_usage_claims", claim_id)
-    await self.redis.lpush(key, json.dumps(event_data))
-    await self.redis.ltrim(key, 0, 4999)
-
-  async def get_accel_usage_history(self, claim_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    if claim_id:
-      claim_ids = [claim_id]
-    else:
-      raw_claims = await self.redis.smembers("open_rl:accel_usage_claims")
-      claim_ids = [c.decode() if isinstance(c, bytes) else str(c) for c in raw_claims]
-      if not claim_ids:
-        keys = await self.redis.keys("open_rl:accel_usage_history:*")
-        claim_ids = []
-        for k in keys:
-          k_str = k.decode() if isinstance(k, bytes) else str(k)
-          claim_ids.append(k_str.replace("open_rl:accel_usage_history:", ""))
-
-    result: dict[str, list[dict[str, Any]]] = {}
-    for c_id in claim_ids:
-      key = f"open_rl:accel_usage_history:{c_id}"
-      raw_items = await self.redis.lrange(key, 0, 4999)
-      items = []
-      for item in raw_items:
-        payload = item.decode() if isinstance(item, bytes) else item
-        items.append(json.loads(payload))
-      result[c_id] = items
-    return result
 
   async def record_job_request_event(self, model_id: str, request_id: str, data: dict[str, Any]) -> None:
     key = f"open_rl:job_requests:{model_id}"

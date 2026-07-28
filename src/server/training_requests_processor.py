@@ -168,7 +168,8 @@ async def _record_slice_telemetry(
   }
 
   try:
-    await store.record_accel_usage_event(claim_id, event)
+    if hasattr(store, "record_accel_usage_event"):
+      await store.record_accel_usage_event(claim_id, event)
   except Exception as exc:
     print(f"[TELEMETRY] Failed to record slice event: {exc}")
 
