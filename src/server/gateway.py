@@ -12,7 +12,7 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
@@ -371,7 +371,6 @@ async def create_session(_: dict):
 @app.post("/api/v1/session_heartbeat")
 async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
-
 
 
 def _get_request(request: Request) -> Request:
