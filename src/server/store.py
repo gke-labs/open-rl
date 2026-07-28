@@ -78,16 +78,6 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
-  async def record_job_request_event(self, model_id: str, request_id: str, data: dict[str, Any]) -> None:
-    """Record or update a request lifecycle event in open_rl:job_requests:<model_id>."""
-    pass
-
-  @abstractmethod
-  async def get_job_requests(self, model_id: str) -> dict[str, dict[str, Any]]:
-    """Retrieve all request lifecycle events for a specific model_id."""
-    pass
-
-  @abstractmethod
   async def list_jobs_metadata(self) -> list[dict[str, Any]]:
     """Retrieve metadata for all registered models/jobs."""
     pass
@@ -108,18 +98,6 @@ class InMemoryStore(RequestStore):
     self.futures_store: dict[str, dict[str, Any]] = {}
     self.futures_events: dict[str, asyncio.Event] = {}
     self.kv_store: dict[str, str] = {}
-    self.accel_usage_history: dict[str, list[dict[str, Any]]] = {}
-    self.job_requests: dict[str, dict[str, dict[str, Any]]] = {}
-
-  async def record_job_request_event(self, model_id: str, request_id: str, data: dict[str, Any]) -> None:
-    if model_id not in self.job_requests:
-      self.job_requests[model_id] = {}
-    existing = self.job_requests[model_id].get(request_id, {})
-    existing.update(data)
-    self.job_requests[model_id][request_id] = existing
-
-  async def get_job_requests(self, model_id: str) -> dict[str, dict[str, Any]]:
-    return self.job_requests.get(model_id, {})
 
   async def list_jobs_metadata(self) -> list[dict[str, Any]]:
     jobs = []
@@ -157,17 +135,6 @@ class InMemoryStore(RequestStore):
     data.update(updates)
     data["updated_at"] = time.time()
     await self.set_value(key, json.dumps(data))
-
-  async def record_accel_usage_event(self, claim_id: str, event_data: dict[str, Any]) -> None:
-    if claim_id not in self.accel_usage_history:
-      self.accel_usage_history[claim_id] = []
-    self.accel_usage_history[claim_id].insert(0, event_data)
-    self.accel_usage_history[claim_id] = self.accel_usage_history[claim_id][:5000]
-
-  async def get_accel_usage_history(self, claim_id: str | None = None) -> dict[str, list[dict[str, Any]]]:
-    if claim_id:
-      return {claim_id: self.accel_usage_history.get(claim_id, [])}
-    return dict(self.accel_usage_history)
 
   async def put_request(self, req_data: dict[str, Any]) -> None:
     model_id = req_data.get("model_id", "default")
@@ -432,34 +399,6 @@ class RedisStore(RequestStore):
   async def delete_values(self, *keys: str) -> None:
     if keys:
       await self.redis.delete(*keys)
-
-  async def record_job_request_event(self, model_id: str, request_id: str, data: dict[str, Any]) -> None:
-    key = f"open_rl:job_requests:{model_id}"
-    raw_existing = await self.redis.hget(key, request_id)
-    if raw_existing:
-      payload = raw_existing.decode() if isinstance(raw_existing, bytes) else str(raw_existing)
-      try:
-        existing = json.loads(payload)
-      except Exception:
-        existing = {}
-    else:
-      existing = {}
-    existing.update(data)
-    await self.redis.hset(key, request_id, json.dumps(existing))
-    await self.redis.expire(key, 86400)  # 24h retention
-
-  async def get_job_requests(self, model_id: str) -> dict[str, dict[str, Any]]:
-    key = f"open_rl:job_requests:{model_id}"
-    raw_hash = await self.redis.hgetall(key)
-    result = {}
-    for req_id, raw_val in raw_hash.items():
-      r_id = req_id.decode() if isinstance(req_id, bytes) else str(req_id)
-      val_str = raw_val.decode() if isinstance(raw_val, bytes) else str(raw_val)
-      try:
-        result[r_id] = json.loads(val_str)
-      except Exception:
-        pass
-    return result
 
   async def list_jobs_metadata(self) -> list[dict[str, Any]]:
     keys = await self.redis.keys("open_rl:model_meta:*")

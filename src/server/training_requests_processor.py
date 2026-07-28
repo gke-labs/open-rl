@@ -7,7 +7,6 @@ import os
 import threading
 import time
 import traceback
-import uuid
 from typing import Any, Protocol
 
 import uvicorn
@@ -118,60 +117,6 @@ class TrainingRequestsProcessor(Protocol):
   async def save_weights_for_sampler(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]: ...
 
   async def save_weights(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]: ...
-
-
-def _extract_token_count(request: dict[str, Any]) -> int:
-  payload = request.get("payload") or request
-  data = payload.get("data") or payload.get("forward_input", {}).get("data", []) or []
-  tokens = 0
-  for item in data:
-    if isinstance(item, dict):
-      model_inp = item.get("model_input") or {}
-      chunks = model_inp.get("chunks") or []
-      for chunk in chunks:
-        if isinstance(chunk, dict):
-          tokens += len(chunk.get("tokens") or [])
-  return max(tokens, 1)
-
-
-async def _record_slice_telemetry(
-  store: RequestStore,
-  model_id: str,
-  worker_role: str,
-  t_start: float,
-  t_end: float,
-  token_count: int,
-  model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
-  num_params_billions: float = 0.5,
-) -> None:
-  dur_sec = max(t_end - t_start, 0.001)
-  dur_ms = int(dur_sec * 1000)
-
-  claim_id = os.getenv("OPEN_RL_DRA_CLAIM_ID") or os.getenv("DRA_RESOURCE_CLAIM") or "open-rl-shared-gpu-claim-01"
-  node_name = os.getenv("NODE_NAME") or os.getenv("HOSTNAME") or "localhost"
-  gpu_index = int(os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")[0] if os.getenv("CUDA_VISIBLE_DEVICES") else 0)
-
-  event = {
-    "event_id": f"accel-evt-{uuid.uuid4().hex[:8]}",
-    "resource_claim_id": claim_id,
-    "node_name": node_name,
-    "gpu_index": gpu_index,
-    "job_id": model_id,
-    "tenant_id": model_id,
-    "model_name": model_name,
-    "num_params_billions": num_params_billions,
-    "worker_role": worker_role,
-    "acquire_time": t_start,
-    "release_time": t_end,
-    "duration_ms": dur_ms,
-    "tokens_processed": token_count,
-  }
-
-  try:
-    if hasattr(store, "record_accel_usage_event"):
-      await store.record_accel_usage_event(claim_id, event)
-  except Exception as exc:
-    print(f"[TELEMETRY] Failed to record slice event: {exc}")
 
 
 async def _fetch_model_meta(
@@ -417,30 +362,15 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         save_reqs = [r for r in training_reqs if r.get("op") in save_ops]
 
         if gpu_reqs:
-          token_count = sum(_extract_token_count(r) for r in gpu_reqs)
           async with self.time_slicer.acquire(self.workload):
-            t_start = time.time()
             if hasattr(self.worker, "wake_up"):
               await asyncio.to_thread(self.worker.wake_up)
             try:
               for request in gpu_reqs:
-                req_id = request.get("request_id")
-                if req_id and hasattr(self.store, "record_job_request_event"):
-                  await self.store.record_job_request_event(
-                    self.model_id,
-                    req_id,
-                    {
-                      "status": "processing",
-                      "started_at": t_start,
-                      "worker_pod": os.getenv("POD_NAME", "trainer-0"),
-                    },
-                  )
                 results.append(await self.handle_request(request, self.model_id))
             finally:
               if hasattr(self.worker, "sleep"):
                 await asyncio.to_thread(self.worker.sleep)
-              t_end = time.time()
-          await _record_slice_telemetry(self.store, self.model_id, "trainer", t_start, t_end, token_count)
 
         if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
           async with self.time_slicer.acquire(self.workload):
@@ -450,19 +380,9 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
           for request in save_reqs:
             results.append(await self.handle_request(request, self.model_id))
 
-        t_now = time.time()
         for request_id, result in results:
           if request_id is not None:
             await self.store.set_future(request_id, result)
-            if hasattr(self.store, "record_job_request_event"):
-              await self.store.record_job_request_event(
-                self.model_id,
-                request_id,
-                {
-                  "status": "done",
-                  "completed_at": t_now,
-                },
-              )
 
     if has_shutdown:
       await self.exit_gracefully()

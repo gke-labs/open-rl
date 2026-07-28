@@ -44,11 +44,14 @@ ENV UV_LINK_MODE=hardlink
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra gpu --extra vllm --extra cluster
 
-# Copy source code
-COPY . .
+# Copy patch script specifically
+COPY src/server/scripts/patch_vllm_lora_dedup.py /app/src/server/scripts/patch_vllm_lora_dedup.py
 
 # Apply vLLM patches (Gemma 4 LoRA dedup)
 RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
+
+# Copy source code
+COPY . .
 
 RUN --mount=type=cache,target=/root/.cache/uv \
     UV_COMPILE_BYTECODE=1 uv sync --frozen --no-editable --extra gpu --extra vllm --extra cluster

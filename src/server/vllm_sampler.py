@@ -4,9 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
-import time
 import traceback
-import uuid
 from typing import Any
 
 os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
@@ -57,45 +55,6 @@ engine: Any = None
 CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
 IS_ENGINE_SLEEPING: bool = True
 reload_lock = asyncio.Lock()
-
-
-async def _record_sampler_slice_telemetry(
-  store: Any,
-  model_id: str,
-  t_start: float,
-  t_end: float,
-  token_count: int,
-  model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
-  num_params_billions: float = 0.5,
-) -> None:
-  dur_sec = max(t_end - t_start, 0.001)
-  dur_ms = int(dur_sec * 1000)
-
-  claim_id = os.getenv("OPEN_RL_DRA_CLAIM_ID") or os.getenv("DRA_RESOURCE_CLAIM") or "open-rl-shared-gpu-claim-01"
-  node_name = os.getenv("NODE_NAME") or os.getenv("HOSTNAME") or "localhost"
-  gpu_index = int(os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")[0] if os.getenv("CUDA_VISIBLE_DEVICES") else 0)
-
-  event = {
-    "event_id": f"accel-evt-{uuid.uuid4().hex[:8]}",
-    "resource_claim_id": claim_id,
-    "node_name": node_name,
-    "gpu_index": gpu_index,
-    "job_id": model_id,
-    "tenant_id": model_id,
-    "model_name": model_name,
-    "num_params_billions": num_params_billions,
-    "worker_role": "sampler",
-    "acquire_time": t_start,
-    "release_time": t_end,
-    "duration_ms": dur_ms,
-    "tokens_processed": token_count,
-  }
-
-  try:
-    if hasattr(store, "record_accel_usage_event"):
-      await store.record_accel_usage_event(claim_id, event)
-  except Exception as exc:
-    print(f"[TELEMETRY] Failed to record sampler slice event: {exc}")
 
 
 def is_fft_enabled() -> bool:
@@ -254,19 +213,7 @@ async def process_sampling_request(req: dict, store: Any) -> None:
   global IS_ENGINE_SLEEPING
 
   request_id = req["request_id"]
-  m_id = req.get("model_id")
   trace_context = req.get("trace_context", {})
-
-  if m_id and hasattr(store, "record_job_request_event"):
-    await store.record_job_request_event(
-      m_id,
-      request_id,
-      {
-        "status": "processing",
-        "started_at": time.time(),
-        "worker_pod": os.getenv("POD_NAME", "sampler-0"),
-      },
-    )
 
   parent_span = propagate.extract(trace_context)
   with tracer.start_as_current_span("process_sampling_request", context=parent_span):
@@ -334,27 +281,9 @@ async def process_sampling_request(req: dict, store: Any) -> None:
         result["type"] = "sample"
 
       await store.set_future(request_id, result)
-      if m_id and hasattr(store, "record_job_request_event"):
-        await store.record_job_request_event(
-          m_id,
-          request_id,
-          {
-            "status": "done",
-            "completed_at": time.time(),
-          },
-        )
     except Exception as exc:
       traceback.print_exc()
       await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
-      if m_id and hasattr(store, "record_job_request_event"):
-        await store.record_job_request_event(
-          m_id,
-          request_id,
-          {
-            "status": "failed",
-            "completed_at": time.time(),
-          },
-        )
 
 
 async def run_sampling_worker(model_id: str) -> None:
@@ -446,9 +375,7 @@ async def run_sampling_worker(model_id: str) -> None:
         if sampling_reqs:
           if time_slicer is not None:
             assert workload is not None
-            token_count = sum(len(r.get("prompt_token_ids") or r.get("prompt_tokens") or [1]) for r in sampling_reqs)
             async with time_slicer.acquire(workload):
-              t_start = time.time()
               if engine is not None and IS_ENGINE_SLEEPING:
                 print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
                 await engine.wake_up(tags=["weights", "kv_cache"])
@@ -461,8 +388,6 @@ async def run_sampling_worker(model_id: str) -> None:
                 print("[vLLM Worker] Exiting batch: sleeping engine (CPU offload weights) to yield GPU memory...")
                 await engine.sleep(level=1)
                 IS_ENGINE_SLEEPING = True
-              t_end = time.time()
-            await _record_sampler_slice_telemetry(store, model_id, t_start, t_end, token_count)
           else:
             if engine is not None and IS_ENGINE_SLEEPING:
               print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")

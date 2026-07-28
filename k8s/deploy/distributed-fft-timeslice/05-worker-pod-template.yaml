@@ -40,8 +40,6 @@ data:
           value: "vllm_fused"
         - name: OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD
           value: "patch_in_place"
-        - name: OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING
-          value: "true"
         - name: PYTORCH_CUDA_ALLOC_CONF
           value: "expandable_segments:True"
         - name: OPEN_RL_TMP_DIR

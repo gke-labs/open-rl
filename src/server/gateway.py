@@ -147,7 +147,7 @@ async def _extract_and_persist_model_metadata(
   fine_tuning_type = default_fine_tuning_type
   if request and hasattr(request, "headers") and "x-open-rl-fine-tuning-type" in request.headers:
     h_val = (request.headers.get("x-open-rl-fine-tuning-type") or "").lower()
-    if h_val in ("full", "fft"):
+    if h_val == "full":
       fine_tuning_type = "full"
     elif h_val == "lora":
       fine_tuning_type = "lora"
@@ -193,25 +193,6 @@ async def enqueue(request: dict) -> str:
   carrier: dict = {}
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
-
-  m_id = request.get("model_id")
-  if m_id and hasattr(store, "record_job_request_event"):
-    op = request.get("op", "unknown")
-    role = "sampler" if op in ("sample", "sample_completed") else "trainer"
-    session_id = request.get("payload", {}).get("sampling_session_id") if isinstance(request.get("payload"), dict) else None
-    await store.record_job_request_event(
-      m_id,
-      request_id,
-      {
-        "request_id": request_id,
-        "model_id": m_id,
-        "op": op,
-        "role": role,
-        "status": "pending",
-        "session_id": session_id,
-        "created_at": time.time(),
-      },
-    )
 
   await store.put_request({**request, "trace_context": carrier})
   return request_id
@@ -730,23 +711,6 @@ async def asample(req: dict):
     "model_id": base_model_id or model_id,
     "trace_context": carrier,
   }
-
-  target_m_id = base_model_id or model_id
-  if target_m_id and hasattr(store, "record_job_request_event"):
-    await store.record_job_request_event(
-      target_m_id,
-      req_id,
-      {
-        "request_id": req_id,
-        "model_id": target_m_id,
-        "op": "sample",
-        "role": "sampler",
-        "status": "pending",
-        "session_id": model_id,
-        "created_at": time.time(),
-        "token_count": len(prompt) + max_tokens,
-      },
-    )
 
   await store.put_sampling_request(sampling_req)
   return {"request_id": req_id}

@@ -94,7 +94,7 @@ class TrainingModelMetadata:
       cfg = WeightSyncConfig()
 
     ft_type = data.get("fine_tuning_type", "lora")
-    if ft_type in ("fft", "full"):
+    if ft_type == "full":
       ft_type = "full"
     else:
       ft_type = "lora"
@@ -119,7 +119,7 @@ class TrainingModelMetadata:
     """Reconstruct TrainingModelMetadata dataclass from environment variables inside a worker process."""
     get_val = (env.get if hasattr(env, "get") else None) or os.getenv
     ft_type = (get_val("OPEN_RL_FINE_TUNING_TYPE") or "lora").lower()
-    ft_type = "full" if ft_type in ("full", "fft") else "lora"
+    ft_type = "full" if ft_type == "full" else "lora"
     return cls(
       base_model=get_val("BASE_MODEL") or get_val("OPEN_RL_BASE_MODEL"),
       created_at=0.0,

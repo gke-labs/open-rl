@@ -555,6 +555,7 @@ def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
 
 def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   prefix = "lora" if "lora" in config.scenario else "fft"
+  lr = "1e-4" if "lora" in config.scenario else "1e-5"
   log_path = str(open_rl_tmp_dir(config) / f"{prefix}_gsm8k_rl")
   if os.path.exists(log_path):
     shutil.rmtree(log_path)
@@ -569,7 +570,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     f"group_size={config.group_size}",
     f"groups_per_batch={config.groups_per_batch}",
     f"max_tokens={config.max_tokens}",
-    "learning_rate=1e-5",
+    f"learning_rate={lr}",
     "temperature=1.0",
     "eval_every=0",
     "save_every=0",
@@ -599,6 +600,7 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         shutil.rmtree(log_path)
       module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
       temp = "1.0"
+      lr = "1e-4" if "lora" in config.scenario else "1e-5"
       args = [
         "env=gsm8k",
         f"model_name={config.base_model}",
@@ -609,7 +611,7 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         f"group_size={config.group_size}",
         f"groups_per_batch={config.groups_per_batch}",
         f"max_tokens={config.max_tokens}",
-        "learning_rate=1e-5",
+        f"learning_rate={lr}",
         f"temperature={temp}",
         "eval_every=0",
         "save_every=0",
