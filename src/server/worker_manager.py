@@ -101,7 +101,6 @@ class FFTWorkerManager:
     if weight_sync_cfg.strategy == "delta":
       env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
       env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
-      env["OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING"] = str(weight_sync_cfg.enable_prefetching).lower()
 
     self.train_processes[model_id] = subprocess.Popen(
       _py_cmd(["gpu"], "server.training_requests_processor", model_id),
@@ -131,7 +130,6 @@ class FFTWorkerManager:
       if weight_sync_cfg.strategy == "delta":
         sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
         sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
-        sampler_env["OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING"] = str(weight_sync_cfg.enable_prefetching).lower()
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu

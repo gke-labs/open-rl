@@ -12,12 +12,16 @@ from typing import Any
 
 import httpx
 from fastapi import Depends, FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+try:
+  from server.admin_dashboard_template import ADMIN_DASHBOARD_HTML
+except ImportError:
+  ADMIN_DASHBOARD_HTML = "<html><body><h1>Admin Dashboard Disabled</h1></body></html>"
 from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_fft_worker_manager
@@ -82,6 +86,23 @@ def sampler_weights_path(model_id: str, name: str) -> str:
   return f"tinker://{model_id}/sampler_weights/{name}"
 
 
+def resolve_sampler_weights_path(model_id: str) -> str:
+  """Resolves a model_id or tinker session reference to a fully-qualified step-specific weights path on disk."""
+  rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
+  local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
+  weights_path = local_path
+  if not os.path.basename(weights_path).startswith("sampler-"):
+    sampler_weights_dir = os.path.join(weights_path, "sampler_weights")
+    if os.path.exists(sampler_weights_dir):
+      try:
+        steps = [int(d.split("-")[1]) for d in os.listdir(sampler_weights_dir) if d.startswith("sampler-")]
+        if steps:
+          weights_path = os.path.join(sampler_weights_dir, f"sampler-{max(steps)}")
+      except Exception as e:
+        print(f"[GATEWAY] Warning: Failed parsing step subdirectories in {sampler_weights_dir}: {e}")
+  return weights_path
+
+
 def checkpoint_state_path(model_id: str, name: str) -> str:
   if os.path.isabs(name):
     return name
@@ -114,11 +135,11 @@ def is_sampler_weights_ref(model_id: str | None) -> bool:
 async def _extract_and_persist_model_metadata(
   req: dict[str, Any],
   request: Request | None = None,
-  default_training_kind: str = "full",
+  default_fine_tuning_type: str = "lora",
 ) -> str:
   """Extract and normalize model configuration from headers and payload, persisting TrainingModelMetadata exactly once."""
   base_model = req.get("base_model")
-  if not base_model and default_training_kind != "restored":
+  if not base_model and default_fine_tuning_type != "restored":
     raise ValueError("base_model is required in request payload")
 
   full_config = dict(req.get("full_config") or {})
@@ -127,9 +148,16 @@ async def _extract_and_persist_model_metadata(
   headers = request.headers if (request and hasattr(request, "headers")) else {}
   weight_sync_cfg = extract_weight_sync_config(headers)
 
-  training_kind = default_training_kind
-  if request and hasattr(request, "headers") and "x-open-rl-training-kind" in request.headers:
-    training_kind = request.headers.get("x-open-rl-training-kind", default_training_kind)
+  fine_tuning_type = default_fine_tuning_type
+  if request and hasattr(request, "headers") and "x-open-rl-fine-tuning-type" in request.headers:
+    h_val = (request.headers.get("x-open-rl-fine-tuning-type") or "").lower()
+    if h_val in ("full", "fft"):
+      fine_tuning_type = "full"
+    elif h_val == "lora":
+      fine_tuning_type = "lora"
+
+  if fine_tuning_type != "full" and default_fine_tuning_type != "restored":
+    fine_tuning_type = "lora"
 
   full_config["weight_sync_strategy"] = weight_sync_cfg.strategy
 
@@ -137,7 +165,7 @@ async def _extract_and_persist_model_metadata(
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
     created_at=time.time(),
-    training_kind=training_kind,
+    fine_tuning_type=fine_tuning_type,
     weight_sync_config=weight_sync_cfg,
     full_config=full_config,
     lora_config=lora_config,
@@ -169,6 +197,26 @@ async def enqueue(request: dict) -> str:
   carrier: dict = {}
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
+
+  m_id = request.get("model_id")
+  if m_id and hasattr(store, "record_job_request_event"):
+    op = request.get("op", "unknown")
+    role = "sampler" if op in ("sample", "sample_completed") else "trainer"
+    session_id = request.get("payload", {}).get("sampling_session_id") if isinstance(request.get("payload"), dict) else None
+    await store.record_job_request_event(
+      m_id,
+      request_id,
+      {
+        "request_id": request_id,
+        "model_id": m_id,
+        "op": op,
+        "role": role,
+        "status": "pending",
+        "session_id": session_id,
+        "created_at": time.time(),
+      },
+    )
+
   await store.put_request({**request, "trace_context": carrier})
   return request_id
 
@@ -233,7 +281,7 @@ def translate_future_result(result: dict) -> dict:
     }
     if "rank" in result:
       response["lora_rank"] = result["rank"]
-    elif result.get("training_kind") == "full":
+    elif result.get("fine_tuning_type") == "full":
       response["lora_rank"] = 16
     if result.get("base_model"):
       response["base_model"] = result["base_model"]
@@ -329,6 +377,223 @@ async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
 
 
+@app.get("/api/v1/admin/accel_usage")
+async def get_admin_accel_usage(
+  resource_claim_id: str | None = None,
+  window_sec: float = 300.0,
+  start_ts: float | None = None,
+  end_ts: float | None = None,
+):
+  """Admin Infrastructure API — Accelerator time-slicing telemetry & duty cycle stats."""
+  raw_history = await store.get_accel_usage_history(resource_claim_id)
+  now = time.time()
+  claims_data: dict[str, Any] = {}
+
+  for c_id, events in raw_history.items():
+    if not events:
+      continue
+
+    # Only filter out stale claims when using short rolling windows (window_sec > 0 and no custom range)
+    most_recent_time = max(ev.get("release_time", 0) for ev in events)
+    if window_sec > 0 and start_ts is None and len(raw_history) > 1 and (now - most_recent_time > 3600):
+      continue
+
+    node_name = events[0].get("node_name", "localhost")
+    gpu_index = events[0].get("gpu_index", 0)
+
+    if start_ts is not None and end_ts is not None and end_ts > start_ts:
+      filtered_events = [ev for ev in events if ev.get("release_time", now) >= start_ts and ev.get("acquire_time", 0) <= end_ts]
+      effective_window_sec = max(end_ts - start_ts, 1.0)
+    elif window_sec > 0:
+      window_start = now - window_sec
+      filtered_events = [ev for ev in events if ev.get("release_time", now) >= window_start]
+      effective_window_sec = window_sec
+    else:
+      filtered_events = events
+      if events:
+        min_acquire = min(ev.get("acquire_time", now) for ev in events)
+        effective_window_sec = max(now - min_acquire, 1.0)
+      else:
+        effective_window_sec = 300.0
+
+    total_active_ms = 0
+    tenant_active_ms: dict[str, float] = {}
+
+    for ev in filtered_events:
+      dur_ms = ev.get("duration_ms", 0)
+      total_active_ms += dur_ms
+      tenant = ev.get("tenant_id", "default")
+      tenant_active_ms[tenant] = tenant_active_ms.get(tenant, 0.0) + dur_ms
+
+    total_window_ms = max(effective_window_sec * 1000, 1.0)
+    duty_cycle_pct = round(min((total_active_ms / total_window_ms) * 100.0, 100.0), 1)
+    idle_pct = round(max(100.0 - duty_cycle_pct, 0.0), 1)
+
+    tenant_breakdown = []
+    for t_id, t_ms in tenant_active_ms.items():
+      t_pct = round((t_ms / total_window_ms) * 100.0, 1)
+      tenant_breakdown.append({"tenant_id": t_id, "active_ms": t_ms, "percentage": t_pct})
+
+    idle_ms = max(total_window_ms - total_active_ms, 0.0)
+    tenant_breakdown.append({"tenant_id": "Idle", "active_ms": idle_ms, "percentage": idle_pct})
+
+    claims_data[c_id] = {
+      "resource_claim_id": c_id,
+      "node_name": node_name,
+      "gpu_index": gpu_index,
+      "hardware_name": f"NVIDIA GPU #{gpu_index}",
+      "duty_cycle_pct": duty_cycle_pct,
+      "idle_pct": idle_pct,
+      "tenant_breakdown": tenant_breakdown,
+      "history": filtered_events,
+      "window_sec": window_sec,
+      "latest_event_time": most_recent_time,
+    }
+
+  # Sort claims by claim ID alphabetically for stable card positions
+  sorted_claims = dict(
+    sorted(
+      claims_data.items(),
+      key=lambda item: item[0],
+    )
+  )
+
+  if not sorted_claims and (resource_claim_id is None or resource_claim_id == "open-rl-shared-gpu-claim-01"):
+    demo_claim = "open-rl-shared-gpu-claim-01"
+    sorted_claims[demo_claim] = {
+      "resource_claim_id": demo_claim,
+      "node_name": "gke-gpu-node-01",
+      "gpu_index": 0,
+      "hardware_name": "NVIDIA L4 (24GB)",
+      "duty_cycle_pct": 0.0,
+      "idle_pct": 100.0,
+      "tenant_breakdown": [{"tenant_id": "Idle", "active_ms": 60000, "percentage": 100.0}],
+      "history": [],
+    }
+
+  return {"timestamp": now, "claims": sorted_claims}
+
+
+@app.get("/api/v1/admin/jobs")
+async def admin_list_jobs():
+  """Phase 2: List all active and completed training/sampling jobs."""
+  raw_jobs = await store.list_jobs_metadata()
+  active_jobs = []
+  completed_jobs = []
+
+  now = time.time()
+  for job in raw_jobs:
+    m_id = job.get("model_id")
+    if not m_id:
+      continue
+
+    # Calculate queue depths & completed step count
+    reqs_map = await store.get_job_requests(m_id)
+    pending_trainer = sum(1 for r in reqs_map.values() if r.get("status") == "pending" and r.get("role") == "trainer")
+    pending_sampler = sum(1 for r in reqs_map.values() if r.get("status") == "pending" and r.get("role") == "sampler")
+    completed_steps = sum(1 for r in reqs_map.values() if r.get("op") == "optim_step" and r.get("status") == "done")
+    current_step = max(job.get("total_steps_completed", 0), completed_steps)
+
+    # Automatic Idle-Timeout Completion:
+    # If an active job has 0 pending queues and no request activity for > 15 minutes (900s),
+    # auto-transition its status to "completed".
+    last_activity = max(
+      [job.get("updated_at", 0.0), job.get("created_at", 0.0)] + [r.get("completed_at", 0.0) for r in reqs_map.values() if r.get("completed_at")]
+    )
+    status = job.get("status", "active")
+    if status == "active" and pending_trainer == 0 and pending_sampler == 0 and last_activity > 0 and (now - last_activity) > 900.0:
+      status = "completed"
+      await store.update_job_metadata(
+        m_id,
+        {"status": "completed", "completed_at": last_activity, "updated_at": last_activity},
+      )
+
+    entry = {
+      "model_id": m_id,
+      "base_model": job.get("base_model", "Unknown"),
+      "fine_tuning_type": job.get("fine_tuning_type", "full"),
+      "tenant_id": job.get("tenant_id", "default"),
+      "status": status,
+      "current_step": current_step,
+      "max_steps": job.get("max_steps"),
+      "pending_trainer_reqs": pending_trainer,
+      "pending_sampler_reqs": pending_sampler,
+      "created_at": job.get("created_at", now),
+      "updated_at": last_activity if last_activity > 0 else job.get("updated_at", now),
+    }
+
+    if status == "active":
+      active_jobs.append(entry)
+    else:
+      completed_jobs.append(entry)
+
+  active_jobs.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+  completed_jobs.sort(key=lambda j: j.get("created_at", 0), reverse=True)
+
+  return {"timestamp": now, "active_jobs": active_jobs, "completed_jobs": completed_jobs}
+
+
+@app.get("/api/v1/admin/jobs/{job_id}/requests")
+async def admin_get_job_requests(job_id: str):
+  """Phase 2: Drill-down real-time request status, dual pending queues, and step feed for job_id."""
+  reqs_map = await store.get_job_requests(job_id)
+  now = time.time()
+
+  currently_executing = None
+  pending_trainer = []
+  pending_sampler = []
+  completed_reqs = []
+
+  for r_id, req in reqs_map.items():
+    st = req.get("status")
+    role = req.get("role", "trainer")
+    op = req.get("op", "unknown")
+
+    if st == "processing":
+      t_started = req.get("started_at", now)
+      currently_executing = {
+        "request_id": r_id,
+        "op": op,
+        "role": role,
+        "worker_pod": req.get("worker_pod", "worker-0"),
+        "started_at": t_started,
+        "elapsed_sec": round(now - t_started, 1) if t_started else 0.0,
+      }
+    elif st == "pending":
+      t_created = req.get("created_at", now)
+      item = {
+        "request_id": r_id,
+        "op": op,
+        "role": role,
+        "created_at": t_created,
+        "waiting_sec": round(now - t_created, 1) if t_created else 0.0,
+      }
+      if role == "sampler":
+        pending_sampler.append(item)
+      else:
+        pending_trainer.append(item)
+    elif st in ("done", "failed"):
+      completed_reqs.append(req)
+
+  completed_reqs.sort(key=lambda r: r.get("completed_at", 0), reverse=True)
+
+  return {
+    "job_id": job_id,
+    "currently_executing": currently_executing,
+    "pending_queues": {
+      "trainer": pending_trainer,
+      "sampler": pending_sampler,
+    },
+    "recent_completed": completed_reqs,
+  }
+
+
+@app.get("/admin/dashboard/", response_class=HTMLResponse)
+async def admin_dashboard():
+  """Admin Infrastructure Dashboard — Light Theme Accelerator Usage UI."""
+  return HTMLResponse(content=ADMIN_DASHBOARD_HTML)
+
+
 def _get_request(request: Request) -> Request:
   return request
 
@@ -340,7 +605,7 @@ async def create_model(
 ) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
   try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_training_kind="full")
+    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="lora")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -363,7 +628,8 @@ async def delete_model(req: dict):
     print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
     await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
-  await store.delete_values(f"open_rl:model_meta:{model_id}")
+  now = time.time()
+  await store.update_job_metadata(model_id, {"status": "completed", "completed_at": now, "updated_at": now})
   return {"status": "ok"}
 
 
@@ -379,7 +645,7 @@ async def create_model_from_state(
   # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
   resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
   try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_training_kind="restored")
+    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="restored")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
@@ -650,16 +916,24 @@ async def asample(req: dict):
   propagate.inject(carrier)
   await store.set_future(req_id, {"status": "pending"})
 
-  if is_fft_enabled():
-    rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
-    local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
-    weights_path = local_path
-    lora_id = None
-    lora_path = None
-  else:
+  model_meta = await store.get_model_metadata(base_model_id or model_id)
+  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
+
+  if fine_tuning_type == "lora":
     weights_path = None
     lora_id = model_id
-    lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
+    peft_dir = os.path.join(TMP_DIR, "peft", base_model_id or model_id, base_model_id or model_id)
+    lora_path = peft_dir if os.path.exists(peft_dir) else None
+  else:
+    resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
+    if resolved_path and os.path.exists(os.path.join(resolved_path, "adapter_config.json")):
+      weights_path = None
+      lora_id = model_id
+      lora_path = resolved_path
+    else:
+      weights_path = resolved_path
+      lora_id = None
+      lora_path = None
 
   sampling_req = {
     "request_id": req_id,
@@ -677,6 +951,23 @@ async def asample(req: dict):
     "model_id": base_model_id or model_id,
     "trace_context": carrier,
   }
+
+  target_m_id = base_model_id or model_id
+  if target_m_id and hasattr(store, "record_job_request_event"):
+    await store.record_job_request_event(
+      target_m_id,
+      req_id,
+      {
+        "request_id": req_id,
+        "model_id": target_m_id,
+        "op": "sample",
+        "role": "sampler",
+        "status": "pending",
+        "session_id": model_id,
+        "created_at": time.time(),
+        "token_count": len(prompt) + max_tokens,
+      },
+    )
 
   await store.put_sampling_request(sampling_req)
   return {"request_id": req_id}

@@ -134,7 +134,10 @@ class KubernetesFFTWorkerManager:
     if worker_image:
       container["image"] = worker_image
     if role == "sampler":
-      container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
+      ft_type = meta.fine_tuning_type if (meta and hasattr(meta, "fine_tuning_type")) else None
+      is_lora = (ft_type == "lora") if ft_type is not None else False
+      sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
+      container["command"] = ["uv", "run", "python", "-u", "-m", sampler_module]
     container.setdefault("args", []).extend(["--model-id", model_id])
     if meta and meta.base_model:
       set_env(container, "BASE_MODEL", meta.base_model)
@@ -148,6 +151,8 @@ class KubernetesFFTWorkerManager:
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
+    role_claim = "open-rl-trainer-gpu-1" if role == "trainer" else "open-rl-sampler-gpu-1"
+    set_env(container, "OPEN_RL_DRA_CLAIM_ID", role_claim)
     from server.model_metadata import WeightSyncConfig
 
     weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
@@ -155,7 +160,6 @@ class KubernetesFFTWorkerManager:
     if weight_sync_cfg.strategy == "delta":
       set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT", weight_sync_cfg.delta_format)
       set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", weight_sync_cfg.delta_apply_method)
-      set_env(container, "OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING", str(weight_sync_cfg.enable_prefetching).lower())
     return pod
 
   def read_pod(self, pod_name: str) -> Any | None:

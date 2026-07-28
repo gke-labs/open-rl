@@ -5,7 +5,9 @@ import asyncio
 import json
 import os
 import threading
+import time
 import traceback
+import uuid
 from typing import Any, Protocol
 
 import uvicorn
@@ -94,6 +96,8 @@ class TrainingRequestsProcessor(Protocol):
         return await self.save_weights_for_sampler(payload, model_id)
       case "save_weights":
         return await self.save_weights(payload, model_id)
+      case "shutdown_workers":
+        return {"status": "ok", "type": "shutdown_acknowledged"}
       case _:
         raise NotImplementedError(f"Training request op {op!r} is not supported")
 
@@ -116,6 +120,59 @@ class TrainingRequestsProcessor(Protocol):
   async def save_weights(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]: ...
 
 
+def _extract_token_count(request: dict[str, Any]) -> int:
+  payload = request.get("payload") or request
+  data = payload.get("data") or payload.get("forward_input", {}).get("data", []) or []
+  tokens = 0
+  for item in data:
+    if isinstance(item, dict):
+      model_inp = item.get("model_input") or {}
+      chunks = model_inp.get("chunks") or []
+      for chunk in chunks:
+        if isinstance(chunk, dict):
+          tokens += len(chunk.get("tokens") or [])
+  return max(tokens, 1)
+
+
+async def _record_slice_telemetry(
+  store: RequestStore,
+  model_id: str,
+  worker_role: str,
+  t_start: float,
+  t_end: float,
+  token_count: int,
+  model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
+  num_params_billions: float = 0.5,
+) -> None:
+  dur_sec = max(t_end - t_start, 0.001)
+  dur_ms = int(dur_sec * 1000)
+
+  claim_id = os.getenv("OPEN_RL_DRA_CLAIM_ID") or os.getenv("DRA_RESOURCE_CLAIM") or "open-rl-shared-gpu-claim-01"
+  node_name = os.getenv("NODE_NAME") or os.getenv("HOSTNAME") or "localhost"
+  gpu_index = int(os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")[0] if os.getenv("CUDA_VISIBLE_DEVICES") else 0)
+
+  event = {
+    "event_id": f"accel-evt-{uuid.uuid4().hex[:8]}",
+    "resource_claim_id": claim_id,
+    "node_name": node_name,
+    "gpu_index": gpu_index,
+    "job_id": model_id,
+    "tenant_id": model_id,
+    "model_name": model_name,
+    "num_params_billions": num_params_billions,
+    "worker_role": worker_role,
+    "acquire_time": t_start,
+    "release_time": t_end,
+    "duration_ms": dur_ms,
+    "tokens_processed": token_count,
+  }
+
+  try:
+    await store.record_accel_usage_event(claim_id, event)
+  except Exception as exc:
+    print(f"[TELEMETRY] Failed to record slice event: {exc}")
+
+
 async def _fetch_model_meta(
   store: RequestStore,
   model_id: str,
@@ -135,8 +192,8 @@ async def _fetch_model_meta(
         base_model = meta.get("base_model") or payload.get("base_model") or ""
         full_config = meta.get("full_config") or payload.get("full_config") or {}
         lora_config = meta.get("lora_config") or payload.get("lora_config") or {}
-        training_kind = meta.get("training_kind") or ("lora" if "lora_config" in meta or "lora_config" in payload else default_kind)
-        return base_model, full_config, lora_config, training_kind
+        fine_tuning_type = meta.get("fine_tuning_type") or ("lora" if "lora_config" in meta or "lora_config" in payload else default_kind)
+        return base_model, full_config, lora_config, fine_tuning_type
     except Exception:
       pass
   return (
@@ -182,19 +239,19 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
         await self.process_request(request, model_id)
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    base_model, _, raw_config, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
+    base_model, _, raw_config, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
     lora_config = LoraConfig(**{k: v for k, v in raw_config.items() if k in LoraConfig.model_fields})
     await asyncio.to_thread(self.worker.create_model, base_model, model_id, lora_config)
     return {
       "base_model": base_model,
       "model_id": model_id,
       "rank": lora_config.rank,
-      "training_kind": training_kind,
+      "fine_tuning_type": fine_tuning_type,
       "type": "model_created",
     }
 
   async def create_model_from_state(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    base_model, _, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
+    base_model, _, _, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
     result = await asyncio.to_thread(
       self.worker.load_from_state,
       model_id,
@@ -204,7 +261,7 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
     return {
       "base_model": result.get("base_model") or base_model,
       "model_id": result.get("model_id", model_id),
-      "training_kind": training_kind,
+      "fine_tuning_type": fine_tuning_type,
       "type": "model_loaded_from_state",
     }
 
@@ -223,6 +280,13 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
   async def optim_step(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     result = await asyncio.to_thread(self.worker.optim_step, payload.get("adam_params", {}), model_id)
     result["type"] = "optim_step_completed"
+    if hasattr(self, "store") and self.store:
+      try:
+        raw_meta = await self.store.get_value(f"open_rl:model_meta:{model_id}")
+        current_step = json.loads(raw_meta).get("total_steps_completed", 0) if raw_meta else 0
+        await self.store.update_job_metadata(model_id, {"total_steps_completed": current_step + 1, "updated_at": time.time()})
+      except Exception as exc:
+        print(f"[PROCESSOR] Failed to update step metadata for model {model_id}: {exc}")
     return result
 
   async def sample(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
@@ -352,15 +416,30 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         save_reqs = [r for r in training_reqs if r.get("op") in save_ops]
 
         if gpu_reqs:
+          token_count = sum(_extract_token_count(r) for r in gpu_reqs)
           async with self.time_slicer.acquire(self.workload):
+            t_start = time.time()
             if hasattr(self.worker, "wake_up"):
               await asyncio.to_thread(self.worker.wake_up)
             try:
               for request in gpu_reqs:
+                req_id = request.get("request_id")
+                if req_id and hasattr(self.store, "record_job_request_event"):
+                  await self.store.record_job_request_event(
+                    self.model_id,
+                    req_id,
+                    {
+                      "status": "processing",
+                      "started_at": t_start,
+                      "worker_pod": os.getenv("POD_NAME", "trainer-0"),
+                    },
+                  )
                 results.append(await self.handle_request(request, self.model_id))
             finally:
               if hasattr(self.worker, "sleep"):
                 await asyncio.to_thread(self.worker.sleep)
+              t_end = time.time()
+          await _record_slice_telemetry(self.store, self.model_id, "trainer", t_start, t_end, token_count)
 
         if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
           async with self.time_slicer.acquire(self.workload):
@@ -370,26 +449,36 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
           for request in save_reqs:
             results.append(await self.handle_request(request, self.model_id))
 
+        t_now = time.time()
         for request_id, result in results:
           if request_id is not None:
             await self.store.set_future(request_id, result)
+            if hasattr(self.store, "record_job_request_event"):
+              await self.store.record_job_request_event(
+                self.model_id,
+                request_id,
+                {
+                  "status": "done",
+                  "completed_at": t_now,
+                },
+              )
 
     if has_shutdown:
       await self.exit_gracefully()
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    base_model, raw_config, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
+    base_model, raw_config, _, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
     full_config = FFTConfig(**{k: v for k, v in raw_config.items() if k in FFTConfig.model_fields})
     await asyncio.to_thread(self.worker.create_model, base_model, model_id, full_config)
     return {
       "base_model": base_model,
       "model_id": model_id,
-      "training_kind": training_kind,
+      "fine_tuning_type": fine_tuning_type,
       "type": "model_created",
     }
 
   async def create_model_from_state(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    base_model, _, _, training_kind = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
+    base_model, _, _, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="full")
     result = await asyncio.to_thread(
       self.worker.load_from_state,
       model_id,
@@ -399,7 +488,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     return {
       "base_model": result.get("base_model") or base_model,
       "model_id": result.get("model_id", model_id),
-      "training_kind": training_kind,
+      "fine_tuning_type": fine_tuning_type,
       "type": "model_loaded_from_state",
     }
 
@@ -418,6 +507,13 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
   async def optim_step(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     result = await asyncio.to_thread(self.worker.optim_step, payload.get("adam_params", {}), model_id)
     result["type"] = "optim_step_completed"
+    if hasattr(self, "store") and self.store:
+      try:
+        raw_meta = await self.store.get_value(f"open_rl:model_meta:{model_id}")
+        current_step = json.loads(raw_meta).get("total_steps_completed", 0) if raw_meta else 0
+        await self.store.update_job_metadata(model_id, {"total_steps_completed": current_step + 1, "updated_at": time.time()})
+      except Exception as exc:
+        print(f"[PROCESSOR] Failed to update step metadata for model {model_id}: {exc}")
     return result
 
   async def sample(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
@@ -490,32 +586,35 @@ async def run_training_requests_processor(
   await processor.run()
 
 
-def start_request_processing_loop() -> None:
-  parser = argparse.ArgumentParser()
-  parser.add_argument("--model-id", help="Model id whose per-model request queue this dedicated trainer worker drains.")
-  args = parser.parse_args()
+async def main_async(args: argparse.Namespace) -> None:
+  fine_tuning_type = "full" if is_fft_enabled() else "lora"
+  if args.model_id:
+    try:
+      store = get_store()
+      raw_meta = await store.get_value(f"open_rl:model_meta:{args.model_id}")
+      if raw_meta:
+        meta_dict = json.loads(raw_meta)
+        fine_tuning_type = meta_dict.get("fine_tuning_type", fine_tuning_type)
+    except Exception as exc:
+      print(f"[WORKER] Failed to fetch model metadata for {args.model_id}: {exc}")
 
-  print("\n" + "=" * 50)
-  print("      Open-RL PyTorch Training Worker")
-  print("=" * 50)
-  cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
-  print(f"-> Hardware : CUDA_VISIBLE_DEVICES={cuda_devs}")
-  print(f"-> FFT enabled: {is_fft_enabled()}\n")
+  is_lora = fine_tuning_type == "lora"
+  print(f"-> Fine-Tuning Type: {fine_tuning_type} (Is LoRA: {is_lora})\n")
 
-  worker: TrainingWorker = FFTTrainingWorker() if is_fft_enabled() else LoraTrainingWorker()
+  worker: TrainingWorker = LoraTrainingWorker() if is_lora else FFTTrainingWorker()
   preload_target = os.getenv("BASE_MODEL")
   is_ready = False
-  if preload_target and not is_fft_enabled():
+  if preload_target and is_lora:
     worker.load_base_model(preload_target)
     is_ready = True
   else:
-    if is_fft_enabled():
+    if not is_lora:
       print("[WORKER] Full fine-tuning mode loads its model from the create_model request.")
     else:
       print("[WARNING] BASE_MODEL not provided. Cold-start penalty will apply on first request.")
     is_ready = True
 
-  if not is_fft_enabled():
+  if is_lora:
     probe_app = FastAPI()
 
     @probe_app.get("/healthz")
@@ -528,7 +627,22 @@ def start_request_processing_loop() -> None:
       uvicorn.run(probe_app, host="0.0.0.0", port=8000, log_level="warning")
 
     threading.Thread(target=run_probe_server, daemon=True).start()
-  asyncio.run(run_training_requests_processor(worker, args.model_id))
+
+  await run_training_requests_processor(worker, args.model_id)
+
+
+def start_request_processing_loop() -> None:
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--model-id", help="Model id whose per-model request queue this dedicated trainer worker drains.")
+  args = parser.parse_args()
+
+  print("\n" + "=" * 50)
+  print("      Open-RL PyTorch Training Worker")
+  print("=" * 50)
+  cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
+  print(f"-> Hardware : CUDA_VISIBLE_DEVICES={cuda_devs}")
+
+  asyncio.run(main_async(args))
 
 
 if __name__ == "__main__":

@@ -123,7 +123,7 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     # Assert canonical metadata persistence:
     meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta["base_model"], "restored-base")
-    self.assertEqual(meta["training_kind"], "restored")
+    self.assertEqual(meta["fine_tuning_type"], "restored")
     self.assertEqual(meta["full_config"]["weight_sync_strategy"], "delta")
 
     # Assert no dual-key writing:
@@ -137,7 +137,7 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
         {
           "base_model": "base-vllm",
           "weight_sync_strategy": "delta",
-          "training_kind": "full",
+          "fine_tuning_type": "full",
         }
       )
       await gateway.ensure_sampler_launched("model-x")
@@ -203,7 +203,7 @@ class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       {
         "base_model": "base-model-a",
         "weight_sync_config": {"strategy": "delta"},
-        "training_kind": "full",
+        "fine_tuning_type": "full",
       }
     )
 
@@ -243,21 +243,21 @@ class GatewayMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
       "type": "http",
       "headers": [
         (b"x-open-rl-weight-sync-strategy", b"delta"),
-        (b"x-open-rl-training-kind", b"lora"),
+        (b"x-open-rl-fine-tuning-type", b"lora"),
       ],
     }
     request = Request(scope)
     model_id = await gateway._extract_and_persist_model_metadata(
       {"base_model": "Qwen/Qwen2.5-0.5B"},
       request,
-      default_training_kind="full",
+      default_fine_tuning_type="full",
     )
 
     meta_val = self.store.kv_store.get(f"open_rl:model_meta:{model_id}")
     self.assertIsNotNone(meta_val)
     meta_dict = json.loads(meta_val)
     self.assertEqual(meta_dict["base_model"], "Qwen/Qwen2.5-0.5B")
-    self.assertEqual(meta_dict["training_kind"], "lora")
+    self.assertEqual(meta_dict["fine_tuning_type"], "lora")
     self.assertEqual(meta_dict["weight_sync_config"]["strategy"], "delta")
 
 
@@ -269,7 +269,7 @@ class GatewayFutureTranslationTest(unittest.TestCase):
           "type": "model_created",
           "model_id": "model-a",
           "base_model": "base-model",
-          "training_kind": "full",
+          "fine_tuning_type": "full",
         }
       ),
       {
@@ -288,7 +288,7 @@ class GatewayFutureTranslationTest(unittest.TestCase):
           "type": "model_loaded_from_state",
           "model_id": "model-a",
           "base_model": "base-model",
-          "training_kind": "full",
+          "fine_tuning_type": "full",
         }
       ),
       {
@@ -308,7 +308,7 @@ class GatewayFutureTranslationTest(unittest.TestCase):
           "model_id": "model-a",
           "base_model": "base-model",
           "rank": 4,
-          "training_kind": "lora",
+          "fine_tuning_type": "lora",
         }
       ),
       {

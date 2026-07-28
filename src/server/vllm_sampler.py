@@ -2,16 +2,14 @@
 
 import argparse
 import asyncio
-import hashlib
-import json
 import os
 import sys
+import time
 import traceback
+import uuid
 from typing import Any
 
 os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
-
-import redis.asyncio as redis
 
 from server.model_metadata import WeightSyncConfig
 
@@ -61,6 +59,45 @@ IS_ENGINE_SLEEPING: bool = True
 reload_lock = asyncio.Lock()
 
 
+async def _record_sampler_slice_telemetry(
+  store: Any,
+  model_id: str,
+  t_start: float,
+  t_end: float,
+  token_count: int,
+  model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
+  num_params_billions: float = 0.5,
+) -> None:
+  dur_sec = max(t_end - t_start, 0.001)
+  dur_ms = int(dur_sec * 1000)
+
+  claim_id = os.getenv("OPEN_RL_DRA_CLAIM_ID") or os.getenv("DRA_RESOURCE_CLAIM") or "open-rl-shared-gpu-claim-01"
+  node_name = os.getenv("NODE_NAME") or os.getenv("HOSTNAME") or "localhost"
+  gpu_index = int(os.getenv("CUDA_VISIBLE_DEVICES", "0").split(",")[0] if os.getenv("CUDA_VISIBLE_DEVICES") else 0)
+
+  event = {
+    "event_id": f"accel-evt-{uuid.uuid4().hex[:8]}",
+    "resource_claim_id": claim_id,
+    "node_name": node_name,
+    "gpu_index": gpu_index,
+    "job_id": model_id,
+    "tenant_id": model_id,
+    "model_name": model_name,
+    "num_params_billions": num_params_billions,
+    "worker_role": "sampler",
+    "acquire_time": t_start,
+    "release_time": t_end,
+    "duration_ms": dur_ms,
+    "tokens_processed": token_count,
+  }
+
+  try:
+    if hasattr(store, "record_accel_usage_event"):
+      await store.record_accel_usage_event(claim_id, event)
+  except Exception as exc:
+    print(f"[TELEMETRY] Failed to record sampler slice event: {exc}")
+
+
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
@@ -99,16 +136,13 @@ def init_engine():
     engine_kwargs = {
       "model": model_name,
       "enable_sleep_mode": is_fft_enabled(),
-      "enable_lora": not is_fft_enabled(),
+      "enable_lora": False,
       "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
       "max_num_seqs": int(os.getenv("VLLM_MAX_NUM_SEQS", "64")),
       "gpu_memory_utilization": float(os.getenv("VLLM_GPU_MEMORY_UTILIZATION", "0.90")),
       "enable_prefix_caching": False,
       "enforce_eager": os.getenv("VLLM_ENFORCE_EAGER", "0") == "1",
     }
-    if not is_fft_enabled():
-      engine_kwargs["max_loras"] = 8
-      engine_kwargs["max_lora_rank"] = 64
     if hf_overrides:
       engine_kwargs["hf_overrides"] = hf_overrides
 
@@ -163,15 +197,8 @@ async def run_generation_backend(
       output_kind=RequestOutputKind.FINAL_ONLY,
     )
 
-    lora_request = None
-    if lora_id and lora_path:
-      # vLLM natively relies on lora_int_id to track cached adapter weights.
-      # Convert the sequence identifier UUID to a stable 32-bit positive integer hash.
-      lora_int_id = int(hashlib.md5(lora_id.encode("utf-8")).hexdigest(), 16) % (2**31 - 1) + 1
-      lora_request = LoRARequest(lora_id, lora_int_id, lora_path)
-
     results_generator = current_engine.generate(
-      prompt={"prompt_token_ids": prompt_token_ids}, sampling_params=sampling_params, request_id=request_id, lora_request=lora_request
+      prompt={"prompt_token_ids": prompt_token_ids}, sampling_params=sampling_params, request_id=request_id, lora_request=None
     )
 
     final_output = None
@@ -227,7 +254,19 @@ async def process_sampling_request(req: dict, store: Any) -> None:
   global IS_ENGINE_SLEEPING
 
   request_id = req["request_id"]
+  m_id = req.get("model_id")
   trace_context = req.get("trace_context", {})
+
+  if m_id and hasattr(store, "record_job_request_event"):
+    await store.record_job_request_event(
+      m_id,
+      request_id,
+      {
+        "status": "processing",
+        "started_at": time.time(),
+        "worker_pod": os.getenv("POD_NAME", "sampler-0"),
+      },
+    )
 
   parent_span = propagate.extract(trace_context)
   with tracer.start_as_current_span("process_sampling_request", context=parent_span):
@@ -295,78 +334,27 @@ async def process_sampling_request(req: dict, store: Any) -> None:
         result["type"] = "sample"
 
       await store.set_future(request_id, result)
+      if m_id and hasattr(store, "record_job_request_event"):
+        await store.record_job_request_event(
+          m_id,
+          request_id,
+          {
+            "status": "done",
+            "completed_at": time.time(),
+          },
+        )
     except Exception as exc:
       traceback.print_exc()
       await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
-
-
-async def weight_prefetcher_loop(model_id: str, store: Any) -> None:
-  global engine
-  global CURRENT_LOADED_SAMPLER_WEIGHTS
-  global IS_ENGINE_SLEEPING
-
-  try:
-    if not hasattr(store, "redis"):
-      return
-
-    redis_url = os.getenv("REDIS_URL")
-    if not redis_url:
-      return
-    client = redis.from_url(redis_url, decode_responses=True, socket_timeout=None, socket_connect_timeout=None)
-    pubsub = client.pubsub()
-    channel_key = f"open_rl:weight_update:{model_id}"
-    await pubsub.subscribe(channel_key)
-    print(f"[vLLM Worker] Weight prefetcher listening on channel: {channel_key}...")
-
-    while True:
-      try:
-        async for message in pubsub.listen():
-          if message["type"] != "message":
-            continue
-          try:
-            data = json.loads(message["data"])
-            target_path = data.get("weights_path")
-            if target_path and target_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
-              print(f"[vLLM Worker] Prefetch signal received. Target weights path: {target_path}")
-              print(f"[vLLM Worker] Background prefetch signal registered for target: {target_path}")
-              if engine is not None and hasattr(engine, "collective_rpc"):
-
-                def _preload(worker, path=target_path):
-                  wt = getattr(worker, "weight_transfer_engine", None)
-                  if wt is not None and hasattr(wt, "preload_delta_to_dram"):
-                    wt.preload_delta_to_dram(path)
-
-                try:
-                  await engine.collective_rpc(_preload)
-                except Exception as pe:
-                  print(f"[vLLM Worker] Background DRAM preloading failed: {pe}")
-          except Exception as e:
-            print(f"[vLLM Worker] Error in prefetch message processing: {e}")
-            traceback.print_exc()
-      except (asyncio.CancelledError, GeneratorExit):
-        print("[vLLM Worker] Weight prefetcher loop cancelled cleanly during shutdown.")
-        break
-      except Exception as e:
-        print(f"[vLLM Worker] Pub/Sub connection error: {e}. Retrying subscription...")
-        await asyncio.sleep(2)
-        try:
-          await pubsub.subscribe(channel_key)
-        except Exception:
-          pass
-  except (asyncio.CancelledError, GeneratorExit):
-    print("[vLLM Worker] Weight prefetcher task terminated cleanly.")
-  except Exception as e:
-    print(f"[vLLM Worker] CRITICAL: Weight prefetcher loop crashed: {e}")
-    traceback.print_exc()
-  finally:
-    try:
-      await pubsub.unsubscribe(channel_key)
-    except Exception:
-      pass
-    try:
-      await client.aclose()
-    except Exception:
-      pass
+      if m_id and hasattr(store, "record_job_request_event"):
+        await store.record_job_request_event(
+          m_id,
+          request_id,
+          {
+            "status": "failed",
+            "completed_at": time.time(),
+          },
+        )
 
 
 async def run_sampling_worker(model_id: str) -> None:
@@ -378,7 +366,6 @@ async def run_sampling_worker(model_id: str) -> None:
   store = get_store()
   snapshot_registered = False
   workload = None
-  prefetch_task = None
   if time_slicer is not None:
     workload = workload_from_env(os.getpid(), job_id=workload_job_id("sampler", model_id), group=SAMPLER_TIME_SLICE_GROUP)
 
@@ -407,11 +394,6 @@ async def run_sampling_worker(model_id: str) -> None:
   async def exit_gracefully() -> None:
     print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
     nonlocal snapshot_registered
-    if prefetch_task is not None:
-      try:
-        prefetch_task.cancel()
-      except Exception:
-        pass
     if snapshot_registered and time_slicer is not None:
       assert workload is not None
       try:
@@ -445,7 +427,6 @@ async def run_sampling_worker(model_id: str) -> None:
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
 
   print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
-  prefetch_task = asyncio.create_task(weight_prefetcher_loop(model_id, store))
   try:
     while True:
       try:
@@ -465,7 +446,9 @@ async def run_sampling_worker(model_id: str) -> None:
         if sampling_reqs:
           if time_slicer is not None:
             assert workload is not None
+            token_count = sum(len(r.get("prompt_token_ids") or r.get("prompt_tokens") or [1]) for r in sampling_reqs)
             async with time_slicer.acquire(workload):
+              t_start = time.time()
               if engine is not None and IS_ENGINE_SLEEPING:
                 print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
                 await engine.wake_up(tags=["weights", "kv_cache"])
@@ -478,6 +461,8 @@ async def run_sampling_worker(model_id: str) -> None:
                 print("[vLLM Worker] Exiting batch: sleeping engine (CPU offload weights) to yield GPU memory...")
                 await engine.sleep(level=1)
                 IS_ENGINE_SLEEPING = True
+              t_end = time.time()
+            await _record_sampler_slice_telemetry(store, model_id, t_start, t_end, token_count)
           else:
             if engine is not None and IS_ENGINE_SLEEPING:
               print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")

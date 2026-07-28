@@ -60,6 +60,7 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
       "REDIS_URL": "redis://redis-service:6379",
       "OPEN_RL_WORKER_POD_TEMPLATE": self.template_file.name,
       "OPEN_RL_WORKER_NAMESPACE": "training",
+      "OPEN_RL_ENABLE_FFT": "1",
     }
 
   def _manager(self, core_api: _FakeCoreApi) -> KubernetesFFTWorkerManager:
@@ -158,7 +159,7 @@ class KubernetesFFTWorkerManagerTest(unittest.TestCase):
       {
         "base_model": "gemma-4-k8s",
         "weight_sync_config": {"strategy": "full"},
-        "training_kind": "full",
+        "fine_tuning_type": "full",
       }
     )
     api = _FakeCoreApi()

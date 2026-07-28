@@ -7,7 +7,6 @@ without external sleep/wake workarounds.
 
 import json
 import os
-import threading
 import time
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass
@@ -71,18 +70,6 @@ class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
 
 
 @dataclass
-class StagedDeltaSnapshot:
-  """Encapsulates pre-allocated bulk tensors and sliced GPU tensor maps for in-place patching."""
-
-  target_path: str
-  bulk_indices_cpu: torch.Tensor | None
-  bulk_values_cpu: torch.Tensor | None
-  op_slices: list[tuple[torch.Tensor, int, int]]  # (gpu_param, start_idx, end_idx)
-  num_layers: int
-  changed_elements: int
-
-
-@dataclass
 class SparseWeightPatch:
   """A sparse in-place patch for one existing parameter."""
 
@@ -123,8 +110,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
     self._base_model: str = ""
-    self._staged_delta_lock = threading.Lock()
-    self._staged_delta: StagedDeltaSnapshot | None = None
 
     if self.model_config is not None and getattr(self.model_config, "model", None):
       self._base_model = self.model_config.model
@@ -182,6 +167,20 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     model = model or self.model
     logger.info(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
 
+    if model is not None:
+      start_t = time.perf_counter()
+      for name, param in model.named_parameters():
+        real_t = self._get_real_tensor(model, name, param)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      for name, buf in model.named_buffers():
+        real_t = self._get_real_tensor(model, name, buf)
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+      elapsed = (time.perf_counter() - start_t) * 1000.0
+      logger.info(
+        f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms."
+      )
+      return
+
     if base_model:
       start_t = time.perf_counter()
       from vllm.model_executor.model_loader.weight_utils import (
@@ -218,20 +217,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
           f"HuggingFace tensors from base model '{base_model}' via vLLM weight iterator in {elapsed:.2f} ms."
         )
         return
-
-    if model is not None:
-      start_t = time.perf_counter()
-      for name, param in model.named_parameters():
-        real_t = self._get_real_tensor(model, name, param)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      for name, buf in model.named_buffers():
-        real_t = self._get_real_tensor(model, name, buf)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
-      elapsed = (time.perf_counter() - start_t) * 1000.0
-      logger.info(
-        f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms."
-      )
-      return
 
     raise RuntimeError(f"Failed to initialize CPU weights snapshot: neither base safetensors for '{base_model}' nor model instance available.")
 
@@ -340,96 +325,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
 
     return bulk_indices_cpu, bulk_values_cpu, op_slices
 
-  def preload_delta_to_dram(self, target_path: str) -> None:
-    """Asynchronously pre-loads and stages delta weights into pinned CPU DRAM before sampling begins."""
-    delta_file = os.path.join(target_path, "delta.safetensors")
-    metadata_path = os.path.join(target_path, "metadata.json")
-
-    # Poll for NFS propagation (up to 10s)
-    start_wait = time.perf_counter()
-    while not (os.path.exists(delta_file) and os.path.exists(metadata_path)):
-      if time.perf_counter() - start_wait > 10.0:
-        logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Target files missing after wait: '{target_path}'")
-        return
-      time.sleep(0.2)
-
-    try:
-      t0 = time.perf_counter()
-      with open(metadata_path) as f:
-        meta = json.load(f)
-
-      if meta.get("format") != "sparse_delta":
-        return
-
-      raw_names = meta.get("layer_names")
-      meta_names: list[str] = json.loads(raw_names) if isinstance(raw_names, str) else (raw_names or [])
-
-      sparse_delta = load_file(delta_file, device="cpu")
-
-      indices_flat = sparse_delta.get("delta.indices_flat")
-      if indices_flat is None:
-        indices_flat = sparse_delta.get("indices")
-      values_flat = sparse_delta.get("delta.values_flat")
-      if values_flat is None:
-        values_flat = sparse_delta.get("values")
-      layer_lengths = sparse_delta.get("delta.layer_lengths")
-      if layer_lengths is None:
-        layer_lengths = sparse_delta.get("layer_lengths")
-
-      if indices_flat is None or values_flat is None or layer_lengths is None:
-        return
-
-      changed_elements = indices_flat.numel()
-      if changed_elements == 0:
-        with self._staged_delta_lock:
-          self._staged_delta = StagedDeltaSnapshot(
-            target_path=target_path,
-            bulk_indices_cpu=None,
-            bulk_values_cpu=None,
-            op_slices=[],
-            num_layers=len(meta_names),
-            changed_elements=0,
-          )
-        return
-
-      split_indices = torch.split(indices_flat, layer_lengths.tolist())
-      split_values = torch.split(values_flat, layer_lengths.tolist())
-
-      resolved_ops = []
-      for i, name in enumerate(meta_names):
-        if i >= len(split_indices) or split_indices[i].numel() == 0:
-          continue
-        gpu_param, offset = self._resolve_gpu_param_and_offset(name)
-        resolved_ops.append((gpu_param, offset, split_indices[i], split_values[i]))
-
-      if not resolved_ops:
-        return
-
-      param_dtype = resolved_ops[0][0].dtype
-      bulk_indices_cpu, bulk_values_cpu, op_slices = self._build_bulk_tensor_slices(resolved_ops, changed_elements, param_dtype)
-
-      if torch.cuda.is_available() and self.device is not None and self.device.type == "cuda":
-        bulk_indices_cpu = bulk_indices_cpu.pin_memory()
-        bulk_values_cpu = bulk_values_cpu.pin_memory()
-
-      t_ms = (time.perf_counter() - t0) * 1000.0
-      logger.info(
-        f"[DeltaSnapshotEngine] [PRELOAD] Successfully staged DRAM buffer for '{target_path}' "
-        f"({changed_elements} elements across {len(meta_names)} layers, pinned CPU RAM) in {t_ms:.2f} ms"
-      )
-
-      with self._staged_delta_lock:
-        self._staged_delta = StagedDeltaSnapshot(
-          target_path=target_path,
-          bulk_indices_cpu=bulk_indices_cpu,
-          bulk_values_cpu=bulk_values_cpu,
-          op_slices=op_slices,
-          num_layers=len(meta_names),
-          changed_elements=changed_elements,
-        )
-    except Exception as exc:
-      logger.warning(f"[DeltaSnapshotEngine] [PRELOAD] Background preloading failed for '{target_path}': {exc}")
-
   def _apply_gpu_in_place(
     self,
     meta_names: list[str],
@@ -439,48 +334,6 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
   ) -> None:
     """Applies sparse 1D patches directly to GPU parameters in-place in VRAM without CPU snapshot or load_weights."""
     t0_start = time.perf_counter()
-    staged_snapshot: StagedDeltaSnapshot | None = None
-    with self._staged_delta_lock:
-      if self._staged_delta is not None and self._staged_delta.target_path == target_path:
-        staged_snapshot = self._staged_delta
-        self._staged_delta = None
-
-    if staged_snapshot is not None:
-      logger.info(
-        f"[DeltaSnapshotEngine] [IN_PLACE_GPU] [PRELOAD HIT] Using background pre-staged DRAM buffer for "
-        f"'{target_path}' ({staged_snapshot.changed_elements} elements across {staged_snapshot.num_layers} layers)..."
-      )
-      if staged_snapshot.changed_elements == 0:
-        self.current_weights_path = target_path
-        return
-
-      target_device = self.device or (staged_snapshot.op_slices[0][0].device if staged_snapshot.op_slices else torch.device("cuda"))
-      t0_copy = time.perf_counter()
-
-      if staged_snapshot.op_slices and staged_snapshot.bulk_indices_cpu is not None and staged_snapshot.bulk_values_cpu is not None:
-        bulk_indices_gpu = staged_snapshot.bulk_indices_cpu.to(device=target_device, non_blocking=True)
-        bulk_values_gpu = staged_snapshot.bulk_values_cpu.to(device=target_device, non_blocking=True)
-
-        for gpu_param, start_idx, end_idx in staged_snapshot.op_slices:
-          flat_param = gpu_param.data.view(-1)
-          idx_slice = bulk_indices_gpu[start_idx:end_idx]
-          val_slice = bulk_values_gpu[start_idx:end_idx]
-          patch = SparseWeightPatch(name=str(gpu_param), indices=idx_slice, values=val_slice)
-          self._validate_patch(patch, flat_param)
-          flat_param.index_copy_(0, idx_slice, val_slice)
-
-        if torch.cuda.is_available() and target_device.type == "cuda":
-          torch.cuda.synchronize(target_device)
-
-      t_copy_ms = (time.perf_counter() - t0_copy) * 1000.0
-      t_total_ms = (time.perf_counter() - t0_start) * 1000.0
-      self.current_weights_path = target_path
-      logger.info(
-        f"[DeltaSnapshotEngine] [IN_PLACE_GPU] [PRELOAD HIT] Successfully applied pre-staged GPU patch in {t_total_ms:.2f} ms "
-        f"(GPU Copy: {t_copy_ms:.2f} ms)."
-      )
-      return
-
     changed_elements = sum(idx.numel() for idx in split_indices)
     logger.info(
       f"[DeltaSnapshotEngine] [IN_PLACE_GPU] Starting direct in-place GPU weight patch across "

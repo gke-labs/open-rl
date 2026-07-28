@@ -182,6 +182,9 @@ class _TrainingRequestsStoreStub(_FutureStoreStub):
   async def get_value(self, key: str) -> str | None:
     return None
 
+  async def record_accel_usage_event(self, claim_id: str, event_data: dict) -> None:
+    pass
+
   def get_value_sync(self, key: str) -> str | None:
     return None
 
@@ -363,7 +366,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     result = store.results["req-a"]
     self.assertEqual(result["model_id"], "adapter-a")
     self.assertEqual(result["rank"], 2)
-    self.assertEqual(result["training_kind"], "lora")
+    self.assertEqual(result["fine_tuning_type"], "lora")
     self.assertEqual(result["type"], "model_created")
 
   def test_parse_datum_flattens_chunked_model_input(self) -> None:
@@ -409,7 +412,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     result = store.results["req-a"]
     self.assertEqual(result["model_id"], "model-a")
     self.assertEqual(result["base_model"], "base-model")
-    self.assertEqual(result["training_kind"], "full")
+    self.assertEqual(result["fine_tuning_type"], "full")
     self.assertEqual(result["type"], "model_created")
 
   async def test_full_processor_saves_sampler_checkpoint_as_full_state(self) -> None:

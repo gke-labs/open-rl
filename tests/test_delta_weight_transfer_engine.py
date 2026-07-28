@@ -388,62 +388,6 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       self.assertEqual(qkv_flat[q_numel + 10].item(), 42.0)
       self.assertEqual(qkv_flat[q_numel + 20].item(), 99.0)
 
-  def test_preload_delta_to_dram(self):
-    """Test that preload_delta_to_dram pre-stages CPU tensors and _apply_gpu_in_place consumes it via PRELOAD HIT."""
-    import json
-
-    from safetensors.torch import save_file
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-      qkv_param = torch.nn.Parameter(torch.zeros(100))
-
-      class MockModel(torch.nn.Module):
-        def get_parameter(self, name):
-          return qkv_param
-
-      model = MockModel()
-      vllm_config = MagicMock()
-      vllm_config.parallel_config = MagicMock(tensor_parallel_size=1, pipeline_parallel_size=1)
-      vllm_config.model_config = MagicMock(model="dummy-qwen")
-
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        vllm_config=vllm_config,
-        device=torch.device("cpu"),
-        model=model,
-      )
-
-      sparse_dict = {
-        "indices": torch.tensor([5, 15], dtype=torch.int32),
-        "values": torch.tensor([7.0, 77.0], dtype=torch.float32),
-        "layer_lengths": torch.tensor([2], dtype=torch.int64),
-      }
-      save_file(sparse_dict, os.path.join(tmpdir, "delta.safetensors"))
-
-      meta = {
-        "format": "sparse_delta",
-        "layer_names": ["model.layers.0.self_attn.qkv_proj.weight"],
-      }
-      with open(os.path.join(tmpdir, "metadata.json"), "w") as f:
-        json.dump(meta, f)
-
-      # 1. Trigger background preloading
-      engine.preload_delta_to_dram(tmpdir)
-      self.assertIsNotNone(engine._staged_delta)
-      self.assertEqual(engine._staged_delta.target_path, tmpdir)
-      self.assertEqual(engine._staged_delta.changed_elements, 2)
-
-      # 2. Receive weights - should consume staged_delta via PRELOAD HIT
-      with patch.dict(os.environ, {"OPEN_RL_IN_PLACE_DELTA": "1"}):
-        update_info = DeltaSnapshotUpdateInfo(target_weights_path=tmpdir)
-        engine.receive_weights(update_info)
-
-      # Staged delta should be consumed (reset to None)
-      self.assertIsNone(engine._staged_delta)
-      qkv_flat = qkv_param.data.view(-1)
-      self.assertEqual(qkv_flat[5].item(), 7.0)
-      self.assertEqual(qkv_flat[15].item(), 77.0)
-
 
 if __name__ == "__main__":
   unittest.main()

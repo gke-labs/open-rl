@@ -68,6 +68,7 @@ class RunConfig:
     "fft-gsm8k-rl-x2-compare",
     "fft-gsm8k-rl-x2-diffing-compare",
     "fft-gsm8k-rl-x3",
+    "fft-gsm8k-rl-x3-hetero-8b-0.6b",
     "fft-gsm8k-rl-hetero",
     "fft-textsql-rl",
     "fft-textsql-rl-x2",
@@ -334,10 +335,10 @@ def examples_env(config: RunConfig) -> dict[str, str]:
       env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
   if config.weight_sync_strategy:
     env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
-  # Prepend 'examples' to PYTHONPATH so child subprocesses resolve both common.*
-  # and recipes.* cleanly. We deliberately do NOT set UV_PROJECT_ENVIRONMENT
-  # here so that container runs utilize the pre-built /app/examples/.venv
-  # instead of re-resolving/re-compiling from scratch on shared network mounts.
+  if config.scenario.startswith("fft") or "fft" in config.scenario:
+    env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
+    env["OPEN_RL_IN_PLACE_DELTA"] = "1"
+    env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env
@@ -816,6 +817,65 @@ def run_gsm8k_rl_hetero(config: RunConfig, base_url: str, watch: list[ManagedPro
   check_snapshot_interleaving(config)
 
 
+def run_gsm8k_rl_x3_hetero_8b_0_6b(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Three concurrent FFT RL jobs: 2x Qwen3-8B and 1x Qwen3-0.6B."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, model_name: str, gpb: int, delay_sec: int) -> None:
+    try:
+      if delay_sec > 0:
+        time.sleep(delay_sec)
+      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(model_name)
+      temp = "1.0"
+      args = [
+        "env=gsm8k",
+        f"model_name={model_name}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 30}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        "group_size=8",
+        f"groups_per_batch={gpb}",
+        "max_tokens=512",
+        "learning_rate=1e-5",
+        f"temperature={temp}",
+        "eval_every=0",
+        "save_every=0",
+        *clean_cli_extra(config.extra),
+      ]
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=examples_env(config),
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  jobs_config = [
+    ("job-a-8b", "Qwen/Qwen3-8B", 24, 0),
+    ("job-b-8b", "Qwen/Qwen3-8B", 24, config.jitter_sec),
+    ("job-c-0.6b", "Qwen/Qwen3-0.6B", 24, config.jitter_sec * 2),
+  ]
+  threads = [threading.Thread(target=train, args=(job, model, gpb, delay)) for job, model, gpb, delay in jobs_config]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"fft-gsm8k-rl-x3-hetero-8b-0.6b {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+  check_snapshot_interleaving(config)
+
+
 def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Two concurrent FFT RL jobs against the same backend: each create_model spawns
   its own trainer and dedicated sampler worker, and the accel timeslicer time-slices them."""
@@ -883,6 +943,7 @@ def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -
     "rl.samples_per_prompt": "4",
     "rl.max_tokens": "64",
     "rl.eval_every": "1",
+    "fine_tuning_type": "full" if "fft" in config.scenario else "lora",
   }
   run_example(config, ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"], defaults, watch=watch)
 
@@ -979,6 +1040,8 @@ def main() -> None:
       run_gsm8k_rl_x2_compare(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x3":
       run_gsm8k_rl_x3(config, base_url, processes)
+    elif config.scenario == "fft-gsm8k-rl-x3-hetero-8b-0.6b":
+      run_gsm8k_rl_x3_hetero_8b_0_6b(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-hetero":
       run_gsm8k_rl_hetero(config, base_url, processes)
     elif config.scenario in {"lora-textsql", "fft-textsql-rl"}:
