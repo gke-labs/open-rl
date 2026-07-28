@@ -37,10 +37,9 @@ COPY pyproject.toml .
 COPY uv.lock .
 
 # Configure uv for Docker and caching
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+ENV UV_LINK_MODE=hardlink
 
-# Install dependencies using uv with BuildKit cache
+# Install dependencies using uv with BuildKit cache (fast dependency extraction)
 # --frozen ensures it uses the uv.lock exactly
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra gpu --extra vllm --extra cluster
@@ -48,11 +47,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy source code
 COPY . .
 
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --extra gpu --extra vllm --extra cluster
-
 # Apply vLLM patches (Gemma 4 LoRA dedup)
 RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_COMPILE_BYTECODE=1 uv sync --frozen --no-editable --extra gpu --extra vllm --extra cluster
 
 
 ENV PATH="/usr/local/cuda/bin:$PATH" \

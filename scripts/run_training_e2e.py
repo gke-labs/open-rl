@@ -61,6 +61,8 @@ class RunConfig:
     "tiny-fft-rl",
     "tiny-fft-rl-x2",
     "lora-textsql",
+    "lora-gsm8k-rl",
+    "lora-gsm8k-rl-x2",
     "fft-gsm8k",
     "fft-gsm8k-x2",
     "fft-gsm8k-rl",
@@ -552,7 +554,8 @@ def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
 
 
 def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  log_path = str(open_rl_tmp_dir(config) / "fft_gsm8k_rl")
+  prefix = "lora" if "lora" in config.scenario else "fft"
+  log_path = str(open_rl_tmp_dir(config) / f"{prefix}_gsm8k_rl")
   if os.path.exists(log_path):
     shutil.rmtree(log_path)
   module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
@@ -584,13 +587,14 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
 
 
 def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run two concurrent FFT RL jobs on GSM8K using standard tinker_cookbook math_rl CLI, check accel timeslicer
-  time slicing, and verify metrics."""
+  """Run two concurrent RL jobs on GSM8K using standard tinker_cookbook math_rl CLI, check accel timeslicer time
+  slicing, and verify metrics."""
   results: dict[str, str | BaseException] = {}
+  prefix = "lora" if "lora" in config.scenario else "fft"
 
   def train(job: str) -> None:
     try:
-      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
+      log_path = str(open_rl_tmp_dir(config) / f"{prefix}_gsm8k_rl_{job}")
       if os.path.exists(log_path):
         shutil.rmtree(log_path)
       module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
@@ -1032,9 +1036,9 @@ def main() -> None:
       run_gsm8k(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-x2":
       run_gsm8k_x2(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl":
+    elif config.scenario in {"fft-gsm8k-rl", "lora-gsm8k-rl"}:
       run_gsm8k_rl(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-x2":
+    elif config.scenario in {"fft-gsm8k-rl-x2", "lora-gsm8k-rl-x2"}:
       run_gsm8k_rl_x2(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2-compare":
       run_gsm8k_rl_x2_compare(config, base_url, processes)

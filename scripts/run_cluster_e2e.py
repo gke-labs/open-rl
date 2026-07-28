@@ -50,8 +50,6 @@ def render_manifest(
       env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT\n          value: "{delta_format}"')
     if delta_apply_method := weight_sync_cfg.get("delta_apply_method"):
       env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD\n          value: "{delta_apply_method}"')
-    if prefetching := weight_sync_cfg.get("enable_prefetching"):
-      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_ENABLE_PREFETCHING\n          value: "{prefetching}"')
 
     if env_vars:
       env_yaml = "\n".join(env_vars)
@@ -87,13 +85,6 @@ def main() -> None:
     default="",
     help="Delta apply method override (patch_in_place | full_replace).",
   )
-  parser.add_argument(
-    "--weight-sync-enable-prefetching",
-    "--enable-prefetching",
-    dest="enable_prefetching",
-    default="",
-    help="Enable background DRAM prefetching (true | false).",
-  )
   parser.add_argument("--no-follow", action="store_true", help="Launch the job but do not follow its logs.")
   parser.add_argument("--print-only", action="store_true", help="Print the kubectl commands and manifest; run nothing.")
   args = parser.parse_args()
@@ -105,8 +96,6 @@ def main() -> None:
     weight_sync_cfg["delta_format"] = args.delta_format
   if args.delta_apply_method:
     weight_sync_cfg["delta_apply_method"] = args.delta_apply_method
-  if args.enable_prefetching:
-    weight_sync_cfg["enable_prefetching"] = args.enable_prefetching
 
   kubectl = ["kubectl"] + (["-n", args.namespace] if args.namespace else [])
   manifest = render_manifest(

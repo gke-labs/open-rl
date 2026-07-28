@@ -91,7 +91,7 @@ test:
 	  uv run --frozen --exact --extra cpu --extra cluster python -m unittest $(UNIT_TESTS); \
 	elif [ "$$mode" = "e2e" ]; then \
 	  if [ -z "$$scenario" ]; then \
-	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, fft-gsm8k, fft-gsm8k-x2, fft-textsql-rl, or fft-textsql-rl-x2."; \
+	    echo "Missing e2e scenario. Expected tiny-lora, tiny-fft, tiny-rl, lora-textsql, lora-gsm8k-rl, fft-gsm8k, fft-gsm8k-x2, fft-textsql-rl, or fft-textsql-rl-x2."; \
 	    exit 2; \
 	  fi; \
 	  set -- "scenario=$$scenario" "uv_extra=$(TRAINING_TEST_EXTRA)"; \

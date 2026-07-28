@@ -1,5 +1,7 @@
 .git
-**/.venv
+.venv
+*/.venv
+*/*/.venv
 **/__pycache__
 **/*.pyc
 .ruff_cache
@@ -8,6 +10,14 @@ runs/
 build/
 dist/
 scratch/
+checkpoints/
+mnt/
 *.pt
 *.bin
 *.safetensors
+*.onnx
+*.log
+.uv/
+.cache/
+.idea/
+.vscode/

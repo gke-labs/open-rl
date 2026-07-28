@@ -21,8 +21,8 @@ COPY pyproject.toml .
 COPY uv.lock .
 
 # Configure uv for Docker and caching
-ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+ENV UV_LINK_MODE=hardlink \
+    UV_COMPILE_BYTECODE=1
 
 # Install the CPU gateway dependencies plus the Kubernetes client used by the
 # cluster worker launcher. Keep the massive ML extras out of this image.
