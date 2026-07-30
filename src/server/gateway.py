@@ -18,8 +18,10 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from server.admin_routes import admin_router
 from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
+from server.telemetry import record_job_request_event
 from server.worker_manager import WorkerManager, create_fft_worker_manager
 
 store = get_store()
@@ -194,6 +196,26 @@ async def enqueue(request: dict) -> str:
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
 
+  m_id = request.get("model_id")
+  if m_id:
+    op = request.get("op", "unknown")
+    role = "sampler" if op in ("sample", "sample_completed") else "trainer"
+    session_id = request.get("payload", {}).get("sampling_session_id") if isinstance(request.get("payload"), dict) else None
+    await record_job_request_event(
+      store,
+      m_id,
+      request_id,
+      {
+        "request_id": request_id,
+        "model_id": m_id,
+        "op": op,
+        "role": role,
+        "status": "pending",
+        "session_id": session_id,
+        "created_at": time.time(),
+      },
+    )
+
   await store.put_request({**request, "trace_context": carrier})
   return request_id
 
@@ -315,6 +337,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
+app.include_router(admin_router)
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 

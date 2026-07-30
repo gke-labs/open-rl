@@ -119,6 +119,9 @@ class TrainingRequestsProcessor(Protocol):
   async def save_weights(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]: ...
 
 
+from server.telemetry import extract_token_count, record_job_request_event, record_slice_telemetry
+
+
 async def _fetch_model_meta(
   store: RequestStore,
   model_id: str,
@@ -362,15 +365,31 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         save_reqs = [r for r in training_reqs if r.get("op") in save_ops]
 
         if gpu_reqs:
+          token_count = sum(extract_token_count(r) for r in gpu_reqs)
           async with self.time_slicer.acquire(self.workload):
+            t_start = time.time()
             if hasattr(self.worker, "wake_up"):
               await asyncio.to_thread(self.worker.wake_up)
             try:
               for request in gpu_reqs:
+                req_id = request.get("request_id")
+                if req_id:
+                  await record_job_request_event(
+                    self.store,
+                    self.model_id,
+                    req_id,
+                    {
+                      "status": "processing",
+                      "started_at": t_start,
+                      "worker_pod": os.getenv("POD_NAME", "trainer-0"),
+                    },
+                  )
                 results.append(await self.handle_request(request, self.model_id))
             finally:
               if hasattr(self.worker, "sleep"):
                 await asyncio.to_thread(self.worker.sleep)
+              t_end = time.time()
+          await record_slice_telemetry(self.store, self.model_id, "trainer", t_start, t_end, token_count)
 
         if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
           async with self.time_slicer.acquire(self.workload):
@@ -380,9 +399,19 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
           for request in save_reqs:
             results.append(await self.handle_request(request, self.model_id))
 
+        t_now = time.time()
         for request_id, result in results:
           if request_id is not None:
             await self.store.set_future(request_id, result)
+            await record_job_request_event(
+              self.store,
+              self.model_id,
+              request_id,
+              {
+                "status": "done",
+                "completed_at": t_now,
+              },
+            )
 
     if has_shutdown:
       await self.exit_gracefully()
@@ -431,8 +460,31 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     if hasattr(self, "store") and self.store:
       try:
         raw_meta = await self.store.get_value(f"open_rl:model_meta:{model_id}")
-        current_step = json.loads(raw_meta).get("total_steps_completed", 0) if raw_meta else 0
-        await self.store.update_job_metadata(model_id, {"total_steps_completed": current_step + 1, "updated_at": time.time()})
+        meta_dict = json.loads(raw_meta) if raw_meta else {}
+        current_step = meta_dict.get("total_steps_completed", 0) + 1
+        mutation_history = meta_dict.get("mutation_history", [])
+
+        updates: dict[str, Any] = {"total_steps_completed": current_step, "updated_at": time.time()}
+        metrics = result.get("metrics", {})
+        if "weight_mutation/density_pct" in metrics:
+          mut_pct = metrics["weight_mutation/density_pct"]
+          changed_el = metrics.get("weight_mutation/changed_elements")
+          total_el = metrics.get("weight_mutation/total_elements")
+          updates["latest_mutation_pct"] = mut_pct
+          updates["latest_changed_elements"] = changed_el
+          updates["latest_total_elements"] = total_el
+
+          mutation_history.append(
+            {
+              "step": current_step,
+              "mutation_pct": mut_pct,
+              "changed_elements": changed_el,
+              "total_elements": total_el,
+              "timestamp": time.time(),
+            }
+          )
+          updates["mutation_history"] = mutation_history[-500:]
+        await self.store.update_job_metadata(model_id, updates)
       except Exception as exc:
         print(f"[PROCESSOR] Failed to update step metadata for model {model_id}: {exc}")
     return result

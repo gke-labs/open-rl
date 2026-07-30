@@ -151,6 +151,8 @@ class KubernetesFFTWorkerManager:
     # same workload identity.
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
+    role_claim = "open-rl-trainer-gpu-1" if role == "trainer" else "open-rl-sampler-gpu-1"
+    set_env(container, "OPEN_RL_DRA_CLAIM_ID", role_claim)
     from server.model_metadata import WeightSyncConfig
 
     weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
