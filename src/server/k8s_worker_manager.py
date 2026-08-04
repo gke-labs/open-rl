@@ -172,6 +172,8 @@ class KubernetesWorkerManager:
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.training_requests_processor"]
 
     container.setdefault("args", []).extend(["--model-id", target_id])
+    if role == "trainer":
+      container["args"].extend(["--active-tenant-set-id", f"{target_id}-1"])
 
     base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
     if base_model:

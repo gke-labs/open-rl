@@ -151,13 +151,20 @@ async def _fetch_model_meta(
 
 
 class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
-  def __init__(self, store: RequestStore, worker: LoraTrainingWorker, model_id: str | None = None):
+  def __init__(
+    self,
+    store: RequestStore,
+    worker: LoraTrainingWorker,
+    model_id: str | None = None,
+    active_tenant_set_id: str | None = None,
+  ):
     self.store = store
     self.worker = worker
     self.model_id = model_id
+    self.active_tenant_set_id = active_tenant_set_id or (f"{model_id}-1" if model_id else None)
 
   async def run(self) -> None:
-    print("[WORKER] LoRA training requests processor started.")
+    print(f"[WORKER] LoRA training requests processor started (Active Set ID: {self.active_tenant_set_id}).")
 
     while True:
       try:
@@ -170,7 +177,7 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
         await asyncio.sleep(1)
 
   async def run_once(self) -> None:
-    batch = await self.store.get_requests()
+    batch = await self.store.get_requests(active_set_id=self.active_tenant_set_id)
     if not batch:
       await asyncio.sleep(0.1)
       return
@@ -500,13 +507,14 @@ async def run_training_requests_processor(
   worker: TrainingWorker,
   model_id: str | None = None,
   time_slicer: TimeSlicerClient | None = None,
+  active_tenant_set_id: str | None = None,
 ) -> None:
   store = get_store()
   if isinstance(worker, FFTTrainingWorker):
     time_slicer = time_slicer or time_slicer_client_from_env()
     processor = FFTTrainingRequestsProcessor(store, worker, model_id, time_slicer)
   else:
-    processor = LoraTrainingRequestsProcessor(store, worker, model_id)
+    processor = LoraTrainingRequestsProcessor(store, worker, model_id, active_tenant_set_id)
   await processor.run()
 
 
@@ -555,12 +563,17 @@ async def main_async(args: argparse.Namespace) -> None:
 
     threading.Thread(target=run_probe_server, daemon=True).start()
 
-  await run_training_requests_processor(worker, args.model_id)
+  await run_training_requests_processor(
+    worker,
+    args.model_id,
+    active_tenant_set_id=getattr(args, "active_tenant_set_id", None),
+  )
 
 
 def start_request_processing_loop() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("--model-id", help="Model id whose per-model request queue this dedicated trainer worker drains.")
+  parser.add_argument("--active-tenant-set-id", help="Active tenant rotation set ID for LoRA workers (e.g. Qwen/Qwen3-0.6B-1).")
   args = parser.parse_args()
 
   print("\n" + "=" * 50)

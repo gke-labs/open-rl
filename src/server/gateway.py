@@ -190,6 +190,15 @@ def make_training_request(
   return request
 
 
+async def _resolve_active_set_id(model_id: str | None) -> str | None:
+  if not model_id or not hasattr(store, "get_model_metadata"):
+    return None
+  meta = await store.get_model_metadata(model_id)
+  if meta and meta.get("fine_tuning_type") == "lora" and meta.get("base_model"):
+    return f"{meta['base_model']}-1"
+  return None
+
+
 async def enqueue(request: dict) -> str:
   """Create a pending future, inject trace context, push to store. Returns req_id."""
   request_id = request["request_id"]
@@ -197,7 +206,8 @@ async def enqueue(request: dict) -> str:
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
 
-  await store.put_request({**request, "trace_context": carrier})
+  active_set_id = await _resolve_active_set_id(request.get("model_id"))
+  await store.put_request({**request, "trace_context": carrier}, active_set_id=active_set_id)
   return request_id
 
 

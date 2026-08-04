@@ -31,10 +31,10 @@ configMapGenerator:
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.6.0
+    newTag: 0.6.4
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.6.0
+    newTag: 0.6.4
 
 replacements:
   - source:

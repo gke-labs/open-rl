@@ -18,13 +18,17 @@ from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLI
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 
-def _py_cmd(extras: list[str], module: str, model_id: str) -> list[str]:
+def _py_cmd(extras: list[str], module: str, model_id: str, active_tenant_set_id: str | None = None) -> list[str]:
   if shutil.which("uv"):
     extra_args = []
     for e in extras:
       extra_args.extend(["--extra", e])
-    return ["uv", "run", *extra_args, "python", "-u", "-m", module, "--model-id", model_id]
-  return [sys.executable, "-u", "-m", module, "--model-id", model_id]
+    cmd = ["uv", "run", *extra_args, "python", "-u", "-m", module, "--model-id", model_id]
+  else:
+    cmd = [sys.executable, "-u", "-m", module, "--model-id", model_id]
+  if active_tenant_set_id:
+    cmd.extend(["--active-tenant-set-id", active_tenant_set_id])
+  return cmd
 
 
 from server.model_metadata import TrainingModelMetadata, WeightSyncConfig
@@ -117,8 +121,9 @@ class LocalWorkerManager:
     if trainer_gpu:
       env["CUDA_VISIBLE_DEVICES"] = trainer_gpu
 
+    active_set_id = f"{target_id}-1" if is_lora else None
     self.train_processes[target_id] = subprocess.Popen(
-      _py_cmd(["gpu"], "server.training_requests_processor", target_id),
+      _py_cmd(["gpu"], "server.training_requests_processor", target_id, active_tenant_set_id=active_set_id),
       cwd=self.project_dir,
       env=env,
       start_new_session=True,

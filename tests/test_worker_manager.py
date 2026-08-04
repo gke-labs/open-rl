@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch
 
@@ -11,7 +12,7 @@ class StoreStub:
     self.futures = {}
     self.kv_store = {}
 
-  async def put_request(self, req_data: dict) -> None:
+  async def put_request(self, req_data: dict, active_set_id: str | None = None) -> None:
     self.forwarded_requests.append(req_data)
 
   async def set_future(self, req_id: str, result: dict) -> None:
@@ -25,6 +26,15 @@ class StoreStub:
 
   def get_value_sync(self, key: str) -> str | None:
     return self.kv_store.get(key)
+
+  async def get_model_metadata(self, model_id: str) -> dict | None:
+    val = self.kv_store.get(f"open_rl:model_meta:{model_id}")
+    if val:
+      try:
+        return json.loads(val)
+      except Exception:
+        return None
+    return None
 
 
 class WorkerManagerStub:

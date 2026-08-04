@@ -13,8 +13,8 @@ from redis.exceptions import TimeoutError as RedisTimeoutError
 
 class RequestStore(ABC):
   @abstractmethod
-  async def put_request(self, req_data: dict[str, Any]) -> None:
-    """Push a request into the global queue."""
+  async def put_request(self, req_data: dict[str, Any], active_set_id: str | None = None) -> None:
+    """Push a request into the tenant queue and assign to an active set."""
     pass
 
   @abstractmethod
@@ -23,8 +23,8 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
-  async def get_requests(self) -> list[dict[str, Any]]:
-    """Block until at least 1 request is available, then return all currently queued requests."""
+  async def get_requests(self, active_set_id: str | None = None) -> list[dict[str, Any]]:
+    """Block until at least 1 request is available in the active set, then return all currently queued requests."""
     pass
 
   @abstractmethod
@@ -92,8 +92,8 @@ class InMemoryStore(RequestStore):
   def __init__(self):
     # tenant_id -> queue of requests
     self.queues: dict[str, asyncio.Queue] = {}
-    # Simple list for round-robin
-    self.active_tenants: list[str] = []
+    # active_set_id -> list of tenant model_ids for round-robin
+    self.active_tenants: dict[str, list[str]] = {}
     self.active_tenants_cv = asyncio.Condition()
     self.futures_store: dict[str, dict[str, Any]] = {}
     self.futures_events: dict[str, asyncio.Event] = {}
@@ -137,8 +137,9 @@ class InMemoryStore(RequestStore):
     data["updated_at"] = time.time()
     await self.set_value(key, json.dumps(data))
 
-  async def put_request(self, req_data: dict[str, Any]) -> None:
+  async def put_request(self, req_data: dict[str, Any], active_set_id: str | None = None) -> None:
     model_id = req_data.get("model_id", "default")
+    set_key = active_set_id or "default"
 
     async with self.active_tenants_cv:
       if model_id not in self.queues:
@@ -146,35 +147,40 @@ class InMemoryStore(RequestStore):
 
       await self.queues[model_id].put(req_data)
 
-      if model_id not in self.active_tenants:
-        self.active_tenants.append(model_id)
-        self.active_tenants_cv.notify()
+      tenants_list = self.active_tenants.setdefault(set_key, [])
+      if model_id not in tenants_list:
+        tenants_list.append(model_id)
+        self.active_tenants_cv.notify_all()
 
   async def put_worker_launch_request(self, req_data: dict[str, Any]) -> None:
     raise RuntimeError("Worker launch requests require REDIS_URL; in-memory queues cannot be shared across processes")
 
-  async def get_requests(self) -> list[dict[str, Any]]:
+  async def get_requests(self, active_set_id: str | None = None) -> list[dict[str, Any]]:
     async with self.active_tenants_cv:
-      # Block until at least one tenant is active
-      while not self.active_tenants:
+      while True:
+        tenants_list = None
+        if active_set_id:
+          tenants_list = self.active_tenants.get(active_set_id)
+        else:
+          for t_list in self.active_tenants.values():
+            if t_list:
+              tenants_list = t_list
+              break
+
+        if tenants_list:
+          model_id = tenants_list[0]
+          queue = self.queues[model_id]
+
+          if not queue.empty():
+            batch = [queue.get_nowait()]
+            while not queue.empty():
+              batch.append(queue.get_nowait())
+            return batch
+          else:
+            tenants_list.pop(0)
+            continue
+
         await self.active_tenants_cv.wait()
-
-      # Pop left, push right (Round Robin)
-      model_id = self.active_tenants.pop(0)
-      self.active_tenants.append(model_id)
-
-      queue = self.queues[model_id]
-      batch = [queue.get_nowait()]
-
-      # Drain the rest of this tenant's queue
-      while not queue.empty():
-        batch.append(queue.get_nowait())
-
-      # If completely empty, remove from rotation
-      if queue.empty():
-        self.active_tenants.remove(model_id)
-
-      return batch
 
   async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
     raise RuntimeError("Worker launch requests require REDIS_URL; in-memory queues cannot be shared across processes")
@@ -246,58 +252,58 @@ class RedisStore(RequestStore):
     self.active_set = "open_rl:active_tenants_set"
     self.worker_launch_queue = "open_rl:worker_launch_queue"
 
-  async def put_request(self, req_data: dict[str, Any]) -> None:
+  async def put_request(self, req_data: dict[str, Any], active_set_id: str | None = None) -> None:
     model_id = req_data.get("model_id", "default")
     queue_key = f"open_rl:queue:{model_id}"
+
+    active_set = f"open_rl:active_tenants_set:{active_set_id}" if active_set_id else self.active_set
+    active_list = f"open_rl:active_tenants:{active_set_id}" if active_set_id else self.active_list
 
     # 1. Add request to tenant-specific list
     await self.redis.rpush(queue_key, json.dumps(req_data))
 
     # 2. Add tenant to active set and list if not already there
     # SADD returns 1 if it was newly added, 0 if it already existed
-    is_new = await self.redis.sadd(self.active_set, model_id)
+    is_new = await self.redis.sadd(active_set, model_id)
     if is_new == 1:
-      await self.redis.rpush(self.active_list, model_id)
+      await self.redis.rpush(active_list, model_id)
 
   async def put_worker_launch_request(self, req_data: dict[str, Any]) -> None:
     await self.redis.rpush(self.worker_launch_queue, json.dumps(req_data))
 
-  async def get_requests(self) -> list[dict[str, Any]]:
-    # BRPOPLPUSH blocks until an item is available.
-    # It atomically pops the rightmost element of src, pushes it to the left of dst, and returns it.
-    # Wait max 5 seconds so we can check for connection death.
-    try:
-      result = await self.redis.brpoplpush(self.active_list, self.active_list, timeout=5)
-    except RedisTimeoutError:
-      return []
+  async def get_requests(self, active_set_id: str | None = None) -> list[dict[str, Any]]:
+    active_set = f"open_rl:active_tenants_set:{active_set_id}" if active_set_id else self.active_set
+    active_list = f"open_rl:active_tenants:{active_set_id}" if active_set_id else self.active_list
 
-    if not result:
-      return []
-
-    model_id = result
-    queue_key = f"open_rl:queue:{model_id}"
-    batch = []
-
-    # Drain the entire queue for this tenant non-blockingly
     while True:
-      item = await self.redis.lpop(queue_key)
-      if not item:
-        break
-      batch.append(json.loads(item))
+      model_id_bytes = await self.redis.lindex(active_list, 0)
+      if not model_id_bytes:
+        try:
+          result = await self.redis.brpoplpush(active_list, active_list, timeout=5)
+        except RedisTimeoutError:
+          return []
+        if not result:
+          return []
+        model_id = result.decode() if isinstance(result, bytes) else str(result)
+      else:
+        model_id = model_id_bytes.decode() if isinstance(model_id_bytes, bytes) else str(model_id_bytes)
 
-    # If the queue was empty (or we just drained it all but nothing new arrived),
-    # we check the length. If it's truly empty, we scrub it from the rotation.
-    # This requires a tiny Lua script or a quick transaction to ensure we don't
-    # delete a tenant just as a new request is pushed.
+      queue_key = f"open_rl:queue:{model_id}"
+      q_len = await self.redis.llen(queue_key)
+      if q_len == 0:
+        await self.redis.lrem(active_list, 0, model_id)
+        await self.redis.srem(active_set, model_id)
+        continue
 
-    # Quick check:
-    q_len = await self.redis.llen(queue_key)
-    if q_len == 0:
-      # We remove it from the list AND set
-      await self.redis.lrem(self.active_list, 0, model_id)
-      await self.redis.srem(self.active_set, model_id)
+      batch = []
+      while True:
+        item = await self.redis.lpop(queue_key)
+        if not item:
+          break
+        batch.append(json.loads(item))
 
-    return batch
+      if batch:
+        return batch
 
   async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
     try:

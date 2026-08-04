@@ -1,10 +1,10 @@
 # Design Doc 009: Standardized Sampling & Training Request Dispatch and Shared LoRA Worker Selection
 
-**Status**: Implemented & Verified (Phase 1 & Phase 2 Complete)  
+**Status**: Implemented & Verified (Phase 1, Phase 2, Phase 3, and Phase 4 Complete - All Phases Verified on Kubernetes)  
 **Author**: Open-RL Engineering  
 **Date**: 2026-08-04  
 **Target Branch**: `main`  
-**Latest Commit**: `8f355bd`  
+**Latest Version**: `0.6.4`  
 
 ---
 
@@ -50,6 +50,15 @@ Previously, sampling and training request handling exhibited four primary operat
 
 ### 5. Unified Sampling Queue Contract in `RequestStore` (`src/server/store.py`)
 `InMemoryStore` will implement `sampling_queues: dict[str, asyncio.Queue]` for `put_sampling_request` and `get_sampling_requests_for_model`. This ensures that all backends (both Redis-backed and in-memory single-process mode) adhere to the standard `store.put_sampling_request(...)` interface.
+
+### 6. LoRA Active Tenant Set Indexing & 1:1 Worker Mapping (`open_rl:active_tenants_set:<base_model>-<idx>`)
+- **Worker-Scoped Rotation Sets**: To prevent cross-model queue stealing and support horizontal worker scaling, LoRA active tenant rotation sets in Redis are indexed by `base_model` and replica index (`idx`), e.g., `open_rl:active_tenants_set:Qwen/Qwen3-0.6B-1`.
+- **1:1 Worker Mapping**: Each LoRA worker pod (e.g., `open-rl-trainer-qwen-qwen3-0-6b-1`) maps 1:1 to its indexed active tenant rotation set (`Qwen/Qwen3-0.6B-1`). A worker only polls and round-robins tenant sessions assigned to its specific `active_tenants_set` index.
+- **Gateway Tenant Assignment**: When a LoRA model is created (`create_model`), the Gateway assigns the tenant UUID to the active tenant set for that base model. Initially, there is one active set per base model (`idx=1`); as workloads scale out to multiple replicas (`idx=1, 2, ...`), the Gateway balances tenant session assignments across the indexed active sets.
+
+### 7. Multi-Tenant LoRA Queue Draining Before Cycling (`v0.6.4`)
+- **Queue Draining Contract**: In `RedisStore.get_requests()` and `InMemoryStore.get_requests()`, when a LoRA trainer worker inspects the head tenant in the active rotation list (`lindex active_list 0`), it drains all pending requests from that tenant's queue (`open_rl:queue:{model_id}`) without rotating the tenant to the tail of the active list until the queue is empty (`llen == 0`).
+- **Elimination of Adapter Thrashing**: Previously, unconditionally calling `brpoplpush(active_list, active_list)` rotated a tenant on every single request. In multi-tenant RL training where a single training step consists of multiple sequential RPC calls (`forward_backward` microbatches followed by `optim_step`), this caused the GPU to swap LoRA adapters back and forth on every request. Keeping the tenant at index 0 until all its pending requests are drained ensures that a tenant's entire training turn executes consecutively on GPU without adapter thrashing.
 
 ---
 
@@ -203,6 +212,21 @@ class InMemoryStore(RequestStore):
     return batch
 ```
 
+### 3.5 LoRA Worker Launch Contract & Active Set Routing (`--active-tenant-set-id`)
+
+- **Worker Command Line Invocation**: When `KubernetesWorkerManager` launches a LoRA trainer pod (`open-rl-trainer-<sanitized_base_model>-<idx>`), it passes `--active-tenant-set-id "open_rl:active_tenants:Qwen/Qwen3-0.6B-1"` (or derives the active set key directly from the worker's assigned base model index).
+- **Tenant Assignment on Gateway (`create_model`)**:
+  - The Gateway maps each newly created LoRA tenant (`model_id`) to the active tenant rotation set for its `base_model` index:
+    ```python
+    active_set_id = f"{base_model}-1"  # Initial deployment: 1 active set per base model
+    await redis.sadd(f"open_rl:active_tenants_set:{active_set_id}", model_id)
+    await redis.rpush(f"open_rl:active_tenants:{active_set_id}", model_id)
+    ```
+- **Isolated Round-Robin Polling**:
+  - The LoRA worker pod calls `get_requests(active_set_id=self.active_tenant_set_id)`.
+  - It rotates via `BRPOPLPUSH` strictly over its assigned `active_set_id`.
+  - This prevents any LoRA worker from observing, popping, or interfering with requests queued for other base models or other replica indices.
+
 ---
 
 ## 4. Streamlined 3-Phase Execution Strategy
@@ -261,57 +285,79 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
   - Unit tests verified (97/97 passing).
   - Executed dual-job RL training benchmark `lora-gsm8k-rl-x2` (`Qwen/Qwen3-0.6B`, 5 steps) on remote GPU host `l4`.
 
-### **Phase 3: Kubernetes Worker Manager Alignment & FFT Validation [NEXT STEP]**
-- **Target File**: `src/server/k8s_worker_manager.py`
-- **Scope**: Align `KubernetesFFTWorkerManager` so LoRA trainer and sampler pods are named `open-rl-trainer-<sanitized_base_model>` and `open-rl-sampler-<sanitized_base_model>` and reused across LoRA sessions sharing the same base model. Validate FFT workflows requiring `accel-timeslicer` daemonset in-cluster.
-- **Validation**: In-cluster testing (`make cluster-e2e`).
+### **Phase 3: Kubernetes Worker Manager Alignment & Per-Base-Model Active Tenant Rotation Sets [COMPLETED & VERIFIED]**
+- **Target Files**: `src/server/k8s_worker_manager.py`, `src/server/gateway.py`, `src/server/store.py`
+- **Status**: **Completed & Verified** on Kubernetes (`v0.6.3`).
+- **Implementation**:
+  - Aligned `KubernetesFFTWorkerManager` so LoRA trainer and sampler pods are named `open-rl-trainer-<sanitized_base_model>-<idx>` and `open-rl-sampler-<sanitized_base_model>-<idx>` and reused across LoRA sessions sharing the same base model.
+  - Scoped active tenant rotation lists (`open_rl:active_tenants:<base_model>-<idx>`) and sets (`open_rl:active_tenants_set:<base_model>-<idx>`) by base model replica index (`idx=1`).
+  - Verified 10-step single-tenant LoRA RL GSM8K benchmark (`lora-gsm8k-rl`) on Kubernetes.
+
+### **Phase 4: Multi-Tenant LoRA Queue Draining & Full Fine-Tuning (FFT) Validation on Kubernetes [COMPLETED & VERIFIED]**
+- **Target Files**: `src/server/store.py`, `k8s/deploy/distributed-fft-timeslice/04-gateway.yaml`
+- **Status**: **Completed & Verified** on Kubernetes (`v0.6.4`).
+- **Implementation**:
+  - Updated `RedisStore.get_requests()` and `InMemoryStore.get_requests()` so that when a LoRA trainer worker inspects the head tenant in the active rotation list (`lindex active_list 0`), it drains all pending requests from that tenant's queue without rotating the tenant to the tail of the active list until the queue is empty (`llen == 0`).
+  - Configured `OPEN_RL_ENABLE_FFT: "true"` on Gateway (`04-gateway.yaml`).
+- **Validation**:
+  - Executed 10-step concurrent dual LoRA RL GSM8K benchmark (`lora-gsm8k-rl-x2`) on `Qwen/Qwen3-0.6B`. Both `job-a` and `job-b` completed cleanly with zero adapter thrashing and ~21.9s average step time.
+  - Executed 10-step Full Fine-Tuning RL GSM8K benchmark (`fft-gsm8k-rl`) on `Qwen/Qwen3-0.6B`. Accuracy improved from **18.75%** at Step 0 to **87.50%** at Step 8 (**81.25%** at Step 9) with ~17.7s average step time.
 
 ---
 
 ## 5. Scope & Target Files
 
 - **Source Files**:
-  - `src/server/store.py` (Phase 1 - Complete)
+  - `src/server/store.py` (Phase 1 & Phase 4 - Complete)
   - `src/server/worker_manager.py`, `src/server/gateway.py`, `src/server/training_requests_processor.py` (Phase 2 - Complete)
-  - `src/server/k8s_worker_manager.py` (Phase 3 - In Progress)
+  - `src/server/k8s_worker_manager.py` (Phase 3 - Complete)
+- **Kubernetes Manifests**:
+  - `k8s/deploy/distributed-fft-timeslice/04-gateway.yaml`, `05-worker-pod-template.yaml`, `09-sampler-pod-template.yaml` (Phase 3 & Phase 4 - Complete)
 - **Test Files**:
   - `tests/test_redis_store.py` (Phase 1 - Complete)
   - `tests/test_worker_manager.py` & `tests/test_gateway_paths.py` (Phase 2 - Complete)
-  - `tests/test_k8s_worker_manager.py` (Phase 3 - In Progress)
+  - `tests/test_k8s_worker_manager.py` (Phase 3 - Complete)
 
 ---
 
 ## 6. Verification & Testing Commands
 
-1. **Phase 1 & 2 Local Unit Testing**:
+1. **Local Unit & Linter/Formatter Testing**:
    ```bash
-   export PATH=$PATH:$HOME/.local/bin && make test
+   export PATH=$PATH:$HOME/.local/bin && make fmt && make lint && make test
    ```
-2. **Phase 2 Remote Dev Host Testing (`l4`)**:
+2. **Kubernetes Cluster E2E Benchmarking (`make cluster-e2e`)**:
    ```bash
-   make push-vm REMOTE_HOST=l4
-   ssh l4 "export PATH=\$PATH:\$HOME/.local/bin && cd ~/open-rl && uv run --extra gpu python scripts/run_training_e2e.py scenario=lora-gsm8k-rl-x2 base_model=Qwen/Qwen3-0.6B steps=5 group_size=4 groups_per_batch=4 sampling_backend=vllm trainer_gpu=0 sampler_gpu=1"
-   ```
-3. **Phase 3 Cluster Integration Testing**:
-   ```bash
-   make cluster-e2e IMAGE_TAG=$(cat VERSION) E2E_SCENARIO=tiny-lora
+   # Multi-Tenant LoRA RL GSM8K x2 (Concurrent Dual Jobs)
+   make cluster-e2e IMAGE_TAG=0.6.4 E2E_SCENARIO=lora-gsm8k-rl-x2 E2E_ARGS="base_model=Qwen/Qwen3-0.6B steps=10 group_size=4 groups_per_batch=4 max_tokens=512"
+
+   # Full Fine-Tuning RL GSM8K (Single-Tenant FFT)
+   make cluster-e2e IMAGE_TAG=0.6.4 E2E_SCENARIO=fft-gsm8k-rl E2E_ARGS="base_model=Qwen/Qwen3-0.6B steps=10 group_size=4 groups_per_batch=4 max_tokens=512"
    ```
 
 ---
 
-## 7. Verified Benchmark Results (`lora-gsm8k-rl-x2` on Host `l4`)
+## 7. Verified Benchmark Results on Kubernetes Cluster (v0.6.3 & v0.6.4)
 
 **Campaign Date**: 2026-08-04  
-**Host**: Dev VM `l4` (2× NVIDIA L4 GPUs)  
-**Model**: `Qwen/Qwen3-0.6B`  
-**Commit**: `8f355bd`  
+**Target Environment**: Kubernetes GPU Cluster (`distributed-fft-timeslice`)  
+**Base Model**: `Qwen/Qwen3-0.6B`  
+**Release Versions**: `v0.6.3` (Phase 3) & `v0.6.4` (Phase 4)  
 
-### Hardware & Process Allocation:
-- **GPU 0**: Single Shared PyTorch Trainer worker (`server.training_requests_processor`, **1,960 MiB VRAM**).
-- **GPU 1**: Single Shared vLLM Sampler worker (`server.lora_sampler`, **16,524 MiB VRAM**).
+### 1. Single-Tenant LoRA RL GSM8K (`lora-gsm8k-rl`, v0.6.3)
+- **Worker Allocation**: Mapped 1:1 to active tenant set `Qwen/Qwen3-0.6B-1` (`open-rl-trainer-qwen-qwen3-0-6b-1` & `open-rl-sampler-qwen-qwen3-0-6b-1`).
+- **Accuracy Progression**: **6.25%** (Step 0) → **75.00%** (Peak, Step 4) → **56.25%** (Step 9).
+- **Stability**: Zero tensor shape mismatches (`3072 vs 4864` bug resolved via active tenant set indexing).
 
-### Performance Metrics:
-- **`job-a` (`55398868...`)**: Completed 5 steps (Step 0..4), reaching **43.75% accuracy** with 24.7s step time.
-- **`job-b` (`f197fecc...`)**: Completed 5 steps (Step 0..4), reaching **56.25% accuracy** (reward 0.5000) with 24.7s step time.
-- **VRAM Savings**: Reduced VRAM overhead on GPU 0 from ~3.8 GB (isolated workers) to **1.9 GB** (shared worker).
+### 2. Concurrent Dual LoRA RL GSM8K (`lora-gsm8k-rl-x2`, v0.6.4)
+- **Multi-Tenant Queue Draining**: Both `job-a` (`becd02b8-...`) and `job-b` (`1ba00139-...`) shared active set `Qwen/Qwen3-0.6B-1`. Draining each tenant's queue before cycling eliminated GPU adapter thrashing.
+- **Accuracy Progression**:
+  - **`job-a`**: **25.00%** (Step 0) → **75.00%** (Peak, Step 4) → **62.50%** (Step 9). Average step time: **~21.9s**.
+  - **`job-b`**: **25.00%** (Step 0) → **68.75%** (Step 8) → **75.00%** (Step 9). Average step time: **~22.0s**.
+
+### 3. Full Fine-Tuning RL GSM8K (`fft-gsm8k-rl`, v0.6.4)
+- **Worker Allocation**: Dedicated FFT trainer (`open-rl-trainer-26e549d0-...`) and sampler (`open-rl-sampler-26e549d0-...`) worker pods.
+- **Accuracy Progression**: **18.75%** (Step 0) → **87.50%** (Peak, Step 8) → **81.25%** (Step 9).
+- **Step Timing & Delta Sync**: Average step time: **~17.7s total** (`train_step`: ~7.8s, `save_checkpoint` delta sync: ~0.9s, `sampling`: ~8.8s). Sparse delta in-place synchronization completed in under **~0.7s** per step.
+
 
