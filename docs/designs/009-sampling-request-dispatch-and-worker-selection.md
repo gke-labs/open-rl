@@ -152,10 +152,10 @@ if base_model:
   env["BASE_MODEL"] = base_model
 
 self.sampler_processes[target_id] = subprocess.Popen(
-    _py_cmd(["gpu", "vllm"], sampler_module, target_id),
-    cwd=self.project_dir,
-    env=env,
-    start_new_session=True,
+  _py_cmd(["gpu", "vllm"], sampler_module, target_id),
+  cwd=self.project_dir,
+  env=env,
+  start_new_session=True,
 )
 ```
 
