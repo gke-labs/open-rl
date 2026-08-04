@@ -1,0 +1,13 @@
+# One DRA ResourceClaim for the LoRA trainer GPU allocation on NVIDIA L4.
+# All LoRA trainer worker pods that reference this claim are scheduled onto
+# an L4 node that can access the allocated physical GPU.
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaim
+metadata:
+  name: open-rl-lora-trainer-gpu-1
+spec:
+  devices:
+    requests:
+    - name: gpu
+      exactly:
+        deviceClassName: gpu.nvidia.com

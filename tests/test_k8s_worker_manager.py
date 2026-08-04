@@ -19,6 +19,9 @@ spec:
     env:
     - name: REDIS_URL
       value: "redis://redis-service:6379"
+  resourceClaims:
+  - name: trainer-gpu
+    resourceClaimName: open-rl-trainer-gpu-1
 """
 
 
@@ -225,6 +228,27 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       manager.launch("job-lora-2")
       manager.launch_sampler("job-lora-2")
       self.assertEqual(len(api.created), 2)  # No new pods created!
+
+  def test_lora_vs_fft_accelerator_and_claims(self) -> None:
+    import json
+
+    from server.store import InMemoryStore
+
+    s = InMemoryStore()
+    s.kv_store["open_rl:model_meta:lora-1"] = json.dumps({"base_model": "qwen-base", "fine_tuning_type": "lora"})
+    s.kv_store["open_rl:model_meta:fft-1"] = json.dumps({"base_model": "qwen-base", "fine_tuning_type": "full"})
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+    with patch("server.store.get_store", return_value=s):
+      manager.launch_trainer("lora-1")
+      manager.launch_trainer("fft-1")
+      self.assertEqual(len(api.created), 2)
+      lora_pod = api.created[0][1]
+      fft_pod = api.created[1][1]
+      self.assertEqual(lora_pod["spec"]["nodeSelector"]["cloud.google.com/gke-accelerator"], "nvidia-l4")
+      self.assertEqual(lora_pod["spec"]["resourceClaims"][0]["resourceClaimName"], "open-rl-lora-trainer-gpu-1")
+      self.assertEqual(fft_pod["spec"]["nodeSelector"]["cloud.google.com/gke-accelerator"], "nvidia-h100-80gb")
+      self.assertEqual(fft_pod["spec"]["resourceClaims"][0]["resourceClaimName"], "open-rl-trainer-gpu-1")
 
   def test_requires_template_and_redis(self) -> None:
     with patch.dict(os.environ, {"REDIS_URL": "redis://r:6379"}, clear=True), self.assertRaisesRegex(RuntimeError, "POD_TEMPLATE"):

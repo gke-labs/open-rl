@@ -74,6 +74,7 @@ class RunConfig:
     "fft-gsm8k-rl-hetero",
     "fft-textsql-rl",
     "fft-textsql-rl-x2",
+    "lora-fft-gsm8k-rl-x4",
   ]
   sampling_backend: str = "torch"
   trainer_gpu: str = "0"
@@ -629,6 +630,72 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
     cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
 
 
+def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Run four concurrent RL jobs on GSM8K (2x LoRA on L4 + 2x FFT on H100)."""
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, mode: str) -> None:
+    try:
+      log_path = str(open_rl_tmp_dir(config) / f"{mode}_gsm8k_rl_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      temp = "1.0"
+      lr = "1e-4" if mode == "lora" else "1e-5"
+      args = [
+        "env=gsm8k",
+        f"model_name={config.base_model}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 10}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        f"group_size={config.group_size}",
+        f"groups_per_batch={config.groups_per_batch}",
+        f"max_tokens={config.max_tokens}",
+        f"learning_rate={lr}",
+        f"temperature={temp}",
+        "eval_every=0",
+        "save_every=0",
+        *clean_cli_extra(config.extra),
+      ]
+      env = examples_env(config).copy()
+      if mode == "lora":
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
+        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
+      else:
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
+        env["OPEN_RL_IN_PLACE_DELTA"] = "1"
+        env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
+
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=env,
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  jobs_config = [
+    ("lora-a", "lora"),
+    ("lora-b", "lora"),
+    ("fft-a", "fft"),
+    ("fft-b", "fft"),
+  ]
+  threads = [threading.Thread(target=train, args=(job, mode)) for job, mode in jobs_config]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"lora-fft-gsm8k-rl-x4 {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+
 def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Run two concurrent FFT RL jobs on GSM8K: Job A (Full Sync) vs Job B (Delta Sync)."""
   results: dict[str, str | BaseException] = {}
@@ -1031,6 +1098,8 @@ def main() -> None:
       run_gsm8k_rl(config, base_url, processes)
     elif config.scenario in {"fft-gsm8k-rl-x2", "lora-gsm8k-rl-x2"}:
       run_gsm8k_rl_x2(config, base_url, processes)
+    elif config.scenario == "lora-fft-gsm8k-rl-x4":
+      run_gsm8k_rl_x4_mixed(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2-compare":
       run_gsm8k_rl_x2_compare(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x3":

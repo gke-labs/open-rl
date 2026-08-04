@@ -161,6 +161,12 @@ class KubernetesWorkerManager:
     labels.pop("timeslice.io/group", None)
     labels.pop("timeslice.io/job-id", None)
 
+    node_sel = pod["spec"].setdefault("nodeSelector", {})
+    node_sel["cloud.google.com/gke-accelerator"] = "nvidia-l4"
+    claim_name = "open-rl-lora-trainer-gpu-1" if role == "trainer" else "open-rl-lora-sampler-gpu-1"
+    for r_claim in pod["spec"].get("resourceClaims", []):
+      r_claim["resourceClaimName"] = claim_name
+
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
     if worker_image:
@@ -222,6 +228,12 @@ class KubernetesWorkerManager:
         "timeslice.io/job-id": role_job_id,
       }
     )
+
+    node_sel = pod["spec"].setdefault("nodeSelector", {})
+    node_sel["cloud.google.com/gke-accelerator"] = "nvidia-h100-80gb"
+    claim_name = "open-rl-trainer-gpu-1" if role == "trainer" else "open-rl-sampler-gpu-1"
+    for r_claim in pod["spec"].get("resourceClaims", []):
+      r_claim["resourceClaimName"] = claim_name
 
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")

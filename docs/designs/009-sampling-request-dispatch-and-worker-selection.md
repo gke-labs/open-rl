@@ -1,10 +1,10 @@
 # Design Doc 009: Standardized Sampling & Training Request Dispatch and Shared LoRA Worker Selection
 
-**Status**: Implemented & Verified (Phase 1, Phase 2, Phase 3, and Phase 4 Complete - All Phases Verified on Kubernetes)  
+**Status**: Implemented & Verified (Phases 1-5 Complete - All Phases Verified on Kubernetes)  
 **Author**: Open-RL Engineering  
 **Date**: 2026-08-04  
 **Target Branch**: `main`  
-**Latest Version**: `0.6.4`  
+**Latest Version**: `0.6.5`  
 
 ---
 
@@ -303,6 +303,18 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
   - Executed 10-step concurrent dual LoRA RL GSM8K benchmark (`lora-gsm8k-rl-x2`) on `Qwen/Qwen3-0.6B`. Both `job-a` and `job-b` completed cleanly with zero adapter thrashing and ~21.9s average step time.
   - Executed 10-step Full Fine-Tuning RL GSM8K benchmark (`fft-gsm8k-rl`) on `Qwen/Qwen3-0.6B`. Accuracy improved from **18.75%** at Step 0 to **87.50%** at Step 8 (**81.25%** at Step 9) with ~17.7s average step time.
 
+### **Phase 5: Concurrent L4 LoRA & H100 FFT Scheduling via Dedicated DRA ResourceClaims [COMPLETED & VERIFIED]**
+- **Target Files**: `src/server/k8s_worker_manager.py`, `k8s/deploy/distributed-fft-timeslice/06b-lora-gpu-resourceclaim.yaml`, `08b-lora-sampler-resourceclaim.yaml`
+- **Status**: **Completed & Verified** on Kubernetes (`v0.6.5`).
+- **Implementation**:
+  - Created dedicated DRA `ResourceClaims` for LoRA workloads (`open-rl-lora-trainer-gpu-1` & `open-rl-lora-sampler-gpu-1`), preventing DRA claim conflicts with H100 FFT pods (`open-rl-trainer-gpu-1` & `open-rl-sampler-gpu-1`).
+  - Updated `KubernetesWorkerManager.render_lora_pod()` and `render_fft_pod()` to dynamically inject `nodeSelector.cloud.google.com/gke-accelerator: "nvidia-l4"` (with LoRA claims) for LoRA pods and `"nvidia-h100-80gb"` (with FFT claims) for FFT pods.
+  - Enables running 4 concurrent RL jobs (2 LoRA on L4 + 2 FFT on H100) simultaneously on a GKE cluster.
+- **Validation**:
+  - Executed 10-step 4x concurrent heterogeneous RL benchmark (`lora-fft-gsm8k-rl-x4`) on `Qwen/Qwen3-0.6B` (`group_size=4, groups_per_batch=4`).
+  - Both L4 LoRA jobs (`lora-a` & `lora-b`) completed all 10 steps sharing a single L4 trainer/sampler pod pair (~35.5s/step), with peak accuracy reaching **87.50%** (`lora-a`) and **68.75%** (`lora-b`).
+  - Both H100 FFT jobs (`fft-a` & `fft-b`) completed all 10 steps on dedicated H100 trainer/sampler pods (~24.2s/step), reaching **62.50%** (`fft-a`) and **68.75%** (`fft-b`) peak accuracy.
+
 ---
 
 ## 5. Scope & Target Files
@@ -310,13 +322,14 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
 - **Source Files**:
   - `src/server/store.py` (Phase 1 & Phase 4 - Complete)
   - `src/server/worker_manager.py`, `src/server/gateway.py`, `src/server/training_requests_processor.py` (Phase 2 - Complete)
-  - `src/server/k8s_worker_manager.py` (Phase 3 - Complete)
+  - `src/server/k8s_worker_manager.py` (Phase 3 & Phase 5 - Complete)
 - **Kubernetes Manifests**:
   - `k8s/deploy/distributed-fft-timeslice/04-gateway.yaml`, `05-worker-pod-template.yaml`, `09-sampler-pod-template.yaml` (Phase 3 & Phase 4 - Complete)
+  - `k8s/deploy/distributed-fft-timeslice/06b-lora-gpu-resourceclaim.yaml`, `08b-lora-sampler-resourceclaim.yaml` (Phase 5 - Complete)
 - **Test Files**:
   - `tests/test_redis_store.py` (Phase 1 - Complete)
   - `tests/test_worker_manager.py` & `tests/test_gateway_paths.py` (Phase 2 - Complete)
-  - `tests/test_k8s_worker_manager.py` (Phase 3 - Complete)
+  - `tests/test_k8s_worker_manager.py` (Phase 3 & Phase 5 - Complete)
 
 ---
 
