@@ -67,8 +67,8 @@ class WorkerManager(Protocol):
   def shutdown_all(self) -> None: ...
 
 
-class FFTWorkerManager:
-  """Runs local trainer and sampler subprocesses per FFT model."""
+class LocalWorkerManager:
+  """Runs local trainer and sampler subprocesses per model."""
 
   def __init__(self, project_dir: Path = PROJECT_DIR):
     if not os.getenv("REDIS_URL"):
@@ -178,10 +178,10 @@ class FFTWorkerManager:
       self.shutdown(model_id)
 
 
-def create_fft_worker_manager() -> WorkerManager:
+def create_worker_manager() -> WorkerManager:
   mode = os.getenv("OPEN_RL_WORKER_MANAGER", "local").lower()
   if mode in {"kubernetes", "k8s"}:
-    from server.k8s_worker_manager import KubernetesFFTWorkerManager
+    from server.k8s_worker_manager import KubernetesWorkerManager
 
-    return KubernetesFFTWorkerManager()
-  return FFTWorkerManager()
+    return KubernetesWorkerManager()
+  return LocalWorkerManager()

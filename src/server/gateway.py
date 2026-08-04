@@ -20,7 +20,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
 from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
-from server.worker_manager import WorkerManager, create_fft_worker_manager
+from server.worker_manager import WorkerManager, create_worker_manager
 
 store = get_store()
 fft_worker_manager: WorkerManager | None = None
@@ -283,10 +283,10 @@ def translate_future_result(result: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-  global fft_worker_manager
+  global worker_manager
   task = None
-  if is_fft_enabled() or os.getenv("REDIS_URL"):
-    fft_worker_manager = create_fft_worker_manager()
+  if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
+    worker_manager = create_worker_manager()
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
@@ -309,9 +309,9 @@ async def lifespan(_: FastAPI):
   finally:
     if task is not None:
       task.cancel()
-    if fft_worker_manager is not None:
-      fft_worker_manager.shutdown_all()
-      fft_worker_manager = None
+    if worker_manager is not None:
+      worker_manager.shutdown_all()
+      worker_manager = None
 
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)

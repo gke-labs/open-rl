@@ -2,7 +2,7 @@ import unittest
 from unittest.mock import patch
 
 from server import gateway
-from server.worker_manager import FFTWorkerManager
+from server.worker_manager import LocalWorkerManager
 
 
 class StoreStub:
@@ -160,17 +160,17 @@ class GatewayLifespanTest(unittest.IsolatedAsyncioTestCase):
         pass
 
 
-class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
+class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
   async def test_requires_redis(self) -> None:
     with patch.dict("os.environ", {}, clear=True), self.assertRaisesRegex(RuntimeError, "REDIS_URL"):
-      FFTWorkerManager()
+      LocalWorkerManager()
 
   async def test_local_launch_stamps_workload_tags_and_process_group(self) -> None:
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379"}, clear=True),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
-      manager = FFTWorkerManager()
+      manager = LocalWorkerManager()
       manager.launch("Model_A.1")
 
     _, kwargs = popen.call_args
@@ -184,7 +184,7 @@ class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm"}, clear=True),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
-      manager = FFTWorkerManager()
+      manager = LocalWorkerManager()
       manager.launch_sampler("Model_A.1")
 
     _, kwargs = popen.call_args
@@ -213,7 +213,7 @@ class FFTWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       patch("server.store.get_store", return_value=s),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
-      manager = FFTWorkerManager()
+      manager = LocalWorkerManager()
       manager.launch_trainer("Model_A.1")
       _, kwargs = popen.call_args
       self.assertEqual(kwargs["env"].get("BASE_MODEL"), "base-model-a")
@@ -340,12 +340,12 @@ class GatewayFutureTranslationTest(unittest.TestCase):
         )
 
 
-class FFTWorkerManagerSamplerLaunchTest(unittest.TestCase):
+class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
   def setUp(self) -> None:
     from pathlib import Path
 
     with patch.dict("os.environ", {"REDIS_URL": "redis://127.0.0.1:6379"}):
-      self.manager = FFTWorkerManager(project_dir=Path("/tmp"))
+      self.manager = LocalWorkerManager(project_dir=Path("/tmp"))
     self.store = StoreStub()
 
   @patch("server.worker_manager._fetch_metadata_from_store")

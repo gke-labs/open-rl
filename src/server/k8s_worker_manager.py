@@ -37,8 +37,8 @@ def sanitize_job_id(model_id: str) -> str:
   return cleaned[:63]
 
 
-class KubernetesFFTWorkerManager:
-  """Runs one trainer worker pod per FFT model."""
+class KubernetesWorkerManager:
+  """Runs trainer and sampler worker pods on Kubernetes."""
 
   def __init__(self, core_api: Any = None):
     if not os.getenv("REDIS_URL"):
@@ -73,9 +73,18 @@ class KubernetesFFTWorkerManager:
     self._launch_pod(model_id, role="sampler")
 
   def _launch_pod(self, model_id: str, role: str) -> None:
-    job_id = sanitize_job_id(model_id)
+    from server.worker_manager import _fetch_metadata_from_store
+
+    meta = _fetch_metadata_from_store(model_id)
+    ft_type = meta.fine_tuning_type if meta else None
+    is_lora = (ft_type == "lora") if ft_type is not None else False
+
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    target_id = (base_model or model_id) if is_lora else model_id
+
+    job_id = sanitize_job_id(target_id)
     prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
-    pod_name = prefix + job_id
+    pod_name = f"{prefix}{job_id}-1"
 
     existing = self.read_pod(pod_name)
     if existing is not None:
@@ -91,9 +100,18 @@ class KubernetesFFTWorkerManager:
         raise
 
   def shutdown(self, model_id: str) -> None:
-    job_id = sanitize_job_id(model_id)
+    from server.worker_manager import _fetch_metadata_from_store
+
+    meta = _fetch_metadata_from_store(model_id)
+    ft_type = meta.fine_tuning_type if meta else None
+    is_lora = (ft_type == "lora") if ft_type is not None else False
+
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    target_id = (base_model or model_id) if is_lora else model_id
+
+    job_id = sanitize_job_id(target_id)
     for prefix in ("open-rl-trainer-", "open-rl-sampler-"):
-      pod_name = prefix + job_id
+      pod_name = f"{prefix}{job_id}-1"
       try:
         self.core_api.delete_namespaced_pod(name=pod_name, namespace=self.namespace)
       except Exception as exc:
@@ -113,11 +131,85 @@ class KubernetesFFTWorkerManager:
     from server.worker_manager import _fetch_metadata_from_store
 
     meta = _fetch_metadata_from_store(model_id)
+    ft_type = meta.fine_tuning_type if meta else None
+    is_lora = (ft_type == "lora") if ft_type is not None else False
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    target_id = (base_model or model_id) if is_lora else model_id
+
+    if is_lora:
+      return self.render_lora_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
+    return self.render_fft_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
+
+  def render_lora_pod(
+    self,
+    pod_name: str,
+    model_id: str,
+    target_id: str,
+    job_id: str,
+    role: str = "trainer",
+    meta: Any | None = None,
+  ) -> dict[str, Any]:
     base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
     pod = copy.deepcopy(base_tmpl)
     metadata = pod.setdefault("metadata", {})
     metadata["name"] = pod_name
     app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
+
+    labels = metadata.setdefault("labels", {})
+    labels["app"] = app_label
+    labels["accel-timeslicer"] = "false"
+    labels.pop("timeslice.io/group", None)
+    labels.pop("timeslice.io/job-id", None)
+
+    container = pod["spec"]["containers"][0]
+    worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
+    if worker_image:
+      container["image"] = worker_image
+
+    if role == "sampler":
+      container["command"] = ["uv", "run", "python", "-u", "-m", "server.lora_sampler"]
+    else:
+      container["command"] = ["uv", "run", "python", "-u", "-m", "server.training_requests_processor"]
+
+    container.setdefault("args", []).extend(["--model-id", target_id])
+
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    if base_model:
+      set_env(container, "BASE_MODEL", base_model)
+      set_env(container, "OPEN_RL_BASE_MODEL", base_model)
+
+    set_env(container, "OPEN_RL_ENABLE_FFT", "false")
+    set_env(container, "OPEN_RL_FINE_TUNING_TYPE", "lora")
+
+    remove_env(container, "OPEN_RL_TIME_SLICE_JOB_ID")
+    remove_env(container, "OPEN_RL_TIME_SLICE_GROUP")
+    remove_env(container, "OPEN_RL_ACCEL_TIMESLICER_HOST")
+    remove_env(container, "OPEN_RL_ACCEL_TIMESLICER_PORT")
+
+    from server.model_metadata import WeightSyncConfig
+
+    weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
+    set_env(container, "OPEN_RL_WEIGHT_SYNC_STRATEGY", weight_sync_cfg.strategy)
+    if weight_sync_cfg.strategy == "delta":
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT", weight_sync_cfg.delta_format)
+      set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", weight_sync_cfg.delta_apply_method)
+    return pod
+
+  def render_fft_pod(
+    self,
+    pod_name: str,
+    model_id: str,
+    target_id: str,
+    job_id: str,
+    role: str = "trainer",
+    meta: Any | None = None,
+  ) -> dict[str, Any]:
+    base_tmpl = self.trainer_template if role == "trainer" else self.sampler_template
+    pod = copy.deepcopy(base_tmpl)
+    metadata = pod.setdefault("metadata", {})
+    metadata["name"] = pod_name
+    app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
+
     role_group = TRAINER_TIME_SLICE_GROUP if role == "trainer" else SAMPLER_TIME_SLICE_GROUP
     role_job_id = workload_job_id(role, job_id)
     metadata.setdefault("labels", {}).update(
@@ -133,24 +225,27 @@ class KubernetesFFTWorkerManager:
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
     if worker_image:
       container["image"] = worker_image
+
     if role == "sampler":
-      ft_type = meta.fine_tuning_type if (meta and hasattr(meta, "fine_tuning_type")) else None
-      is_lora = (ft_type == "lora") if ft_type is not None else False
-      sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
-      container["command"] = ["uv", "run", "python", "-u", "-m", sampler_module]
-    container.setdefault("args", []).extend(["--model-id", model_id])
-    if meta and meta.base_model:
-      set_env(container, "BASE_MODEL", meta.base_model)
-      set_env(container, "OPEN_RL_BASE_MODEL", meta.base_model)
-      if "gemma-4" in meta.base_model.lower() or "gemma4" in meta.base_model.lower():
+      container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
+
+    container.setdefault("args", []).extend(["--model-id", target_id])
+
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    if base_model:
+      set_env(container, "BASE_MODEL", base_model)
+      set_env(container, "OPEN_RL_BASE_MODEL", base_model)
+      if "gemma-4" in base_model.lower() or "gemma4" in base_model.lower():
         set_env(container, "VLLM_ARCHITECTURE_OVERRIDE", "Gemma4ForCausalLM")
     arch_override = os.getenv("VLLM_ARCHITECTURE_OVERRIDE")
     if arch_override:
       set_env(container, "VLLM_ARCHITECTURE_OVERRIDE", arch_override)
-    # Keep env aligned with labels so process discovery and llm-d target the
-    # same workload identity.
+
     set_env(container, "OPEN_RL_TIME_SLICE_JOB_ID", role_job_id)
     set_env(container, "OPEN_RL_TIME_SLICE_GROUP", role_group)
+    set_env(container, "OPEN_RL_ENABLE_FFT", "true")
+    set_env(container, "OPEN_RL_FINE_TUNING_TYPE", "full")
+
     from server.model_metadata import WeightSyncConfig
 
     weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
@@ -185,3 +280,8 @@ def set_env(container: dict[str, Any], name: str, value: str) -> None:
       item.update({"name": name, "value": value})
       return
   env.append({"name": name, "value": value})
+
+
+def remove_env(container: dict[str, Any], name: str) -> None:
+  env = container.get("env", [])
+  container["env"] = [item for item in env if item.get("name") != name]

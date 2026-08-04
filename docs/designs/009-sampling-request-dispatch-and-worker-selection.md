@@ -116,27 +116,31 @@ await store.put_sampling_request(sampling_req)
 
 ---
 
-### 3.2 Local Worker Manager (`src/server/worker_manager.py`)
+### 3.2 Worker Manager Renaming & Local Worker Manager (`src/server/worker_manager.py`)
+
+- **Clean Class Rename**: `FFTWorkerManager` is renamed to `LocalWorkerManager`.
+- **Factory Update**: `create_worker_manager()` returns `KubernetesWorkerManager` when `OPEN_RL_WORKER_MANAGER=kubernetes` and `LocalWorkerManager` otherwise.
+- **Base-Model Target Resolution**: For LoRA mode (`fine_tuning_type == "lora"`), `launch_trainer()` and `launch_sampler()` resolve `target_id = base_model` (`Qwen/Qwen3-0.6B`), reusing active Trainer (GPU 0) and Sampler (GPU 1) processes.
 
 #### `launch_sampler(target_id: str)`:
 ```python
+meta = _fetch_metadata_from_store(model_id)
+ft_type = meta.fine_tuning_type if meta else None
+is_fft = os.getenv("OPEN_RL_ENABLE_FFT", "").lower() in ("true", "1")
+is_lora = (ft_type == "lora") if ft_type is not None else (not is_fft)
+
+base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+target_id = (base_model or model_id) if is_lora else model_id
+
 proc = self.sampler_processes.get(target_id)
 if proc is not None and proc.poll() is None:
   return  # Reuse existing running sampler worker!
 
-meta = _fetch_metadata_from_store(target_id)
-if meta and meta.base_model:
-  base_model = meta.base_model
-else:
-  base_model = target_id
-
-ft_type = meta.fine_tuning_type if meta else None
-is_lora = (ft_type == "lora") if ft_type is not None else not is_fft_enabled()
-
 sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
 
-env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-env["BASE_MODEL"] = base_model
+env = {**os.environ, "OPEN_RL_ENABLE_FFT": "false" if is_lora else "true"}
+if base_model:
+  env["BASE_MODEL"] = base_model
 
 self.sampler_processes[target_id] = subprocess.Popen(
     _py_cmd(["gpu", "vllm"], sampler_module, target_id),
@@ -150,9 +154,25 @@ self.sampler_processes[target_id] = subprocess.Popen(
 
 ### 3.3 Kubernetes Worker Manager (`src/server/k8s_worker_manager.py`)
 
-For Kubernetes, pods are named `open-rl-sampler-<sanitized_target_id>`. When `launch_sampler(target_id)` is called:
-- `meta = _fetch_metadata_from_store(target_id)` strictly supplies `meta.base_model` to container environment variables.
-- `read_pod("open-rl-sampler-" + sanitized_target_id)` checks if a pod for `target_id` (the `base_model` in LoRA mode or `model_id` in FFT mode) is active. If running, it skips pod creation and reuses the existing pod.
+- **Clean Class Rename**: `KubernetesFFTWorkerManager` is renamed to `KubernetesWorkerManager`.
+- **Pod Naming with Suffix Indexing**:
+  - Pod naming format: `open-rl-trainer-<sanitized_target_id>-<instance_id>` and `open-rl-sampler-<sanitized_target_id>-<instance_id>`.
+  - Default `instance_id = 1`.
+  - Default tenant capacity per worker instance = **unlimited** (all tenant jobs for the same base model share instance `1`).
+- **Modular Pod YAML Rendering**:
+  - `render_pod()` dispatches to dedicated rendering methods: `render_lora_pod()` for LoRA mode and `render_fft_pod()` for Full Fine-Tuning mode.
+  - Eliminates nested conditionals and cleanly isolates LoRA standalone YAML construction from FFT time-sliced YAML construction.
+- **LoRA Mode Execution (`render_lora_pod`)**:
+  - Target ID: `target_id = base_model` (`Qwen/Qwen3-0.6B`).
+  - Pod names: `open-rl-trainer-<sanitized_base_model>-1` and `open-rl-sampler-<sanitized_base_model>-1`.
+  - Pod reuse: `read_pod()` checks for running instance `1`. If active, reuses it for subsequent adapter jobs (`job-a`, `job-b`).
+  - Standalone execution: Pod sets `"accel-timeslicer": "false"`, strips timeslicer labels/env vars (`OPEN_RL_TIME_SLICE_*`), sets `OPEN_RL_ENABLE_FFT="false"`, `OPEN_RL_FINE_TUNING_TYPE="lora"`, and launches `server.lora_sampler` for inference.
+  - DRA claims: Uses existing cluster DRA claims from manifest without time-slicer coordination.
+- **FFT Mode Execution (`render_fft_pod`)**:
+  - Target ID: `target_id = model_id`.
+  - Pod names: `open-rl-trainer-<sanitized_model_id>-1` and `open-rl-sampler-<sanitized_model_id>-1`.
+  - Time-slicing: Retains `"accel-timeslicer": "true"`, `timeslice.io/*` labels, `OPEN_RL_TIME_SLICE_*` env vars, and shared DRA claim.
+  - Environment: Sets `OPEN_RL_ENABLE_FFT="true"`, `OPEN_RL_FINE_TUNING_TYPE="full"`, and launches `server.vllm_sampler` for inference.
 
 ---
 
