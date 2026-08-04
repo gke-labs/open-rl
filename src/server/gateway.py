@@ -23,7 +23,7 @@ from server.store import get_store
 from server.worker_manager import WorkerManager, create_worker_manager
 
 store = get_store()
-fft_worker_manager: WorkerManager | None = None
+worker_manager: WorkerManager | None = None
 
 provider = TracerProvider()
 trace.set_tracer_provider(provider)
@@ -152,6 +152,9 @@ async def _extract_and_persist_model_metadata(
     elif h_val == "lora":
       fine_tuning_type = "lora"
 
+  if fine_tuning_type == "full" and not is_fft_enabled():
+    raise ValueError("Full Fine-Tuning (FFT) is disabled on this Open-RL Gateway instance")
+
   if fine_tuning_type != "full" and default_fine_tuning_type != "restored":
     fine_tuning_type = "lora"
 
@@ -206,11 +209,11 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   queue. Launch failures resolve the future immediately so clients don't long-poll
   a request that can never be served.
   """
-  assert fft_worker_manager is not None, "FFT worker manager is initialized by the app lifespan when FFT is enabled"
+  assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
   request_id = request["request_id"]
   await store.set_future(request_id, {"status": "pending"})
   try:
-    await asyncio.to_thread(fft_worker_manager.launch_trainer, request["model_id"])
+    await asyncio.to_thread(worker_manager.launch_trainer, request["model_id"])
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
@@ -219,9 +222,9 @@ async def launch_worker_and_enqueue(request: dict) -> str:
 
 
 async def ensure_sampler_launched(model_id: str) -> None:
-  if fft_worker_manager is not None and get_sampler_backend() == "vllm":
+  if worker_manager is not None and get_sampler_backend() == "vllm":
     try:
-      await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id)
+      await asyncio.to_thread(worker_manager.launch_sampler, model_id)
     except Exception:
       traceback.print_exc()
 
@@ -375,7 +378,7 @@ async def create_model(
     {},
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if fft_worker_manager is not None else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -418,7 +421,7 @@ async def create_model_from_state(
     },
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if fft_worker_manager is not None else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 

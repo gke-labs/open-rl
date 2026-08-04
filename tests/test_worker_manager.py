@@ -63,14 +63,14 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     self.store = StoreStub()
     self.worker_manager = WorkerManagerStub()
     self.old_store = gateway.store
-    self.old_manager = gateway.fft_worker_manager
+    self.old_manager = gateway.worker_manager
     gateway.store = self.store
-    gateway.fft_worker_manager = self.worker_manager
+    gateway.worker_manager = self.worker_manager
     self.addCleanup(self._restore)
 
   def _restore(self) -> None:
     gateway.store = self.old_store
-    gateway.fft_worker_manager = self.old_manager
+    gateway.worker_manager = self.old_manager
 
   async def test_create_model_launches_worker_then_enqueues(self) -> None:
     import json

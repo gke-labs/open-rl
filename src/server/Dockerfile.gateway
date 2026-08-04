@@ -32,6 +32,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy source code
 COPY . .
 
+RUN --mount=type=cache,target=/root/.cache/uv \
+    UV_COMPILE_BYTECODE=1 uv sync --frozen --no-editable --extra cluster
+
 # Expose source code via PYTHONPATH instead of modifying .venv after COPY . .
 ENV PYTHONPATH="/app/src:/app:$PYTHONPATH"
 

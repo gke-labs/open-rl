@@ -57,7 +57,7 @@ spec:
         - name: SAMPLING_BACKEND
           value: "vllm"
         - name: OPEN_RL_ENABLE_FFT
-          value: "true"
+          value: "false"
         - name: OPEN_RL_WORKER_MANAGER
           value: "kubernetes"
         - name: OPEN_RL_WORKER_NAMESPACE
