@@ -82,47 +82,69 @@ class FFTWorkerManager:
     self.launch_trainer(model_id)
 
   def launch_trainer(self, model_id: str) -> None:
-    proc = self.train_processes.get(model_id)
+    meta = _fetch_metadata_from_store(model_id)
+    ft_type = meta.fine_tuning_type if meta else None
+    is_lora = (ft_type == "lora") if ft_type is not None else False
+
+    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
+    target_id = (base_model or model_id) if is_lora else model_id
+
+    proc = self.train_processes.get(target_id)
     if proc is not None and proc.poll() is None:
       return
 
-    meta = _fetch_metadata_from_store(model_id)
     env = {
       **os.environ,
-      "OPEN_RL_ENABLE_FFT": "true",
-      "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", model_id),
+      "OPEN_RL_ENABLE_FFT": "false" if is_lora else "true",
+      "OPEN_RL_FINE_TUNING_TYPE": "lora" if is_lora else "full",
+      "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", target_id),
       "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
     }
+    if is_lora:
+      env["OPEN_RL_ENABLE_FFT"] = "false"
+    elif "OPEN_RL_ENABLE_FFT" not in env:
+      env["OPEN_RL_ENABLE_FFT"] = "true"
     weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
-    if meta and meta.base_model:
-      env["BASE_MODEL"] = meta.base_model
+    if base_model:
+      env["BASE_MODEL"] = base_model
 
     env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_cfg.strategy
     if weight_sync_cfg.strategy == "delta":
       env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
       env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
 
-    self.train_processes[model_id] = subprocess.Popen(
-      _py_cmd(["gpu"], "server.training_requests_processor", model_id),
+    trainer_gpu = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES")
+    if trainer_gpu:
+      env["CUDA_VISIBLE_DEVICES"] = trainer_gpu
+
+    self.train_processes[target_id] = subprocess.Popen(
+      _py_cmd(["gpu"], "server.training_requests_processor", target_id),
       cwd=self.project_dir,
       env=env,
       start_new_session=True,
     )
 
   def launch_sampler(self, model_id: str) -> None:
-    proc = self.sampler_processes.get(model_id)
+    meta = _fetch_metadata_from_store(model_id)
+    ft_type = meta.fine_tuning_type if meta else None
+    is_lora = (ft_type == "lora") if ft_type is not None else (os.getenv("OPEN_RL_ENABLE_FFT", "").lower() != "true")
+
+    base_model = meta.base_model if meta and meta.base_model else None
+    target_id = (base_model or model_id) if is_lora else model_id
+
+    proc = self.sampler_processes.get(target_id)
     if proc is not None and proc.poll() is None:
       return
 
-    meta = _fetch_metadata_from_store(model_id)
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    if meta and meta.base_model:
-      env["BASE_MODEL"] = meta.base_model
+    if base_model:
+      env["BASE_MODEL"] = base_model
+
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
       sampler_env = env.copy()
-      sampler_env["OPEN_RL_MODEL_ID"] = model_id
-      sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", model_id)
+      sampler_env["OPEN_RL_MODEL_ID"] = target_id
+      sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", target_id)
       sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
 
       weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
@@ -134,8 +156,10 @@ class FFTWorkerManager:
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
 
-      self.sampler_processes[model_id] = subprocess.Popen(
-        _py_cmd(["gpu", "vllm"], "server.vllm_sampler", model_id),
+      sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
+
+      self.sampler_processes[target_id] = subprocess.Popen(
+        _py_cmd(["gpu", "vllm"], sampler_module, target_id),
         cwd=self.project_dir,
         env=sampler_env,
         start_new_session=True,

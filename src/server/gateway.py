@@ -219,7 +219,7 @@ async def launch_worker_and_enqueue(request: dict) -> str:
 
 
 async def ensure_sampler_launched(model_id: str) -> None:
-  if is_fft_enabled() and fft_worker_manager is not None and get_sampler_backend() == "vllm":
+  if fft_worker_manager is not None and get_sampler_backend() == "vllm":
     try:
       await asyncio.to_thread(fft_worker_manager.launch_sampler, model_id)
     except Exception:
@@ -285,7 +285,7 @@ def translate_future_result(result: dict) -> dict:
 async def lifespan(_: FastAPI):
   global fft_worker_manager
   task = None
-  if is_fft_enabled():
+  if is_fft_enabled() or os.getenv("REDIS_URL"):
     fft_worker_manager = create_fft_worker_manager()
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
@@ -375,7 +375,7 @@ async def create_model(
     {},
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if is_fft_enabled() else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command) if fft_worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -418,7 +418,7 @@ async def create_model_from_state(
     },
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if is_fft_enabled() else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command) if fft_worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -616,15 +616,18 @@ async def create_sampling_session(req: dict):
     sess_id = model_id or "samp-session-live-123"
     target_model_id = sess_id
 
-  if get_sampler_backend() == "vllm" and target_model_id:
-    if is_fft_enabled():
-      await ensure_sampler_launched(target_model_id)
+  model_meta = await store.get_model_metadata(target_model_id) if target_model_id else None
+  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
+  ready_check_id = (model_meta.get("base_model") or target_model_id) if (fine_tuning_type == "lora" and model_meta) else target_model_id
+
+  if get_sampler_backend() == "vllm" and ready_check_id:
+    await ensure_sampler_launched(ready_check_id)
     s = get_store()
     if hasattr(s, "redis"):
-      print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {target_model_id}...")
+      print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
       start_time = time.monotonic()
       while True:
-        is_ready = await s.redis.get(f"open_rl:sampler_ready:{target_model_id}")
+        is_ready = await s.redis.get(f"open_rl:sampler_ready:{ready_check_id}")
         if is_ready == "1" or is_ready == b"1":
           print(f"[GATEWAY] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
           break
@@ -653,12 +656,13 @@ async def asample(req: dict):
 
   model_id = req.get("model_id") or req.get("sampling_session_id")
   base_model_id = base_model_id_from_sampling_ref(model_id)
+  lookup_id = base_model_id or model_id
 
   if get_sampler_backend() == "torch":
     req_id = await enqueue(
       make_training_request(
         "sample",
-        base_model_id or model_id,
+        lookup_id,
         {
           "prompt_tokens": prompt,
           "max_tokens": max_tokens,
@@ -676,24 +680,21 @@ async def asample(req: dict):
   propagate.inject(carrier)
   await store.set_future(req_id, {"status": "pending"})
 
-  model_meta = await store.get_model_metadata(base_model_id or model_id)
+  model_meta = await store.get_model_metadata(lookup_id)
   fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
 
   if fine_tuning_type == "lora":
     weights_path = None
     lora_id = model_id
-    peft_dir = os.path.join(TMP_DIR, "peft", base_model_id or model_id, base_model_id or model_id)
+    peft_dir = os.path.join(TMP_DIR, "peft", lookup_id, lookup_id)
     lora_path = peft_dir if os.path.exists(peft_dir) else None
+    queue_id = (model_meta.get("base_model") if model_meta else None) or lookup_id
   else:
     resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
-    if resolved_path and os.path.exists(os.path.join(resolved_path, "adapter_config.json")):
-      weights_path = None
-      lora_id = model_id
-      lora_path = resolved_path
-    else:
-      weights_path = resolved_path
-      lora_id = None
-      lora_path = None
+    weights_path = resolved_path
+    lora_id = None
+    lora_path = None
+    queue_id = lookup_id
 
   sampling_req = {
     "request_id": req_id,
@@ -708,7 +709,7 @@ async def asample(req: dict):
     "lora_path": lora_path,
     "weights_path": weights_path,
     "include_prompt_logprobs": include_prompt_logprobs,
-    "model_id": base_model_id or model_id,
+    "model_id": queue_id,
     "trace_context": carrier,
   }
 

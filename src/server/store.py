@@ -98,6 +98,7 @@ class InMemoryStore(RequestStore):
     self.futures_store: dict[str, dict[str, Any]] = {}
     self.futures_events: dict[str, asyncio.Event] = {}
     self.kv_store: dict[str, str] = {}
+    self.sampling_queues: dict[str, asyncio.Queue] = {}
 
   async def list_jobs_metadata(self) -> list[dict[str, Any]]:
     jobs = []
@@ -182,10 +183,21 @@ class InMemoryStore(RequestStore):
     raise RuntimeError("Per-model full fine-tuning workers require REDIS_URL; in-memory queues cannot be shared across processes")
 
   async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
-    raise RuntimeError("Sampling queues require REDIS_URL")
+    model_id = req_data.get("model_id", "default")
+    if model_id not in self.sampling_queues:
+      self.sampling_queues[model_id] = asyncio.Queue()
+    await self.sampling_queues[model_id].put(req_data)
 
   async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
-    raise RuntimeError("Sampling queues require REDIS_URL")
+    if model_id not in self.sampling_queues:
+      return []
+    queue = self.sampling_queues[model_id]
+    if queue.empty():
+      return []
+    batch = [queue.get_nowait()]
+    while not queue.empty():
+      batch.append(queue.get_nowait())
+    return batch
 
   async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
     self.futures_store[req_id] = result

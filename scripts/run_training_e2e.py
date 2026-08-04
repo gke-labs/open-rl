@@ -253,11 +253,18 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   port = config.port or unused_tcp_port()
   base_url = f"http://{config.host}:{port}"
   env = base_env(config)
-  env["CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
+  env["TRAINER_CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
+  env["SAMPLER_CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
+  if config.sampling_backend == "vllm":
+    env.pop("CUDA_VISIBLE_DEVICES", None)
+    env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
+  else:
+    env["CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
 
-  if "fft" in config.scenario:
+  need_redis = "fft" in config.scenario or config.sampling_backend == "vllm"
+  if need_redis:
     if shutil.which("redis-server") is None:
-      raise RuntimeError("redis-server is required for FFT e2e scenarios")
+      raise RuntimeError("redis-server is required for multi-process e2e scenarios (vLLM sampling or FFT)")
     redis_port = unused_tcp_port()
     launch(
       processes,
@@ -268,6 +275,9 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
       lambda: redis_ok("127.0.0.1", redis_port),
       timeout=60,
     )
+    env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
+
+  if "fft" in config.scenario:
     if shutil.which("cuda-checkpoint") is None:
       raise RuntimeError(
         "cuda-checkpoint is required for FFT e2e scenarios (the snapshot agent checkpoints workers around every batch); "
@@ -285,30 +295,9 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
       timeout=60,
     )
     env["OPEN_RL_ACCEL_TIMESLICER_SOCKET"] = str(snapshot_socket)
-    env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
     env["OPEN_RL_ENABLE_FFT"] = "true"
   else:
-    env.pop("REDIS_URL", None)
     env.pop("OPEN_RL_ENABLE_FFT", None)
-
-  if env.get("SAMPLING_BACKEND") == "vllm":
-    if "fft" in config.scenario:
-      env["SAMPLER_CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
-      env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
-    else:
-      vllm_env = env.copy()
-      vllm_env["CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
-      vllm_env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
-      base_model = config.base_model
-      launch(
-        processes,
-        "vllm-worker",
-        uv_run(config.eval_uv_extra) + ["python", "-m", "server.vllm_sampler", "--model-id", base_model],
-        vllm_env,
-        log_dir / "vllm_worker.log",
-        lambda: True,
-        timeout=config.startup_timeout,
-      )
 
   launch(
     processes,

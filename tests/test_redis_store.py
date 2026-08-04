@@ -101,5 +101,26 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual((await self.store.get_future("req-1", timeout=0.3))["type"], "try_again")
 
 
+class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
+  def setUp(self) -> None:
+    from server.store import InMemoryStore
+
+    self.store = InMemoryStore()
+
+  async def test_sampling_queue_put_and_get(self) -> None:
+    req1 = {"model_id": "base-m1", "request_id": "r1"}
+    req2 = {"model_id": "base-m1", "request_id": "r2"}
+    await self.store.put_sampling_request(req1)
+    await self.store.put_sampling_request(req2)
+
+    batch = await self.store.get_sampling_requests_for_model("base-m1")
+    self.assertEqual(len(batch), 2)
+    self.assertEqual(batch[0]["request_id"], "r1")
+    self.assertEqual(batch[1]["request_id"], "r2")
+
+    empty_batch = await self.store.get_sampling_requests_for_model("base-m1")
+    self.assertEqual(empty_batch, [])
+
+
 if __name__ == "__main__":
   unittest.main()

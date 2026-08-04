@@ -151,9 +151,10 @@ async def _fetch_model_meta(
 
 
 class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
-  def __init__(self, store: RequestStore, worker: LoraTrainingWorker):
+  def __init__(self, store: RequestStore, worker: LoraTrainingWorker, model_id: str | None = None):
     self.store = store
     self.worker = worker
+    self.model_id = model_id
 
   async def run(self) -> None:
     print("[WORKER] LoRA training requests processor started.")
@@ -182,7 +183,8 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
 
       print(f"\n[TRAINING REQUESTS] Popped {len(batch)} requests for model: {model_id}")
       for request in batch:
-        await self.process_request(request, model_id)
+        target_model_id = request.get("adapter_id") or request.get("model_id") or model_id
+        await self.process_request(request, target_model_id)
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     base_model, _, raw_config, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")
@@ -226,6 +228,7 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
   async def optim_step(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     result = await asyncio.to_thread(self.worker.optim_step, payload.get("adam_params", {}), model_id)
     result["type"] = "optim_step_completed"
+    await asyncio.to_thread(self.worker.save_adapter, model_id)
     if hasattr(self, "store") and self.store:
       try:
         raw_meta = await self.store.get_value(f"open_rl:model_meta:{model_id}")
@@ -503,12 +506,12 @@ async def run_training_requests_processor(
     time_slicer = time_slicer or time_slicer_client_from_env()
     processor = FFTTrainingRequestsProcessor(store, worker, model_id, time_slicer)
   else:
-    processor = LoraTrainingRequestsProcessor(store, worker)
+    processor = LoraTrainingRequestsProcessor(store, worker, model_id)
   await processor.run()
 
 
 async def main_async(args: argparse.Namespace) -> None:
-  fine_tuning_type = "full" if is_fft_enabled() else "lora"
+  fine_tuning_type = os.getenv("OPEN_RL_FINE_TUNING_TYPE") or ("full" if is_fft_enabled() else "lora")
   if args.model_id:
     try:
       store = get_store()
@@ -545,7 +548,10 @@ async def main_async(args: argparse.Namespace) -> None:
       raise HTTPException(status_code=503, detail="Model Loading")
 
     def run_probe_server():
-      uvicorn.run(probe_app, host="0.0.0.0", port=8000, log_level="warning")
+      try:
+        uvicorn.run(probe_app, host="0.0.0.0", port=8000, log_level="warning")
+      except Exception as exc:
+        print(f"[WORKER] Probe server on port 8000 skipped: {exc}")
 
     threading.Thread(target=run_probe_server, daemon=True).start()
 

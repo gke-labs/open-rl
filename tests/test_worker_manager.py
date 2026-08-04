@@ -144,11 +144,12 @@ class GatewayInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
 
     self.assertEqual(self.worker_manager.launched_sampler_model_ids, ["model-x"])
 
-  async def test_create_model_without_fft_skips_launcher(self) -> None:
+  async def test_create_model_launches_trainer_when_worker_manager_present(self) -> None:
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "false"}):
-      await gateway.create_model({"base_model": "base-model"})
+      result = await gateway.create_model({"base_model": "base-model"})
 
-    self.assertEqual(self.worker_manager.launched_model_ids, [])
+    model_id = result["request_id"]
+    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
     self.assertEqual(len(self.store.forwarded_requests), 1)
 
 
@@ -337,6 +338,67 @@ class GatewayFutureTranslationTest(unittest.TestCase):
           gateway.translate_future_result({"type": internal_type, "path": "/tmp/x"}),
           {"type": public_type, "path": "/tmp/x"},
         )
+
+
+class FFTWorkerManagerSamplerLaunchTest(unittest.TestCase):
+  def setUp(self) -> None:
+    from pathlib import Path
+
+    with patch.dict("os.environ", {"REDIS_URL": "redis://127.0.0.1:6379"}):
+      self.manager = FFTWorkerManager(project_dir=Path("/tmp"))
+    self.store = StoreStub()
+
+  @patch("server.worker_manager._fetch_metadata_from_store")
+  @patch("subprocess.Popen")
+  def test_launch_sampler_lora_uses_base_model_and_reuses_process(self, mock_popen, mock_fetch) -> None:
+    from server.model_metadata import TrainingModelMetadata
+
+    mock_proc = unittest.mock.MagicMock()
+    mock_proc.poll.return_value = None
+    mock_popen.return_value = mock_proc
+
+    mock_fetch.return_value = TrainingModelMetadata(
+      base_model="Qwen/Qwen2.5-0.5B",
+      created_at=100.0,
+      fine_tuning_type="lora",
+    )
+
+    # Launch for first LoRA model ID
+    self.manager.launch_sampler("model-lora-1")
+    self.assertIn("Qwen/Qwen2.5-0.5B", self.manager.sampler_processes)
+    self.assertEqual(mock_popen.call_count, 1)
+
+    cmd_args = mock_popen.call_args[0][0]
+    self.assertIn("server.lora_sampler", cmd_args)
+    self.assertIn("Qwen/Qwen2.5-0.5B", cmd_args)
+
+    # Launch for second LoRA model ID sharing the same base model
+    self.manager.launch_sampler("model-lora-2")
+    # Should reuse existing process and NOT call popen again!
+    self.assertEqual(mock_popen.call_count, 1)
+
+  @patch("server.worker_manager._fetch_metadata_from_store")
+  @patch("subprocess.Popen")
+  def test_launch_sampler_fft_uses_model_id(self, mock_popen, mock_fetch) -> None:
+    from server.model_metadata import TrainingModelMetadata
+
+    mock_proc = unittest.mock.MagicMock()
+    mock_proc.poll.return_value = None
+    mock_popen.return_value = mock_proc
+
+    mock_fetch.return_value = TrainingModelMetadata(
+      base_model="Qwen/Qwen2.5-0.5B",
+      created_at=100.0,
+      fine_tuning_type="full",
+    )
+
+    self.manager.launch_sampler("model-fft-1")
+    self.assertIn("model-fft-1", self.manager.sampler_processes)
+    self.assertEqual(mock_popen.call_count, 1)
+
+    cmd_args = mock_popen.call_args[0][0]
+    self.assertIn("server.vllm_sampler", cmd_args)
+    self.assertIn("model-fft-1", cmd_args)
 
 
 if __name__ == "__main__":
