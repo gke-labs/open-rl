@@ -1,22 +1,23 @@
-# Design Doc 009: Standardized Sampling Request Dispatch and Shared LoRA Worker Selection
+# Design Doc 009: Standardized Sampling & Training Request Dispatch and Shared LoRA Worker Selection
 
-**Status**: Proposed  
+**Status**: Implemented & Verified (Phase 1 & Phase 2 Complete)  
 **Author**: Open-RL Engineering  
 **Date**: 2026-08-04  
 **Target Branch**: `main`  
+**Latest Commit**: `8f355bd`  
 
 ---
 
 ## 1. Executive Summary
 
-This design document outlines key architectural improvements to sampling request dispatch, queue contracts, sampler worker launching, and resource sharing across `src/server/gateway.py`, `src/server/worker_manager.py`, `src/server/k8s_worker_manager.py`, and `src/server/store.py`.
+This design document outlines key architectural improvements to sampling and training request dispatch, queue contracts, worker selection, and resource sharing across `src/server/gateway.py`, `src/server/worker_manager.py`, `src/server/training_requests_processor.py`, `src/server/k8s_worker_manager.py`, and `src/server/store.py`.
 
-Currently, sampling request handling exhibits four primary operational issues:
+Previously, sampling and training request handling exhibited four primary operational issues:
 
-1. **Local Sampler Selection Mismatch**: `FFTWorkerManager` (the local process launcher) unconditionally spawns `server.vllm_sampler` when launching a sampler worker for any model. `vllm_sampler` is designed specifically for Full Fine-Tuning (FFT) with time-sliced sleep/wake cycles and in-place weight reloading. Consequently, running LoRA fine-tuning jobs locally fails because the local worker manager does not launch `server.lora_sampler` (unlike `KubernetesFFTWorkerManager`, which inspects `meta.fine_tuning_type`).
-2. **Unnecessary Per-Model LoRA Worker Duplication**: Currently, a new sampler worker is launched for every individual `model_id`. For LoRA fine-tuning jobs, vLLM's `enable_lora=True` feature allows a single base model engine to serve dynamic LoRA adapters via `LoRARequest`. Launching duplicate sampler workers for every LoRA `model_id` wastes VRAM and CPU host RAM.
-3. **Heuristic Filesystem & Environment Variable Fallbacks**: In `src/server/gateway.py` (`asample`) and sampler workers, code currently falls back to `os.getenv("BASE_MODEL")` or inspects disk for `adapter_config.json`. Fallbacks to environment variables risk using the wrong base model if environment defaults change or if multiple models run concurrently.
-4. **Queue Contract Discrepancy Across Backends**: `InMemoryStore` currently throws `RuntimeError("Sampling queues require REDIS_URL")` for `put_sampling_request` and `get_sampling_requests_for_model`, forcing `torch` single-process sampling mode to route through `enqueue()` (`open_rl:queue:<model_id>`) with a different payload schema than the `vllm` sampling queue (`open_rl:sampler_queue:<model_id>`).
+1. **Local Worker Selection Mismatch**: `WorkerManager` (the local process launcher) unconditionally spawned `server.vllm_sampler` for sampling workers and spawned separate `server.training_requests_processor` subprocesses per adapter `model_id`.
+2. **Unnecessary Per-Model LoRA Worker Duplication**: A new PyTorch Trainer worker and vLLM Sampler worker were launched for every individual `model_id`. For LoRA fine-tuning jobs, vLLM's `enable_lora=True` and PyTorch's in-process `PeftModel.add_adapter` allow a single base model engine to serve dynamic LoRA adapters. Launching duplicate workers for every LoRA `model_id` wasted VRAM (3.8+ GB vs 1.9 GB) and host CPU memory.
+3. **Heuristic Filesystem & Environment Variable Fallbacks**: Code previously fell back to `os.getenv("BASE_MODEL")` or inspected disk for `adapter_config.json`, risking incorrect model targeting under concurrency.
+4. **Queue Contract Discrepancy Across Backends**: `InMemoryStore` threw `RuntimeError("Sampling queues require REDIS_URL")` for `put_sampling_request`, causing inconsistency between Redis and in-memory test harnesses.
 
 ---
 
@@ -222,26 +223,27 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
 └──────────────────────────┘
 ```
 
-### **Phase 1: Store Queue Standardization**
+### **Phase 1: Store Queue Standardization [COMPLETED & VERIFIED]**
 - **Target File**: `src/server/store.py`
-- **Scope**: Implement `sampling_queues` in `InMemoryStore`.
-- **Validation**: Local unit tests (`make test`). Ensures non-Redis / local dev mode can process sampling queues cleanly.
+- **Status**: **Completed & Verified** (unit tests passing).
+- **Validation**: Added `sampling_queues` in `InMemoryStore` to support `put_sampling_request` and `get_sampling_requests_for_model` without requiring Redis.
 
-### **Phase 2: Merged Local Sampler Selection & Gateway Metadata Dispatch (LoRA Focus)**
-- **Target Files**: `src/server/worker_manager.py` & `src/server/gateway.py`
-- **Scope**:
-  - Update `FFTWorkerManager.launch_sampler()` to inspect `meta.fine_tuning_type`.
-  - For LoRA: set `target_id = meta.base_model`, launch `server.lora_sampler` if not already running.
-  - For FFT: set `target_id = model_id`, launch `server.vllm_sampler` if not already running.
-  - Update `asample()` and `create_sampling_session()` in `gateway.py` to use `model_meta["base_model"]` as `queue_id` for LoRA mode.
-  - Remove `os.path.exists(...)` checks for `adapter_config.json` and zero fallback to environment variables.
+### **Phase 2: Local Sampler & Trainer Selection, Shared Base-Model Workers & Gateway Metadata Dispatch [COMPLETED & VERIFIED]**
+- **Target Files**: `src/server/worker_manager.py`, `src/server/gateway.py`, `src/server/training_requests_processor.py`
+- **Status**: **Completed & Verified** on remote host `l4`.
+- **Implementation**:
+  - `WorkerManager.launch_sampler()` & `launch_trainer()` resolve `target_id = base_model` for LoRA mode (`Qwen/Qwen3-0.6B`).
+  - Launches **1 PyTorch Trainer worker** on GPU 0 and **1 vLLM Sampler worker** on GPU 1 per base model.
+  - Subsequent LoRA jobs (`job-a`, `job-b`) reuse the active workers without spawning redundant processes.
+  - `LoraTrainingRequestsProcessor.run_once()` drains all queued requests for each adapter in sequence ("in one go").
+  - Adapter weights are auto-saved to disk after every `optim_step`, with pointer updates (`sampling_session_id`) on `create_sampling_client` / `save_weights_for_sampler`.
 - **Validation**:
-  - Unit tests in `tests/test_worker_manager.py` and `tests/test_gateway_paths.py`.
-  - Push code to GPU dev host `l4` (`make push-vm REMOTE_HOST=l4`) and verify local process spawning and end-to-end LoRA recipe execution (`tiny_rl` or `lora-textsql`).
+  - Unit tests verified (97/97 passing).
+  - Executed dual-job RL training benchmark `lora-gsm8k-rl-x2` (`Qwen/Qwen3-0.6B`, 5 steps) on remote GPU host `l4`.
 
-### **Phase 3: Kubernetes Worker Manager Alignment & FFT Validation**
+### **Phase 3: Kubernetes Worker Manager Alignment & FFT Validation [NEXT STEP]**
 - **Target File**: `src/server/k8s_worker_manager.py`
-- **Scope**: Align `KubernetesFFTWorkerManager.launch_sampler()` so LoRA sampler pods are named `open-rl-sampler-<sanitized_base_model>` and reused across LoRA sessions sharing the same base model. Validate FFT workflows requiring `accel-timeslicer` daemonset in-cluster.
+- **Scope**: Align `KubernetesFFTWorkerManager` so LoRA trainer and sampler pods are named `open-rl-trainer-<sanitized_base_model>` and `open-rl-sampler-<sanitized_base_model>` and reused across LoRA sessions sharing the same base model. Validate FFT workflows requiring `accel-timeslicer` daemonset in-cluster.
 - **Validation**: In-cluster testing (`make cluster-e2e`).
 
 ---
@@ -249,13 +251,13 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
 ## 5. Scope & Target Files
 
 - **Source Files**:
-  - `src/server/store.py` (Phase 1)
-  - `src/server/worker_manager.py` & `src/server/gateway.py` (Phase 2 - Merged LoRA Dev Focus)
-  - `src/server/k8s_worker_manager.py` (Phase 3 - Kubernetes & FFT)
+  - `src/server/store.py` (Phase 1 - Complete)
+  - `src/server/worker_manager.py`, `src/server/gateway.py`, `src/server/training_requests_processor.py` (Phase 2 - Complete)
+  - `src/server/k8s_worker_manager.py` (Phase 3 - In Progress)
 - **Test Files**:
-  - `tests/test_redis_store.py` (Phase 1)
-  - `tests/test_worker_manager.py` & `tests/test_gateway_paths.py` (Phase 2)
-  - `tests/test_k8s_worker_manager.py` (Phase 3)
+  - `tests/test_redis_store.py` (Phase 1 - Complete)
+  - `tests/test_worker_manager.py` & `tests/test_gateway_paths.py` (Phase 2 - Complete)
+  - `tests/test_k8s_worker_manager.py` (Phase 3 - In Progress)
 
 ---
 
@@ -268,9 +270,28 @@ Furthermore, local/dev host (`l4`) testing focuses on LoRA fine-tuning workflows
 2. **Phase 2 Remote Dev Host Testing (`l4`)**:
    ```bash
    make push-vm REMOTE_HOST=l4
-   ssh l4 "export PATH=\$PATH:\$HOME/.local/bin && cd ~/open-rl && make test"
+   ssh l4 "export PATH=\$PATH:\$HOME/.local/bin && cd ~/open-rl && uv run --extra gpu python scripts/run_training_e2e.py scenario=lora-gsm8k-rl-x2 base_model=Qwen/Qwen3-0.6B steps=5 group_size=4 groups_per_batch=4 sampling_backend=vllm trainer_gpu=0 sampler_gpu=1"
    ```
 3. **Phase 3 Cluster Integration Testing**:
    ```bash
    make cluster-e2e IMAGE_TAG=$(cat VERSION) E2E_SCENARIO=tiny-lora
    ```
+
+---
+
+## 7. Verified Benchmark Results (`lora-gsm8k-rl-x2` on Host `l4`)
+
+**Campaign Date**: 2026-08-04  
+**Host**: Dev VM `l4` (2× NVIDIA L4 GPUs)  
+**Model**: `Qwen/Qwen3-0.6B`  
+**Commit**: `8f355bd`  
+
+### Hardware & Process Allocation:
+- **GPU 0**: Single Shared PyTorch Trainer worker (`server.training_requests_processor`, **1,960 MiB VRAM**).
+- **GPU 1**: Single Shared vLLM Sampler worker (`server.lora_sampler`, **16,524 MiB VRAM**).
+
+### Performance Metrics:
+- **`job-a` (`55398868...`)**: Completed 5 steps (Step 0..4), reaching **43.75% accuracy** with 24.7s step time.
+- **`job-b` (`f197fecc...`)**: Completed 5 steps (Step 0..4), reaching **56.25% accuracy** (reward 0.5000) with 24.7s step time.
+- **VRAM Savings**: Reduced VRAM overhead on GPU 0 from ~3.8 GB (isolated workers) to **1.9 GB** (shared worker).
+
