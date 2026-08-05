@@ -5,6 +5,10 @@ apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
   name: open-rl-sampler-gpu-1
+  labels:
+    open-rl.io/workload-type: "full"
+    open-rl.io/role: "sampler"
+    open-rl.io/memory-tier: "80gb"
 spec:
   devices:
     requests:

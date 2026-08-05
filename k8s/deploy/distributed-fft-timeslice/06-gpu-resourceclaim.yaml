@@ -10,6 +10,10 @@ apiVersion: resource.k8s.io/v1
 kind: ResourceClaim
 metadata:
   name: open-rl-trainer-gpu-1
+  labels:
+    open-rl.io/workload-type: "full"
+    open-rl.io/role: "trainer"
+    open-rl.io/memory-tier: "80gb"
 spec:
   devices:
     requests:

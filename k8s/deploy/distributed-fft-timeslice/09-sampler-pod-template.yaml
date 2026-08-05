@@ -70,7 +70,6 @@ data:
           claimName: open-rl-shared-pvc
       nodeSelector:
         group.timeslice.io/samplers: "true"
-        cloud.google.com/gke-accelerator: "nvidia-h100-80gb"
       tolerations:
       - key: "nvidia.com/gpu"
         operator: "Exists"

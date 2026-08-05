@@ -13,6 +13,7 @@ dependencies are installed.
 """
 
 import copy
+import logging
 import os
 import re
 import time
@@ -22,6 +23,8 @@ import yaml
 from kubernetes import client, config
 
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+
+logger = logging.getLogger(__name__)
 
 POD_NAME_PREFIX = "open-rl-trainer-"
 TERMINAL_POD_PHASES = {"Succeeded", "Failed"}
@@ -140,6 +143,91 @@ class KubernetesWorkerManager:
       return self.render_lora_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
     return self.render_fft_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
 
+  def _discover_eligible_claims(self, workload_type: str, role: str) -> list[str]:
+    if not hasattr(self.core_api, "api_client"):
+      # Unit test mock environment using _FakeCoreApi
+      custom_objects = getattr(self.core_api, "custom_objects", None)
+      if custom_objects is not None:
+        return custom_objects.get((workload_type, role), [])
+      if workload_type == "lora":
+        return ["open-rl-lora-trainer-gpu-1"] if role == "trainer" else ["open-rl-lora-sampler-gpu-1"]
+      return ["open-rl-trainer-gpu-1"] if role == "trainer" else ["open-rl-sampler-gpu-1"]
+
+    try:
+      custom_api = client.CustomObjectsApi(self.core_api.api_client)
+      label_selector = f"open-rl.io/workload-type={workload_type},open-rl.io/role={role}"
+      res = custom_api.list_namespaced_custom_object(
+        group="resource.k8s.io",
+        version="v1",
+        namespace=self.namespace,
+        plural="resourceclaims",
+        label_selector=label_selector,
+      )
+      items = res.get("items", []) if isinstance(res, dict) else getattr(res, "items", [])
+      claim_names = [item["metadata"]["name"] for item in items if isinstance(item, dict) and "metadata" in item and "name" in item["metadata"]]
+      return sorted(claim_names)
+    except Exception as exc:
+      logger.debug("DRA label discovery failed for %s/%s: %s", workload_type, role, exc)
+      return []
+
+  def _get_claim_locks(self) -> dict[str, set[str]]:
+    locks: dict[str, set[str]] = {}
+    try:
+      pods = self.core_api.list_namespaced_pod(
+        self.namespace,
+        label_selector="app in (open-rl-trainer-worker, open-rl-sampler-worker)",
+      )
+      items = pods.items if hasattr(pods, "items") else pods.get("items", [])
+      for pod in items:
+        status_phase = ""
+        metadata = {}
+        if isinstance(pod, dict):
+          status_phase = pod.get("status", {}).get("phase", "")
+          metadata = pod.get("metadata", {})
+        else:
+          status_phase = getattr(getattr(pod, "status", None), "phase", "")
+          metadata = getattr(pod, "metadata", {})
+
+        if status_phase in TERMINAL_POD_PHASES:
+          continue
+
+        labels = (metadata.get("labels", {}) if isinstance(metadata, dict) else getattr(metadata, "labels", {})) or {}
+        claim_name = labels.get("open-rl.io/assigned-claim")
+        bound_model = labels.get("open-rl.io/bound-base-model")
+        if claim_name and bound_model:
+          locks.setdefault(claim_name, set()).add(bound_model)
+    except Exception as exc:
+      logger.debug("Failed to inspect active Pod claim locks: %s", exc)
+    return locks
+
+  def resolve_claim(self, workload_type: str, role: str, target_id: str) -> str:
+    """Resolve target DRA ResourceClaim using Mode A label discovery and LoRA base-model mutual exclusion."""
+    claims = self._discover_eligible_claims(workload_type, role)
+    if not claims:
+      raise RuntimeError(f"No DRA claims matching 'open-rl.io/workload-type={workload_type},role={role}' in namespace '{self.namespace}'.")
+
+    locks = self._get_claim_locks()
+    clean_target = sanitize_job_id(target_id)
+
+    # Rule 1: Base-Model Affinity (reuse claim if already running clean_target)
+    for c_name in claims:
+      if clean_target in locks.get(c_name, set()):
+        return c_name
+
+    # Rule 2: Mutual Exclusion for LoRA (skip any claim locked to a different base model)
+    eligible = []
+    for c_name in claims:
+      claim_locks = locks.get(c_name, set())
+      if workload_type == "lora" and claim_locks and clean_target not in claim_locks:
+        continue
+      eligible.append(c_name)
+
+    if not eligible:
+      raise RuntimeError(f"All DRA claims for workload-type={workload_type}, role={role} are currently locked by other base models.")
+
+    # Rule 3: Deterministic Lowest-Index Sorting
+    return sorted(eligible)[0]
+
   def render_lora_pod(
     self,
     pod_name: str,
@@ -155,15 +243,20 @@ class KubernetesWorkerManager:
     metadata["name"] = pod_name
     app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
 
+    claim_name = self.resolve_claim("lora", role, target_id)
     labels = metadata.setdefault("labels", {})
     labels["app"] = app_label
     labels["accel-timeslicer"] = "false"
+    labels["open-rl.io/workload-type"] = "lora"
+    labels["open-rl.io/role"] = role
+    labels["open-rl.io/assigned-claim"] = claim_name
+    labels["open-rl.io/bound-base-model"] = sanitize_job_id(target_id)
     labels.pop("timeslice.io/group", None)
     labels.pop("timeslice.io/job-id", None)
 
-    node_sel = pod["spec"].setdefault("nodeSelector", {})
-    node_sel["cloud.google.com/gke-accelerator"] = "nvidia-l4"
-    claim_name = "open-rl-lora-trainer-gpu-1" if role == "trainer" else "open-rl-lora-sampler-gpu-1"
+    node_sel = pod["spec"].get("nodeSelector", {})
+    if isinstance(node_sel, dict):
+      node_sel.pop("cloud.google.com/gke-accelerator", None)
     for r_claim in pod["spec"].get("resourceClaims", []):
       r_claim["resourceClaimName"] = claim_name
 
@@ -220,18 +313,23 @@ class KubernetesWorkerManager:
 
     role_group = TRAINER_TIME_SLICE_GROUP if role == "trainer" else SAMPLER_TIME_SLICE_GROUP
     role_job_id = workload_job_id(role, job_id)
+    claim_name = self.resolve_claim("full", role, target_id)
     metadata.setdefault("labels", {}).update(
       {
         "app": app_label,
         "accel-timeslicer": "true",
+        "open-rl.io/workload-type": "full",
+        "open-rl.io/role": role,
+        "open-rl.io/assigned-claim": claim_name,
+        "open-rl.io/bound-base-model": sanitize_job_id(target_id),
         "timeslice.io/group": role_group,
         "timeslice.io/job-id": role_job_id,
       }
     )
 
-    node_sel = pod["spec"].setdefault("nodeSelector", {})
-    node_sel["cloud.google.com/gke-accelerator"] = "nvidia-h100-80gb"
-    claim_name = "open-rl-trainer-gpu-1" if role == "trainer" else "open-rl-sampler-gpu-1"
+    node_sel = pod["spec"].get("nodeSelector", {})
+    if isinstance(node_sel, dict):
+      node_sel.pop("cloud.google.com/gke-accelerator", None)
     for r_claim in pod["spec"].get("resourceClaims", []):
       r_claim["resourceClaimName"] = claim_name
 

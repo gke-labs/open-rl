@@ -83,6 +83,10 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       {
         "app": "open-rl-trainer-worker",
         "accel-timeslicer": "true",
+        "open-rl.io/workload-type": "full",
+        "open-rl.io/role": "trainer",
+        "open-rl.io/assigned-claim": "open-rl-trainer-gpu-1",
+        "open-rl.io/bound-base-model": "model-a-1",
         "timeslice.io/group": "trainers",
         "timeslice.io/job-id": "trainer-model-a-1",
       },
@@ -117,6 +121,10 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       {
         "app": "open-rl-sampler-worker",
         "accel-timeslicer": "true",
+        "open-rl.io/workload-type": "full",
+        "open-rl.io/role": "sampler",
+        "open-rl.io/assigned-claim": "open-rl-sampler-gpu-1",
+        "open-rl.io/bound-base-model": "model-a-1",
         "timeslice.io/group": "samplers",
         "timeslice.io/job-id": "sampler-model-a-1",
       },
@@ -229,7 +237,7 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       manager.launch_sampler("job-lora-2")
       self.assertEqual(len(api.created), 2)  # No new pods created!
 
-  def test_lora_vs_fft_accelerator_and_claims(self) -> None:
+  def test_lora_vs_fft_claims_without_node_selector_overrides(self) -> None:
     import json
 
     from server.store import InMemoryStore
@@ -245,10 +253,40 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       self.assertEqual(len(api.created), 2)
       lora_pod = api.created[0][1]
       fft_pod = api.created[1][1]
-      self.assertEqual(lora_pod["spec"]["nodeSelector"]["cloud.google.com/gke-accelerator"], "nvidia-l4")
+      self.assertNotIn("cloud.google.com/gke-accelerator", lora_pod["spec"].get("nodeSelector", {}))
       self.assertEqual(lora_pod["spec"]["resourceClaims"][0]["resourceClaimName"], "open-rl-lora-trainer-gpu-1")
-      self.assertEqual(fft_pod["spec"]["nodeSelector"]["cloud.google.com/gke-accelerator"], "nvidia-h100-80gb")
+      self.assertNotIn("cloud.google.com/gke-accelerator", fft_pod["spec"].get("nodeSelector", {}))
       self.assertEqual(fft_pod["spec"]["resourceClaims"][0]["resourceClaimName"], "open-rl-trainer-gpu-1")
+
+  def test_label_based_claim_discovery_and_mutual_exclusion(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+
+    # 1. Test error when no labeled claims are discovered
+    with patch.object(manager, "_discover_eligible_claims", return_value=[]), self.assertRaisesRegex(RuntimeError, "No DRA claims matching"):
+      manager.resolve_claim("lora", "trainer", "Qwen3-0.6B")
+
+    # 2. Test LoRA mutual exclusion with discovered claims and active pod locks
+    lora_claims = ["lora-gpu-1", "lora-gpu-2"]
+    with patch.object(manager, "_discover_eligible_claims", return_value=lora_claims):
+      # Initially no locks -> selects index 0
+      self.assertEqual(manager.resolve_claim("lora", "trainer", "Qwen3-0.6B"), "lora-gpu-1")
+
+      # Simulate lora-gpu-1 locked to qwen3-0-6b
+      with patch.object(manager, "_get_claim_locks", return_value={"lora-gpu-1": {"qwen3-0-6b"}}):
+        # Same base model -> affinity reuses lora-gpu-1
+        self.assertEqual(manager.resolve_claim("lora", "trainer", "Qwen3-0.6B"), "lora-gpu-1")
+        # Different base model -> mutual exclusion skips lora-gpu-1 and selects lora-gpu-2
+        self.assertEqual(manager.resolve_claim("lora", "trainer", "Qwen3-8B"), "lora-gpu-2")
+
+    # 3. Test FFT workload (no mutual exclusion)
+    fft_claims = ["fft-gpu-1", "fft-gpu-2"]
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=fft_claims),
+      patch.object(manager, "_get_claim_locks", return_value={"fft-gpu-1": {"qwen3-0-6b"}}),
+    ):
+      # FFT does not enforce mutual exclusion -> still selects index 0 (fft-gpu-1)
+      self.assertEqual(manager.resolve_claim("full", "trainer", "Qwen3-8B"), "fft-gpu-1")
 
   def test_requires_template_and_redis(self) -> None:
     with patch.dict(os.environ, {"REDIS_URL": "redis://r:6379"}, clear=True), self.assertRaisesRegex(RuntimeError, "POD_TEMPLATE"):
