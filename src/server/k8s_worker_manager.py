@@ -228,6 +228,17 @@ class KubernetesWorkerManager:
     # Rule 3: Deterministic Lowest-Index Sorting
     return sorted(eligible)[0]
 
+  @staticmethod
+  def _inject_resource_claim(pod: dict[str, Any], role: str, claim_name: str) -> None:
+    default_ref = "trainer-gpu" if role == "trainer" else "sampler-gpu"
+    containers = pod["spec"].get("containers", [])
+    claim_ref_name = default_ref
+    if containers and isinstance(containers[0].get("resources"), dict):
+      claims = containers[0]["resources"].get("claims", [])
+      if claims and isinstance(claims[0], dict) and "name" in claims[0]:
+        claim_ref_name = claims[0]["name"]
+    pod["spec"]["resourceClaims"] = [{"name": claim_ref_name, "resourceClaimName": claim_name}]
+
   def render_lora_pod(
     self,
     pod_name: str,
@@ -257,8 +268,7 @@ class KubernetesWorkerManager:
     node_sel = pod["spec"].get("nodeSelector", {})
     if isinstance(node_sel, dict):
       node_sel.pop("cloud.google.com/gke-accelerator", None)
-    for r_claim in pod["spec"].get("resourceClaims", []):
-      r_claim["resourceClaimName"] = claim_name
+    self._inject_resource_claim(pod, role, claim_name)
 
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
@@ -330,8 +340,7 @@ class KubernetesWorkerManager:
     node_sel = pod["spec"].get("nodeSelector", {})
     if isinstance(node_sel, dict):
       node_sel.pop("cloud.google.com/gke-accelerator", None)
-    for r_claim in pod["spec"].get("resourceClaims", []):
-      r_claim["resourceClaimName"] = claim_name
+    self._inject_resource_claim(pod, role, claim_name)
 
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")

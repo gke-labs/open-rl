@@ -27,11 +27,6 @@ data:
         env:
         - name: REDIS_URL
           value: "redis://redis-service:6379?max_connections=500"
-        - name: BASE_MODEL
-          valueFrom:
-            configMapKeyRef:
-              name: open-rl-config
-              key: BASE_MODEL
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
         - name: OPEN_RL_WEIGHT_SYNC_STRATEGY
@@ -64,19 +59,9 @@ data:
         volumeMounts:
         - name: shared-storage
           mountPath: /mnt/shared
-      resourceClaims:
-      - name: trainer-gpu
-        resourceClaimName: open-rl-trainer-gpu-1
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
           claimName: open-rl-shared-pvc
       nodeSelector:
         group.timeslice.io/trainers: "true"
-      tolerations:
-      - key: "nvidia.com/gpu"
-        operator: "Exists"
-        effect: "NoSchedule"
-      - key: "node.kubernetes.io/disk-pressure"
-        operator: "Exists"
-        effect: "NoSchedule"
