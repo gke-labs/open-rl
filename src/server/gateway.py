@@ -397,7 +397,15 @@ async def delete_model(req: dict):
   model_id = req.get("model_id")
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  if is_fft_enabled():
+  meta_dict = None
+  try:
+    raw_meta = await store.get_value(f"open_rl:model_meta:{model_id}")
+    if raw_meta:
+      meta_dict = json.loads(raw_meta)
+  except Exception:
+    pass
+  is_lora = meta_dict and meta_dict.get("fine_tuning_type") == "lora"
+  if is_fft_enabled() and not is_lora:
     print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
     await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})

@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Protocol
 
@@ -91,76 +92,90 @@ class LocalWorkerManager:
     self.project_dir = project_dir
     self.train_processes: dict[str, subprocess.Popen] = {}
     self.sampler_processes: dict[str, subprocess.Popen] = {}
+    self.lock = threading.Lock()
 
   def launch(self, model_id: str) -> None:
     self.launch_trainer(model_id)
 
   def launch_trainer(self, model_id: str) -> None:
     meta, target_id, is_lora = get_model_target_info(model_id)
-    proc = self.train_processes.get(target_id)
-    if proc is not None and proc.poll() is None:
-      return
+    with self.lock:
+      proc = self.train_processes.get(target_id)
+      if proc is not None and proc.poll() is None:
+        return
 
-    env = {
-      **os.environ,
-      "OPEN_RL_ENABLE_FFT": "false" if is_lora else "true",
-      "OPEN_RL_FINE_TUNING_TYPE": "lora" if is_lora else "full",
-      "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", target_id),
-      "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
-    }
-    if meta.base_model:
-      env["BASE_MODEL"] = meta.base_model
+      env = {
+        **os.environ,
+        "OPEN_RL_ENABLE_FFT": "false" if is_lora else "true",
+        "OPEN_RL_FINE_TUNING_TYPE": "lora" if is_lora else "full",
+        "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", target_id),
+        "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
+      }
+      if meta.base_model:
+        env["BASE_MODEL"] = meta.base_model
 
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
-    if meta.weight_sync_config.strategy == "delta":
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
+      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
+      if meta.weight_sync_config.strategy == "delta":
+        env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
+        env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
 
-    trainer_gpu = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES")
-    if trainer_gpu:
-      env["CUDA_VISIBLE_DEVICES"] = trainer_gpu
+      trainer_gpu = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES")
+      if trainer_gpu:
+        env["CUDA_VISIBLE_DEVICES"] = trainer_gpu
 
-    active_set_id = f"{target_id}-1" if is_lora else None
-    self.train_processes[target_id] = subprocess.Popen(
-      _py_cmd(["gpu"], "server.training_requests_processor", target_id, active_tenant_set_id=active_set_id),
-      cwd=self.project_dir,
-      env=env,
-      start_new_session=True,
-    )
+      active_set_id = f"{target_id}-1" if is_lora else None
+      tmp_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
+      tmp_dir.mkdir(parents=True, exist_ok=True)
+      clean_name = target_id.replace("/", "_")
+      with open(tmp_dir / f"trainer_{clean_name}.log", "a") as train_log:
+        self.train_processes[target_id] = subprocess.Popen(
+          _py_cmd(["gpu"], "server.training_requests_processor", target_id, active_tenant_set_id=active_set_id),
+          cwd=self.project_dir,
+          env=env,
+          stdout=train_log,
+          stderr=subprocess.STDOUT,
+          start_new_session=True,
+        )
 
   def launch_sampler(self, model_id: str) -> None:
     meta, target_id, is_lora = get_model_target_info(model_id)
-    proc = self.sampler_processes.get(target_id)
-    if proc is not None and proc.poll() is None:
-      return
+    with self.lock:
+      proc = self.sampler_processes.get(target_id)
+      if proc is not None and proc.poll() is None:
+        return
 
-    env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    if meta.base_model:
-      env["BASE_MODEL"] = meta.base_model
+      env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
+      if meta.base_model:
+        env["BASE_MODEL"] = meta.base_model
 
-    sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
-    if sampling_backend == "vllm":
-      sampler_env = env.copy()
-      sampler_env["OPEN_RL_MODEL_ID"] = target_id
-      sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", target_id)
-      sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
+      sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
+      if sampling_backend == "vllm":
+        sampler_env = env.copy()
+        sampler_env["OPEN_RL_MODEL_ID"] = target_id
+        sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", target_id)
+        sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
 
-      sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
-      if meta.weight_sync_config.strategy == "delta":
-        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
-        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
-      sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
-      if sampler_gpu:
-        sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
+        sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
+        if meta.weight_sync_config.strategy == "delta":
+          sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
+          sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
+        sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
+        if sampler_gpu:
+          sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
 
-      sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
-
-      self.sampler_processes[target_id] = subprocess.Popen(
-        _py_cmd(["gpu", "vllm"], sampler_module, target_id),
-        cwd=self.project_dir,
-        env=sampler_env,
-        start_new_session=True,
-      )
+        sampler_module = "server.lora_sampler" if is_lora else "server.vllm_sampler"
+        tmp_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        clean_name = target_id.replace("/", "_")
+        with open(tmp_dir / f"sampler_{clean_name}.log", "a") as sampler_log:
+          self.sampler_processes[target_id] = subprocess.Popen(
+            _py_cmd(["gpu", "vllm"], sampler_module, target_id),
+            cwd=self.project_dir,
+            env=sampler_env,
+            stdout=sampler_log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+          )
 
   def shutdown(self, model_id: str) -> None:
     try:
