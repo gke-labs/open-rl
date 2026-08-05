@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 import traceback
 from typing import Any
 
@@ -55,6 +56,9 @@ engine: Any = None
 CURRENT_LOADED_SAMPLER_WEIGHTS: str | None = None
 IS_ENGINE_SLEEPING: bool = True
 reload_lock = asyncio.Lock()
+
+
+from server.telemetry import record_job_request_event, record_slice_telemetry
 
 
 def is_fft_enabled() -> bool:
@@ -213,7 +217,22 @@ async def process_sampling_request(req: dict, store: Any) -> None:
   global IS_ENGINE_SLEEPING
 
   request_id = req["request_id"]
+  m_id = req.get("model_id")
   trace_context = req.get("trace_context", {})
+
+  if m_id:
+    await record_job_request_event(
+      store,
+      m_id,
+      request_id,
+      {
+        "op": "sample",
+        "role": "sampler",
+        "status": "processing",
+        "started_at": time.time(),
+        "worker_pod": os.getenv("POD_NAME", "sampler-0"),
+      },
+    )
 
   parent_span = propagate.extract(trace_context)
   with tracer.start_as_current_span("process_sampling_request", context=parent_span):
@@ -281,9 +300,33 @@ async def process_sampling_request(req: dict, store: Any) -> None:
         result["type"] = "sample"
 
       await store.set_future(request_id, result)
+      if m_id:
+        await record_job_request_event(
+          store,
+          m_id,
+          request_id,
+          {
+            "op": "sample",
+            "role": "sampler",
+            "status": "done",
+            "completed_at": time.time(),
+          },
+        )
     except Exception as exc:
       traceback.print_exc()
       await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": f"vLLM Worker Error: {str(exc)}"})
+      if m_id:
+        await record_job_request_event(
+          store,
+          m_id,
+          request_id,
+          {
+            "op": "sample",
+            "role": "sampler",
+            "status": "failed",
+            "completed_at": time.time(),
+          },
+        )
 
 
 async def run_sampling_worker(model_id: str) -> None:
@@ -375,7 +418,9 @@ async def run_sampling_worker(model_id: str) -> None:
         if sampling_reqs:
           if time_slicer is not None:
             assert workload is not None
+            token_count = sum(len(r.get("prompt_token_ids") or r.get("prompt_tokens") or [1]) for r in sampling_reqs)
             async with time_slicer.acquire(workload):
+              t_start = time.time()
               if engine is not None and IS_ENGINE_SLEEPING:
                 print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
                 await engine.wake_up(tags=["weights", "kv_cache"])
@@ -388,6 +433,8 @@ async def run_sampling_worker(model_id: str) -> None:
                 print("[vLLM Worker] Exiting batch: sleeping engine (CPU offload weights) to yield GPU memory...")
                 await engine.sleep(level=1)
                 IS_ENGINE_SLEEPING = True
+              t_end = time.time()
+            await record_slice_telemetry(store, model_id, "sampler", t_start, t_end, token_count)
           else:
             if engine is not None and IS_ENGINE_SLEEPING:
               print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")

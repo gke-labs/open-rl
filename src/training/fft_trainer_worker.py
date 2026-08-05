@@ -491,14 +491,20 @@ class FFTTrainingWorker(BaseTrainerWorker):
       f"total_optim_time={clip_time + step_time + delta_compute_time:.4f}s"
     )
 
-    return {
-      "metrics": {
-        "grad_norm:mean": self.sanitize_float(total_norm.item()),
-        "time/compute_delta_diff": self.sanitize_float(delta_compute_time),
-        "time/optimizer_step": self.sanitize_float(step_time),
-        "time/clip_grad_norm": self.sanitize_float(clip_time),
-      },
+    metrics = {
+      "grad_norm:mean": self.sanitize_float(total_norm.item()),
+      "time/compute_delta_diff": self.sanitize_float(delta_compute_time),
+      "time/optimizer_step": self.sanitize_float(step_time),
+      "time/clip_grad_norm": self.sanitize_float(clip_time),
     }
+
+    if self.weight_sync_cfg.strategy == "delta":
+      density_pct = round(100.0 * self._latest_total_changed / max(1, self._latest_total_elements), 4)
+      metrics["weight_mutation/changed_elements"] = self._latest_total_changed
+      metrics["weight_mutation/total_elements"] = self._latest_total_elements
+      metrics["weight_mutation/density_pct"] = self.sanitize_float(density_pct)
+
+    return {"metrics": metrics}
 
   def generate(
     self,
