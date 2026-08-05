@@ -76,15 +76,9 @@ class KubernetesWorkerManager:
     self._launch_pod(model_id, role="sampler")
 
   def _launch_pod(self, model_id: str, role: str) -> None:
-    from server.worker_manager import _fetch_metadata_from_store
+    from server.worker_manager import get_model_target_info
 
-    meta = _fetch_metadata_from_store(model_id)
-    ft_type = meta.fine_tuning_type if meta else None
-    is_lora = (ft_type == "lora") if ft_type is not None else False
-
-    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
-    target_id = (base_model or model_id) if is_lora else model_id
-
+    meta, target_id, is_lora = get_model_target_info(model_id)
     job_id = sanitize_job_id(target_id)
     prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
     pod_name = f"{prefix}{job_id}-1"
@@ -103,14 +97,12 @@ class KubernetesWorkerManager:
         raise
 
   def shutdown(self, model_id: str) -> None:
-    from server.worker_manager import _fetch_metadata_from_store
+    from server.worker_manager import get_model_target_info
 
-    meta = _fetch_metadata_from_store(model_id)
-    ft_type = meta.fine_tuning_type if meta else None
-    is_lora = (ft_type == "lora") if ft_type is not None else False
-
-    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
-    target_id = (base_model or model_id) if is_lora else model_id
+    try:
+      _, target_id, _ = get_model_target_info(model_id)
+    except Exception:
+      target_id = model_id
 
     job_id = sanitize_job_id(target_id)
     for prefix in ("open-rl-trainer-", "open-rl-sampler-"):
@@ -131,28 +123,14 @@ class KubernetesWorkerManager:
     job_id: str,
     role: str = "trainer",
   ) -> dict[str, Any]:
-    from server.worker_manager import _fetch_metadata_from_store
+    from server.worker_manager import get_model_target_info
 
-    meta = _fetch_metadata_from_store(model_id)
-    ft_type = meta.fine_tuning_type if meta else None
-    is_lora = (ft_type == "lora") if ft_type is not None else False
-    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
-    target_id = (base_model or model_id) if is_lora else model_id
-
+    meta, target_id, is_lora = get_model_target_info(model_id)
     if is_lora:
       return self.render_lora_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
     return self.render_fft_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
 
   def _discover_eligible_claims(self, workload_type: str, role: str) -> list[str]:
-    if not hasattr(self.core_api, "api_client"):
-      # Unit test mock environment using _FakeCoreApi
-      custom_objects = getattr(self.core_api, "custom_objects", None)
-      if custom_objects is not None:
-        return custom_objects.get((workload_type, role), [])
-      if workload_type == "lora":
-        return ["open-rl-lora-trainer-gpu-1"] if role == "trainer" else ["open-rl-lora-sampler-gpu-1"]
-      return ["open-rl-trainer-gpu-1"] if role == "trainer" else ["open-rl-sampler-gpu-1"]
-
     try:
       custom_api = client.CustomObjectsApi(self.core_api.api_client)
       label_selector = f"open-rl.io/workload-type={workload_type},open-rl.io/role={role}"

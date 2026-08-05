@@ -2,6 +2,7 @@ import os
 import tempfile
 import types
 import unittest
+from typing import Any
 from unittest.mock import patch
 
 from server.k8s_worker_manager import KubernetesWorkerManager, sanitize_job_id
@@ -31,12 +32,38 @@ class _ApiError(Exception):
     self.status = status
 
 
+class _FakeCustomObjectsApi:
+  def __init__(self, api_client: Any = None):
+    self.api_client = api_client
+
+  def list_namespaced_custom_object(
+    self,
+    group: str,
+    version: str,
+    namespace: str,
+    plural: str,
+    label_selector: str = "",
+  ) -> dict[str, Any]:
+    parts = dict(pair.split("=") for pair in label_selector.split(",") if "=" in pair)
+    workload_type = parts.get("open-rl.io/workload-type", "")
+    role = parts.get("open-rl.io/role", "")
+    custom_objects = getattr(self.api_client, "custom_objects", None)
+    if custom_objects is not None:
+      names = custom_objects.get((workload_type, role), [])
+    elif workload_type == "lora":
+      names = ["open-rl-lora-trainer-gpu-1"] if role == "trainer" else ["open-rl-lora-sampler-gpu-1"]
+    else:
+      names = ["open-rl-trainer-gpu-1"] if role == "trainer" else ["open-rl-sampler-gpu-1"]
+    return {"items": [{"metadata": {"name": name}} for name in names]}
+
+
 class _FakeCoreApi:
-  def __init__(self, pod_phases: dict[str, str] | None = None):
+  def __init__(self, pod_phases: dict[str, str] | None = None, custom_objects: dict[tuple[str, str], list[str]] | None = None):
     self.pod_phases = pod_phases or {}
     self.created: list[tuple[str, dict]] = []
     self.deleted: list[str] = []
     self.create_error: Exception | None = None
+    self.api_client = types.SimpleNamespace(custom_objects=custom_objects)
 
   def read_namespaced_pod(self, name: str, namespace: str):
     if name not in self.pod_phases:
@@ -55,6 +82,9 @@ class _FakeCoreApi:
 
 class KubernetesWorkerManagerTest(unittest.TestCase):
   def setUp(self) -> None:
+    self._custom_api_patcher = patch("server.k8s_worker_manager.client.CustomObjectsApi", _FakeCustomObjectsApi)
+    self._custom_api_patcher.start()
+    self.addCleanup(self._custom_api_patcher.stop)
     self.template_file = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     self.template_file.write(POD_TEMPLATE)
     self.template_file.close()

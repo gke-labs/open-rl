@@ -31,7 +31,7 @@ def _py_cmd(extras: list[str], module: str, model_id: str, active_tenant_set_id:
   return cmd
 
 
-from server.model_metadata import TrainingModelMetadata, WeightSyncConfig
+from server.model_metadata import TrainingModelMetadata
 
 
 def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
@@ -49,6 +49,16 @@ def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
   except Exception:
     pass
   return None
+
+
+def get_model_target_info(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
+  """Retrieve model metadata, target_id, and is_lora flag cleanly from the canonical store."""
+  meta = _fetch_metadata_from_store(model_id)
+  if meta is None:
+    meta = TrainingModelMetadata(base_model=model_id, created_at=0.0, fine_tuning_type="full")
+  is_lora = meta.fine_tuning_type == "lora"
+  target_id = meta.base_model if is_lora else model_id
+  return meta, target_id, is_lora
 
 
 class WorkerManager(Protocol):
@@ -86,13 +96,7 @@ class LocalWorkerManager:
     self.launch_trainer(model_id)
 
   def launch_trainer(self, model_id: str) -> None:
-    meta = _fetch_metadata_from_store(model_id)
-    ft_type = meta.fine_tuning_type if meta else None
-    is_lora = (ft_type == "lora") if ft_type is not None else False
-
-    base_model = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL")
-    target_id = (base_model or model_id) if is_lora else model_id
-
+    meta, target_id, is_lora = get_model_target_info(model_id)
     proc = self.train_processes.get(target_id)
     if proc is not None and proc.poll() is None:
       return
@@ -104,18 +108,13 @@ class LocalWorkerManager:
       "OPEN_RL_TIME_SLICE_JOB_ID": workload_job_id("trainer", target_id),
       "OPEN_RL_TIME_SLICE_GROUP": TRAINER_TIME_SLICE_GROUP,
     }
-    if is_lora:
-      env["OPEN_RL_ENABLE_FFT"] = "false"
-    elif "OPEN_RL_ENABLE_FFT" not in env:
-      env["OPEN_RL_ENABLE_FFT"] = "true"
-    weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
-    if base_model:
-      env["BASE_MODEL"] = base_model
+    if meta.base_model:
+      env["BASE_MODEL"] = meta.base_model
 
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_cfg.strategy
-    if weight_sync_cfg.strategy == "delta":
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
+    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
+    if meta.weight_sync_config.strategy == "delta":
+      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
+      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
 
     trainer_gpu = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES")
     if trainer_gpu:
@@ -130,20 +129,14 @@ class LocalWorkerManager:
     )
 
   def launch_sampler(self, model_id: str) -> None:
-    meta = _fetch_metadata_from_store(model_id)
-    ft_type = meta.fine_tuning_type if meta else None
-    is_lora = (ft_type == "lora") if ft_type is not None else (os.getenv("OPEN_RL_ENABLE_FFT", "").lower() != "true")
-
-    base_model = meta.base_model if meta and meta.base_model else None
-    target_id = (base_model or model_id) if is_lora else model_id
-
+    meta, target_id, is_lora = get_model_target_info(model_id)
     proc = self.sampler_processes.get(target_id)
     if proc is not None and proc.poll() is None:
       return
 
     env = {**os.environ, "OPEN_RL_ENABLE_FFT": "true"}
-    if base_model:
-      env["BASE_MODEL"] = base_model
+    if meta.base_model:
+      env["BASE_MODEL"] = meta.base_model
 
     sampling_backend = os.getenv("SAMPLING_BACKEND", "vllm").lower()
     if sampling_backend == "vllm":
@@ -152,11 +145,10 @@ class LocalWorkerManager:
       sampler_env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id("sampler", target_id)
       sampler_env["OPEN_RL_TIME_SLICE_GROUP"] = SAMPLER_TIME_SLICE_GROUP
 
-      weight_sync_cfg = meta.weight_sync_config if meta else WeightSyncConfig()
-      sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_cfg.strategy
-      if weight_sync_cfg.strategy == "delta":
-        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync_cfg.delta_format
-        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync_cfg.delta_apply_method
+      sampler_env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
+      if meta.weight_sync_config.strategy == "delta":
+        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = meta.weight_sync_config.delta_format
+        sampler_env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = meta.weight_sync_config.delta_apply_method
       sampler_gpu = os.getenv("SAMPLER_CUDA_VISIBLE_DEVICES")
       if sampler_gpu:
         sampler_env["CUDA_VISIBLE_DEVICES"] = sampler_gpu
@@ -171,12 +163,17 @@ class LocalWorkerManager:
       )
 
   def shutdown(self, model_id: str) -> None:
-    proc = self.train_processes.pop(model_id, None)
-    if proc is not None and proc.poll() is None:
-      proc.terminate()
-    proc_s = self.sampler_processes.pop(model_id, None)
-    if proc_s is not None and proc_s.poll() is None:
-      proc_s.terminate()
+    try:
+      _, target_id, _ = get_model_target_info(model_id)
+    except Exception:
+      target_id = model_id
+    for key in {model_id, target_id}:
+      proc = self.train_processes.pop(key, None)
+      if proc is not None and proc.poll() is None:
+        proc.terminate()
+      proc_s = self.sampler_processes.pop(key, None)
+      if proc_s is not None and proc_s.poll() is None:
+        proc_s.terminate()
 
   def shutdown_all(self) -> None:
     for model_id in set(list(self.train_processes) + list(self.sampler_processes)):

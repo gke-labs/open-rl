@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class TrainingModelMetadata:
-  base_model: str | None
+  base_model: str
   created_at: float
   fine_tuning_type: str = "lora"
   weight_sync_config: WeightSyncConfig = field(default_factory=WeightSyncConfig)
@@ -100,7 +100,7 @@ class TrainingModelMetadata:
       ft_type = "lora"
 
     return cls(
-      base_model=data.get("base_model"),
+      base_model=str(data.get("base_model") or ""),
       created_at=data.get("created_at", 0.0),
       fine_tuning_type=ft_type,
       weight_sync_config=cfg,
@@ -121,7 +121,7 @@ class TrainingModelMetadata:
     ft_type = (get_val("OPEN_RL_FINE_TUNING_TYPE") or "lora").lower()
     ft_type = "full" if ft_type == "full" else "lora"
     return cls(
-      base_model=get_val("BASE_MODEL") or get_val("OPEN_RL_BASE_MODEL"),
+      base_model=str(get_val("BASE_MODEL") or get_val("OPEN_RL_BASE_MODEL") or ""),
       created_at=0.0,
       fine_tuning_type=ft_type,
       weight_sync_config=WeightSyncConfig.from_env(env),

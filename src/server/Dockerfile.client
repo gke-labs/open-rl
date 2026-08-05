@@ -22,7 +22,7 @@ COPY pyproject.toml uv.lock ./
 COPY examples/pyproject.toml examples/uv.lock ./examples/
 
 # Configure uv for Docker and caching
-ENV UV_LINK_MODE=hardlink \
+ENV UV_LINK_MODE=copy \
     UV_COMPILE_BYTECODE=1
 
 # Sync CPU-only dependencies for root (with cluster extra for kubernetes launcher) and examples

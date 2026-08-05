@@ -76,7 +76,7 @@ class RunConfig:
     "fft-textsql-rl-x2",
     "lora-fft-gsm8k-rl-x4",
   ]
-  sampling_backend: str = "torch"
+  sampling_backend: str = "vllm"
   trainer_gpu: str = "0"
   sampler_gpu: str = "1"
   base_url: str = ""

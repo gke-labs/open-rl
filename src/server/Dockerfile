@@ -37,7 +37,7 @@ COPY pyproject.toml .
 COPY uv.lock .
 
 # Configure uv for Docker and caching
-ENV UV_LINK_MODE=hardlink
+ENV UV_LINK_MODE=copy
 
 # Install dependencies using uv with BuildKit cache (fast dependency extraction)
 # --frozen ensures it uses the uv.lock exactly
@@ -52,10 +52,6 @@ RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
 
 # Copy source code
 COPY . .
-
-RUN --mount=type=cache,target=/root/.cache/uv \
-    UV_COMPILE_BYTECODE=1 uv sync --frozen --no-editable --extra gpu --extra vllm --extra cluster
-
 
 ENV PATH="/usr/local/cuda/bin:$PATH" \
     CUDA_HOME="/usr/local/cuda" \
