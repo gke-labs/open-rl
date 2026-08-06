@@ -49,10 +49,10 @@ data:
           claims:
           - name: sampler-gpu
           limits:
-            memory: "40Gi"
+            memory: "110Gi"
           requests:
-            memory: "8Gi"
-            cpu: "1"
+            memory: "90Gi"
+            cpu: "12"
         volumeMounts:
         - name: shared-storage
           mountPath: /mnt/shared

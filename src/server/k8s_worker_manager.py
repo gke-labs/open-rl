@@ -368,6 +368,23 @@ class KubernetesWorkerManager:
         claim_ref_name = claims[0]["name"]
     pod["spec"]["resourceClaims"] = [{"name": claim_ref_name, "resourceClaimName": claim_name}]
 
+  @staticmethod
+  def _inject_container_resources(pod: dict[str, Any], memory_tier: str) -> None:
+    containers = pod.get("spec", {}).get("containers", [])
+    if not containers:
+      return
+    resources = containers[0].setdefault("resources", {})
+    limits = resources.setdefault("limits", {})
+    requests = resources.setdefault("requests", {})
+    if memory_tier == "80gb":
+      limits["memory"] = "110Gi"
+      requests["memory"] = "90Gi"
+      requests["cpu"] = "12"
+    else:
+      limits["memory"] = "40Gi"
+      requests["memory"] = "20Gi"
+      requests["cpu"] = "6"
+
   def render_lora_pod(
     self,
     pod_name: str,
@@ -398,6 +415,11 @@ class KubernetesWorkerManager:
     if isinstance(node_sel, dict):
       node_sel.pop("cloud.google.com/gke-accelerator", None)
     self._inject_resource_claim(pod, role, claim_name)
+    base_model_name = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL") or target_id
+    from server.worker_manager import estimate_memory_tier
+
+    memory_tier = estimate_memory_tier(base_model_name, fine_tuning_type="lora")
+    self._inject_container_resources(pod, memory_tier)
 
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
@@ -470,6 +492,11 @@ class KubernetesWorkerManager:
     if isinstance(node_sel, dict):
       node_sel.pop("cloud.google.com/gke-accelerator", None)
     self._inject_resource_claim(pod, role, claim_name)
+    base_model_name = (meta.base_model if meta and meta.base_model else None) or os.getenv("BASE_MODEL") or target_id
+    from server.worker_manager import estimate_memory_tier
+
+    memory_tier = estimate_memory_tier(base_model_name, fine_tuning_type="full")
+    self._inject_container_resources(pod, memory_tier)
 
     container = pod["spec"]["containers"][0]
     worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
