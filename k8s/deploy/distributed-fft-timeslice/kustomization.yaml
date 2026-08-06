@@ -10,11 +10,7 @@ resources:
   - 03-rbac.yaml
   - 04-gateway.yaml
   - 05-worker-pod-template.yaml
-  - 06-gpu-resourceclaim.yaml
-  - 06b-lora-gpu-resourceclaim.yaml
   - 07-accel-timeslicer-daemonset.yaml
-  - 08-sampler-resourceclaim.yaml
-  - 08b-lora-sampler-resourceclaim.yaml
   - 09-sampler-pod-template.yaml
   - 10-dcgm-monitoring.yaml
 
@@ -33,10 +29,10 @@ configMapGenerator:
 images:
   - name: ghcr.io/gke-labs/open-rl/server
     newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.6.8
+    newTag: 0.6.12
   - name: ghcr.io/gke-labs/open-rl/gateway
     newName: gcr.io/cdrollouts-sunilarora/open-rl-gateway
-    newTag: 0.6.8
+    newTag: 0.6.12
 
 replacements:
   - source:

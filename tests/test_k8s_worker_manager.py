@@ -56,6 +56,13 @@ class _FakeCustomObjectsApi:
       names = ["open-rl-trainer-gpu-1"] if role == "trainer" else ["open-rl-sampler-gpu-1"]
     return {"items": [{"metadata": {"name": name}} for name in names]}
 
+  def create_namespaced_custom_object(self, group: str, version: str, namespace: str, plural: str, body: dict) -> dict[str, Any]:
+    name = body.get("metadata", {}).get("name", "created-claim")
+    return {"metadata": {"name": name}}
+
+  def delete_namespaced_custom_object(self, group: str, version: str, namespace: str, plural: str, name: str) -> dict[str, Any]:
+    return {"status": "Success"}
+
 
 class _FakeCoreApi:
   def __init__(self, pod_phases: dict[str, str] | None = None, custom_objects: dict[tuple[str, str], list[str]] | None = None):
@@ -292,8 +299,12 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
     api = _FakeCoreApi()
     manager = self._manager(api)
 
-    # 1. Test error when no labeled claims are discovered
-    with patch.object(manager, "_discover_eligible_claims", return_value=[]), self.assertRaisesRegex(RuntimeError, "No DRA claims matching"):
+    # 1. Test error when no labeled claims are discovered and dynamic creation fails
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=[]),
+      patch.object(manager, "_create_managed_claim", side_effect=RuntimeError("No DRA claims available")),
+      self.assertRaisesRegex(RuntimeError, "No DRA claims available"),
+    ):
       manager.resolve_claim("lora", "trainer", "Qwen3-0.6B")
 
     # 2. Test LoRA mutual exclusion with discovered claims and active pod locks
@@ -315,7 +326,7 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       patch.object(manager, "_discover_eligible_claims", return_value=fft_claims),
       patch.object(manager, "_get_claim_locks", return_value={"fft-gpu-1": {"qwen3-0-6b"}}),
     ):
-      # FFT does not enforce mutual exclusion -> still selects index 0 (fft-gpu-1)
+      # FFT trainer allows up to max_workers_per_claim (2) -> fft-gpu-1 has 1 worker (1/2), so reuses fft-gpu-1
       self.assertEqual(manager.resolve_claim("full", "trainer", "Qwen3-8B"), "fft-gpu-1")
 
   def test_requires_template_and_redis(self) -> None:

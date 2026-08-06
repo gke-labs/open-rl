@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import time
+import uuid
 from typing import Any
 
 import yaml
@@ -130,10 +131,12 @@ class KubernetesWorkerManager:
       return self.render_lora_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
     return self.render_fft_pod(pod_name, model_id, target_id, job_id, role=role, meta=meta)
 
-  def _discover_eligible_claims(self, workload_type: str, role: str) -> list[str]:
+  def _discover_eligible_claims(self, workload_type: str, role: str, memory_tier: str | None = None) -> list[str]:
     try:
       custom_api = client.CustomObjectsApi(self.core_api.api_client)
       label_selector = f"open-rl.io/workload-type={workload_type},open-rl.io/role={role}"
+      if memory_tier:
+        label_selector += f",open-rl.io/memory-tier={memory_tier}"
       res = custom_api.list_namespaced_custom_object(
         group="resource.k8s.io",
         version="v1",
@@ -145,7 +148,7 @@ class KubernetesWorkerManager:
       claim_names = [item["metadata"]["name"] for item in items if isinstance(item, dict) and "metadata" in item and "name" in item["metadata"]]
       return sorted(claim_names)
     except Exception as exc:
-      logger.debug("DRA label discovery failed for %s/%s: %s", workload_type, role, exc)
+      logger.debug("DRA label discovery failed for %s/%s (%s): %s", workload_type, role, memory_tier, exc)
       return []
 
   def _get_claim_locks(self) -> dict[str, set[str]]:
@@ -178,33 +181,125 @@ class KubernetesWorkerManager:
       logger.debug("Failed to inspect active Pod claim locks: %s", exc)
     return locks
 
-  def resolve_claim(self, workload_type: str, role: str, target_id: str) -> str:
-    """Resolve target DRA ResourceClaim using Mode A label discovery and LoRA base-model mutual exclusion."""
-    claims = self._discover_eligible_claims(workload_type, role)
-    if not claims:
-      raise RuntimeError(f"No DRA claims matching 'open-rl.io/workload-type={workload_type},role={role}' in namespace '{self.namespace}'.")
+  def _create_managed_claim(self, workload_type: str, role: str, memory_tier: str) -> str:
+    custom_api = client.CustomObjectsApi(self.core_api.api_client)
+    claim_id = uuid.uuid4().hex[:6]
+    claim_name = f"open-rl-managed-{workload_type}-{role}-{claim_id}"
+    gpu_product = "NVIDIA L4" if memory_tier == "24gb" else "NVIDIA H100 80GB HBM3"
 
+    claim_manifest = {
+      "apiVersion": "resource.k8s.io/v1",
+      "kind": "ResourceClaim",
+      "metadata": {
+        "name": claim_name,
+        "namespace": self.namespace,
+        "labels": {
+          "open-rl.io/managed-by": "open-rl-gateway",
+          "open-rl.io/workload-type": workload_type,
+          "open-rl.io/role": role,
+          "open-rl.io/memory-tier": memory_tier,
+        },
+      },
+      "spec": {
+        "devices": {
+          "requests": [
+            {
+              "name": "gpu",
+              "exactly": {
+                "deviceClassName": "gpu.nvidia.com",
+                "selectors": [{"cel": {"expression": f"device.attributes['gpu.nvidia.com'].productName == '{gpu_product}'"}}],
+              },
+            }
+          ]
+        }
+      },
+    }
+
+    custom_api.create_namespaced_custom_object(
+      group="resource.k8s.io",
+      version="v1",
+      namespace=self.namespace,
+      plural="resourceclaims",
+      body=claim_manifest,
+    )
+    logger.info("Created dynamic managed DRA claim %s for %s/%s (%s)", claim_name, workload_type, role, memory_tier)
+    return claim_name
+
+  def reconcile_managed_claims(self) -> list[str]:
+    """Delete dynamic managed claims that have 0 active worker pods referencing them."""
+    deleted = []
+    try:
+      custom_api = client.CustomObjectsApi(self.core_api.api_client)
+      res = custom_api.list_namespaced_custom_object(
+        group="resource.k8s.io",
+        version="v1",
+        namespace=self.namespace,
+        plural="resourceclaims",
+        label_selector="open-rl.io/managed-by=open-rl-gateway",
+      )
+      items = res.get("items", []) if isinstance(res, dict) else getattr(res, "items", [])
+      active_locks = self._get_claim_locks()
+      for item in items:
+        claim_name = item.get("metadata", {}).get("name")
+        if claim_name and claim_name not in active_locks:
+          try:
+            custom_api.delete_namespaced_custom_object(
+              group="resource.k8s.io",
+              version="v1",
+              namespace=self.namespace,
+              plural="resourceclaims",
+              name=claim_name,
+            )
+            deleted.append(claim_name)
+            logger.info("Reconciled and deleted unused dynamic managed claim %s", claim_name)
+          except Exception as del_exc:
+            logger.debug("Failed to delete managed claim %s: %s", claim_name, del_exc)
+    except Exception as exc:
+      logger.debug("Reconciliation of managed claims failed: %s", exc)
+    return deleted
+
+  def resolve_claim(
+    self,
+    workload_type: str,
+    role: str,
+    target_id: str,
+    memory_tier: str | None = None,
+    meta: Any | None = None,
+  ) -> str:
+    """Resolve target DRA ResourceClaim using pure dynamic managed claim provisioning (No static fallbacks)."""
+    if not memory_tier:
+      from server.worker_manager import estimate_memory_tier
+
+      base_model_name = (meta.base_model if meta and getattr(meta, "base_model", None) else None) or target_id
+      memory_tier = estimate_memory_tier(base_model_name, fine_tuning_type=workload_type)
+
+    claims = self._discover_eligible_claims(workload_type, role, memory_tier=memory_tier)
     locks = self._get_claim_locks()
     clean_target = sanitize_job_id(target_id)
 
-    # Rule 1: Base-Model Affinity (reuse claim if already running clean_target)
+    max_workers_per_claim = int(os.getenv("OPEN_RL_MAX_WORKERS_PER_CLAIM", "2"))
+
+    # Rule 1: Base-Model Affinity (reuse existing dynamic claim if under capacity and already running clean_target)
     for c_name in claims:
-      if clean_target in locks.get(c_name, set()):
+      c_locks = locks.get(c_name, set())
+      if clean_target in c_locks and len(c_locks) < max_workers_per_claim:
         return c_name
 
-    # Rule 2: Mutual Exclusion for LoRA (skip any claim locked to a different base model)
+    # Rule 2: Reuse eligible dynamic claim matching workload_type, role, and memory_tier if under capacity
     eligible = []
     for c_name in claims:
-      claim_locks = locks.get(c_name, set())
-      if workload_type == "lora" and claim_locks and clean_target not in claim_locks:
+      c_locks = locks.get(c_name, set())
+      if len(c_locks) >= max_workers_per_claim:
+        continue
+      if workload_type == "lora" and c_locks and clean_target not in c_locks:
         continue
       eligible.append(c_name)
 
-    if not eligible:
-      raise RuntimeError(f"All DRA claims for workload-type={workload_type}, role={role} are currently locked by other base models.")
+    if eligible:
+      return sorted(eligible)[0]
 
-    # Rule 3: Deterministic Lowest-Index Sorting
-    return sorted(eligible)[0]
+    # Rule 3: Dynamically create a new managed claim for the requested memory tier (No fallback)
+    return self._create_managed_claim(workload_type, role, memory_tier)
 
   @staticmethod
   def _inject_resource_claim(pod: dict[str, Any], role: str, claim_name: str) -> None:
@@ -232,7 +327,7 @@ class KubernetesWorkerManager:
     metadata["name"] = pod_name
     app_label = "open-rl-trainer-worker" if role == "trainer" else "open-rl-sampler-worker"
 
-    claim_name = self.resolve_claim("lora", role, target_id)
+    claim_name = self.resolve_claim("lora", role, target_id, meta=meta)
     labels = metadata.setdefault("labels", {})
     labels["app"] = app_label
     labels["accel-timeslicer"] = "false"
@@ -301,7 +396,7 @@ class KubernetesWorkerManager:
 
     role_group = TRAINER_TIME_SLICE_GROUP if role == "trainer" else SAMPLER_TIME_SLICE_GROUP
     role_job_id = workload_job_id(role, job_id)
-    claim_name = self.resolve_claim("full", role, target_id)
+    claim_name = self.resolve_claim("full", role, target_id, meta=meta)
     metadata.setdefault("labels", {}).update(
       {
         "app": app_label,
