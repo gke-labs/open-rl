@@ -67,6 +67,13 @@ class KubernetesWorkerManager:
       core_api = client.CoreV1Api()
     self.core_api = core_api
 
+    self._resource_slice_cache: dict[str, str] = {}
+    self._resource_slice_cache_time: float = 0.0
+    try:
+      self._discover_cluster_gpu_products()
+    except Exception as exc:
+      logger.debug("Initial ResourceSlice auto-scan skipped: %s", exc)
+
   def launch(self, model_id: str) -> None:
     self.launch_trainer(model_id)
 
@@ -181,11 +188,60 @@ class KubernetesWorkerManager:
       logger.debug("Failed to inspect active Pod claim locks: %s", exc)
     return locks
 
+  def _discover_cluster_gpu_products(self) -> dict[str, str]:
+    """Scan cluster ResourceSlices and return a mapping of memory_tier -> productName (cached for 15 mins)."""
+    now = time.time()
+    if now - self._resource_slice_cache_time < 900.0 and self._resource_slice_cache:
+      return self._resource_slice_cache
+
+    tier_map = {}
+    tier_counts = {}
+    tier_mem = {}
+    try:
+      custom_api = client.CustomObjectsApi(self.core_api.api_client)
+      slices = custom_api.list_cluster_custom_object(group="resource.k8s.io", version="v1", plural="resourceslices")
+      items = slices.get("items", []) if isinstance(slices, dict) else getattr(slices, "items", [])
+      for item in items:
+        if item.get("spec", {}).get("driver") == "gpu.nvidia.com":
+          for dev in item.get("spec", {}).get("devices", []):
+            attrs = dev.get("attributes", {})
+            cap = dev.get("capacity", {})
+            prod = attrs.get("productName", {}).get("string")
+            mem_str = cap.get("memory", {}).get("value", "")
+
+            if prod and mem_str:
+              mem_mib = int(mem_str.rstrip("Mi")) if mem_str.endswith("Mi") else 0
+              tier = "80gb" if mem_mib > 40000 else "24gb"
+              tier_map[tier] = prod
+              tier_mem[tier] = mem_mib
+              tier_counts[tier] = tier_counts.get(tier, 0) + 1
+    except Exception as exc:
+      raise RuntimeError(f"Failed to auto-scan cluster ResourceSlices (resource.k8s.io/v1): {exc}") from exc
+
+    if not tier_map:
+      raise RuntimeError("No active GPU devices found in cluster ResourceSlices (resource.k8s.io/v1)")
+
+    self._resource_slice_cache = tier_map
+    self._resource_slice_cache_time = now
+    logger.info(
+      "Auto-discovered cluster GPU topology from ResourceSlices: products=%s, quantities=%s, memory=%s",
+      tier_map,
+      tier_counts,
+      tier_mem,
+    )
+    return tier_map
+
   def _create_managed_claim(self, workload_type: str, role: str, memory_tier: str) -> str:
     custom_api = client.CustomObjectsApi(self.core_api.api_client)
     claim_id = uuid.uuid4().hex[:6]
     claim_name = f"open-rl-managed-{workload_type}-{role}-{claim_id}"
-    gpu_product = "NVIDIA L4" if memory_tier == "24gb" else "NVIDIA H100 80GB HBM3"
+
+    discovered_products = self._discover_cluster_gpu_products()
+    gpu_product = discovered_products.get(memory_tier)
+    if not gpu_product:
+      raise RuntimeError(
+        f"No cluster ResourceSlice found matching VRAM memory tier {memory_tier!r}. Discovered tiers: {list(discovered_products.keys())}"
+      )
 
     claim_manifest = {
       "apiVersion": "resource.k8s.io/v1",

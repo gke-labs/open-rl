@@ -1,5 +1,5 @@
 # The gateway launches one trainer worker pod per model, so its service account
-# needs pod CRUD in the workload namespace.
+# needs pod CRUD in the workload namespace and cluster-wide resourceslices read permissions.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -27,4 +27,26 @@ subjects:
 roleRef:
   kind: Role
   name: open-rl-worker-launcher
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: open-rl-resourceslice-reader
+rules:
+- apiGroups: ["resource.k8s.io"]
+  resources: ["resourceslices"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: open-rl-resourceslice-reader
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sa
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: open-rl-resourceslice-reader
   apiGroup: rbac.authorization.k8s.io

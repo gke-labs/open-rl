@@ -56,6 +56,29 @@ class _FakeCustomObjectsApi:
       names = ["open-rl-trainer-gpu-1"] if role == "trainer" else ["open-rl-sampler-gpu-1"]
     return {"items": [{"metadata": {"name": name}} for name in names]}
 
+  def list_cluster_custom_object(self, group: str, version: str, plural: str) -> dict[str, Any]:
+    return {
+      "items": [
+        {
+          "spec": {
+            "driver": "gpu.nvidia.com",
+            "devices": [
+              {
+                "name": "gpu-0",
+                "attributes": {"productName": {"string": "NVIDIA L4"}},
+                "capacity": {"memory": {"value": "23034Mi"}},
+              },
+              {
+                "name": "gpu-0",
+                "attributes": {"productName": {"string": "NVIDIA H100 80GB HBM3"}},
+                "capacity": {"memory": {"value": "81559Mi"}},
+              },
+            ],
+          }
+        }
+      ]
+    }
+
   def create_namespaced_custom_object(self, group: str, version: str, namespace: str, plural: str, body: dict) -> dict[str, Any]:
     name = body.get("metadata", {}).get("name", "created-claim")
     return {"metadata": {"name": name}}
