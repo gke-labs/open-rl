@@ -52,6 +52,30 @@ def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
   return None
 
 
+def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str:
+  """Estimate VRAM memory tier ('24gb' or '80gb') based on base model scale and fine-tuning type.
+
+  Anchors:
+    - Qwen3-0.6B / Qwen2.5-0.5B / Qwen2.5-1.5B (LoRA or FFT): '24gb' (NVIDIA L4)
+    - Qwen3-8B / Qwen2.5-7B (LoRA): '24gb' (NVIDIA L4)
+    - Qwen3-8B / Qwen2.5-7B (Full Fine-Tuning): '80gb' (NVIDIA H100)
+    - 14B+ models (LoRA or FFT): '80gb' (NVIDIA H100)
+  """
+  model_lower = (base_model or "").lower()
+
+  # Full fine-tuning 7B/8B+ requires H100 (80gb)
+  if fine_tuning_type == "full":
+    if any(size in model_lower for size in ["7b", "8b", "14b", "32b", "70b"]):
+      return "80gb"
+    return "24gb"
+
+  # LoRA fine-tuning memory scaling
+  if any(size in model_lower for size in ["14b", "32b", "70b"]):
+    return "80gb"
+
+  return "24gb"
+
+
 def get_model_target_info(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
   """Retrieve model metadata, target_id, and is_lora flag cleanly from the canonical store."""
   meta = _fetch_metadata_from_store(model_id)

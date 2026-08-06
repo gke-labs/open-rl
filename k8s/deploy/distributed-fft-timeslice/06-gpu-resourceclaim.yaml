@@ -20,3 +20,6 @@ spec:
     - name: gpu
       exactly:
         deviceClassName: gpu.nvidia.com
+        selectors:
+        - cel:
+            expression: device.attributes['gpu.nvidia.com'].productName == 'NVIDIA H100 80GB HBM3'

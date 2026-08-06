@@ -49,10 +49,10 @@ data:
           claims:
           - name: sampler-gpu
           limits:
-            memory: "180Gi"
+            memory: "40Gi"
           requests:
-            memory: "18Gi"
-            cpu: "4"
+            memory: "8Gi"
+            cpu: "1"
         volumeMounts:
         - name: shared-storage
           mountPath: /mnt/shared
@@ -62,3 +62,7 @@ data:
           claimName: open-rl-shared-pvc
       nodeSelector:
         group.timeslice.io/samplers: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
