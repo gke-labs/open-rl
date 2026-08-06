@@ -631,20 +631,23 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
 
 
 def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run four concurrent RL jobs on GSM8K (2x LoRA on L4 + 2x FFT on H100)."""
+  """Run four concurrent RL jobs on GSM8K (2x LoRA Qwen3-0.6B on L4 + 2x FFT Qwen3-8B on H100)."""
   results: dict[str, str | BaseException] = {}
 
-  def train(job: str, mode: str) -> None:
+  fft_model = "Qwen/Qwen3-8B"
+  lora_model = "Qwen/Qwen3-0.6B"
+
+  def train(job: str, mode: str, job_model: str) -> None:
     try:
       log_path = str(open_rl_tmp_dir(config) / f"{mode}_gsm8k_rl_{job}")
       if os.path.exists(log_path):
         shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(job_model)
       temp = "1.0"
       lr = "1e-4" if mode == "lora" else "1e-5"
       args = [
         "env=gsm8k",
-        f"model_name={config.base_model}",
+        f"model_name={job_model}",
         f"renderer_name={renderer_name}",
         f"max_steps={config.steps if config.steps is not None else 10}",
         f"base_url={base_url}",
@@ -677,12 +680,12 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
       results[job] = exc
 
   jobs_config = [
-    ("lora-a", "lora"),
-    ("lora-b", "lora"),
-    ("fft-a", "fft"),
-    ("fft-b", "fft"),
+    ("lora-a", "lora", lora_model),
+    ("lora-b", "lora", lora_model),
+    ("fft-a", "fft", fft_model),
+    ("fft-b", "fft", fft_model),
   ]
-  threads = [threading.Thread(target=train, args=(job, mode)) for job, mode in jobs_config]
+  threads = [threading.Thread(target=train, args=(job, mode, model)) for job, mode, model in jobs_config]
   for thread in threads:
     thread.start()
   for thread in threads:
