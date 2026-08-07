@@ -148,6 +148,15 @@ async def main():
   print(f"-> Model ID     : {model_id}")
   print(f"-> Base Model   : {model_name}\n")
 
+  # Publish busy before the engine comes up, not after. Loading a multi-GB model
+  # takes minutes during which this worker has no requests to point at, and the
+  # Gateway's reaper cannot tell "no work has arrived yet" from "no work is
+  # happening" -- it reaped a sampler and its trainer mid-job for exactly this
+  # reason. Booting is work; it just has nothing to report on its own.
+  # See server/worker_heartbeat.py.
+  heartbeat = heartbeat_from_env(store)
+  await heartbeat.touch(busy=True)
+
   global engine
   engine_kwargs = {
     "model": model_name,
@@ -176,11 +185,9 @@ async def main():
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
     print(f"[LoRA Sampler] Registered ready signal for model {model_id} in Redis.")
 
-  # Lets the Gateway reap this pod once it stops serving requests; see
-  # server/worker_heartbeat.py. Sampler and trainer are reaped as a pair, so a
-  # sampler idling between training steps does not get pulled out from under a
-  # job that is still running.
-  heartbeat = heartbeat_from_env(store)
+  # Serving now, so the idle clock starts here. Sampler and trainer are reaped
+  # as a pair, so a sampler idling between training steps does not get pulled out
+  # from under a job that is still running.
   await heartbeat.touch(busy=False)
 
   while True:

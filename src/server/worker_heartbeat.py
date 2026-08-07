@@ -61,7 +61,12 @@ class WorkerHeartbeat:
     if self._key is None:
       return
     now = time.time()
-    if busy:
+    # Both directions stamp activity. Going busy is obvious; going idle matters
+    # just as much, because a worker that was busy up to this instant was active
+    # up to this instant. Stamping only on the way in would date the idle clock
+    # from the *start* of the work, so anything slower than the reap timeout --
+    # a long batch, a multi-minute model load -- would finish already expired.
+    if busy or self._busy:
       self._last_activity = now
     if busy == self._busy and (now - self._last_write) < self._write_interval:
       return
@@ -95,18 +100,32 @@ async def read_heartbeat(store: Any, pod_name: str) -> dict[str, Any] | None:
   return parsed if isinstance(parsed, dict) else None
 
 
-def idle_seconds(heartbeat: dict[str, Any] | None, fallback_start: float | None, now: float | None = None) -> float | None:
+def idle_seconds(
+  heartbeat: dict[str, Any] | None,
+  fallback_start: float | None,
+  now: float | None = None,
+  startup_grace: float = 0.0,
+) -> float | None:
   """Seconds this worker has been idle, or None when it is busy or unknowable.
 
-  ``fallback_start`` is the pod's start time. It covers a worker that has
-  published nothing -- one running an image without heartbeat support, or one
-  still loading its model -- which then ages out from boot rather than staying
-  immortal. Returning None means "do not reap".
+  ``fallback_start`` is the pod's start time, used when the worker has published
+  nothing. Silence has two causes and they want opposite handling: a worker still
+  starting up must not be reaped, while one running an image without heartbeat
+  support, or one that died before its first write, must not be immortal.
+  ``startup_grace`` separates them. Below it, silence reads as "still coming up"
+  and this returns None; past it, the worker ages out from its own start time.
+
+  The grace has to cover everything before the process's first heartbeat write --
+  image pull included, since the pod's start time predates it -- which on a
+  multi-GB CUDA image is minutes. Returning None means "do not reap".
   """
   now = time.time() if now is None else now
 
   def from_start() -> float | None:
-    return None if fallback_start is None else max(0.0, now - fallback_start)
+    if fallback_start is None:
+      return None
+    age = max(0.0, now - fallback_start)
+    return None if age < startup_grace else age
 
   if heartbeat is None:
     return from_start()

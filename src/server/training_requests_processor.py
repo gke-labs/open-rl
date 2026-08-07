@@ -549,6 +549,11 @@ async def main_async(args: argparse.Namespace) -> None:
   preload_target = os.getenv("BASE_MODEL")
   is_ready = False
   if preload_target and is_lora:
+    # Booting counts as busy. This load takes minutes, and until the processor
+    # starts publishing there is nothing to tell this pod apart from an idle one
+    # -- the Gateway's reaper would delete it, and the sampler grouped with it,
+    # while it was still coming up. See server/worker_heartbeat.py.
+    await heartbeat_from_env(get_store()).touch(busy=True)
     worker.load_base_model(preload_target)
     is_ready = True
   else:

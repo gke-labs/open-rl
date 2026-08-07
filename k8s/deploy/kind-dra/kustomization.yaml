@@ -127,3 +127,9 @@ patches:
                     value: "180"
                   - name: OPEN_RL_LORA_WORKER_IDLE_CHECK_INTERVAL_SECONDS
                     value: "30"
+                  # Shorter than the 900s default because the images are already
+                  # on this host, but still generous: this window has to cover
+                  # container start through the worker's first heartbeat write,
+                  # and importing vllm alone takes the better part of a minute.
+                  - name: OPEN_RL_LORA_WORKER_STARTUP_GRACE_SECONDS
+                    value: "300"

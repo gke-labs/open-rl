@@ -63,6 +63,19 @@ class WorkerHeartbeatTest(unittest.IsolatedAsyncioTestCase):
     await heartbeat.touch(busy=True)
     self.assertTrue((await read_heartbeat(store, "pod-a"))["busy"])
 
+  async def test_going_idle_stamps_activity_at_the_transition(self) -> None:
+    store = InMemoryStore()
+    heartbeat = WorkerHeartbeat(store, "pod-a", write_interval=3600.0)
+
+    with patch("server.worker_heartbeat.time.time", side_effect=[1000.0, 5000.0]):
+      await heartbeat.touch(busy=True)
+      await heartbeat.touch(busy=False)
+
+    # The end of the work, not its start. Stamping only on the way in would date
+    # the idle clock from 1000.0, so any batch or model load slower than the reap
+    # timeout would come back already expired.
+    self.assertEqual((await read_heartbeat(store, "pod-a"))["last_activity"], 5000.0)
+
   async def test_unreadable_heartbeats_read_as_absent(self) -> None:
     store = InMemoryStore()
     self.assertIsNone(await read_heartbeat(store, "missing"))
@@ -85,6 +98,13 @@ class IdleSecondsTest(unittest.TestCase):
     # An image predating heartbeat support, or a worker still loading its model.
     self.assertEqual(idle_seconds(None, fallback_start=400.0, now=1000.0), 600.0)
     self.assertEqual(idle_seconds({"busy": False}, fallback_start=400.0, now=1000.0), 600.0)
+
+  def test_silence_inside_the_startup_grace_is_not_idleness(self) -> None:
+    # Nothing published yet and the pod is two minutes old: it is pulling a
+    # multi-GB image or loading a model, not sitting idle.
+    self.assertIsNone(idle_seconds(None, fallback_start=880.0, now=1000.0, startup_grace=900.0))
+    # Past the grace the same silence means the worker is never going to speak.
+    self.assertEqual(idle_seconds(None, fallback_start=0.0, now=1000.0, startup_grace=900.0), 1000.0)
 
   def test_unknowable_idleness_is_not_reapable(self) -> None:
     self.assertIsNone(idle_seconds(None, fallback_start=None))
@@ -155,6 +175,20 @@ class ReapIdleLoraWorkersTest(unittest.IsolatedAsyncioTestCase):
     await self._publish(store, "sampler-a", last_activity=now - 3600)
 
     self.assertEqual(await lora_reaper.select_idle_pods(store, pods, timeout_seconds=1800.0, now=now), [])
+
+  async def test_a_worker_still_coming_up_holds_its_whole_group(self) -> None:
+    store = InMemoryStore()
+    now = 10_000.0
+    pods = [_pod("trainer-a", "qwen3-0-6b", start_time=now - 120), _pod("sampler-a", "qwen3-0-6b", start_time=now - 120)]
+    # The trainer is up and polling an empty queue -- because it is waiting on the
+    # sampler, which is still loading its model and has published nothing.
+    await self._publish(store, "trainer-a", last_activity=now - 100)
+
+    self.assertEqual(await lora_reaper.select_idle_pods(store, pods, timeout_seconds=60.0, now=now, startup_grace=900.0), [])
+
+    # Past the grace, silence stops meaning "booting" and the group ages out.
+    selected = await lora_reaper.select_idle_pods(store, pods, timeout_seconds=60.0, now=now, startup_grace=60.0)
+    self.assertEqual(sorted(p["name"] for p in selected), ["sampler-a", "trainer-a"])
 
   async def test_ungrouped_pods_are_never_reaped(self) -> None:
     store = InMemoryStore()
