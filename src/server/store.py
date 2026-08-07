@@ -171,10 +171,14 @@ class InMemoryStore(RequestStore):
           model_id = tenants_list[0]
           queue = self.queues[model_id]
 
-          if not queue.empty():
-            batch = [queue.get_nowait()]
-            while not queue.empty():
-              batch.append(queue.get_nowait())
+          # Drain only what was pending on entry. Requests this tenant enqueues
+          # while we drain wait for its next turn, so a tenant whose producer
+          # outruns the consumer cannot hold the queue open indefinitely.
+          pending = queue.qsize()
+          if pending:
+            batch = [queue.get_nowait() for _ in range(pending)]
+            # Round-robin: rotate the tenant we just served to the tail.
+            tenants_list.append(tenants_list.pop(0))
             return batch
           else:
             tenants_list.pop(0)
@@ -289,6 +293,9 @@ class RedisStore(RequestStore):
         model_id = model_id_bytes.decode() if isinstance(model_id_bytes, bytes) else str(model_id_bytes)
 
       queue_key = f"open_rl:queue:{model_id}"
+      # Snapshot the depth before draining: requests this tenant enqueues while
+      # we drain belong to its next turn, otherwise a producer that outruns the
+      # consumer keeps the drain loop alive and never yields the head slot.
       q_len = await self.redis.llen(queue_key)
       if q_len == 0:
         await self.redis.lrem(active_list, 0, model_id)
@@ -296,13 +303,17 @@ class RedisStore(RequestStore):
         continue
 
       batch = []
-      while True:
+      for _ in range(q_len):
         item = await self.redis.lpop(queue_key)
         if not item:
           break
         batch.append(json.loads(item))
 
       if batch:
+        # Round-robin: move the tenant we just served from the head to the tail.
+        # Draining a tenant's whole batch keeps training batches intact; rotating
+        # afterwards keeps a continuously-enqueueing tenant from starving peers.
+        await self.redis.lmove(active_list, active_list, "LEFT", "RIGHT")
         return batch
 
   async def get_worker_launch_requests(self) -> list[dict[str, Any]]:
