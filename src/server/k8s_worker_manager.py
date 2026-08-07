@@ -13,9 +13,11 @@ dependencies are installed.
 """
 
 import copy
+import datetime
 import logging
 import os
 import re
+import threading
 import time
 import uuid
 from typing import Any
@@ -67,6 +69,14 @@ class KubernetesWorkerManager:
       core_api = client.CoreV1Api()
     self.core_api = core_api
 
+    # Claim resolution is a read-modify-write against the API server: discover
+    # eligible claims, inspect their usage, then create one if none fit. Two
+    # concurrent launches would both see "nothing eligible" and each provision a
+    # claim, so serialize the whole sequence. This guards a single gateway
+    # process; across replicas reconcile_managed_claims() is the backstop.
+    self._launch_lock = threading.RLock()
+    self._claims_created_this_launch: list[str] = []
+
     self._resource_slice_cache: dict[str, str] = {}
     self._resource_slice_cache_time: float = 0.0
     try:
@@ -91,18 +101,26 @@ class KubernetesWorkerManager:
     prefix = "open-rl-trainer-" if role == "trainer" else "open-rl-sampler-"
     pod_name = f"{prefix}{job_id}-1"
 
-    existing = self.read_pod(pod_name)
-    if existing is not None:
-      if existing.status.phase not in TERMINAL_POD_PHASES:
-        return
-      self.delete_pod_and_wait(pod_name)
+    with self._launch_lock:
+      existing = self.read_pod(pod_name)
+      if existing is not None:
+        if existing.status.phase not in TERMINAL_POD_PHASES:
+          return
+        self.delete_pod_and_wait(pod_name)
 
-    try:
-      pod_body = self.render_pod(pod_name, model_id, job_id, role=role)
-      self.core_api.create_namespaced_pod(namespace=self.namespace, body=pod_body)
-    except Exception as exc:
-      if getattr(exc, "status", None) != 409:
-        raise
+      self._claims_created_this_launch = []
+      try:
+        pod_body = self.render_pod(pod_name, model_id, job_id, role=role)
+        self.core_api.create_namespaced_pod(namespace=self.namespace, body=pod_body)
+      except Exception as exc:
+        # The pod never came up, so any claim provisioned while rendering it has
+        # no worker to reference it and reconciliation would be the only thing
+        # left to notice. Release it here instead of leaking a GPU claim.
+        self._release_claims_created_this_launch()
+        if getattr(exc, "status", None) != 409:
+          raise
+      finally:
+        self._claims_created_this_launch = []
 
   def shutdown(self, model_id: str) -> None:
     from server.worker_manager import get_model_target_info
@@ -158,14 +176,22 @@ class KubernetesWorkerManager:
       logger.debug("DRA label discovery failed for %s/%s (%s): %s", workload_type, role, memory_tier, exc)
       return []
 
-  def _get_claim_locks(self) -> dict[str, set[str]]:
-    locks: dict[str, set[str]] = {}
+  def _get_claim_usage(self) -> dict[str, dict[str, Any]]:
+    """Map each claim to its live usage: the set of base models bound to it and its worker count.
+
+    Both numbers come off Pod labels. They are not the same thing: two workers of
+    the same base model share one entry in ``models`` but count as two against
+    claim capacity, so packing decisions must use ``workers`` and LoRA mutual
+    exclusion must use ``models``.
+    """
+    usage: dict[str, dict[str, Any]] = {}
     try:
       pods = self.core_api.list_namespaced_pod(
         self.namespace,
         label_selector="app in (open-rl-trainer-worker, open-rl-sampler-worker)",
       )
-      items = pods.items if hasattr(pods, "items") else pods.get("items", [])
+      # dict.items is a method, so the isinstance check has to come first.
+      items = pods.get("items", []) if isinstance(pods, dict) else getattr(pods, "items", [])
       for pod in items:
         status_phase = ""
         metadata = {}
@@ -183,10 +209,12 @@ class KubernetesWorkerManager:
         claim_name = labels.get("open-rl.io/assigned-claim")
         bound_model = labels.get("open-rl.io/bound-base-model")
         if claim_name and bound_model:
-          locks.setdefault(claim_name, set()).add(bound_model)
+          entry = usage.setdefault(claim_name, {"models": set(), "workers": 0})
+          entry["models"].add(bound_model)
+          entry["workers"] += 1
     except Exception as exc:
-      logger.debug("Failed to inspect active Pod claim locks: %s", exc)
-    return locks
+      logger.debug("Failed to inspect active Pod claim usage: %s", exc)
+    return usage
 
   def _discover_cluster_gpu_products(self) -> dict[str, str]:
     """Scan cluster ResourceSlices and return a mapping of memory_tier -> productName (cached for 15 mins)."""
@@ -279,39 +307,88 @@ class KubernetesWorkerManager:
       body=claim_manifest,
     )
     logger.info("Created dynamic managed DRA claim %s for %s/%s (%s)", claim_name, workload_type, role, memory_tier)
+    self._claims_created_this_launch.append(claim_name)
     return claim_name
 
-  def reconcile_managed_claims(self) -> list[str]:
-    """Delete dynamic managed claims that have 0 active worker pods referencing them."""
-    deleted = []
+  def _delete_managed_claim(self, claim_name: str) -> None:
+    custom_api = client.CustomObjectsApi(self.core_api.api_client)
+    custom_api.delete_namespaced_custom_object(
+      group="resource.k8s.io",
+      version="v1",
+      namespace=self.namespace,
+      plural="resourceclaims",
+      name=claim_name,
+    )
+
+  def _release_claims_created_this_launch(self) -> None:
+    for claim_name in self._claims_created_this_launch:
+      try:
+        self._delete_managed_claim(claim_name)
+        logger.info("Released dynamic managed claim %s after failed worker launch", claim_name)
+      except Exception as exc:
+        logger.debug("Failed to release managed claim %s: %s", claim_name, exc)
+    self._claims_created_this_launch = []
+
+  @staticmethod
+  def _claim_age_seconds(metadata: dict[str, Any]) -> float:
+    """Age of a claim from its creationTimestamp; infinite when the stamp is missing or unparseable.
+
+    Falling back to "infinitely old" means an unreadable timestamp makes a claim
+    eligible for collection rather than immortal. The API server always sets this
+    field, so in practice the fallback only affects fakes.
+    """
+    raw = metadata.get("creationTimestamp")
+    if not raw:
+      return float("inf")
     try:
-      custom_api = client.CustomObjectsApi(self.core_api.api_client)
-      res = custom_api.list_namespaced_custom_object(
-        group="resource.k8s.io",
-        version="v1",
-        namespace=self.namespace,
-        plural="resourceclaims",
-        label_selector="open-rl.io/managed-by=open-rl-gateway",
-      )
-      items = res.get("items", []) if isinstance(res, dict) else getattr(res, "items", [])
-      active_locks = self._get_claim_locks()
-      for item in items:
-        claim_name = item.get("metadata", {}).get("name")
-        if claim_name and claim_name not in active_locks:
+      created = datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+      return float("inf")
+    if created.tzinfo is None:
+      created = created.replace(tzinfo=datetime.UTC)
+    return (datetime.datetime.now(datetime.UTC) - created).total_seconds()
+
+  def reconcile_managed_claims(self, min_age_seconds: float | None = None) -> list[str]:
+    """Delete dynamic managed claims that have 0 active worker pods referencing them.
+
+    A claim is provisioned moments before its worker Pod, so "no Pod references
+    it" is also what an in-flight launch looks like. The launch lock closes that
+    window for this process; ``min_age_seconds`` closes it for the other gateway
+    replicas, whose in-flight launches this process cannot see.
+    """
+    if min_age_seconds is None:
+      min_age_seconds = float(os.getenv("OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS", "120"))
+
+    deleted = []
+    with self._launch_lock:
+      try:
+        custom_api = client.CustomObjectsApi(self.core_api.api_client)
+        res = custom_api.list_namespaced_custom_object(
+          group="resource.k8s.io",
+          version="v1",
+          namespace=self.namespace,
+          plural="resourceclaims",
+          label_selector="open-rl.io/managed-by=open-rl-gateway",
+        )
+        items = res.get("items", []) if isinstance(res, dict) else getattr(res, "items", [])
+        active_usage = self._get_claim_usage()
+        for item in items:
+          metadata = item.get("metadata", {})
+          claim_name = metadata.get("name")
+          if not claim_name or claim_name in active_usage:
+            continue
+          age = self._claim_age_seconds(metadata)
+          if age < min_age_seconds:
+            logger.debug("Skipping managed claim %s: %.0fs old, below the %.0fs grace period", claim_name, age, min_age_seconds)
+            continue
           try:
-            custom_api.delete_namespaced_custom_object(
-              group="resource.k8s.io",
-              version="v1",
-              namespace=self.namespace,
-              plural="resourceclaims",
-              name=claim_name,
-            )
+            self._delete_managed_claim(claim_name)
             deleted.append(claim_name)
             logger.info("Reconciled and deleted unused dynamic managed claim %s", claim_name)
           except Exception as del_exc:
             logger.debug("Failed to delete managed claim %s: %s", claim_name, del_exc)
-    except Exception as exc:
-      logger.debug("Reconciliation of managed claims failed: %s", exc)
+      except Exception as exc:
+        logger.debug("Reconciliation of managed claims failed: %s", exc)
     return deleted
 
   def resolve_claim(
@@ -330,24 +407,28 @@ class KubernetesWorkerManager:
       memory_tier = estimate_memory_tier(base_model_name, fine_tuning_type=workload_type)
 
     claims = self._discover_eligible_claims(workload_type, role, memory_tier=memory_tier)
-    locks = self._get_claim_locks()
+    usage = self._get_claim_usage()
     clean_target = sanitize_job_id(target_id)
 
     max_workers_per_claim = int(os.getenv("OPEN_RL_MAX_WORKERS_PER_CLAIM", "2"))
 
+    def _models(c_name: str) -> set[str]:
+      return usage.get(c_name, {}).get("models", set())
+
+    def _workers(c_name: str) -> int:
+      return usage.get(c_name, {}).get("workers", 0)
+
     # Rule 1: Base-Model Affinity (reuse existing dynamic claim if under capacity and already running clean_target)
     for c_name in claims:
-      c_locks = locks.get(c_name, set())
-      if clean_target in c_locks and len(c_locks) < max_workers_per_claim:
+      if clean_target in _models(c_name) and _workers(c_name) < max_workers_per_claim:
         return c_name
 
     # Rule 2: Reuse eligible dynamic claim matching workload_type, role, and memory_tier if under capacity
     eligible = []
     for c_name in claims:
-      c_locks = locks.get(c_name, set())
-      if len(c_locks) >= max_workers_per_claim:
+      if _workers(c_name) >= max_workers_per_claim:
         continue
-      if workload_type == "lora" and c_locks and clean_target not in c_locks:
+      if workload_type == "lora" and _models(c_name) and clean_target not in _models(c_name):
         continue
       eligible.append(c_name)
 

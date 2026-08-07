@@ -1,5 +1,6 @@
 import os
 import tempfile
+import time
 import types
 import unittest
 from typing import Any
@@ -337,7 +338,8 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       self.assertEqual(manager.resolve_claim("lora", "trainer", "Qwen3-0.6B"), "lora-gpu-1")
 
       # Simulate lora-gpu-1 locked to qwen3-0-6b
-      with patch.object(manager, "_get_claim_locks", return_value={"lora-gpu-1": {"qwen3-0-6b"}}):
+      usage = {"lora-gpu-1": {"models": {"qwen3-0-6b"}, "workers": 1}}
+      with patch.object(manager, "_get_claim_usage", return_value=usage):
         # Same base model -> affinity reuses lora-gpu-1
         self.assertEqual(manager.resolve_claim("lora", "trainer", "Qwen3-0.6B"), "lora-gpu-1")
         # Different base model -> mutual exclusion skips lora-gpu-1 and selects lora-gpu-2
@@ -347,10 +349,220 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
     fft_claims = ["fft-gpu-1", "fft-gpu-2"]
     with (
       patch.object(manager, "_discover_eligible_claims", return_value=fft_claims),
-      patch.object(manager, "_get_claim_locks", return_value={"fft-gpu-1": {"qwen3-0-6b"}}),
+      patch.object(manager, "_get_claim_usage", return_value={"fft-gpu-1": {"models": {"qwen3-0-6b"}, "workers": 1}}),
     ):
       # FFT trainer allows up to max_workers_per_claim (2) -> fft-gpu-1 has 1 worker (1/2), so reuses fft-gpu-1
       self.assertEqual(manager.resolve_claim("full", "trainer", "Qwen3-8B"), "fft-gpu-1")
+
+  def test_claim_capacity_counts_workers_not_distinct_models(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+    claims = ["fft-gpu-1", "fft-gpu-2"]
+
+    # Two workers of the SAME base model fill a claim with max_workers_per_claim=2.
+    # Counting distinct models here would see 1/2 and keep packing onto fft-gpu-1.
+    saturated = {"fft-gpu-1": {"models": {"qwen3-8b"}, "workers": 2}}
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=claims),
+      patch.object(manager, "_get_claim_usage", return_value=saturated),
+    ):
+      self.assertEqual(manager.resolve_claim("full", "trainer", "Qwen3-8B"), "fft-gpu-2")
+
+    # Base-model affinity must respect the same worker ceiling.
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=["fft-gpu-1"]),
+      patch.object(manager, "_get_claim_usage", return_value=saturated),
+      patch.object(manager, "_create_managed_claim", return_value="fft-gpu-new") as create,
+    ):
+      self.assertEqual(manager.resolve_claim("full", "trainer", "Qwen3-8B"), "fft-gpu-new")
+      create.assert_called_once()
+
+  def test_claim_usage_counts_each_pod_separately(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+
+    def _pod(name: str, claim: str, model: str, phase: str = "Running") -> dict[str, Any]:
+      return {
+        "metadata": {"name": name, "labels": {"open-rl.io/assigned-claim": claim, "open-rl.io/bound-base-model": model}},
+        "status": {"phase": phase},
+      }
+
+    pods = {
+      "items": [
+        _pod("w1", "claim-a", "qwen3-8b"),
+        _pod("w2", "claim-a", "qwen3-8b"),
+        _pod("w3", "claim-a", "qwen3-0-6b"),
+        _pod("w4", "claim-a", "qwen3-8b", phase="Succeeded"),
+      ]
+    }
+    with patch.object(api, "list_namespaced_pod", return_value=pods, create=True):
+      usage = manager._get_claim_usage()
+
+    # Terminal pods are excluded; the two live qwen3-8b pods count twice.
+    self.assertEqual(usage["claim-a"]["workers"], 3)
+    self.assertEqual(usage["claim-a"]["models"], {"qwen3-8b", "qwen3-0-6b"})
+
+  def test_dynamic_claim_is_released_when_pod_create_fails(self) -> None:
+    api = _FakeCoreApi()
+    api.create_error = _ApiError(500)
+    manager = self._manager(api)
+
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=[]),
+      patch.object(manager, "_delete_managed_claim") as delete_claim,
+      self.assertRaises(_ApiError),
+    ):
+      manager.launch("model-a")
+
+    # The claim provisioned while rendering the pod must not outlive the failure.
+    delete_claim.assert_called_once()
+    self.assertTrue(delete_claim.call_args[0][0].startswith("open-rl-managed-full-trainer-"))
+
+  def test_dynamic_claim_is_released_when_pod_create_conflicts(self) -> None:
+    api = _FakeCoreApi()
+    api.create_error = _ApiError(409)
+    manager = self._manager(api)
+
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=[]),
+      patch.object(manager, "_delete_managed_claim") as delete_claim,
+    ):
+      manager.launch("model-a")  # 409 is tolerated, but the claim still leaks without cleanup
+
+    delete_claim.assert_called_once()
+
+  def test_successful_launch_keeps_its_dynamic_claim(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+
+    with (
+      patch.object(manager, "_discover_eligible_claims", return_value=[]),
+      patch.object(manager, "_delete_managed_claim") as delete_claim,
+    ):
+      manager.launch("model-a")
+
+    delete_claim.assert_not_called()
+    self.assertEqual(manager._claims_created_this_launch, [])
+    claim = api.created[0][1]["spec"]["resourceClaims"][0]["resourceClaimName"]
+    self.assertTrue(claim.startswith("open-rl-managed-full-trainer-"))
+
+  def test_concurrent_launches_provision_a_single_claim(self) -> None:
+    import threading
+
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+    created_claims: list[str] = []
+    barrier = threading.Barrier(4)
+
+    real_create = manager._create_managed_claim
+
+    def slow_create(workload_type: str, role: str, memory_tier: str) -> str:
+      # Widen the resolve -> create window so an unsynchronized launch path would
+      # reliably interleave and double-provision.
+      time.sleep(0.05)
+      name = real_create(workload_type, role, memory_tier)
+      created_claims.append(name)
+      return name
+
+    def launch() -> None:
+      barrier.wait()
+      manager.launch("model-a")
+
+    with (
+      patch.object(manager, "_discover_eligible_claims", side_effect=lambda *a, **k: list(created_claims)),
+      patch.object(manager, "_get_claim_usage", side_effect=lambda: {c: {"models": {"model-a"}, "workers": 1} for c in created_claims}),
+      patch.object(manager, "_create_managed_claim", side_effect=slow_create),
+    ):
+      threads = [threading.Thread(target=launch) for _ in range(4)]
+      for t in threads:
+        t.start()
+      for t in threads:
+        t.join()
+
+    self.assertEqual(len(created_claims), 1, f"expected one dynamic claim, got {created_claims}")
+
+  def _managed_claim(self, name: str, age_seconds: float) -> dict[str, Any]:
+    import datetime
+
+    created = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=age_seconds)
+    return {"metadata": {"name": name, "creationTimestamp": created.strftime("%Y-%m-%dT%H:%M:%SZ")}}
+
+  def _reconcile(self, manager: KubernetesWorkerManager, claims: list[dict], usage: dict, **kwargs) -> list[str]:
+    """Run a reconcile pass over `claims`, returning the names it deleted."""
+    with (
+      patch.object(_FakeCustomObjectsApi, "list_namespaced_custom_object", return_value={"items": claims}),
+      patch.object(manager, "_get_claim_usage", return_value=usage),
+      patch.object(manager, "_delete_managed_claim") as delete_claim,
+    ):
+      deleted = manager.reconcile_managed_claims(**kwargs)
+    # The returned names must be exactly the claims it actually issued deletes for.
+    self.assertEqual(deleted, [call.args[0] for call in delete_claim.call_args_list])
+    return deleted
+
+  def test_reconcile_deletes_unreferenced_claims(self) -> None:
+    manager = self._manager(_FakeCoreApi())
+    claims = [self._managed_claim("claim-idle", age_seconds=600), self._managed_claim("claim-busy", age_seconds=600)]
+    usage = {"claim-busy": {"models": {"qwen3-8b"}, "workers": 1}}
+
+    deleted = self._reconcile(manager, claims, usage)
+
+    self.assertEqual(deleted, ["claim-idle"])
+
+  def test_reconcile_skips_claims_inside_the_grace_period(self) -> None:
+    manager = self._manager(_FakeCoreApi())
+    # A claim provisioned seconds ago whose Pod has not registered yet is
+    # indistinguishable from an abandoned one; another replica may be mid-launch.
+    claims = [self._managed_claim("claim-just-created", age_seconds=5)]
+
+    self.assertEqual(self._reconcile(manager, claims, {}, min_age_seconds=120), [])
+    # Past the grace period the same claim is collected.
+    self.assertEqual(self._reconcile(manager, claims, {}, min_age_seconds=1), ["claim-just-created"])
+
+  def test_reconcile_grace_period_is_configurable_by_env(self) -> None:
+    manager = self._manager(_FakeCoreApi())
+    claims = [self._managed_claim("claim-idle", age_seconds=60)]
+
+    with patch.dict(os.environ, {**self.env, "OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS": "600"}, clear=True):
+      self.assertEqual(self._reconcile(manager, claims, {}), [])
+    with patch.dict(os.environ, {**self.env, "OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS": "10"}, clear=True):
+      self.assertEqual(self._reconcile(manager, claims, {}), ["claim-idle"])
+
+  def test_reconcile_excludes_launches_in_the_same_process(self) -> None:
+    import threading
+
+    manager = self._manager(_FakeCoreApi())
+    order: list[str] = []
+    launch_holds_lock = threading.Event()
+    reconcile_attempted = threading.Event()
+
+    def hold_lock() -> None:
+      with manager._launch_lock:
+        launch_holds_lock.set()
+        reconcile_attempted.wait(timeout=2)
+        time.sleep(0.05)
+        order.append("launch-done")
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    self.assertTrue(launch_holds_lock.wait(timeout=2))
+
+    def reconcile() -> None:
+      reconcile_attempted.set()
+      self._reconcile(manager, [self._managed_claim("claim-idle", age_seconds=600)], {})
+      order.append("reconcile-done")
+
+    reconciler = threading.Thread(target=reconcile)
+    reconciler.start()
+    holder.join(timeout=5)
+    reconciler.join(timeout=5)
+
+    # Reconciliation cannot inspect claims while a launch is provisioning one.
+    self.assertEqual(order, ["launch-done", "reconcile-done"])
+
+  def test_claim_age_tolerates_missing_or_bad_timestamps(self) -> None:
+    self.assertEqual(KubernetesWorkerManager._claim_age_seconds({}), float("inf"))
+    self.assertEqual(KubernetesWorkerManager._claim_age_seconds({"creationTimestamp": "not-a-date"}), float("inf"))
+    self.assertLess(KubernetesWorkerManager._claim_age_seconds(self._managed_claim("c", 30)["metadata"]) - 30, 5)
 
   def test_requires_template_and_redis(self) -> None:
     with patch.dict(os.environ, {"REDIS_URL": "redis://r:6379"}, clear=True), self.assertRaisesRegex(RuntimeError, "POD_TEMPLATE"):

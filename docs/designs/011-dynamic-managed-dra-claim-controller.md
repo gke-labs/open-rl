@@ -218,11 +218,18 @@ Result: The 8x H100 node is partitioned into two equal 4-GPU sets with zero devi
 
 ### 4.8 Automated Garbage Collection & Reconciliation
 
-To prevent claim leaks, `reconcile_managed_claims()` runs periodically inside the control plane:
+To prevent claim leaks, `reconcile_managed_claims()` runs periodically inside the control plane, driven by a background task started in the Gateway lifespan (`OPEN_RL_CLAIM_RECONCILE_INTERVAL_SECONDS`, default `300`; set to `0` to disable):
 
-- Queries all claims labeled `open-rl.io/managed-by=open-rl-control-plane`.
+- Queries all claims labeled `open-rl.io/managed-by=open-rl-gateway`.
 - Cross-references active worker pods (`app in (open-rl-trainer-worker, open-rl-sampler-worker)`).
 - If a managed claim has **0 active worker pods referencing it**, the control plane deletes the `ResourceClaim` custom object, releasing physical GPU resources back to the cloud pool.
+
+A claim is created moments *before* its worker Pod, so an in-flight launch is indistinguishable from an abandoned claim. Two guards keep reconciliation from deleting a claim out from under a starting worker:
+
+- The reconcile pass holds the Workload Scheduler's launch lock, excluding launches from the same Gateway process.
+- Claims younger than `OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS` (default `120`) are skipped, covering in-flight launches on *other* Gateway replicas, which this process cannot observe.
+
+Independently, a launch that fails after provisioning a claim releases that claim immediately rather than waiting for the next reconcile pass.
 
 ---
 

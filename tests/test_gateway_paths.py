@@ -62,5 +62,53 @@ class GatewayPathTest(unittest.TestCase):
     self.assertEqual(gateway.checkpoint_state_path("job-a", "/mnt/checkpoints/final"), "/mnt/checkpoints/final")
 
 
+class ClaimReconcilerTest(unittest.IsolatedAsyncioTestCase):
+  class _K8sManager:
+    def __init__(self) -> None:
+      self.calls = 0
+
+    def reconcile_managed_claims(self) -> list[str]:
+      self.calls += 1
+      return ["claim-idle"]
+
+  class _LocalManager:
+    """Stands in for LocalWorkerManager, which provisions no DRA claims."""
+
+  async def test_reconciler_runs_on_its_interval(self) -> None:
+    manager = self._K8sManager()
+    task = asyncio.create_task(gateway.run_claim_reconciler(manager, interval=0.01))
+    await asyncio.sleep(0.1)
+    task.cancel()
+
+    self.assertGreater(manager.calls, 1, "reconcile loop should fire repeatedly, not once")
+
+  async def test_reconciler_survives_a_failing_pass(self) -> None:
+    manager = self._K8sManager()
+
+    def boom() -> list[str]:
+      manager.calls += 1
+      raise RuntimeError("API server unavailable")
+
+    manager.reconcile_managed_claims = boom
+    task = asyncio.create_task(gateway.run_claim_reconciler(manager, interval=0.01))
+    await asyncio.sleep(0.1)
+    task.cancel()
+
+    # A transient API error must not silently kill the only thing reclaiming GPUs.
+    self.assertGreater(manager.calls, 1)
+
+  async def test_reconciler_starts_only_for_claim_provisioning_managers(self) -> None:
+    self.assertIsNone(gateway.start_claim_reconciler(None))
+    self.assertIsNone(gateway.start_claim_reconciler(self._LocalManager()))
+
+    task = gateway.start_claim_reconciler(self._K8sManager())
+    self.assertIsNotNone(task)
+    task.cancel()
+
+  async def test_reconciler_can_be_disabled(self) -> None:
+    with patch.dict(os.environ, {"OPEN_RL_CLAIM_RECONCILE_INTERVAL_SECONDS": "0"}):
+      self.assertIsNone(gateway.start_claim_reconciler(self._K8sManager()))
+
+
 if __name__ == "__main__":
   unittest.main()
