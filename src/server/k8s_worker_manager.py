@@ -424,9 +424,7 @@ class KubernetesWorkerManager:
     self._inject_container_resources(pod, memory_tier)
 
     container = pod["spec"]["containers"][0]
-    worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
-    if worker_image:
-      container["image"] = worker_image
+    _apply_worker_image_overrides(container)
 
     if role == "sampler":
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.lora_sampler"]
@@ -501,9 +499,7 @@ class KubernetesWorkerManager:
     self._inject_container_resources(pod, memory_tier)
 
     container = pod["spec"]["containers"][0]
-    worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
-    if worker_image:
-      container["image"] = worker_image
+    _apply_worker_image_overrides(container)
 
     if role == "sampler":
       container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
@@ -549,6 +545,23 @@ class KubernetesWorkerManager:
       if time.monotonic() > deadline:
         raise RuntimeError(f"pod {pod_name} did not terminate within {timeout:.0f}s; cannot relaunch worker")
       time.sleep(0.5)
+
+
+def _apply_worker_image_overrides(container: dict[str, Any]) -> None:
+  """Point a rendered worker at the operator's image, and say how to fetch it.
+
+  The pod templates live inside ConfigMaps as YAML strings, out of reach of any
+  kustomize image transformer, so this is what actually decides the image every
+  launched worker runs. The pull policy has to come along with it: a dev loop
+  that republishes the same mutable tag needs ``Always``, or the kubelet keeps
+  the build it already cached and silently runs the previous code.
+  """
+  worker_image = os.getenv("OPEN_RL_WORKER_IMAGE")
+  if worker_image:
+    container["image"] = worker_image
+  pull_policy = os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY")
+  if pull_policy:
+    container["imagePullPolicy"] = pull_policy
 
 
 def set_env(container: dict[str, Any], name: str, value: str) -> None:

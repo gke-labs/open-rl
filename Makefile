@@ -207,7 +207,7 @@ kind-sync:
 kind-create: kind-sync
 	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/create-cluster.sh'
 
-# Rebuild and side-load only the slim gateway image -- the fast inner loop.
+# Rebuild and republish only the slim gateway image -- the fast inner loop.
 kind-gateway: kind-sync
 	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/load-images.sh gateway && kubectl rollout restart deployment/open-rl-gateway'
 
@@ -218,9 +218,9 @@ kind-client: kind-sync
 	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/load-images.sh client'
 
 # Same harness as cluster-e2e, driven over ssh so kubectl runs against the kind
-# context on the VM. IfNotPresent is mandatory here: the side-loaded
-# open-rl.local image exists only in the node's containerd store, and the
-# default Always would send the kubelet to a registry that cannot serve it.
+# context on the VM. Always is deliberate: :kind-dev is republished on every
+# iteration, so IfNotPresent would run whatever the kubelet cached last time.
+# The registry sits on the kind docker network, so the pull is local.
 kind-e2e: kind-sync
 	@if [ -z "$(E2E_SCENARIO)" ]; then \
 	  echo "Missing E2E_SCENARIO. Example:"; \
@@ -229,8 +229,8 @@ kind-e2e: kind-sync
 	fi
 	ssh $(KIND_HOST) 'cd $(KIND_REPO) && python3 scripts/run_cluster_e2e.py \
 	  --scenario "$(E2E_SCENARIO)" \
-	  --image open-rl.local/open-rl-client:kind-dev \
-	  --image-pull-policy IfNotPresent \
+	  --image localhost:5001/open-rl-client:kind-dev \
+	  --image-pull-policy Always \
 	  $(if $(E2E_ARGS),--args "$(E2E_ARGS)",)'
 
 kind-status:

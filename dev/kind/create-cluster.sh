@@ -26,9 +26,16 @@ if kind get clusters 2>/dev/null | grep -qx "$CLUSTER_NAME"; then
   kind delete cluster --name "$CLUSTER_NAME"
 fi
 
+# Before the cluster: the node's containerd config names the registry container,
+# and starting it first means the mirror resolves on the node's very first pull.
+"$SCRIPT_DIR/registry.sh"
+
 log "Creating cluster '$CLUSTER_NAME'..."
 kind create cluster --config "$SCRIPT_DIR/kind-cluster.yaml" --name "$CLUSTER_NAME"
 kubectl config use-context "kind-${CLUSTER_NAME}"
+
+# The kind network only exists now, so the connect step was skipped above.
+"$SCRIPT_DIR/registry.sh"
 
 log "Confirming GPUs reached the node container..."
 docker exec "${CLUSTER_NAME}-control-plane" nvidia-smi -L
@@ -91,7 +98,7 @@ fi
 cat <<EOF
 
 Cluster ready. Next:
-  ./dev/kind/load-images.sh          # build + side-load the open-rl images
+  ./dev/kind/load-images.sh          # build + push the open-rl images
   kubectl apply -k k8s/deploy/kind-dra/
   kubectl apply -f dev/kind/synthetic-h100-resourceslice.yaml   # optional, for 80gb-tier tests
 EOF

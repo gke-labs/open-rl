@@ -4,10 +4,16 @@ Runs the Open-RL DRA workload scheduler against real GPUs inside a kind cluster
 on a single Linux GPU VM, instead of against GKE.
 
 The point is the image loop. On GKE every code change means build → push →
-pull, and the CUDA server image is multiple GB. Here `docker build` and
-`kind load docker-image` hand the image straight to the node's containerd store,
-so nothing crosses a network. Cluster teardown and rebuild is a minute, which
-makes claim-leak and reconciliation behavior cheap to test from a clean slate.
+pull across the internet, and the CUDA server image is multiple GB. Here the
+build, the registry, and the node all live on one machine: `docker push` moves
+only the layer that changed, over the local docker network. Cluster teardown and
+rebuild is a minute, which makes claim-leak and reconciliation behavior cheap to
+test from a clean slate.
+
+Not `kind load docker-image`. That path is `docker save` piped into
+`ctr images import`, with no layer-level dedup against what the node already
+holds — a one-line source change re-shipped the whole 36 GB server image, about
+24 minutes per iteration. A registry dedups by digest.
 
 ## Requirements
 
@@ -28,7 +34,7 @@ ssh l4dev 'bash -s' < dev/kind/host-setup.sh     # one time; installs docker,
 ssh l4dev                                        # re-login picks up the docker group
 
 # On the VM, in a checkout of this repo:
-./dev/kind/create-cluster.sh
+./dev/kind/create-cluster.sh                     # also starts the registry
 ./dev/kind/load-images.sh
 kubectl apply -k k8s/deploy/kind-dra/
 ```
@@ -43,6 +49,30 @@ kubectl rollout restart deployment/open-rl-gateway
 
 Rebuild the `server` image only when the trainer or sampler code changes — it is
 the expensive one.
+
+## The cluster-local registry
+
+`registry.sh` runs a `registry:2` container published on `127.0.0.1:5001` and
+attached to the `kind` docker network. `create-cluster.sh` calls it, so there is
+usually nothing to do by hand; run it directly if the container was removed.
+
+The host pushes to `localhost:5001`. The node cannot reach the host's loopback,
+so `kind-cluster.yaml` gives containerd a mirror rewriting that same reference to
+`http://kind-registry:5000` on the docker network. One image reference works from
+both sides, which is why the manifests can name `localhost:5001` directly.
+
+Two consequences worth knowing:
+
+- **The mirror is baked in at cluster creation.** Adding it to
+  `kind-cluster.yaml` does nothing for a cluster that already exists; recreate
+  the cluster.
+- **`imagePullPolicy: Always` everywhere in the kind overlay.** The `:kind-dev`
+  tag is mutable and republished every iteration, so the base manifests'
+  `IfNotPresent` would leave the kubelet on the build it already cached and
+  silently test the previous code. The worker pod templates live inside
+  ConfigMaps as YAML strings where no kustomize patch can reach them, so the
+  gateway stamps their image and pull policy at render time from
+  `OPEN_RL_WORKER_IMAGE` / `OPEN_RL_WORKER_IMAGE_PULL_POLICY`.
 
 ## How GPUs reach the pods
 

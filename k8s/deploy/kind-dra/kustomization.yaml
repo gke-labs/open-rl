@@ -8,7 +8,7 @@ kind: Kustomization
 #   - local-path PVC instead of an RWX Filestore class
 #   - DCGM/PodMonitoring dropped (GKE-release image, gke-accelerator node
 #     selector, and a Google Managed Prometheus CRD that does not exist here)
-#   - images point at locally built tags side-loaded with `kind load`
+#   - images point at locally built tags in the cluster-local registry
 #
 # Images are set with explicit patches rather than an `images:` transformer.
 # The base kustomization runs its own transformer first, retagging everything to
@@ -63,7 +63,12 @@ patches:
       metadata:
         name: nvidia-dcgm-exporter-scraper
 
-  # Must match what dev/kind/load-images.sh builds and side-loads.
+  # Must match what dev/kind/load-images.sh builds and pushes.
+  #
+  # imagePullPolicy: Always throughout. The tag is mutable -- every iteration
+  # republishes :kind-dev -- so the base's IfNotPresent would leave the kubelet
+  # on the build it already cached and silently test the previous code. The
+  # registry is one docker network away, so re-pulling costs nothing.
   - target:
       kind: DaemonSet
       name: open-rl-accel-timeslicer
@@ -77,7 +82,8 @@ patches:
           spec:
             containers:
               - name: accel-timeslicer
-                image: open-rl.local/open-rl-server:kind-dev
+                image: localhost:5001/open-rl-server:kind-dev
+                imagePullPolicy: Always
 
   - target:
       kind: Deployment
@@ -92,7 +98,8 @@ patches:
           spec:
             containers:
               - name: gateway
-                image: open-rl.local/open-rl-gateway:kind-dev
+                image: localhost:5001/open-rl-gateway:kind-dev
+                imagePullPolicy: Always
                 env:
                   # The worker and sampler pod templates live inside ConfigMaps
                   # as YAML strings, out of reach of any image transformer. The
@@ -100,7 +107,12 @@ patches:
                   # (k8s_worker_manager.py:506), so this is what actually decides
                   # the image every launched worker runs.
                   - name: OPEN_RL_WORKER_IMAGE
-                    value: open-rl.local/open-rl-server:kind-dev
+                    value: localhost:5001/open-rl-server:kind-dev
+                  # Same reason as the containers patched above, but the worker
+                  # templates are ConfigMap strings a patch cannot reach, so the
+                  # gateway stamps this at render time.
+                  - name: OPEN_RL_WORKER_IMAGE_PULL_POLICY
+                    value: Always
                   # Tighter than the 300s/120s production defaults so a manual
                   # test does not spend five minutes waiting to watch the
                   # reconciler reclaim a leaked claim.
