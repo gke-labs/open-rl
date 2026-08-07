@@ -26,7 +26,7 @@ spec:
       containers:
       - name: e2e-client
         image: E2E-IMAGE
-        imagePullPolicy: Always
+        imagePullPolicy: E2E-IMAGE-PULL-POLICY
         args:
         - "scenario=E2E-SCENARIO"
         - "uv_extra=cpu"

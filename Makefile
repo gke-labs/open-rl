@@ -1,4 +1,9 @@
-.PHONY: server vllm test lint fmt help render release-bundle push-vm pull-vm cluster-eval
+.PHONY: server vllm test lint fmt help render release-bundle push-vm pull-vm cluster-eval \
+	cloud-build-gateway cloud-build-server cloud-build-client \
+	cloud-deploy-gateway cloud-deploy-server \
+	cloud-rollout-gateway cloud-rollout-server cloud-rollout \
+	kind-host-setup kind-sync kind-create kind-gateway kind-deploy \
+	kind-client kind-e2e kind-status kind-logs kind-delete
 
 # ---------------------------------------------------------------------------
 # Knobs (override on the command line: make server BASE_MODEL=... SAMPLING_BACKEND=...)
@@ -135,6 +140,108 @@ push-images:
 	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set env deployment/open-rl-gateway OPEN_RL_WORKER_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
 
+# --- Cloud Build ------------------------------------------------------------
+# Builds in GCP instead of locally: `gcloud builds submit` uploads only the
+# tracked source (~7 MB after .dockerignore) and the CUDA base layers are pulled
+# inside Google's network. Useful when the workstation is far from the cluster
+# or has no Docker daemon.
+#
+#   make cloud-rollout-gateway   # slim gateway image, ~2 min -- covers gateway.py,
+#                                #   k8s_worker_manager.py, store.py
+#   make cloud-rollout-server    # CUDA worker image, ~20-40 min
+#   make cloud-rollout           # both, plus the client image
+#
+# Tag for cloud-built images. A dirty tree gets a unique -dev<stamp> suffix so
+# uncommitted work never reuses the committed sha's tag, and so the kubelet is
+# forced to pull rather than reuse a cached layer under the same name.
+CLOUD_IMAGE_TAG ?= $(shell test -z "$$(git status --porcelain 2>/dev/null)" && echo "$(IMAGE_TAG)" || echo "$(IMAGE_TAG)-dev$$(date +%m%d%H%M%S)")
+# Snapshot it. Left recursive, the shell above would re-run -- and re-stamp the
+# time -- on every reference within a single make invocation.
+CLOUD_IMAGE_TAG := $(CLOUD_IMAGE_TAG)
+
+CLOUD_BUILD = gcloud builds submit --project=$(GCP_PROJECT) --config=cloudbuild.yaml
+
+cloud-build-gateway:
+	$(CLOUD_BUILD) --substitutions=_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-gateway,_DOCKERFILE=src/server/Dockerfile.gateway,_TAG=$(CLOUD_IMAGE_TAG) .
+
+cloud-build-server:
+	$(CLOUD_BUILD) --substitutions=_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server,_DOCKERFILE=src/server/Dockerfile,_TAG=$(CLOUD_IMAGE_TAG) .
+
+cloud-build-client:
+	$(CLOUD_BUILD) --substitutions=_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-client,_DOCKERFILE=src/server/Dockerfile.client,_TAG=$(CLOUD_IMAGE_TAG) .
+
+# Point the running workloads at the freshly built tag. Split from the build
+# steps so a tag built earlier can be re-deployed with
+# `make cloud-deploy-gateway CLOUD_IMAGE_TAG=<tag>`.
+cloud-deploy-gateway:
+	kubectl set image deployment/open-rl-gateway gateway=gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(CLOUD_IMAGE_TAG)
+	@echo "gateway -> gcr.io/$(GCP_PROJECT)/open-rl-gateway:$(CLOUD_IMAGE_TAG)"
+
+cloud-deploy-server:
+	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=gcr.io/$(GCP_PROJECT)/open-rl-server:$(CLOUD_IMAGE_TAG) 2>/dev/null || true
+	kubectl set env deployment/open-rl-gateway OPEN_RL_WORKER_IMAGE=gcr.io/$(GCP_PROJECT)/open-rl-server:$(CLOUD_IMAGE_TAG)
+	@echo "workers -> gcr.io/$(GCP_PROJECT)/open-rl-server:$(CLOUD_IMAGE_TAG)"
+
+cloud-rollout-gateway: cloud-build-gateway cloud-deploy-gateway
+cloud-rollout-server: cloud-build-server cloud-deploy-server
+cloud-rollout: cloud-build-gateway cloud-build-server cloud-build-client cloud-deploy-gateway cloud-deploy-server
+
+# --- kind on a GPU VM -------------------------------------------------------
+# Drives the remote kind cluster over SSH. See dev/kind/README.md.
+# KIND_HOST must be a Host alias in ~/.ssh/config; dev/infra/gen_gcp_ssh_config.py
+# prints a suitable block for a GCE instance.
+KIND_HOST ?= l4dev
+KIND_REPO ?= ~/open-rl
+
+kind-host-setup:
+	ssh $(KIND_HOST) 'bash -s' < dev/kind/host-setup.sh
+
+# Mirror the working tree to the VM, including uncommitted work, so a local edit
+# can be built there without a commit-push-pull round trip.
+kind-sync:
+	rsync -az --delete \
+	  --exclude .git --exclude .venv --exclude examples/.venv \
+	  --exclude runs --exclude scratch --exclude '__pycache__' \
+	  ./ $(KIND_HOST):$(KIND_REPO)/
+
+kind-create: kind-sync
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/create-cluster.sh'
+
+# Rebuild and side-load only the slim gateway image -- the fast inner loop.
+kind-gateway: kind-sync
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/load-images.sh gateway && kubectl rollout restart deployment/open-rl-gateway'
+
+kind-deploy: kind-sync
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/load-images.sh && kubectl apply -k k8s/deploy/kind-dra/'
+
+kind-client: kind-sync
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/load-images.sh client'
+
+# Same harness as cluster-e2e, driven over ssh so kubectl runs against the kind
+# context on the VM. IfNotPresent is mandatory here: the side-loaded
+# open-rl.local image exists only in the node's containerd store, and the
+# default Always would send the kubelet to a registry that cannot serve it.
+kind-e2e: kind-sync
+	@if [ -z "$(E2E_SCENARIO)" ]; then \
+	  echo "Missing E2E_SCENARIO. Example:"; \
+	  echo "  make kind-e2e E2E_SCENARIO=tiny-rl E2E_ARGS=\"base_model=Qwen/Qwen3-0.6B steps=4\""; \
+	  exit 2; \
+	fi
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && python3 scripts/run_cluster_e2e.py \
+	  --scenario "$(E2E_SCENARIO)" \
+	  --image open-rl.local/open-rl-client:kind-dev \
+	  --image-pull-policy IfNotPresent \
+	  $(if $(E2E_ARGS),--args "$(E2E_ARGS)",)'
+
+kind-status:
+	ssh $(KIND_HOST) 'kubectl get pods,resourceclaims,resourceslices'
+
+kind-logs:
+	ssh $(KIND_HOST) 'kubectl logs deployment/open-rl-gateway --tail=100'
+
+kind-delete:
+	ssh $(KIND_HOST) 'kind delete cluster --name open-rl-dra'
+
 deploy:
 	kubectl apply -k k8s/deploy/distributed-lustre/
 
@@ -169,6 +276,7 @@ cluster-e2e:
 	set -- --scenario "$(E2E_SCENARIO)" --image "gcr.io/$(GCP_PROJECT)/open-rl-client:$(IMAGE_TAG)"; \
 	if [ -n "$(E2E_ARGS)" ]; then set -- "$$@" --args "$(E2E_ARGS)"; fi; \
 	if [ -n "$(E2E_NAMESPACE)" ]; then set -- "$$@" --namespace "$(E2E_NAMESPACE)"; fi; \
+	if [ -n "$(E2E_IMAGE_PULL_POLICY)" ]; then set -- "$$@" --image-pull-policy "$(E2E_IMAGE_PULL_POLICY)"; fi; \
 	if [ -n "$(WEIGHT_SYNC_STRATEGY)" ]; then set -- "$$@" --weight-sync-strategy "$(WEIGHT_SYNC_STRATEGY)"; fi; \
 	if [ -n "$(WEIGHT_SYNC_DELTA_FORMAT)" ]; then set -- "$$@" --weight-sync-delta-format "$(WEIGHT_SYNC_DELTA_FORMAT)"; fi; \
 	if [ -n "$(WEIGHT_SYNC_DELTA_APPLY_METHOD)" ]; then set -- "$$@" --weight-sync-delta-apply-method "$(WEIGHT_SYNC_DELTA_APPLY_METHOD)"; fi; \

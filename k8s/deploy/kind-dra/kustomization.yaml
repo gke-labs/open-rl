@@ -1,0 +1,110 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# kind variant of the FFT/DRA deployment, for running the workload scheduler
+# against real GPUs on a single Linux GPU VM. See dev/kind/README.md.
+#
+# Differences from the GKE deployment:
+#   - local-path PVC instead of an RWX Filestore class
+#   - DCGM/PodMonitoring dropped (GKE-release image, gke-accelerator node
+#     selector, and a Google Managed Prometheus CRD that does not exist here)
+#   - images point at locally built tags side-loaded with `kind load`
+#
+# Images are set with explicit patches rather than an `images:` transformer.
+# The base kustomization runs its own transformer first, retagging everything to
+# gcr.io, so an `images:` entry here matching ghcr.io/gke-labs/... would silently
+# match nothing and deploy the wrong images. Patching the two containers by name
+# does not care what the base retagged them to.
+#
+# The pod templates' nodeSelectors are left alone: dev/kind/kind-cluster.yaml
+# labels the single node as both a trainer and a sampler host, so the GKE
+# manifests apply unmodified.
+resources:
+  - ../distributed-fft-timeslice
+
+generatorOptions:
+  disableNameSuffixHash: true
+
+configMapGenerator:
+  - name: open-rl-config
+    behavior: merge
+    literals:
+      # No Cloud Trace exporter on a local cluster.
+      - ENABLE_GCP_TRACE="0"
+
+patches:
+  - path: pvc-local.yaml
+
+  - target:
+      kind: DaemonSet
+      name: nvidia-dcgm-exporter
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: nvidia-dcgm-exporter
+  - target:
+      kind: ConfigMap
+      name: dcgm-exporter-metrics
+    patch: |
+      $patch: delete
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: dcgm-exporter-metrics
+  - target:
+      kind: PodMonitoring
+      name: nvidia-dcgm-exporter-scraper
+    patch: |
+      $patch: delete
+      apiVersion: monitoring.googleapis.com/v1
+      kind: PodMonitoring
+      metadata:
+        name: nvidia-dcgm-exporter-scraper
+
+  # Must match what dev/kind/load-images.sh builds and side-loads.
+  - target:
+      kind: DaemonSet
+      name: open-rl-accel-timeslicer
+    patch: |
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: open-rl-accel-timeslicer
+      spec:
+        template:
+          spec:
+            containers:
+              - name: accel-timeslicer
+                image: open-rl.local/open-rl-server:kind-dev
+
+  - target:
+      kind: Deployment
+      name: open-rl-gateway
+    patch: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: open-rl-gateway
+      spec:
+        template:
+          spec:
+            containers:
+              - name: gateway
+                image: open-rl.local/open-rl-gateway:kind-dev
+                env:
+                  # The worker and sampler pod templates live inside ConfigMaps
+                  # as YAML strings, out of reach of any image transformer. The
+                  # gateway overrides that image at render time from this var
+                  # (k8s_worker_manager.py:506), so this is what actually decides
+                  # the image every launched worker runs.
+                  - name: OPEN_RL_WORKER_IMAGE
+                    value: open-rl.local/open-rl-server:kind-dev
+                  # Tighter than the 300s/120s production defaults so a manual
+                  # test does not spend five minutes waiting to watch the
+                  # reconciler reclaim a leaked claim.
+                  - name: OPEN_RL_CLAIM_RECONCILE_INTERVAL_SECONDS
+                    value: "30"
+                  - name: OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS
+                    value: "60"

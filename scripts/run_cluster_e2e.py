@@ -29,9 +29,16 @@ def render_manifest(
   extra_args_str: str,
   image: str,
   weight_sync_cfg: dict[str, Any] | None = None,
+  image_pull_policy: str = "Always",
 ) -> str:
   manifest = MANIFEST.read_text(encoding="utf-8")
-  for placeholder, value in [("E2E-IMAGE", image), ("E2E-SCENARIO", scenario)]:
+  # E2E-IMAGE-PULL-POLICY before E2E-IMAGE: the latter is a prefix of the former,
+  # so substituting it first would leave a mangled "<image>-PULL-POLICY" behind.
+  for placeholder, value in [
+    ("E2E-IMAGE-PULL-POLICY", image_pull_policy),
+    ("E2E-IMAGE", image),
+    ("E2E-SCENARIO", scenario),
+  ]:
     if placeholder not in manifest:
       raise RuntimeError(f"{MANIFEST} no longer contains the {placeholder} placeholder")
     manifest = manifest.replace(placeholder, value)
@@ -85,6 +92,12 @@ def main() -> None:
     default="",
     help="Delta apply method override (patch_in_place | full_replace).",
   )
+  parser.add_argument(
+    "--image-pull-policy",
+    default="Always",
+    choices=["Always", "IfNotPresent", "Never"],
+    help="imagePullPolicy for the client container. Use IfNotPresent for an image side-loaded into kind, which no registry can serve.",
+  )
   parser.add_argument("--no-follow", action="store_true", help="Launch the job but do not follow its logs.")
   parser.add_argument("--print-only", action="store_true", help="Print the kubectl commands and manifest; run nothing.")
   args = parser.parse_args()
@@ -103,6 +116,7 @@ def main() -> None:
     args.args,
     args.image,
     weight_sync_cfg=weight_sync_cfg if weight_sync_cfg else None,
+    image_pull_policy=args.image_pull_policy,
   )
   commands = [
     kubectl + ["delete", "job", JOB, "--ignore-not-found"],

@@ -1,0 +1,41 @@
+# Synthetic ResourceSlice advertising an 80gb-tier GPU.
+#
+# Why: _discover_cluster_gpu_products() (src/server/k8s_worker_manager.py) builds
+# its tier map by listing every ResourceSlice with driver gpu.nvidia.com and
+# bucketing devices as "80gb" when capacity.memory > 40000Mi, else "24gb". Two L4s
+# only ever produce a "24gb" tier, so the 80gb branch -- tier selection, the CEL
+# productName selector, per-tier claim naming, and reconciliation of 80gb claims
+# -- goes untested on a kind box.
+#
+# spec.nodeName deliberately points at a node that does not exist. The gateway
+# only lists slices, so the tier shows up in its map, but kube-scheduler will
+# never allocate a claim against a phantom node. Claims created for this tier
+# stay Pending forever, which is exactly what we want: the control-plane paths
+# run end to end and no real pod is ever sent to a device that isn't there.
+#
+#   kubectl apply -f dev/kind/synthetic-h100-resourceslice.yaml
+#   kubectl delete -f dev/kind/synthetic-h100-resourceslice.yaml
+#
+# Note the gateway caches the tier map for 15 minutes; restart the gateway
+# Deployment after applying or deleting this to pick the change up immediately.
+apiVersion: resource.k8s.io/v1
+kind: ResourceSlice
+metadata:
+  name: synthetic-h100-slice
+  labels:
+    open-rl.io/synthetic: "true"
+spec:
+  driver: gpu.nvidia.com
+  nodeName: synthetic-h100-node
+  pool:
+    name: synthetic-h100-pool
+    generation: 1
+    resourceSliceCount: 1
+  devices:
+    - name: gpu-synthetic-0
+      attributes:
+        productName:
+          string: NVIDIA H100 80GB HBM3
+      capacity:
+        memory:
+          value: 81559Mi
