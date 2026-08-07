@@ -11,6 +11,15 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 name: open-rl-dra
+# Point the node's containerd at the cluster-local registry (dev/kind/registry.sh).
+# The host pushes to localhost:5001 through the registry's published port; the
+# node cannot use that loopback, so the mirror rewrites the same reference to the
+# registry container's name on the kind docker network. One image reference works
+# from both sides, which is why the manifests can name localhost:5001 directly.
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry.mirrors."localhost:5001"]
+      endpoint = ["http://kind-registry:5000"]
 nodes:
   - role: control-plane
     image: kindest/node:v1.35.5

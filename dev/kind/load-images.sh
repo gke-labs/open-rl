@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 #
-# Build the open-rl images on this host and side-load them into the kind cluster.
+# Build the open-rl images on this host and publish them to the cluster-local
+# registry.
 #
 # This is the reason to run kind on the GPU VM at all: the multi-GB CUDA server
-# image never touches a registry. `kind load` copies it straight from the local
-# Docker daemon into the node's containerd store, so an edit-to-running-pod loop
-# costs a docker build layer, not a push plus a pull.
+# image never leaves the machine. It goes to a registry container sitting on the
+# kind docker network, so an edit-to-running-pod loop costs a docker build layer
+# plus a layer push, not a push plus a pull across the internet.
 #
-# The manifests already set imagePullPolicy: IfNotPresent, so a side-loaded image
-# is used as-is and the kubelet never reaches out to gcr.io.
+# It used to use `kind load docker-image`, which was the wrong tool for an edit
+# loop. That path is `docker save` streamed into `ctr images import` on the node,
+# and it has no layer-level dedup against what the node already holds -- so a
+# one-line source change re-shipped the whole 36GB server image and containerd
+# re-unpacked every layer, about 24 minutes per iteration. `docker push` to a
+# registry dedups by digest: only the changed source layer moves, and the
+# kubelet pulls only that. Same iteration is now seconds.
 #
 # Usage:
 #   ./dev/kind/load-images.sh                # gateway + server
@@ -17,11 +23,12 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-CLUSTER_NAME="${KIND_CLUSTER_NAME:-open-rl-dra}"
 IMAGE_TAG="${IMAGE_TAG:-kind-dev}"
-# Local-only names. Kept distinct from the gcr.io names so a side-loaded dev
-# build can never be confused with something that was actually pushed.
-REGISTRY="${REGISTRY:-open-rl.local}"
+# The registry is published on the host loopback and mirrored into the node by
+# create-cluster.sh, so this one reference resolves from both sides. Kept
+# distinct from the gcr.io names so a local dev build can never be confused with
+# something that was actually pushed.
+REGISTRY="${REGISTRY:-localhost:5001}"
 
 TARGETS=("$@")
 if [[ ${#TARGETS[@]} -eq 0 ]]; then
@@ -29,6 +36,13 @@ if [[ ${#TARGETS[@]} -eq 0 ]]; then
 fi
 
 log() { echo "[load-images] $*"; }
+
+if ! curl -fsS "http://${REGISTRY}/v2/" >/dev/null 2>&1; then
+  echo "No registry answering at ${REGISTRY}." >&2
+  echo "It is started by dev/kind/create-cluster.sh; bring it back with:" >&2
+  echo "  ./dev/kind/registry.sh" >&2
+  exit 1
+fi
 
 for target in "${TARGETS[@]}"; do
   case "$target" in
@@ -45,15 +59,20 @@ for target in "${TARGETS[@]}"; do
   log "Building $image..."
   DOCKER_BUILDKIT=1 docker build -t "$image" -f "$REPO_ROOT/$dockerfile" "$REPO_ROOT"
 
-  log "Loading $image into kind cluster '$CLUSTER_NAME'..."
-  kind load docker-image "$image" --name "$CLUSTER_NAME"
+  log "Pushing $image..."
+  docker push "$image"
 done
 
 cat <<EOF
 
-Loaded. Deploy with:
+Pushed. Deploy with:
   kubectl apply -k k8s/deploy/kind-dra/
 
-If the cluster is already running, restart to pick up the new build:
+The manifests pin imagePullPolicy: Always against this registry. The tag does not
+change between iterations, so IfNotPresent would leave the kubelet sitting on the
+build it already has and silently test the previous code. Pulling from a registry
+one docker network away costs nothing.
+
+To pick up a new build in an already-running deployment:
   kubectl rollout restart deployment/open-rl-gateway
 EOF
