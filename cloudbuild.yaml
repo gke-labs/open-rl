@@ -1,0 +1,48 @@
+# Generic Cloud Build config: builds one image from one Dockerfile in this repo.
+#
+# The build runs in GCP, so the multi-GB CUDA base layers for the server image
+# never cross the developer's uplink -- only the ~7 MB of tracked source does.
+# Invoke it once per image (see the cloud-build-* targets in the Makefile):
+#
+#   gcloud builds submit --config=cloudbuild.yaml \
+#     --substitutions=_IMAGE=gcr.io/PROJECT/open-rl-gateway,_DOCKERFILE=src/server/Dockerfile.gateway,_TAG=abc1234 .
+#
+# Files sent as build context are filtered by .dockerignore, which already drops
+# .git, .venv, model caches, and runs/.
+
+substitutions:
+  _IMAGE: '' # Fully-qualified repository, e.g. gcr.io/my-project/open-rl-gateway
+  _DOCKERFILE: '' # Path to the Dockerfile, relative to the repo root
+  _TAG: '' # Immutable tag for this build
+
+options:
+  # The CUDA server image needs both the CPU and the disk; the slim gateway
+  # image finishes in a couple of minutes either way.
+  machineType: E2_HIGHCPU_8
+  diskSizeGb: 200
+  # Default logging (GCS + Cloud Logging) so `gcloud builds submit` can stream
+  # output live. That matters for the CUDA image, which runs for tens of
+  # minutes. Requires the legacy Cloud Build service account; a project using a
+  # user-specified build SA has to set CLOUD_LOGGING_ONLY here instead.
+
+# Long enough for the nvidia/cuda:12.9.0-devel base plus a full uv sync.
+timeout: 3600s
+
+steps:
+  - name: gcr.io/cloud-builders/docker
+    env: ['DOCKER_BUILDKIT=1']
+    args:
+      - build
+      - --file=${_DOCKERFILE}
+      - --tag=${_IMAGE}:${_TAG}
+      - --tag=${_IMAGE}:latest
+      # Warm-start from the previous build. BUILDKIT_INLINE_CACHE embeds the
+      # cache manifest in the pushed image so :latest is usable as --cache-from
+      # without a separate cache repository.
+      - --cache-from=${_IMAGE}:latest
+      - --build-arg=BUILDKIT_INLINE_CACHE=1
+      - .
+
+images:
+  - '${_IMAGE}:${_TAG}'
+  - '${_IMAGE}:latest'
