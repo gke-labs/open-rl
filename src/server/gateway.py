@@ -294,12 +294,45 @@ def translate_future_result(result: dict) -> dict:
   return result
 
 
+async def run_claim_reconciler(manager: WorkerManager, interval: float) -> None:
+  """Periodically reclaim dynamic DRA claims left behind by finished workers.
+
+  Nothing else deletes them: the scheduler provisions a claim whenever no
+  eligible one is free, so without this loop every completed job strands a GPU
+  claim until an operator removes it by hand.
+  """
+  while True:
+    await asyncio.sleep(interval)
+    try:
+      deleted = await asyncio.to_thread(manager.reconcile_managed_claims)
+      if deleted:
+        print(f"[GATEWAY] Reclaimed {len(deleted)} unused DRA claim(s): {', '.join(deleted)}")
+    except asyncio.CancelledError:
+      raise
+    except Exception:
+      traceback.print_exc()
+
+
+def start_claim_reconciler(manager: WorkerManager | None) -> asyncio.Task | None:
+  """Start the reconcile loop when the worker manager provisions claims (Kubernetes mode only)."""
+  if manager is None or not hasattr(manager, "reconcile_managed_claims"):
+    return None
+  interval = float(os.getenv("OPEN_RL_CLAIM_RECONCILE_INTERVAL_SECONDS", "300"))
+  if interval <= 0:
+    print("[GATEWAY] DRA claim reconciliation disabled (OPEN_RL_CLAIM_RECONCILE_INTERVAL_SECONDS <= 0)")
+    return None
+  print(f"[GATEWAY] DRA claim reconciliation every {interval:.0f}s")
+  return asyncio.create_task(run_claim_reconciler(manager, interval))
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
   global worker_manager
   task = None
+  reconcile_task = None
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
     worker_manager = create_worker_manager()
+    reconcile_task = start_claim_reconciler(worker_manager)
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
@@ -322,6 +355,8 @@ async def lifespan(_: FastAPI):
   finally:
     if task is not None:
       task.cancel()
+    if reconcile_task is not None:
+      reconcile_task.cancel()
     if worker_manager is not None:
       worker_manager.shutdown_all()
       worker_manager = None
