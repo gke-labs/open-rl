@@ -36,8 +36,8 @@ ML engineers and researchers interact with Open-RL exclusively through high-leve
 ```python
 # User submits job specifying only model intent and tuning strategy
 client.create_model(
-    base_model="Qwen/Qwen3-8B",
-    fine_tuning_type="full"  # or "lora"
+  base_model="Qwen/Qwen3-8B",
+  fine_tuning_type="full",  # or "lora"
 )
 ```
 
@@ -95,20 +95,20 @@ Before launching worker pods, the Workload Scheduler estimates peak memory requi
 
 ```python
 def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str:
-    """Map model parameters and fine-tuning mode to standardized VRAM tiers.
+  """Map model parameters and fine-tuning mode to standardized VRAM tiers.
 
-    - 24gb Tier: LoRA (0.6B to 8B) or small FFT models (<= 1.5B). Targets NVIDIA L4.
-    - 80gb Tier: Full Fine-Tuning (7B/8B+) or large models (>= 14B). Targets NVIDIA H100 80GB.
-    """
-    model_lower = (base_model or "").lower()
-    if fine_tuning_type == "full":
-        if any(size in model_lower for size in ["7b", "8b", "14b", "32b", "70b"]):
-            return "80gb"
-        return "24gb"
-
-    if any(size in model_lower for size in ["14b", "32b", "70b"]):
-        return "80gb"
+  - 24gb Tier: LoRA (0.6B to 8B) or small FFT models (<= 1.5B). Targets NVIDIA L4.
+  - 80gb Tier: Full Fine-Tuning (7B/8B+) or large models (>= 14B). Targets NVIDIA H100 80GB.
+  """
+  model_lower = (base_model or "").lower()
+  if fine_tuning_type == "full":
+    if any(size in model_lower for size in ["7b", "8b", "14b", "32b", "70b"]):
+      return "80gb"
     return "24gb"
+
+  if any(size in model_lower for size in ["14b", "32b", "70b"]):
+    return "80gb"
+  return "24gb"
 ```
 
 ### 4.2 Dynamic `ResourceClaim` Provisioning via CEL Expressions
