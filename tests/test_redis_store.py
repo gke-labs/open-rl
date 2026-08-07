@@ -100,6 +100,39 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
     await self.store.set_future("req-1", {"status": "pending"})
     self.assertEqual((await self.store.get_future("req-1", timeout=0.3))["type"], "try_again")
 
+  async def test_get_requests_rotates_between_tenants(self) -> None:
+    for i in range(3):
+      await self.store.put_request({"model_id": "tenant-a", "request_id": f"a{i}"}, active_set_id="base-1")
+      await self.store.put_request({"model_id": "tenant-b", "request_id": f"b{i}"}, active_set_id="base-1")
+
+    served = []
+    for _ in range(2):
+      batch = await self.store.get_requests(active_set_id="base-1")
+      served.append(batch[0]["model_id"])
+
+    self.assertEqual(served, ["tenant-a", "tenant-b"])
+
+  async def test_busy_tenant_does_not_starve_its_peer(self) -> None:
+    await self.store.put_request({"model_id": "busy", "request_id": "b0"}, active_set_id="base-1")
+    await self.store.put_request({"model_id": "quiet", "request_id": "q0"}, active_set_id="base-1")
+
+    # The busy tenant keeps enqueueing after each turn. Without rotation it holds
+    # the head of the active list forever and 'quiet' is never served.
+    served = []
+    for i in range(4):
+      batch = await self.store.get_requests(active_set_id="base-1")
+      served.append(batch[0]["model_id"])
+      await self.store.put_request({"model_id": "busy", "request_id": f"b{i + 1}"}, active_set_id="base-1")
+
+    self.assertIn("quiet", served)
+
+  async def test_get_requests_drains_only_the_depth_present_on_entry(self) -> None:
+    for i in range(2):
+      await self.store.put_request({"model_id": "tenant-a", "request_id": f"a{i}"}, active_set_id="base-1")
+
+    batch = await self.store.get_requests(active_set_id="base-1")
+    self.assertEqual([r["request_id"] for r in batch], ["a0", "a1"])
+
 
 class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
   def setUp(self) -> None:
@@ -120,6 +153,37 @@ class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
 
     empty_batch = await self.store.get_sampling_requests_for_model("base-m1")
     self.assertEqual(empty_batch, [])
+
+  async def test_get_requests_rotates_between_tenants(self) -> None:
+    for i in range(3):
+      await self.store.put_request({"model_id": "tenant-a", "request_id": f"a{i}"}, active_set_id="base-1")
+      await self.store.put_request({"model_id": "tenant-b", "request_id": f"b{i}"}, active_set_id="base-1")
+
+    served = []
+    for _ in range(2):
+      batch = await self.store.get_requests(active_set_id="base-1")
+      served.append(batch[0]["model_id"])
+
+    self.assertEqual(served, ["tenant-a", "tenant-b"])
+
+  async def test_busy_tenant_does_not_starve_its_peer(self) -> None:
+    await self.store.put_request({"model_id": "busy", "request_id": "b0"}, active_set_id="base-1")
+    await self.store.put_request({"model_id": "quiet", "request_id": "q0"}, active_set_id="base-1")
+
+    served = []
+    for i in range(4):
+      batch = await self.store.get_requests(active_set_id="base-1")
+      served.append(batch[0]["model_id"])
+      await self.store.put_request({"model_id": "busy", "request_id": f"b{i + 1}"}, active_set_id="base-1")
+
+    self.assertIn("quiet", served)
+
+  async def test_get_requests_drains_only_the_depth_present_on_entry(self) -> None:
+    for i in range(2):
+      await self.store.put_request({"model_id": "tenant-a", "request_id": f"a{i}"}, active_set_id="base-1")
+
+    batch = await self.store.get_requests(active_set_id="base-1")
+    self.assertEqual([r["request_id"] for r in batch], ["a0", "a1"])
 
 
 if __name__ == "__main__":
