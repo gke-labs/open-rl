@@ -231,6 +231,18 @@ A claim is created moments *before* its worker Pod, so an in-flight launch is in
 
 Independently, a launch that fails after provisioning a claim releases that claim immediately rather than waiting for the next reconcile pass.
 
+### 4.9 Idle Teardown of LoRA Workers
+
+Reconciliation only reclaims a claim once no worker pod references it, so it depends on workers actually exiting. FFT workers do: `/api/v1/delete_model` enqueues a shutdown sentinel and the pods terminate. LoRA workers deliberately do *not* receive that sentinel — a LoRA worker is keyed by **base model** and serves every adapter derived from it, so stopping it when one tenant finishes would take out the others. The result was that nothing stopped LoRA workers at all: the pods ran indefinitely and their claims leaked permanently.
+
+Idle teardown (`src/server/lora_reaper.py`) closes that loop. It needs a signal only the worker can produce — a request popped off the queue an hour ago may still be running, so "nothing new was enqueued" does not mean "nothing is happening":
+
+- Each LoRA worker publishes `{last_activity, busy}` to `open_rl:worker_heartbeat:<pod_name>` (`src/server/worker_heartbeat.py`). The pod name is stamped into the container as `OPEN_RL_POD_NAME` at render time, so the Gateway's lookup is an exact key rather than a scan. `busy` keeps a worker mid-batch alive however stale its timestamp; `last_activity` advances only on real work, so an idle worker genuinely ages out.
+- A background task in the Gateway lifespan lists pods labeled `open-rl.io/workload-type=lora`, groups them by `open-rl.io/bound-base-model`, and deletes a group only when **every** pod in it has been idle past `OPEN_RL_LORA_WORKER_IDLE_TIMEOUT_SECONDS` (default `1800`; `0` disables), checked every `OPEN_RL_LORA_WORKER_IDLE_CHECK_INTERVAL_SECONDS` (default `300`). Grouping matters: a trainer and its sampler take turns, so a sampler quiet for an hour may still belong to a job whose trainer is busy.
+- A worker that has published nothing — an older image, or one still loading its model — ages out from its pod start time instead of staying immortal. A heartbeat older than the pod itself is discarded as belonging to the previous pod of the same (deterministic) name.
+
+The reaper only deletes pods. Reconciliation (§4.8) then reclaims the freed claims on its next pass.
+
 ---
 
 ## 5. End-to-End Sequence

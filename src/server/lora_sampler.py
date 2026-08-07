@@ -11,6 +11,7 @@ from vllm.lora.request import LoRARequest
 from vllm.sampling_params import RequestOutputKind, SamplingParams
 
 from server.store import get_store
+from server.worker_heartbeat import heartbeat_from_env
 
 TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
 engine: AsyncLLMEngine | None = None
@@ -175,15 +176,27 @@ async def main():
     await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
     print(f"[LoRA Sampler] Registered ready signal for model {model_id} in Redis.")
 
+  # Lets the Gateway reap this pod once it stops serving requests; see
+  # server/worker_heartbeat.py. Sampler and trainer are reaped as a pair, so a
+  # sampler idling between training steps does not get pulled out from under a
+  # job that is still running.
+  heartbeat = heartbeat_from_env(store)
+  await heartbeat.touch(busy=False)
+
   while True:
     try:
       sampling_reqs = await store.get_sampling_requests_for_model(model_id)
       if not sampling_reqs:
+        await heartbeat.touch(busy=False)
         await asyncio.sleep(0.05)
         continue
 
-      tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
-      await asyncio.gather(*tasks)
+      await heartbeat.touch(busy=True)
+      try:
+        tasks = [asyncio.create_task(process_sampling_request(req, store)) for req in sampling_reqs]
+        await asyncio.gather(*tasks)
+      finally:
+        await heartbeat.touch(busy=False)
     except asyncio.CancelledError:
       break
     except Exception as exc:

@@ -521,6 +521,10 @@ class KubernetesWorkerManager:
 
     set_env(container, "OPEN_RL_ENABLE_FFT", "false")
     set_env(container, "OPEN_RL_FINE_TUNING_TYPE", "lora")
+    # Lets the worker publish its idle heartbeat under a key the reaper can find.
+    # We stamp the name we are about to create rather than using the downward API
+    # so the lookup is an exact key, not a scan.
+    set_env(container, "OPEN_RL_POD_NAME", pod_name)
 
     remove_env(container, "OPEN_RL_TIME_SLICE_JOB_ID")
     remove_env(container, "OPEN_RL_TIME_SLICE_GROUP")
@@ -609,6 +613,65 @@ class KubernetesWorkerManager:
       set_env(container, "OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", weight_sync_cfg.delta_apply_method)
     return pod
 
+  def list_lora_worker_pods(self) -> list[dict[str, Any]]:
+    """Live LoRA worker pods with the fields the idle reaper needs to group and age them.
+
+    Terminal pods are skipped: they no longer hold their claim, and replacing one
+    is the launcher's job rather than the reaper's.
+    """
+    pods = self.core_api.list_namespaced_pod(
+      self.namespace,
+      label_selector="open-rl.io/workload-type=lora",
+    )
+    items = pods.get("items", []) if isinstance(pods, dict) else getattr(pods, "items", [])
+    result: list[dict[str, Any]] = []
+    for pod in items:
+      if isinstance(pod, dict):
+        metadata = pod.get("metadata") or {}
+        status = pod.get("status") or {}
+      else:
+        metadata = getattr(pod, "metadata", None) or {}
+        status = getattr(pod, "status", None) or {}
+
+      name = metadata.get("name") if isinstance(metadata, dict) else getattr(metadata, "name", None)
+      labels = (metadata.get("labels") if isinstance(metadata, dict) else getattr(metadata, "labels", None)) or {}
+      if isinstance(status, dict):
+        phase = status.get("phase", "")
+        started = status.get("startTime")
+      else:
+        phase = getattr(status, "phase", "") or ""
+        started = getattr(status, "start_time", None)
+      if not name or phase in TERMINAL_POD_PHASES:
+        continue
+
+      # A Pending pod has no startTime, so fall back to creation. That makes a
+      # pod wedged in Pending age out too, which is what we want: it is holding a
+      # claim allocation and will not start on its own.
+      created = metadata.get("creationTimestamp") if isinstance(metadata, dict) else getattr(metadata, "creation_timestamp", None)
+      start_epoch = _timestamp_to_epoch(started)
+      if start_epoch is None:
+        start_epoch = _timestamp_to_epoch(created)
+
+      result.append(
+        {
+          "name": name,
+          "base_model": labels.get("open-rl.io/bound-base-model"),
+          "role": labels.get("open-rl.io/role"),
+          "claim": labels.get("open-rl.io/assigned-claim"),
+          "phase": phase,
+          "start_time": start_epoch,
+        }
+      )
+    return result
+
+  def delete_pod(self, pod_name: str) -> None:
+    """Delete a pod, treating one that is already gone as success."""
+    try:
+      self.core_api.delete_namespaced_pod(name=pod_name, namespace=self.namespace)
+    except Exception as exc:
+      if getattr(exc, "status", None) != 404:
+        raise
+
   def read_pod(self, pod_name: str) -> Any | None:
     try:
       return self.core_api.read_namespaced_pod(name=pod_name, namespace=self.namespace)
@@ -641,6 +704,26 @@ def _apply_worker_image_overrides(container: dict[str, Any]) -> None:
   pull_policy = os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY")
   if pull_policy:
     container["imagePullPolicy"] = pull_policy
+
+
+def _timestamp_to_epoch(raw: Any) -> float | None:
+  """Epoch seconds from an RFC3339 string or a datetime, or None if unusable.
+
+  The Kubernetes client hands back datetimes; raw API dicts and test fakes hand
+  back strings. Both reach here.
+  """
+  if raw is None:
+    return None
+  if isinstance(raw, datetime.datetime):
+    parsed = raw
+  else:
+    try:
+      parsed = datetime.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except ValueError:
+      return None
+  if parsed.tzinfo is None:
+    parsed = parsed.replace(tzinfo=datetime.UTC)
+  return parsed.timestamp()
 
 
 def set_env(container: dict[str, Any], name: str, value: str) -> None:

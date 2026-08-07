@@ -17,6 +17,7 @@ from opentelemetry import propagate, trace
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
 from accel_timeslicer.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.store import RequestStore, get_store
+from server.worker_heartbeat import heartbeat_from_env
 from training.fft_trainer_worker import FFTConfig, FFTTrainingWorker
 from training.lora_trainer_worker import LoraConfig, LoraTrainingWorker
 from training.trainer_worker import Datum
@@ -162,9 +163,13 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
     self.worker = worker
     self.model_id = model_id
     self.active_tenant_set_id = active_tenant_set_id or (f"{model_id}-1" if model_id else None)
+    self.heartbeat = heartbeat_from_env(store)
 
   async def run(self) -> None:
     print(f"[WORKER] LoRA training requests processor started (Active Set ID: {self.active_tenant_set_id}).")
+    # Lets the Gateway reap this pod once it stops serving requests; see
+    # server/worker_heartbeat.py.
+    await self.heartbeat.touch(busy=False)
 
     while True:
       try:
@@ -179,19 +184,26 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
   async def run_once(self) -> None:
     batch = await self.store.get_requests(active_set_id=self.active_tenant_set_id)
     if not batch:
+      await self.heartbeat.touch(busy=False)
       await asyncio.sleep(0.1)
       return
 
     model_id = batch[0].get("model_id", "default")
+    # Publish busy before the batch and idle after it, so a batch that outruns
+    # the reaper's timeout still holds the worker open for its whole duration.
+    await self.heartbeat.touch(busy=True)
 
-    with tracer.start_as_current_span("training_requests_batch") as batch_span:
-      batch_span.set_attribute("batch_size", len(batch))
-      batch_span.set_attribute("model_id", model_id)
+    try:
+      with tracer.start_as_current_span("training_requests_batch") as batch_span:
+        batch_span.set_attribute("batch_size", len(batch))
+        batch_span.set_attribute("model_id", model_id)
 
-      print(f"\n[TRAINING REQUESTS] Popped {len(batch)} requests for model: {model_id}")
-      for request in batch:
-        target_model_id = request.get("adapter_id") or request.get("model_id") or model_id
-        await self.process_request(request, target_model_id)
+        print(f"\n[TRAINING REQUESTS] Popped {len(batch)} requests for model: {model_id}")
+        for request in batch:
+          target_model_id = request.get("adapter_id") or request.get("model_id") or model_id
+          await self.process_request(request, target_model_id)
+    finally:
+      await self.heartbeat.touch(busy=False)
 
   async def create_model(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     base_model, _, raw_config, fine_tuning_type = await _fetch_model_meta(self.store, model_id, payload, default_kind="lora")

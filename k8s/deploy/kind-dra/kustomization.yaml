@@ -120,3 +120,10 @@ patches:
                     value: "30"
                   - name: OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS
                     value: "60"
+                  # Likewise for idle LoRA worker teardown: 30min/5min in
+                  # production, but a kind run should surface the reap within a
+                  # test rather than after one.
+                  - name: OPEN_RL_LORA_WORKER_IDLE_TIMEOUT_SECONDS
+                    value: "180"
+                  - name: OPEN_RL_LORA_WORKER_IDLE_CHECK_INTERVAL_SECONDS
+                    value: "30"

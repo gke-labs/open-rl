@@ -18,6 +18,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from server.lora_reaper import start_lora_idle_reaper
 from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_worker_manager
@@ -330,9 +331,11 @@ async def lifespan(_: FastAPI):
   global worker_manager
   task = None
   reconcile_task = None
+  reaper_task = None
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
     worker_manager = create_worker_manager()
     reconcile_task = start_claim_reconciler(worker_manager)
+    reaper_task = start_lora_idle_reaper(worker_manager, store)
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
@@ -357,6 +360,8 @@ async def lifespan(_: FastAPI):
       task.cancel()
     if reconcile_task is not None:
       reconcile_task.cancel()
+    if reaper_task is not None:
+      reaper_task.cancel()
     if worker_manager is not None:
       worker_manager.shutdown_all()
       worker_manager = None

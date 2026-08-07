@@ -289,6 +289,13 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
       sampler_container = sampler_pod["spec"]["containers"][0]
       self.assertEqual(sampler_container["command"], ["uv", "run", "python", "-u", "-m", "server.lora_sampler"])
 
+      # Each worker needs its own pod name to publish an idle heartbeat the
+      # Gateway's reaper can look up by key.
+      trainer_env = {item["name"]: item["value"] for item in trainer_pod["spec"]["containers"][0]["env"] if "value" in item}
+      sampler_env = {item["name"]: item["value"] for item in sampler_container["env"] if "value" in item}
+      self.assertEqual(trainer_env["OPEN_RL_POD_NAME"], "open-rl-trainer-qwen-qwen2-5-0-5b-1")
+      self.assertEqual(sampler_env["OPEN_RL_POD_NAME"], "open-rl-sampler-qwen-qwen2-5-0-5b-1")
+
       # Simulate live running status for existing base-model pods
       api.pod_phases["open-rl-trainer-qwen-qwen2-5-0-5b-1"] = "Running"
       api.pod_phases["open-rl-sampler-qwen-qwen2-5-0-5b-1"] = "Running"
@@ -401,6 +408,60 @@ class KubernetesWorkerManagerTest(unittest.TestCase):
     # Terminal pods are excluded; the two live qwen3-8b pods count twice.
     self.assertEqual(usage["claim-a"]["workers"], 3)
     self.assertEqual(usage["claim-a"]["models"], {"qwen3-8b", "qwen3-0-6b"})
+
+  def test_list_lora_worker_pods_reports_grouping_and_age(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+
+    pods = {
+      "items": [
+        {
+          "metadata": {
+            "name": "open-rl-trainer-qwen-1",
+            "labels": {
+              "open-rl.io/role": "trainer",
+              "open-rl.io/bound-base-model": "qwen3-0-6b",
+              "open-rl.io/assigned-claim": "claim-a",
+            },
+          },
+          "status": {"phase": "Running", "startTime": "2026-01-01T00:00:00Z"},
+        },
+        {
+          # Pending pods have no startTime; creation is the only age we have, and
+          # one wedged in Pending is still holding a claim allocation.
+          "metadata": {"name": "open-rl-sampler-qwen-1", "creationTimestamp": "2026-01-01T00:05:00Z", "labels": {}},
+          "status": {"phase": "Pending"},
+        },
+        {
+          "metadata": {"name": "open-rl-trainer-done-1", "labels": {}},
+          "status": {"phase": "Succeeded", "startTime": "2026-01-01T00:00:00Z"},
+        },
+      ]
+    }
+    with patch.object(api, "list_namespaced_pod", return_value=pods, create=True) as list_pods:
+      listed = manager.list_lora_worker_pods()
+
+    self.assertEqual(list_pods.call_args.kwargs["label_selector"], "open-rl.io/workload-type=lora")
+    self.assertEqual([p["name"] for p in listed], ["open-rl-trainer-qwen-1", "open-rl-sampler-qwen-1"])
+    self.assertEqual(listed[0]["base_model"], "qwen3-0-6b")
+    self.assertEqual(listed[0]["claim"], "claim-a")
+    self.assertEqual(listed[1]["start_time"] - listed[0]["start_time"], 300.0)
+
+  def test_delete_pod_tolerates_an_already_deleted_pod(self) -> None:
+    api = _FakeCoreApi()
+    manager = self._manager(api)
+
+    manager.delete_pod("open-rl-trainer-gone")
+    self.assertEqual(api.deleted, ["open-rl-trainer-gone"])
+
+    def boom(name: str, namespace: str) -> None:
+      raise _ApiError(404)
+
+    with patch.object(api, "delete_namespaced_pod", side_effect=boom):
+      manager.delete_pod("open-rl-trainer-gone")  # 404 means someone else got there first
+
+    with patch.object(api, "delete_namespaced_pod", side_effect=_ApiError(500)), self.assertRaises(_ApiError):
+      manager.delete_pod("open-rl-trainer-gone")
 
   def test_dynamic_claim_is_released_when_pod_create_fails(self) -> None:
     api = _FakeCoreApi()
