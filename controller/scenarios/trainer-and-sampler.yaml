@@ -1,0 +1,29 @@
+# One L4 running both halves of the training loop.
+#
+# The node carries both role labels, so a trainer and a sampler can land on the
+# same accelerator. Role selects nodes; it does not partition claims. Neither
+# names a cohort, so they share nothing and take strict turns -- which is what
+# you want on a single GPU, and what the old role-partitioned claims made
+# impossible.
+#
+#   go run ./cmd/sim scenarios/trainer-and-sampler.yaml
+quantum: 45s
+until: 20m
+
+nodes:
+  - name: l4-0
+    devices: 1
+    deviceMemory: 24Gi
+    hostMemory: 94Gi
+    roles: [trainer, sampler]
+    maxResidents: 2
+
+work:
+  - id: lora-trainer
+    role: trainer
+    memory: 6Gi
+    work: 6m
+  - id: vllm-sampler
+    role: sampler
+    memory: 8Gi
+    work: 6m

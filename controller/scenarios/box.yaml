@@ -1,0 +1,50 @@
+# The dev box: g2-standard-24, one node, 2x L4 24Gi, 94Gi of host RAM.
+#
+# More work than GPUs, deliberately. The 30Gi trainer does not fit one L4, so
+# its claim takes both -- and while it holds them there is no accelerator left
+# to cut a second claim on. Everything else queues, then piles onto one claim
+# once it frees, because the scheduler bin-packs. That leaves the second L4
+# idle while four cohorts take turns on the first, which is the first thing
+# worth arguing with about this policy.
+#
+#   go run ./cmd/sim scenarios/box.yaml -timeline
+quantum: 90s
+until: 60m
+
+nodes:
+  - name: box-gpu-0
+    devices: 2
+    deviceMemory: 24Gi
+    hostMemory: 94Gi
+    roles: [trainer, sampler]
+    maxResidents: 4
+
+work:
+  # Too big for one L4: laid out across both, layer by layer.
+  - id: fft-8b
+    role: trainer
+    memory: 30Gi
+    work: 10m
+
+  - id: lora-a
+    role: trainer
+    cohort: qwen3-0-6b
+    memory: 6Gi
+    work: 5m
+  - id: lora-b
+    role: trainer
+    cohort: qwen3-0-6b
+    memory: 6Gi
+    work: 5m
+  - id: lora-c
+    role: trainer
+    cohort: llama-3-8b
+    memory: 9Gi
+    at: 3m
+    work: 5m
+
+  - id: sampler-qwen
+    role: sampler
+    memory: 8Gi
+    at: 5m
+    work: 4m

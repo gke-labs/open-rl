@@ -1,0 +1,173 @@
+# The GPU scheduler.
+#
+# It runs beside kube-scheduler rather than replacing it: it decides which
+# ResourceClaim a worker joins -- and cuts a new one when none will have it --
+# and the real scheduler decides where that claim lands. Nothing else in the
+# cluster changes when this is applied; without any OpenRLWorker objects it
+# watches an empty namespace and does nothing.
+#
+# Placement is a global bin-packing decision: a reconcile reads a snapshot of
+# claims, nodes and workers and then writes, so two reconciles running at once
+# would each decide against a fleet missing the other's booking. The controller
+# runs one reconcile at a time internally, and holds a leader lease so a rolling
+# update never has two processes deciding at once.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-rl-scheduler
+---
+# Cluster-scoped only for reading nodes: the scheduler must see the capacity
+# labels (openrl.io/enabled, /trainer, /sampler, /max-residents) to know which
+# nodes accept which role and how many workers may share a claim there, and the
+# node's allocatable memory, which is what actually bounds how many workers can
+# be parked on it at once.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: open-rl-scheduler-nodes
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "list", "watch"]
+# ResourceSlices are cluster-scoped and are how the scheduler learns what
+# accelerators each node actually has.
+- apiGroups: ["resource.k8s.io"]
+  resources: ["resourceslices"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: open-rl-scheduler-nodes
+subjects:
+- kind: ServiceAccount
+  name: open-rl-scheduler
+  namespace: default
+roleRef:
+  kind: ClusterRole
+  name: open-rl-scheduler-nodes
+  apiGroup: rbac.authorization.k8s.io
+---
+# Everything else is namespaced, so the scheduler cannot reach pods or claims
+# outside the namespace it was pointed at.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-rl-scheduler
+rules:
+- apiGroups: ["openrl.io"]
+  resources: ["openrlworkers"]
+  verbs: ["get", "list", "watch"]
+# The scheduler never edits a request, only reports on it.
+- apiGroups: ["openrl.io"]
+  resources: ["openrlworkers/status"]
+  verbs: ["get", "update", "patch"]
+- apiGroups: ["resource.k8s.io"]
+  resources: ["resourceclaims"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "delete"]
+# Worker pods are rendered from templates held in ConfigMaps.
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+# Leader election.
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-rl-scheduler
+subjects:
+- kind: ServiceAccount
+  name: open-rl-scheduler
+roleRef:
+  kind: Role
+  name: open-rl-scheduler
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-scheduler
+  labels:
+    app: open-rl-scheduler
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: open-rl-scheduler
+  template:
+    metadata:
+      labels:
+        app: open-rl-scheduler
+    spec:
+      serviceAccountName: open-rl-scheduler
+      securityContext:
+        runAsNonRoot: true
+      containers:
+      - name: manager
+        # Built by `make docker-build docker-push` from controller/.
+        image: ghcr.io/gke-labs/open-rl/placement-controller:latest
+        args:
+        - --leader-elect
+        - --health-probe-bind-address=:8081
+        - --metrics-bind-address=:8080
+        env:
+        - name: OPEN_RL_WORKER_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: OPEN_RL_RECONCILE_INTERVAL
+          value: "10s"
+        # The DeviceClass generated claims request, and the driver whose
+        # ResourceSlices describe the hardware. The driver name is also the CEL
+        # domain the per-device memory floor is written against.
+        - name: OPEN_RL_DEVICE_CLASS
+          value: "gpu.nvidia.com"
+        - name: OPEN_RL_DEVICE_DRIVER
+          value: "gpu.nvidia.com"
+        # Worker pods are rendered from these ConfigMaps, read through the API
+        # rather than mounted: a worker may name its own template, and the set
+        # of templates is not known when this pod starts.
+        - name: OPEN_RL_TRAINER_POD_TEMPLATE_CONFIGMAP
+          value: "open-rl-trainer-worker-pod-template"
+        - name: OPEN_RL_SAMPLER_POD_TEMPLATE_CONFIGMAP
+          value: "open-rl-sampler-worker-pod-template"
+        # How long a worker may go unplaced before the request is called
+        # unsatisfiable. Without a deadline an impossible request waits forever,
+        # indistinguishable from one that is merely queued behind a busy fleet.
+        - name: OPEN_RL_PLACEMENT_TIMEOUT
+          value: "15m"
+        - name: OPEN_RL_RECLAIM_INTERVAL
+          value: "1m"
+        ports:
+        - name: metrics
+          containerPort: 8080
+        livenessProbe:
+          httpGet: {path: /healthz, port: 8081}
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        readinessProbe:
+          httpGet: {path: /readyz, port: 8081}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            memory: 512Mi

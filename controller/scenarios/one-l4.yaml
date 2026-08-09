@@ -1,0 +1,38 @@
+# One L4, three trainers, two cohorts.
+#
+# The full fine-tune shares nothing, so it is a cohort of one. The two lora
+# adapters name the same base model, so they are one cohort and hold the GPU
+# together -- their memory sums (6 + 6 = 12Gi, inside the L4's 24Gi) and
+# neither waits for the other. The two cohorts take turns.
+#
+#   go run ./cmd/sim scenarios/one-l4.yaml
+quantum: 60s
+until: 20m
+
+nodes:
+  - name: l4-0
+    devices: 1
+    deviceMemory: 24Gi
+    hostMemory: 94Gi
+    roles: [trainer]
+    maxResidents: 4
+
+work:
+  # Shares nothing: no cohort, so it takes its turn alone.
+  - id: fft-qwen
+    role: trainer
+    memory: 10Gi
+    work: 5m
+
+  # Both adapters sit on one frozen copy of the same base model.
+  - id: lora-alpha
+    role: trainer
+    cohort: qwen3-0-6b
+    memory: 6Gi
+    work: 4m
+  - id: lora-beta
+    role: trainer
+    cohort: qwen3-0-6b
+    memory: 6Gi
+    at: 90s
+    work: 4m

@@ -1,0 +1,5 @@
+# Local tool binaries (controller-gen) and build output. The repo's top-level
+# .gitignore has no Go section, so the kubebuilder scaffold's ignores live here.
+bin/
+*.test
+*.out

@@ -1,0 +1,16 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The scheduler on its own: a CRD and one deployment, no base overlay.
+#
+# Applying this changes nothing about a running cluster. The scheduler only acts
+# on OpenRLWorker objects, and nothing creates those yet -- the gateway still
+# manages its workers itself. That is the point: this can land, be applied, and
+# be exercised by hand before anything depends on it.
+#
+#   kubectl apply -k k8s/deploy/scheduler
+#   kubectl label node <node> openrl.io/enabled=true openrl.io/trainer=true openrl.io/max-residents=4
+#   kubectl get openrlworkers -w
+resources:
+  - 00-openrlworker-crd.yaml
+  - 01-scheduler.yaml
