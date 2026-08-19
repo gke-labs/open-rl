@@ -91,11 +91,25 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
 
 ## Contributing
 
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for how to set up a
+development environment, find an issue to work on, and open a pull request.
+
+Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+## Community
+
+<!-- TODO: Add a developer mailing list, chat channel, and public developer meeting once
+     these are set up. -->
+
+- **Questions and discussion**: [GitHub Issues](https://github.com/gke-labs/open-rl/issues)
+- **Reporting a vulnerability**: see our [Security Policy](SECURITY.md) — please do not open a
+  public issue for security reports
+- **How the project is run**: [GOVERNANCE.md](GOVERNANCE.md)
+- **Who maintains it**: [MAINTAINERS.md](MAINTAINERS.md)
+
+## License
+
 This project is licensed under the [Apache 2.0 License](LICENSE).
-
-We welcome contributions! Please see [docs/contributing.md](docs/contributing.md) for more information.
-
-We follow [Google's Open Source Community Guidelines](https://opensource.google.com/conduct/).
 
 ## Disclaimer
 
