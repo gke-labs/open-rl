@@ -32,6 +32,4 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: |
-            VERSION=${{ github.sha }}
           push: false

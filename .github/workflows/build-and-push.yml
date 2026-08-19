@@ -38,14 +38,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/gke-labs/open-rl/${{ matrix.image_name }}
+          # Tags every push `sha-<short>`, and the default branch `latest`.
+          flavor: |
+            latest=false
+          tags: |
+            type=sha
+            type=raw,value=latest,enable={{is_default_branch}}
+
       - name: Build and push
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5.4.0
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: |
-            VERSION=${{ github.sha }}
           push: true
-          tags: |
-            ghcr.io/gke-labs/open-rl/${{ matrix.image_name }}:latest
-            ghcr.io/gke-labs/open-rl/${{ matrix.image_name }}:${{ github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
