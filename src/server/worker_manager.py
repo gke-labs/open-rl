@@ -63,11 +63,12 @@ def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str
   """
   model_lower = (base_model or "").lower()
 
-  # Full fine-tuning 7B/8B+ requires H100 (80gb)
+  # Full fine-tuning always maps to the 80gb tier: FFT of any
+  # multi-billion-param model (bf16 params + grads + AdamW states +
+  # pinned-DRAM shadow) exceeds the 24gb tier, and name-based size
+  # sniffing misses many model naming schemes (e.g. gemma-4-e2b).
   if fine_tuning_type == "full":
-    if any(size in model_lower for size in ["7b", "8b", "14b", "32b", "70b"]):
-      return "80gb"
-    return "24gb"
+    return "80gb"
 
   # LoRA fine-tuning memory scaling
   if any(size in model_lower for size in ["14b", "32b", "70b"]):

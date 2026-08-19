@@ -377,7 +377,9 @@ class KubernetesWorkerManager:
     limits = resources.setdefault("limits", {})
     requests = resources.setdefault("requests", {})
     if memory_tier == "80gb":
-      limits["memory"] = "110Gi"
+      # 7B-class FFT peaks near 110Gi (pinned optimizer+weight shadow ~75Gi
+      # plus reload buffers) — one OOMKill observed at 110Gi; give headroom.
+      limits["memory"] = "200Gi"
       requests["memory"] = "90Gi"
       requests["cpu"] = "12"
     else:

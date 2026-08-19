@@ -347,6 +347,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     config = getattr(self.model, "config", None)
     if config is None:
       return layer_names_list, indices_list
+    # Multimodal wrappers (e.g. gemma-4 ForConditionalGeneration) nest the LM
+    # dims under text_config.
+    if getattr(config, "hidden_size", None) is None and getattr(config, "text_config", None) is not None:
+      config = config.text_config
 
     hidden_size = getattr(config, "hidden_size", None)
     num_heads = getattr(config, "num_attention_heads", None)
@@ -360,21 +364,29 @@ class FFTTrainingWorker(BaseTrainerWorker):
     q_numel = (num_heads * head_dim * hidden_size) if (hidden_size and num_heads and head_dim) else None
     k_numel = (num_kv_heads * head_dim * hidden_size) if (hidden_size and num_kv_heads and head_dim) else None
     gate_numel = (intermediate_size * hidden_size) if (hidden_size and intermediate_size) else None
+    # Bias rows fuse with bias-sized offsets (Qwen2.5 attention has QKV
+    # biases; using weight-sized offsets sent bias indices out of bounds).
+    q_bias_numel = (num_heads * head_dim) if (num_heads and head_dim) else None
+    k_bias_numel = (num_kv_heads * head_dim) if (num_kv_heads and head_dim) else None
 
     mapped_names: list[str] = []
     mapped_indices: list[torch.Tensor] = []
 
     for name, idx in zip(layer_names_list, indices_list):
+      is_bias = name.endswith(".bias")
       if (".q_proj." in name or ".k_proj." in name or ".v_proj." in name) and q_numel is not None and k_numel is not None:
         qkv_name = name.replace(".q_proj.", ".qkv_proj.").replace(".k_proj.", ".qkv_proj.").replace(".v_proj.", ".qkv_proj.")
-        offset = 0 if ".q_proj." in name else (q_numel if ".k_proj." in name else q_numel + k_numel)
+        qn, kn = (q_bias_numel, k_bias_numel) if is_bias else (q_numel, k_numel)
+        offset = 0 if ".q_proj." in name else (qn if ".k_proj." in name else qn + kn)
         mapped_names.append(qkv_name)
         mapped_indices.append(idx + offset)
         continue
 
       if (".gate_proj." in name or ".up_proj." in name) and gate_numel is not None:
         gate_up_name = name.replace(".gate_proj.", ".gate_up_proj.").replace(".up_proj.", ".gate_up_proj.")
-        offset = 0 if ".gate_proj." in name else gate_numel
+        # (No known FFT target has MLP biases; if one appears, intermediate_size
+        # is the bias-sized gate offset.)
+        offset = 0 if ".gate_proj." in name else (intermediate_size if is_bias else gate_numel)
         mapped_names.append(gate_up_name)
         mapped_indices.append(idx + offset)
         continue
