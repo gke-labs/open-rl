@@ -402,10 +402,18 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         save_reqs = [r for r in training_reqs if r.get("op") in save_ops]
 
         if gpu_reqs:
-          async with self.time_slicer.acquire(self.workload):
-            # llmd-app mode: the Snapshot Agent owns offload/reload (pushed
-            # over the app_channel stream) — never sleep()/wake_up() inline.
+          async with self.time_slicer.acquire(self.workload) as acquire_result:
+            # llmd-app mode: reload already happened via the app_channel
+            # restore push before acquire() returned; context_restored=False
+            # means the context was never evicted (zero-overhead path), so
+            # there is no reload work either way. The snapshot on release is
+            # deferred by the orchestrator — never offload manually here.
             if self.llmd_app_mode:
+              if acquire_result is not None:
+                print(
+                  f"[WORKER] Orchestrator lock granted for {self.workload.key} "
+                  f"(waited {acquire_result.waited_ms} ms, context_restored={acquire_result.context_restored})"
+                )
               for request in gpu_reqs:
                 results.append(await self.handle_request(request, self.model_id))
             else:

@@ -68,6 +68,8 @@ if is_fft_enabled():
   from accel_timeslicer.time_slicer import time_slicer_client_from_env, workload_from_env
   from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, workload_job_id
 
+  # In llmd-app mode this returns the TimeSlice Orchestrator adapter; the
+  # legacy accel-timeslicer client otherwise. Same acquire/release surface.
   LLMD_APP_MODE = is_llmd_app_mode()
   time_slicer = time_slicer_client_from_env()
 
@@ -327,8 +329,8 @@ async def run_sampling_worker(model_id: str) -> None:
         if engine is not None:
           if LLMD_APP_MODE:
             # Register before yielding the lock so the agent can snapshot this
-            # job as soon as another job needs the GPU. The engine stays
-            # resident; the agent decides when to sleep it.
+            # job as soon as another job acquires. The engine stays resident:
+            # the orchestrator defers the snapshot until there is a waiter.
             register_app_channel()
             IS_ENGINE_SLEEPING = False
           else:
@@ -406,11 +408,18 @@ async def run_sampling_worker(model_id: str) -> None:
         if sampling_reqs:
           if time_slicer is not None:
             assert workload is not None
-            async with time_slicer.acquire(workload):
+            async with time_slicer.acquire(workload) as acquire_result:
               if LLMD_APP_MODE:
-                # The snapshot agent pushes sleep(level)/wake_up(tags) over the
-                # app_channel stream; the worker no longer calls them itself
-                # around lock boundaries.
+                # The snapshot agent already pushed wake_up() before acquire()
+                # returned (or the engine was never put to sleep on the
+                # zero-overhead path — context_restored=False). Either way the
+                # engine is awake here; do not sleep it on the way out — the
+                # orchestrator defers the snapshot until another job acquires.
+                if acquire_result is not None:
+                  print(
+                    f"[vLLM Worker] Orchestrator lock granted (waited {acquire_result.waited_ms} ms, "
+                    f"context_restored={acquire_result.context_restored})"
+                  )
                 IS_ENGINE_SLEEPING = False
               elif engine is not None and IS_ENGINE_SLEEPING:
                 print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")

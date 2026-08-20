@@ -50,3 +50,16 @@ calling `snapshot_and_wait` / `restore_and_wait`.
 For this first integration, release checkpoints the workload before another
 workload can acquire the accelerator when the backend reports resident GPU
 state.
+
+## llmd-app mode (llm-d platform coordination)
+
+Setting `OPEN_RL_TIME_SLICE_MODE=llmd-app` on workers bypasses this daemon
+entirely (see `llmd_app.py`): `time_slicer_client_from_env()` returns an
+adapter over the cluster-scoped llm-d TimeSlice Orchestrator
+(`OPEN_RL_TIME_SLICE_ORCH_ADDR`), and workers register their suspend/resume
+mechanics with the node-local llm-d Snapshot Agent
+(`OPEN_RL_SNAPSHOT_AGENT_ADDR`) over the `app_channel` stream — trainers hand
+over their pinned-buffer offload/reload callbacks, samplers hand over the
+vLLM engine object. Unlike this daemon's eager checkpoint-on-release, the
+orchestrator defers the snapshot until another job acquires the group lock,
+and its queue is FIFO rather than LRS.
