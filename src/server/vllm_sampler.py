@@ -62,10 +62,13 @@ def is_fft_enabled() -> bool:
 
 
 time_slicer: Any = None
+LLMD_APP_MODE = False
 if is_fft_enabled():
+  from accel_timeslicer.llmd_app import is_llmd_app_mode, register_app_channel_workload
   from accel_timeslicer.time_slicer import time_slicer_client_from_env, workload_from_env
   from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, workload_job_id
 
+  LLMD_APP_MODE = is_llmd_app_mode()
   time_slicer = time_slicer_client_from_env()
 
 
@@ -294,9 +297,22 @@ async def run_sampling_worker(model_id: str) -> None:
 
   store = get_store()
   snapshot_registered = False
+  app_channel_handle: Any = None
   workload = None
   if time_slicer is not None:
     workload = workload_from_env(os.getpid(), job_id=workload_job_id("sampler", model_id), group=SAMPLER_TIME_SLICE_GROUP)
+
+  def register_app_channel() -> None:
+    # llmd-app mode: hand the engine object to the node-local snapshot agent.
+    # vLLM engines are recognized by type (requires enable_sleep_mode=True);
+    # the agent pushes sleep(level)/wake_up(tags) — the worker no longer calls
+    # them itself around lock boundaries.
+    nonlocal app_channel_handle
+    if not LLMD_APP_MODE or engine is None or app_channel_handle is not None:
+      return
+    assert workload is not None
+    app_channel_handle = register_app_channel_workload(workload, engine=engine)
+    print(f"[vLLM Worker] Registered app_channel workload {workload.key} with node-local snapshot agent.")
 
   if time_slicer is not None:
     assert workload is not None
@@ -309,20 +325,35 @@ async def run_sampling_worker(model_id: str) -> None:
         init_engine()
         print("[vLLM Worker] Engine initialized successfully.")
         if engine is not None:
-          print("[vLLM Worker] Sleeping engine after init to yield GPU memory (CPU offload)...")
-          await engine.sleep(level=1)
-          IS_ENGINE_SLEEPING = True
+          if LLMD_APP_MODE:
+            # Register before yielding the lock so the agent can snapshot this
+            # job as soon as another job needs the GPU. The engine stays
+            # resident; the agent decides when to sleep it.
+            register_app_channel()
+            IS_ENGINE_SLEEPING = False
+          else:
+            print("[vLLM Worker] Sleeping engine after init to yield GPU memory (CPU offload)...")
+            await engine.sleep(level=1)
+            IS_ENGINE_SLEEPING = True
     except Exception as exc:
       print(f"[vLLM Worker] Failed to perform coordinated initialization: {exc}")
       traceback.print_exc()
       if engine is None:
         init_engine()
+      register_app_channel()
   else:
     init_engine()
 
   async def exit_gracefully() -> None:
     print(f"[vLLM Worker] Initiating immediate exit for model {model_id} sampler worker...")
     nonlocal snapshot_registered
+    nonlocal app_channel_handle
+    if app_channel_handle is not None:
+      try:
+        app_channel_handle.close()
+      except Exception as exc:
+        print(f"[vLLM Worker] Failed to close app_channel workload handle: {exc}")
+      app_channel_handle = None
     if snapshot_registered and time_slicer is not None:
       assert workload is not None
       try:
@@ -376,7 +407,12 @@ async def run_sampling_worker(model_id: str) -> None:
           if time_slicer is not None:
             assert workload is not None
             async with time_slicer.acquire(workload):
-              if engine is not None and IS_ENGINE_SLEEPING:
+              if LLMD_APP_MODE:
+                # The snapshot agent pushes sleep(level)/wake_up(tags) over the
+                # app_channel stream; the worker no longer calls them itself
+                # around lock boundaries.
+                IS_ENGINE_SLEEPING = False
+              elif engine is not None and IS_ENGINE_SLEEPING:
                 print("[vLLM Worker] Engine is sleeping. Waking up weights and KV cache before batch processing...")
                 await engine.wake_up(tags=["weights", "kv_cache"])
                 IS_ENGINE_SLEEPING = False
@@ -384,7 +420,7 @@ async def run_sampling_worker(model_id: str) -> None:
               await asyncio.gather(*tasks)
               if has_shutdown:
                 await exit_gracefully()
-              if engine is not None:
+              if not LLMD_APP_MODE and engine is not None:
                 print("[vLLM Worker] Exiting batch: sleeping engine (CPU offload weights) to yield GPU memory...")
                 await engine.sleep(level=1)
                 IS_ENGINE_SLEEPING = True

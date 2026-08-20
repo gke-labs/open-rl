@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from opentelemetry import context as otel_context
 from opentelemetry import propagate, trace
 
+from accel_timeslicer.llmd_app import is_llmd_app_mode, register_app_channel_workload
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
 from accel_timeslicer.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.store import RequestStore, get_store
@@ -309,9 +310,25 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     self.workload = workload_from_env(os.getpid(), job_id=workload_job_id("trainer", model_id), group=TRAINER_TIME_SLICE_GROUP)
     self.time_slicer = time_slicer
     self.snapshot_registered = False
+    # llmd-app mode: the Snapshot Agent pushes offload/reload over the
+    # app_channel stream, so run_once must not call sleep()/wake_up() inline.
+    self.llmd_app_mode = is_llmd_app_mode()
+    self.app_channel_handle: Any = None
+    if self.llmd_app_mode and hasattr(worker, "external_offload_manager"):
+      worker.external_offload_manager = True
+
+  def close_app_channel(self) -> None:
+    if self.app_channel_handle is None:
+      return
+    try:
+      self.app_channel_handle.close()
+    except Exception as exc:
+      print(f"[WORKER] Failed to close app_channel workload handle: {exc}")
+    self.app_channel_handle = None
 
   async def exit_gracefully(self) -> None:
     print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
+    self.close_app_channel()
     if self.snapshot_registered:
       try:
         await self.time_slicer.unregister(self.workload)
@@ -328,6 +345,18 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     print("[WORKER] Full fine-tuning training requests processor started.")
 
     try:
+      if self.llmd_app_mode:
+        # The existing pinned-buffer offload/reload functions become the
+        # app_channel callbacks; the agent decides when they run. Trainers
+        # cannot reconstruct dropped state, so only "offload" is supported.
+        self.app_channel_handle = register_app_channel_workload(
+          self.workload,
+          on_snapshot=lambda mode, tags: self.worker.sleep(),
+          on_restore=lambda tags: self.worker.wake_up(),
+          supported_modes=["offload"],
+          default_mode="offload",
+        )
+        print(f"[WORKER] Registered app_channel workload {self.workload.key} with node-local snapshot agent.")
       await self.time_slicer.register(self.workload)
       self.snapshot_registered = True
       while True:
@@ -341,6 +370,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
           await asyncio.sleep(1)
     finally:
       try:
+        self.close_app_channel()
         if self.snapshot_registered:
           await self.time_slicer.unregister(self.workload)
       finally:
@@ -373,14 +403,20 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
 
         if gpu_reqs:
           async with self.time_slicer.acquire(self.workload):
-            if hasattr(self.worker, "wake_up"):
-              await asyncio.to_thread(self.worker.wake_up)
-            try:
+            # llmd-app mode: the Snapshot Agent owns offload/reload (pushed
+            # over the app_channel stream) — never sleep()/wake_up() inline.
+            if self.llmd_app_mode:
               for request in gpu_reqs:
                 results.append(await self.handle_request(request, self.model_id))
-            finally:
-              if hasattr(self.worker, "sleep"):
-                await asyncio.to_thread(self.worker.sleep)
+            else:
+              if hasattr(self.worker, "wake_up"):
+                await asyncio.to_thread(self.worker.wake_up)
+              try:
+                for request in gpu_reqs:
+                  results.append(await self.handle_request(request, self.model_id))
+              finally:
+                if hasattr(self.worker, "sleep"):
+                  await asyncio.to_thread(self.worker.sleep)
 
         if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
           async with self.time_slicer.acquire(self.workload):

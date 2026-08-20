@@ -447,6 +447,8 @@ class KubernetesWorkerManager:
     remove_env(container, "OPEN_RL_TIME_SLICE_GROUP")
     remove_env(container, "OPEN_RL_ACCEL_TIMESLICER_HOST")
     remove_env(container, "OPEN_RL_ACCEL_TIMESLICER_PORT")
+    remove_env(container, "OPEN_RL_TIME_SLICE_MODE")
+    remove_env(container, "OPEN_RL_SNAPSHOT_AGENT_ADDR")
 
     from server.model_metadata import WeightSyncConfig
 
