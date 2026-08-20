@@ -99,7 +99,12 @@ async def main_async() -> None:
   if args.backend == "llmd":
     if LlmDClient is None:
       raise RuntimeError("--backend llmd requires the llm-d timeslice snapshot client package")
-    restorer = LlmDCheckpointRestorer(LlmDClient(endpoint=args.llmd_snapshot_endpoint), args.llmd_backend, args.llmd_poll_interval_sec)
+    if args.llmd_backend != "CUDA":
+      raise RuntimeError(f"--llmd-backend {args.llmd_backend} is not supported; only CUDA is")
+    from timeslice.snapshot_agent import snapshot_agent_pb2
+
+    backend_config = snapshot_agent_pb2.BackendConfig(cuda=snapshot_agent_pb2.CudaBackendConfig())
+    restorer = LlmDCheckpointRestorer(LlmDClient(endpoint=args.llmd_snapshot_endpoint), backend_config, args.llmd_poll_interval_sec)
     time_slicer = SingleNodeTimeSlicer(restorer=restorer, scheduling_policy=args.scheduling_policy)
   else:
     restorer = CudaCheckpointRestorer(args.cuda_checkpoint_bin, args.cuda_checkpoint_timeout_ms)

@@ -1,4 +1,4 @@
-from typing import Protocol
+from typing import Any, Protocol
 
 from .checkpoint import CheckpointRestorer
 from .workload import WorkloadRef
@@ -10,9 +10,9 @@ class LlmDOperationResult(Protocol):
 
 
 class LlmDClient(Protocol):
-  def snapshot_and_wait(self, job_id: str, group: str, backend: str, poll_interval_sec: float = 1.0) -> LlmDOperationResult: ...
+  def snapshot_and_wait(self, job_id: str, group: str = "", poll_interval_sec: float = 1.0, backend_config: Any = None) -> LlmDOperationResult: ...
 
-  def restore_and_wait(self, job_id: str, group: str, backend: str, poll_interval_sec: float = 1.0) -> LlmDOperationResult: ...
+  def restore_and_wait(self, job_id: str, group: str = "", poll_interval_sec: float = 1.0, backend_config: Any = None) -> LlmDOperationResult: ...
 
   def close(self) -> None: ...
 
@@ -23,20 +23,24 @@ class LlmDCheckpointRestorer(CheckpointRestorer):
   def __init__(
     self,
     client: LlmDClient,
-    backend: str = "CUDA",
+    backend_config: Any = None,
     poll_interval_sec: float = 1.0,
   ):
-    self.backend = backend
+    self.backend_config = backend_config
     self.poll_interval_sec = poll_interval_sec
     self.client = client
 
   def checkpoint(self, workload: WorkloadRef) -> bool:
-    result = self.client.snapshot_and_wait(workload.job_id, workload.group, self.backend, self.poll_interval_sec)
+    result = self.client.snapshot_and_wait(
+      workload.job_id, group=workload.group, poll_interval_sec=self.poll_interval_sec, backend_config=self.backend_config
+    )
     ensure_complete("snapshot", workload.job_id, result)
     return True
 
   def restore(self, workload: WorkloadRef) -> None:
-    result = self.client.restore_and_wait(workload.job_id, workload.group, self.backend, self.poll_interval_sec)
+    result = self.client.restore_and_wait(
+      workload.job_id, group=workload.group, poll_interval_sec=self.poll_interval_sec, backend_config=self.backend_config
+    )
     ensure_complete("restore", workload.job_id, result)
 
 

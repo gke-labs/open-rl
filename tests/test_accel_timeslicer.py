@@ -443,7 +443,7 @@ class LlmDCheckpointRestorerTest(unittest.TestCase):
       parameters = inspect.signature(getattr(SnapshotAgentClient, name)).parameters
       self.assertEqual(
         list(parameters)[:5],
-        ["self", "job_id", "group", "backend", "poll_interval_sec"],
+        ["self", "job_id", "group", "poll_interval_sec", "backend_config"],
       )
       self.assertEqual(parameters["poll_interval_sec"].default, 1.0)
 
@@ -456,19 +456,20 @@ class LlmDCheckpointRestorerTest(unittest.TestCase):
       def __init__(self):
         self.calls = []
 
-      def snapshot_and_wait(self, job_id, group, backend, poll_interval_sec=1.0):
-        self.calls.append(("snapshot", job_id, group, backend, poll_interval_sec))
+      def snapshot_and_wait(self, job_id, group="", poll_interval_sec=1.0, backend_config=None):
+        self.calls.append(("snapshot", job_id, group, poll_interval_sec, backend_config))
         return SimpleNamespace(status="OPERATION_STATUS_COMPLETE")
 
-      def restore_and_wait(self, job_id, group, backend, poll_interval_sec=1.0):
-        self.calls.append(("restore", job_id, group, backend, poll_interval_sec))
+      def restore_and_wait(self, job_id, group="", poll_interval_sec=1.0, backend_config=None):
+        self.calls.append(("restore", job_id, group, poll_interval_sec, backend_config))
         return SimpleNamespace(status="OPERATION_STATUS_COMPLETE")
 
       def close(self):
         pass
 
     client = Client()
-    restorer = LlmDCheckpointRestorer(client, "CUDA", 0.25)
+    cuda_config = object()
+    restorer = LlmDCheckpointRestorer(client, cuda_config, 0.25)
 
     target = WorkloadRef(job_id="job-a")
     restorer.checkpoint(target)
@@ -477,8 +478,8 @@ class LlmDCheckpointRestorerTest(unittest.TestCase):
     self.assertEqual(
       client.calls,
       [
-        ("snapshot", "job-a", "shared-accelerator", "CUDA", 0.25),
-        ("restore", "job-a", "shared-accelerator", "CUDA", 0.25),
+        ("snapshot", "job-a", "shared-accelerator", 0.25, cuda_config),
+        ("restore", "job-a", "shared-accelerator", 0.25, cuda_config),
       ],
     )
 
