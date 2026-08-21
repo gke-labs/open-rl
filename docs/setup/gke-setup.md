@@ -95,18 +95,27 @@ gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 
 ## 3. Deploy OpenRL
 
-Deploy the manifests using the Kustomize overlay. You should apply **only one** of the following, depending on your needs:
+Apply **only one** of the following. Options A and B install images pinned to a released version, so the cluster stays on that version until you deploy another one. Option C tracks `main`.
 
-*   **Option A: Generic Base Setup** (without recipe-specific configurations):
+*   **Option A: Generic Base Setup** (without recipe-specific configurations). Apply the release bundle directly:
     ```bash
-    kubectl apply -k k8s/deploy/distributed-shared
+    kubectl apply -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml
+    ```
+    Use `openrl-distributed-lustre.yaml` instead for a Lustre-backed filesystem, or replace `latest/download` with `download/v0.0.1` to pin a specific version.
+
+*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL). The recipe overlay includes the base setup and applies its own customizations, so do not apply Option A as well. Clone the repository at the release tag and render the overlay with its images pinned:
+    ```bash
+    git clone https://github.com/gke-labs/open-rl.git
+    cd open-rl
+    git checkout v0.0.1
+    make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
     ```
 
-*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL):
-    The recipe overlay automatically includes the base setup and applies specific customizations. You do not need to apply the base setup separately.
+*   **Option C: Install from Source** (contributors, tracking unreleased code):
     ```bash
-    kubectl apply -k examples/text-to-sql
+    kubectl apply -k k8s/deploy/distributed-shared    # or: kubectl apply -k examples/text-to-sql
     ```
+    This deploys `:latest`, which is retagged on every push to `main`.
 
 Wait for the shared storage (PVC) to be bound:
 

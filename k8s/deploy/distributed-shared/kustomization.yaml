@@ -8,6 +8,13 @@ resources:
   - 04-gateway.yaml
   - 05-trainer-worker.yaml
 
+# Release builds repoint these with `kustomize edit set image`.
+images:
+  - name: ghcr.io/gke-labs/open-rl/server
+    newTag: latest
+  - name: ghcr.io/gke-labs/open-rl/gateway
+    newTag: latest
+
 configMapGenerator:
   - name: open-rl-config
     literals:
