@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>open-rl operations</title>
+  <link rel="stylesheet" href="/dashboard/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='2' width='12' height='12' rx='2' fill='none' stroke='black' stroke-width='2'/></svg>">
+</head>
+<body>
+  <div id="demo-banner" class="demo-banner" hidden>Demo data — everything on this page is fictional.</div>
+
+  <header class="topbar">
+    <nav class="tabs" role="tablist">
+      <button class="tab" data-tab="cluster" role="tab">Cluster</button>
+      <button class="tab" data-tab="runs" role="tab">Runs</button>
+      <button class="tab" data-tab="health" role="tab">Health<span id="problem-dot" class="problem-dot" hidden></span></button>
+    </nav>
+    <div class="topbar-right">
+      <span id="updated-at" class="updated-at"></span>
+      <button id="refresh" class="icon-btn" title="Refresh now">&#8635;</button>
+      <button id="theme-toggle" class="icon-btn" title="Toggle theme">&#9681;</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="view-cluster" class="view" hidden>
+      <div id="canvas" class="canvas">
+        <div id="world" class="world">
+          <svg id="edges" class="edges" aria-hidden="true"></svg>
+          <div id="control-col" class="control-col"></div>
+          <div id="pools-col" class="pools-col"></div>
+        </div>
+        <div class="canvas-controls">
+          <button id="zoom-out" class="icon-btn" title="Zoom out">&minus;</button>
+          <button id="zoom-in" class="icon-btn" title="Zoom in">+</button>
+          <button id="zoom-reset" class="icon-btn" title="Reset view">&#8862;</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-pool" class="view" hidden>
+      <div class="page page-wide">
+        <div class="pool-head-row">
+          <button id="pool-back" class="btn">&larr; Cluster</button>
+          <h1 id="pool-title"></h1>
+          <span id="pool-meta" class="page-count"></span>
+        </div>
+        <div class="chart-card">
+          <div class="chart-head">
+            <span class="eyebrow">GPU duty cycle</span>
+            <span id="chart-readout" class="chart-readout"></span>
+          </div>
+          <svg id="duty-chart" aria-label="GPU duty cycle over time, stacked by job"></svg>
+          <p id="chart-empty" class="chart-empty" hidden></p>
+          <div id="chart-legend" class="chart-legend"></div>
+          <div id="chart-tip" class="chart-tip" hidden></div>
+          <p class="chart-note">Allocation duty: GPUs claimed by scheduled pods &divide; pool capacity, stacked by the job holding them, sampled while the gateway is polled. Device utilization lives in DCGM.</p>
+        </div>
+        <div class="eyebrow">Nodes</div>
+        <div id="pool-node-list"></div>
+      </div>
+    </section>
+
+    <section id="view-runs" class="view" hidden>
+      <div class="page">
+        <div class="page-head">
+          <h1>Runs</h1>
+          <span id="runs-count" class="page-count"></span>
+        </div>
+        <div id="runs-list" class="runs-list"></div>
+        <p id="runs-empty" class="empty" hidden>No runs. Launch one with the SDK, or <code>ops.py launch --base-model &lt;model&gt;</code>.</p>
+      </div>
+    </section>
+
+    <section id="view-health" class="view" hidden>
+      <div class="page">
+        <div class="page-head"><h1>Health</h1></div>
+        <div class="health-section">
+          <div class="eyebrow">Problems</div>
+          <div id="problems-list"></div>
+          <p id="problems-empty" class="empty" hidden>No problems detected.</p>
+        </div>
+        <div class="health-section">
+          <div class="eyebrow">Load</div>
+          <div id="stats-grid" class="stats-grid"></div>
+          <div id="queues-block" hidden>
+            <div class="eyebrow">Queued work by run</div>
+            <div id="queue-list"></div>
+          </div>
+        </div>
+        <div id="checks"></div>
+      </div>
+    </section>
+  </main>
+
+  <aside id="panel" class="panel" hidden aria-label="Pod details">
+    <div class="panel-head">
+      <div>
+        <div id="panel-title" class="panel-title"></div>
+        <div id="panel-sub" class="panel-sub"></div>
+      </div>
+      <button id="panel-close" class="icon-btn" title="Close (Esc)">&times;</button>
+    </div>
+    <div id="panel-meta" class="panel-meta"></div>
+    <div id="panel-containers" class="panel-containers"></div>
+    <div class="panel-logs-head">
+      <span class="eyebrow">Logs</span>
+      <label class="follow"><input type="checkbox" id="log-follow" checked> follow</label>
+      <span id="log-updated" class="updated-at"></span>
+    </div>
+    <pre id="panel-logs" class="panel-logs">loading…</pre>
+  </aside>
+
+  <script type="module" src="/dashboard/static/app.js"></script>
+</body>
+</html>

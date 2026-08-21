@@ -16,6 +16,7 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
+from server.dashboard import mount_dashboard
 from server.store import get_store
 from server.worker_launch_processor import (
   FFTWorkerManager,
@@ -43,7 +44,7 @@ else:
 class FilterNoisyEndpoints(logging.Filter):
   def filter(self, record: logging.LogRecord) -> bool:
     msg = record.getMessage()
-    return "retrieve_future" not in msg and "session_heartbeat" not in msg
+    return "retrieve_future" not in msg and "session_heartbeat" not in msg and "/api/v1/dashboard/" not in msg
 
 
 logging.getLogger("uvicorn.access").addFilter(FilterNoisyEndpoints())
@@ -202,7 +203,7 @@ def translate_future_result(result: dict) -> dict:
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(served_app: FastAPI):
   task = None
   fft_worker_manager = None
   worker_launch_task = None
@@ -210,6 +211,7 @@ async def lifespan(_: FastAPI):
     fft_worker_manager = FFTWorkerManager()
     worker_launch_processor = WorkerLaunchProcessor(store, fft_worker_manager)
     worker_launch_task = asyncio.create_task(worker_launch_processor.run())
+  served_app.state.fft_worker_manager = fft_worker_manager
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
@@ -239,7 +241,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
-FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
+FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat,/api/v1/dashboard/.*,/dashboard.*")
+mount_dashboard(app)
 
 
 # *** ServiceClient endpoints ***

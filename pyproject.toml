@@ -52,6 +52,9 @@ vllm = [
 where = ["src"]
 include = ["server*", "training*", "snapshot_agent*"]
 
+[tool.setuptools.package-data]
+"server.dashboard" = ["static/*"]
+
 [tool.uv]
 override-dependencies = [
     # vLLM still carries an older transformers constraint; keep the project on

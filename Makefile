@@ -13,7 +13,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_gateway_paths tests.test_snapshot_agent tests.test_trainer_optimizer_correctness tests.test_worker_launch_processor
+UNIT_TESTS ?= tests.test_dashboard tests.test_gateway_paths tests.test_snapshot_agent tests.test_trainer_optimizer_correctness tests.test_worker_launch_processor
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
@@ -38,6 +38,7 @@ help:
 	@echo "make test e2e tiny-fft TRAINING_TEST_ARGS='steps=20'"
 	@echo "make test e2e fft-gsm8k TRAINING_TEST_ARGS='steps=10 eval_examples=8 extra=\"batch=2\"'"
 	@echo "make test piglatin                      # pig-latin example end-to-end tests"
+	@echo "make ops health|problems|inspect|runs   # cluster ops as JSON (dashboard at $(BASE_URL)/dashboard)"
 	@echo "make lint | fmt"
 	@echo "make render OVERLAY=k8s/deploy/distributed-shared VERSION=v0.0.1  # pinned manifests to stdout"
 	@echo "make release-bundle VERSION=v0.0.1     # release assets into $(DIST_DIR)/"
@@ -63,6 +64,11 @@ ifeq (cli,$(firstword $(MAKECMDGOALS)))
   $(eval $(CLI_ARGS):;@:)
 endif
 
+ifeq (ops,$(firstword $(MAKECMDGOALS)))
+  OPS_ARGS := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(OPS_ARGS):;@:)
+endif
+
 ifeq (test,$(firstword $(MAKECMDGOALS)))
   TEST_MODE := $(word 2,$(MAKECMDGOALS))
   TEST_SCENARIO := $(word 3,$(MAKECMDGOALS))
@@ -74,6 +80,9 @@ endif
 
 cli:
 	@cd dev/tools && BASE_URL="$(BASE_URL)" uv run python cli.py $(CLI_ARGS)
+
+ops:
+	@BASE_URL="$(BASE_URL)" python3 dev/tools/ops.py $(OPS_ARGS)
 
 # ---------------------------------------------------------------------------
 # Dev
