@@ -95,18 +95,38 @@ gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 
 ## 3. Deploy OpenRL
 
-Deploy the manifests using the Kustomize overlay. You should apply **only one** of the following, depending on your needs:
+Apply **only one** of the following. Options A and B install images pinned to a released version, so the cluster stays on that version until you deploy another one. Option C tracks `main`.
 
-*   **Option A: Generic Base Setup** (without recipe-specific configurations):
+*   **Option A: Generic Base Setup** (without recipe-specific configurations). Apply the release bundle directly:
     ```bash
-    kubectl apply -k k8s/deploy/distributed-shared
+    kubectl apply -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml
+    ```
+    Use `openrl-distributed-lustre.yaml` instead for a Lustre-backed filesystem, or replace `latest/download` with `download/v0.1.0` to pin a specific version.
+
+*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL). The recipe overlay includes the base setup and applies its own customizations, so do not apply Option A as well. Clone the repository at the release tag and render the overlay with its images pinned:
+    ```bash
+    git clone https://github.com/gke-labs/open-rl.git
+    cd open-rl
+    git checkout v0.1.0
+    make render OVERLAY=examples/text-to-sql VERSION=v0.1.0 | kubectl apply -f -
     ```
 
-*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL):
-    The recipe overlay automatically includes the base setup and applies specific customizations. You do not need to apply the base setup separately.
+    > [!WARNING]
+    > Do not apply the Option A bundle and then `kubectl apply -k examples/text-to-sql`. The
+    > second apply re-renders the base from your clone and resets every image back to `latest`,
+    > silently undoing the pin.
+
+*   **Option C: Install from Source** (contributors, tracking unreleased code):
     ```bash
-    kubectl apply -k examples/text-to-sql
+    kubectl apply -k k8s/deploy/distributed-shared    # or: kubectl apply -k examples/text-to-sql
     ```
+    This deploys `:latest`, which is retagged on every push to `main`, so pods move to a newer build whenever they restart. Checking out a tag does **not** change that — the overlays carry the `latest` tag on every branch. `make render` is the only pinned from-source path.
+
+> [!IMPORTANT]
+> Run recipe clients from the same tag you deployed. The client pins a `tinker` SDK version in
+> `examples/pyproject.toml`, and that pin moves on `main`, so a client from `main` can disagree
+> with a released gateway about the API. If the cluster runs `v0.1.0`, run the recipe from a
+> `v0.1.0` checkout.
 
 Wait for the shared storage (PVC) to be bound:
 

@@ -7,6 +7,7 @@
 * [Pull Request Lifecycle](#pull-request-lifecycle)
 * [Sign Your Commits](#sign-your-commits)
 * [Pull Request Checklist](#pull-request-checklist)
+* [Releases](#releases)
 
 Welcome! We are glad that you want to contribute to OpenRL. 💖
 
@@ -163,3 +164,13 @@ following locally:
 * [ ] Documentation under `docs/` or `examples/` is updated if behavior changed.
 * [ ] The pull request description explains what changed and why, and links the related issue.
 * [ ] Commits are scoped and have clear messages.
+
+## Releases
+
+Maintainers cut releases by pushing a `v*` tag to `main`; CI publishes the images and attaches the
+rendered manifest bundles. See [RELEASING.md](RELEASING.md) for the full procedure, the local dry
+run, and the per-release compatibility matrix.
+
+Note for changes that touch `k8s/deploy/` or the build workflows: the release bundles are rendered
+from those overlays, so run `make release-bundle VERSION=v0.0.0-dev` and check the output before
+opening the pull request.
