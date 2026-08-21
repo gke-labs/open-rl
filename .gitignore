@@ -58,6 +58,9 @@ Thumbs.db
 !examples/tinker-cookbook/plots/*.png
 !examples/harvey_labs/assets/*.png
 
+# Image tag stamped by `make push-vm` for remote trees that have no .git
+.image-tag
+
 # Local benchmark run outputs
 runs/
 *.pyc

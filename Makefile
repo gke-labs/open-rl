@@ -119,7 +119,8 @@ fmt:
 # Deployment (GKE)
 # ---------------------------------------------------------------------------
 GCP_PROJECT ?= cdrollouts-sunilarora
-IMAGE_TAG   ?= $(shell git rev-parse --short HEAD 2>/dev/null || cat VERSION 2>/dev/null || echo latest)
+# `.image-tag` is the SHA stamped by push-vm, for remote trees rsynced without .git.
+IMAGE_TAG   ?= $(shell git rev-parse --short HEAD 2>/dev/null || cat .image-tag 2>/dev/null || cat VERSION 2>/dev/null || echo latest)
 
 build-images:
 	DOCKER_BUILDKIT=1 docker build -t gcr.io/$(GCP_PROJECT)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
@@ -231,7 +232,7 @@ REMOTE_HOST ?= <PLACE_HOLDER_FOR_REMOTE_HOST_ADDRESS>
 
 # Push local workspace changes to the remote VM
 push-vm:
-	@git rev-parse --short HEAD > VERSION 2>/dev/null || true
+	@git rev-parse --short HEAD > .image-tag 2>/dev/null || true
 	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'scratch' ./ $(REMOTE_HOST):~/open-rl
 
 # Pull changes from the remote VM back to the local workspace
