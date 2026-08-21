@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -14,13 +15,25 @@ from src.server.delta_weight_transfer_engine import (
 )
 
 
+def _make_engine(**overrides) -> DeltaSnapshotWeightTransferEngine:
+  """Build an engine with the arguments vLLM's factory passes.
+
+  The base class reads `parallel_config` and `model_config` off `vllm_config`,
+  so it cannot be a bare `None`.
+  """
+  kwargs = {
+    "config": None,
+    "vllm_config": SimpleNamespace(parallel_config=None, model_config=None),
+    "device": torch.device("cpu"),
+    "model": None,
+  }
+  return DeltaSnapshotWeightTransferEngine(**(kwargs | overrides))
+
+
 class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
   def test_delta_snapshot_weight_transfer_engine_contract(self):
     """Test that DeltaSnapshotWeightTransferEngine satisfies the vLLM contract."""
-    engine = DeltaSnapshotWeightTransferEngine(
-      config=None,
-      parallel_config=None,  # type: ignore
-    )
+    engine = _make_engine()
 
     init_info = engine.parse_init_info({"model_name_or_path": "Qwen/Qwen3-8B"})
     self.assertIsInstance(init_info, DeltaSnapshotInitInfo)
@@ -43,10 +56,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       file_path = os.path.join(tmpdir, "delta.safetensors")
       save_file(dummy_weights, file_path)
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        parallel_config=None,  # type: ignore
-      )
+      engine = _make_engine()
       update_info = DeltaSnapshotUpdateInfo(target_weights_path=file_path)
 
       loaded_tensors: list[tuple[str, torch.Tensor]] = []
@@ -73,10 +83,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       file_v1 = os.path.join(tmpdir, "delta1.safetensors")
       save_file(weights_v1, file_v1)
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        parallel_config=None,  # type: ignore
-      )
+      engine = _make_engine()
 
       # First update: 2 new/changed tensors
       calls_v1: list[list[tuple[str, torch.Tensor]]] = []
@@ -112,10 +119,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       file_v1 = os.path.join(tmpdir, "delta1.safetensors")
       save_file(weights_v1, file_v1)
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        parallel_config=None,  # type: ignore
-      )
+      engine = _make_engine()
       engine.receive_weights(
         DeltaSnapshotUpdateInfo(target_weights_path=file_v1),
         lambda w: None,
@@ -159,10 +163,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       }
       save_file(sparse_dict, os.path.join(tmpdir, "delta.safetensors"))
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        parallel_config=None,  # type: ignore
-      )
+      engine = _make_engine()
 
       # Mock active vLLM model holding initial weights (all zeros)
       class DummyModel:
@@ -240,10 +241,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
           "vllm.model_executor.model_loader.weight_utils": mock_utils,
         },
       ):
-        engine = DeltaSnapshotWeightTransferEngine(
-          config=None,
-          parallel_config=None,  # type: ignore
-        )
+        engine = _make_engine()
 
         loaded_calls: list[tuple[str, torch.Tensor]] = []
         engine.receive_weights(
@@ -308,10 +306,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
           },
         ),
       ):
-        engine = DeltaSnapshotWeightTransferEngine(
-          config=None,
-          parallel_config=None,  # type: ignore
-        )
+        engine = _make_engine()
 
         loaded_calls: list[tuple[str, torch.Tensor]] = []
         engine.receive_weights(
@@ -356,12 +351,7 @@ class DeltaSnapshotWeightTransferEngineTest(unittest.TestCase):
       vllm_config.model_config.hf_config = mock_hf_config
       vllm_config.model_config.model = "Qwen/Qwen2.5-0.5B-Instruct"
 
-      engine = DeltaSnapshotWeightTransferEngine(
-        config=None,
-        vllm_config=vllm_config,
-        device=torch.device("cpu"),
-        model=model,
-      )
+      engine = _make_engine(vllm_config=vllm_config, model=model)
 
       # Create sparse delta patch targeting k_proj (which maps to qkv_proj with offset)
       sparse_dict = {

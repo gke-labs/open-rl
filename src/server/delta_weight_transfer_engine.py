@@ -41,8 +41,16 @@ except ImportError:
     is_checkpoint_format: bool = True
 
   class WeightTransferEngine:
-    def __init__(self, *args, **kwargs):
-      pass
+    # Mirrors the real signature: a permissive *args/**kwargs lets a caller
+    # drift from the vLLM contract undetected wherever vLLM is absent, which is
+    # how the unit tests run.
+    def __init__(self, config: Any, vllm_config: Any, device: torch.device, model: torch.nn.Module | None) -> None:
+      self.config = config
+      self.vllm_config = vllm_config
+      self.parallel_config = getattr(vllm_config, "parallel_config", None)
+      self.model_config = getattr(vllm_config, "model_config", None)
+      self.device = device
+      self.model = model
 
     @classmethod
     def parse_init_info(cls, init_dict: dict[str, Any]):
