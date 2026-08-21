@@ -39,8 +39,8 @@ help:
 	@echo "make test e2e fft-gsm8k TRAINING_TEST_ARGS='steps=10 eval_examples=8 extra=\"batch=2\"'"
 	@echo "make test piglatin                      # pig-latin example end-to-end tests"
 	@echo "make lint | fmt"
-	@echo "make render OVERLAY=k8s/deploy/distributed-shared VERSION=v0.1.0  # pinned manifests to stdout"
-	@echo "make release-bundle VERSION=v0.1.0     # release assets into $(DIST_DIR)/"
+	@echo "make render OVERLAY=k8s/deploy/distributed-shared VERSION=v0.0.1  # pinned manifests to stdout"
+	@echo "make release-bundle VERSION=v0.0.1     # release assets into $(DIST_DIR)/"
 
 # ---------------------------------------------------------------------------
 # Server
@@ -151,12 +151,12 @@ RELEASE_IMAGES ?= server gateway client
 DIST_DIR       ?= dist
 
 # Print any overlay with the open-rl images pinned to VERSION:
-#   make render OVERLAY=examples/text-to-sql VERSION=v0.1.0 | kubectl apply -f -
+#   make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
 # Works on a temp copy of the repo: `kustomize edit` rewrites the kustomization
 # in place, and overlays reach into k8s/deploy/ by relative path.
 render:
 	@test -n "$(OVERLAY)" && test -d "$(OVERLAY)" || { echo "Set OVERLAY=<dir> to an overlay directory"; exit 2; }
-	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.1.0"; exit 2; }
+	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.0.1"; exit 2; }
 	@set -eu; \
 	tmp="$$(mktemp -d)"; \
 	trap 'rm -rf "$$tmp"' EXIT INT TERM; \
@@ -170,7 +170,7 @@ render:
 # Build the assets attached to a GitHub Release. Asset names carry no version so
 # that /releases/latest/download/<name> keeps resolving.
 release-bundle:
-	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.1.0"; exit 2; }
+	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.0.1"; exit 2; }
 	@rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-shared VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-shared.yaml
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-lustre VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-lustre.yaml

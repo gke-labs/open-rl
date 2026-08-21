@@ -101,14 +101,14 @@ Apply **only one** of the following. Options A and B install images pinned to a 
     ```bash
     kubectl apply -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml
     ```
-    Use `openrl-distributed-lustre.yaml` instead for a Lustre-backed filesystem, or replace `latest/download` with `download/v0.1.0` to pin a specific version.
+    Use `openrl-distributed-lustre.yaml` instead for a Lustre-backed filesystem, or replace `latest/download` with `download/v0.0.1` to pin a specific version.
 
 *   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL). The recipe overlay includes the base setup and applies its own customizations, so do not apply Option A as well. Clone the repository at the release tag and render the overlay with its images pinned:
     ```bash
     git clone https://github.com/gke-labs/open-rl.git
     cd open-rl
-    git checkout v0.1.0
-    make render OVERLAY=examples/text-to-sql VERSION=v0.1.0 | kubectl apply -f -
+    git checkout v0.0.1
+    make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
     ```
 
 *   **Option C: Install from Source** (contributors, tracking unreleased code):
