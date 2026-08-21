@@ -61,17 +61,6 @@ experiments for parameter sweeps and reward-signal improvement against a shared 
 
 ## Quick Start
 
-Deploy the latest release to a Kubernetes cluster:
-
-```bash
-kubectl apply -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml
-```
-
-Cluster prerequisites, the Lustre variant, and the recipe-specific install are covered in the
-[GKE Setup Guide](docs/setup/gke-setup.md).
-
-To see training in action:
-
  - Follow the [Pig Latin notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) or [Text-to-SQL notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb) to see supervised fine-tuning in action.
  - Follow the [Text-to-SQL RL recipe](examples/text-to-sql/README.md) to see reinforcement learning in action.
 
