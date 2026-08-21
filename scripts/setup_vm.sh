@@ -90,16 +90,18 @@ if [ -z "$NVCC" ]; then
 fi
 
 # --- 4. python env: core sync (must succeed), fast path (may not) ------------
-step "Python env sync (gpu + vllm + fastpath)"
+# `cluster` is not optional here: `--exact` uninstalls whatever the named extras
+# do not pull in, and dropping it takes the k8s and timeslice clients with it.
+step "Python env sync (gpu + vllm + cluster + fastpath)"
 if ! grep -q '^fastpath' pyproject.toml; then
-  if uv sync --frozen --exact --extra gpu --extra vllm > /tmp/uv-sync.log 2>&1; then
+  if uv sync --frozen --exact --extra gpu --extra vllm --extra cluster > /tmp/uv-sync.log 2>&1; then
     ok "core sync (conv1d ships inside the gpu extra on this branch)"
   else
     tail -5 /tmp/uv-sync.log; bad "core uv sync (full log: /tmp/uv-sync.log)"
   fi
-elif uv sync --frozen --exact --extra gpu --extra vllm --extra fastpath > /tmp/uv-sync.log 2>&1; then
+elif uv sync --frozen --exact --extra gpu --extra vllm --extra cluster --extra fastpath > /tmp/uv-sync.log 2>&1; then
   ok "full sync incl. conv1d fast path"
-elif uv sync --frozen --exact --extra gpu --extra vllm > /tmp/uv-sync.log 2>&1; then
+elif uv sync --frozen --exact --extra gpu --extra vllm --extra cluster > /tmp/uv-sync.log 2>&1; then
   ok "core sync"
   bad "causal-conv1d build (log: /tmp/uv-sync.log) — without it training runs the eager deltanet fallback (2-5x slower)"
 else
@@ -133,6 +135,7 @@ done
 # --- 7. final checklist ------------------------------------------------------
 step "verification"
 uv run --no-sync python -c "import torch; assert torch.cuda.is_available()" 2>/dev/null && ok "torch sees the GPU" || bad "torch.cuda.is_available()"
+uv run --no-sync python -c "import kubernetes, timeslice" 2>/dev/null && ok "cluster extra (kubernetes + timeslice clients)" || bad "kubernetes/timeslice import — re-run the sync with --extra cluster"
 FP=$(uv run --no-sync python -c "from transformers.models.qwen3_5 import modeling_qwen3_5 as m; print(m.is_fast_path_available)" 2>/dev/null)
 if [ "$FP" = "True" ]; then ok "Qwen deltanet fast path available"; else bad "Qwen deltanet fast path unavailable — training would run 2-5x slower"; fi
 timeout 90 podman run --rm ghcr.io/harveyai/lab-sandbox:latest echo ok >/dev/null 2>&1 && ok "podman sandbox runs" || bad "podman run lab-sandbox (try: podman system migrate; check /etc/subuid)"
