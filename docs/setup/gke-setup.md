@@ -111,22 +111,11 @@ Apply **only one** of the following. Options A and B install images pinned to a 
     make render OVERLAY=examples/text-to-sql VERSION=v0.1.0 | kubectl apply -f -
     ```
 
-    > [!WARNING]
-    > Do not apply the Option A bundle and then `kubectl apply -k examples/text-to-sql`. The
-    > second apply re-renders the base from your clone and resets every image back to `latest`,
-    > silently undoing the pin.
-
 *   **Option C: Install from Source** (contributors, tracking unreleased code):
     ```bash
     kubectl apply -k k8s/deploy/distributed-shared    # or: kubectl apply -k examples/text-to-sql
     ```
-    This deploys `:latest`, which is retagged on every push to `main`, so pods move to a newer build whenever they restart. Checking out a tag does **not** change that — the overlays carry the `latest` tag on every branch. `make render` is the only pinned from-source path.
-
-> [!IMPORTANT]
-> Run recipe clients from the same tag you deployed. The client pins a `tinker` SDK version in
-> `examples/pyproject.toml`, and that pin moves on `main`, so a client from `main` can disagree
-> with a released gateway about the API. If the cluster runs `v0.1.0`, run the recipe from a
-> `v0.1.0` checkout.
+    This deploys `:latest`, which is retagged on every push to `main`.
 
 Wait for the shared storage (PVC) to be bound:
 
