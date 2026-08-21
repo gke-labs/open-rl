@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-rl-client"
-version = "0.1.0"
+version = "0.0.1"
 description = "Open-RL client: CLI and shared utilities for talking to an Open-RL server."
 readme = "README.md"
 requires-python = ">=3.12"
