@@ -39,6 +39,12 @@ data:
           value: "/mnt/shared/open-rl"
         - name: HF_HOME
           value: "/mnt/shared/open-rl/huggingface"
+        # torch.compile/inductor artifacts, on the shared volume for the same
+        # reason HF_HOME is: the default lands in the container filesystem and
+        # dies with the pod, so every sampler launch recompiles the graph from
+        # scratch -- measured at 15.2s for Qwen3-0.6B on an L4.
+        - name: VLLM_CACHE_ROOT
+          value: "/mnt/shared/open-rl/vllm-cache"
         - name: OPEN_RL_ACCEL_TIMESLICER_HOST
           valueFrom:
             fieldRef:
