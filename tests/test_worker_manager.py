@@ -2,7 +2,7 @@ import json
 import unittest
 from unittest.mock import patch
 
-from server import gateway
+from server import gateway, worker_manager
 from server.worker_manager import LocalWorkerManager
 
 
@@ -409,6 +409,53 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
     cmd_args = mock_popen.call_args[0][0]
     self.assertIn("server.vllm_sampler", cmd_args)
     self.assertIn("model-fft-1", cmd_args)
+
+
+class EstimateMemoryTierTest(unittest.TestCase):
+  """Tier selection for full fine-tuning is driven by real parameter count."""
+
+  def setUp(self) -> None:
+    worker_manager._PARAM_COUNT_CACHE.clear()
+
+  def _with_hub(self, total: int | None):
+    return patch("server.worker_manager._hub_parameter_count", return_value=total)
+
+  def test_small_model_fft_fits_the_24gb_tier(self) -> None:
+    with self._with_hub(600_000_000):
+      self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-0.6B", "full"), "24gb")
+
+  def test_large_model_fft_needs_the_80gb_tier_without_a_lookup(self) -> None:
+    with self._with_hub(8_000_000_000) as hub:
+      self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-8B", "full"), "80gb")
+    hub.assert_not_called()
+
+  def test_hub_metadata_overrides_a_misleading_name(self) -> None:
+    # `gemma-4-e2b` states its *effective* size; the raw weights an FFT must
+    # hold are far larger. Trusting the name here is what puts a 5B FFT on a
+    # 24 GB card and OOMs it mid-run.
+    with self._with_hub(5_400_000_000):
+      self.assertEqual(worker_manager.estimate_memory_tier("google/gemma-4-e2b", "full"), "80gb")
+
+  def test_falls_back_to_the_name_when_the_hub_is_unreachable(self) -> None:
+    with self._with_hub(None), self.assertLogs("server.worker_manager", level="WARNING"):
+      self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-0.6B", "full"), "24gb")
+
+  def test_unknown_size_stays_on_the_conservative_tier_without_a_lookup(self) -> None:
+    with self._with_hub(600_000_000) as hub:
+      self.assertEqual(worker_manager.estimate_memory_tier("acme/mystery-model", "full"), "80gb")
+    hub.assert_not_called()
+
+  def test_hub_result_is_cached_including_failures(self) -> None:
+    with patch("server.worker_manager._hub_parameter_count", return_value=None) as hub:
+      worker_manager.estimate_memory_tier("Qwen/Qwen3-0.6B", "full")
+      worker_manager.estimate_memory_tier("Qwen/Qwen3-0.6B", "full")
+    self.assertEqual(hub.call_count, 1)
+
+  def test_lora_tiers_are_unchanged(self) -> None:
+    with self._with_hub(70_000_000_000) as hub:
+      self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-8B", "lora"), "24gb")
+      self.assertEqual(worker_manager.estimate_memory_tier("meta-llama/Llama-3-70B", "lora"), "80gb")
+    hub.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -6,6 +6,7 @@ separate launch queue: the subprocess table / the Kubernetes API already hold
 the launched-worker state, and both launchers are idempotent per model_id.
 """
 
+import logging
 import os
 import shutil
 import subprocess
@@ -17,6 +18,8 @@ from typing import Protocol
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
+
+logger = logging.getLogger(__name__)
 
 
 def _py_cmd(extras: list[str], module: str, model_id: str, active_tenant_set_id: str | None = None) -> list[str]:
@@ -52,6 +55,86 @@ def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
   return None
 
 
+# A bf16 full fine-tune holds 2 bytes of weights, 2 of gradients and 8 of fp32
+# AdamW moments per parameter. Activations, the sampler's KV cache and reload
+# buffers come on top, so only part of a tier's VRAM is budgeted here. The
+# pinned-DRAM weight shadow is host memory and does not count.
+FFT_VRAM_BYTES_PER_PARAM = 12
+# Of the 24gb tier's 23 GiB usable, leave headroom for everything above. 20 GiB
+# admits FFT up to ~1.7B params, which keeps the Qwen2.5-1.5B anchor on an L4.
+TIER_24GB_FFT_BUDGET_BYTES = 20 * 1024**3
+
+_HUB_TIMEOUT_SECONDS = 5.0
+# Maps a base model to its Hub parameter count, or to None when the lookup did
+# not answer. Negative results are cached too: an unreachable Hub must not cost
+# a timeout on every worker launch.
+_PARAM_COUNT_CACHE: dict[str, int | None] = {}
+
+
+def _hub_parameter_count(base_model: str) -> int | None:
+  """Parameter count from the Hub's safetensors metadata, or None if unavailable."""
+  if os.getenv("HF_HUB_OFFLINE"):
+    return None
+  try:
+    from huggingface_hub import HfApi
+
+    info = HfApi().model_info(base_model, timeout=_HUB_TIMEOUT_SECONDS)
+    total = getattr(getattr(info, "safetensors", None), "total", None)
+    return int(total) if total else None
+  except Exception:
+    return None
+
+
+def _name_parameter_count(base_model: str) -> int | None:
+  """Parameter count parsed from a size token in the model id, e.g. `Qwen3-8B` -> 8e9.
+
+  A fallback only. It reads the first size token, so an MoE id like
+  `Qwen3-30B-A3B` reports the 30B total rather than the active 3B, and a
+  scheme that states effective rather than raw size (`gemma-4-e2b`) understates
+  the real footprint. Both err toward a larger model for `Qwen3-30B-A3B` and,
+  for the effective-size schemes, are the reason the Hub is consulted first.
+  """
+  import re
+
+  match = re.search(r"(\d+(?:\.\d+)?)\s*b\b", (base_model or "").lower())
+  if not match:
+    return None
+  return int(float(match.group(1)) * 1e9)
+
+
+def _fits_24gb_fft(params: int) -> bool:
+  return params * FFT_VRAM_BYTES_PER_PARAM <= TIER_24GB_FFT_BUDGET_BYTES
+
+
+def _fft_memory_tier(base_model: str) -> str:
+  """Tier for a full fine-tune, sized from the model's parameter count.
+
+  The Hub is consulted only when the name claims the model is small enough for
+  an L4, because that is the sole direction that can end a run: too large a GPU
+  wastes capacity, too small a one OOMs mid-training. It is also the direction
+  naming schemes get wrong -- an id stating an *effective* size (`gemma-4-e2b`)
+  understates the weights an FFT has to hold. A name that reads large, or that
+  carries no size at all, already resolves to '80gb' and needs no lookup, which
+  keeps this call off the network for most launches.
+  """
+  named = _name_parameter_count(base_model)
+  if named is None or not _fits_24gb_fft(named):
+    return "80gb"
+
+  if base_model not in _PARAM_COUNT_CACHE:
+    _PARAM_COUNT_CACHE[base_model] = _hub_parameter_count(base_model)
+  confirmed = _PARAM_COUNT_CACHE[base_model]
+
+  if confirmed is None:
+    logger.warning(
+      "Could not confirm the parameter count of %r against the Hub; trusting the size in its name (%d params) and using the 24gb tier.",
+      base_model,
+      named,
+    )
+    return "24gb"
+  return "24gb" if _fits_24gb_fft(confirmed) else "80gb"
+
+
 def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str:
   """Estimate VRAM memory tier ('24gb' or '80gb') based on base model scale and fine-tuning type.
 
@@ -60,15 +143,15 @@ def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str
     - Qwen3-8B / Qwen2.5-7B (LoRA): '24gb' (NVIDIA L4)
     - Qwen3-8B / Qwen2.5-7B (Full Fine-Tuning): '80gb' (NVIDIA H100)
     - 14B+ models (LoRA or FFT): '80gb' (NVIDIA H100)
+
+  Full fine-tuning is sized from the model's parameter count. When that cannot
+  be established the tier stays '80gb': an FFT sent to too small a GPU dies on
+  an OOM mid-run, while one sent to too large a GPU merely wastes it.
   """
   model_lower = (base_model or "").lower()
 
-  # Full fine-tuning always maps to the 80gb tier: FFT of any
-  # multi-billion-param model (bf16 params + grads + AdamW states +
-  # pinned-DRAM shadow) exceeds the 24gb tier, and name-based size
-  # sniffing misses many model naming schemes (e.g. gemma-4-e2b).
   if fine_tuning_type == "full":
-    return "80gb"
+    return _fft_memory_tier(base_model)
 
   # LoRA fine-tuning memory scaling
   if any(size in model_lower for size in ["14b", "32b", "70b"]):
