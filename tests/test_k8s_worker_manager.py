@@ -384,8 +384,40 @@ class CreateWorkerManagerTest(unittest.TestCase):
     self.assertIs(manager, manager_cls.return_value)
 
 
-if __name__ == "__main__":
-  unittest.main()
+class InjectContainerResourcesTest(unittest.TestCase):
+  def _inject(self, tier: str, env: dict[str, str] | None = None) -> dict[str, Any]:
+    pod: dict[str, Any] = {"spec": {"containers": [{"name": "worker"}]}}
+    with patch.dict(os.environ, env or {}, clear=True):
+      KubernetesWorkerManager._inject_container_resources(pod, tier)
+    return pod["spec"]["containers"][0]["resources"]
+
+  def test_tier_defaults(self) -> None:
+    small = self._inject("24gb")
+    self.assertEqual(small["requests"], {"memory": "20Gi", "cpu": "6"})
+    self.assertEqual(small["limits"], {"memory": "40Gi"})
+
+    large = self._inject("80gb")
+    self.assertEqual(large["requests"], {"memory": "90Gi", "cpu": "12"})
+    self.assertEqual(large["limits"], {"memory": "200Gi"})
+
+  def test_env_overrides_win(self) -> None:
+    # What lets four workers fit on a single-node dev cluster.
+    resources = self._inject(
+      "24gb",
+      {
+        "OPEN_RL_WORKER_CPU_REQUEST": "4",
+        "OPEN_RL_WORKER_MEMORY_REQUEST": "16Gi",
+        "OPEN_RL_WORKER_MEMORY_LIMIT": "32Gi",
+      },
+    )
+    self.assertEqual(resources["requests"], {"memory": "16Gi", "cpu": "4"})
+    self.assertEqual(resources["limits"], {"memory": "32Gi"})
+
+  def test_overrides_apply_to_the_80gb_tier_too(self) -> None:
+    resources = self._inject("80gb", {"OPEN_RL_WORKER_CPU_REQUEST": "8"})
+    self.assertEqual(resources["requests"]["cpu"], "8")
+    self.assertEqual(resources["requests"]["memory"], "90Gi")
+
 
 if __name__ == "__main__":
   unittest.main()

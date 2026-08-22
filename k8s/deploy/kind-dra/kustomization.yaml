@@ -120,3 +120,11 @@ patches:
                     value: "30"
                   - name: OPEN_RL_CLAIM_RECONCILE_MIN_AGE_SECONDS
                     value: "60"
+                  # The production requests assume a node per GPU. This is one
+                  # 24-core box, and a two-job time-slicing run needs four
+                  # workers seated beside the gateway, store, time-slicer and
+                  # client -- which does not fit at 6 CPU and 20Gi each.
+                  - name: OPEN_RL_WORKER_CPU_REQUEST
+                    value: "4"
+                  - name: OPEN_RL_WORKER_MEMORY_REQUEST
+                    value: "12Gi"

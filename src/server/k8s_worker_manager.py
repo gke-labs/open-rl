@@ -379,13 +379,19 @@ class KubernetesWorkerManager:
     if memory_tier == "80gb":
       # 7B-class FFT peaks near 110Gi (pinned optimizer+weight shadow ~75Gi
       # plus reload buffers) — one OOMKill observed at 110Gi; give headroom.
-      limits["memory"] = "200Gi"
-      requests["memory"] = "90Gi"
-      requests["cpu"] = "12"
+      memory_limit, memory_request, cpu_request = "200Gi", "90Gi", "12"
     else:
-      limits["memory"] = "40Gi"
-      requests["memory"] = "20Gi"
-      requests["cpu"] = "6"
+      memory_limit, memory_request, cpu_request = "40Gi", "20Gi", "6"
+
+    # These are sized for a production node with a GPU to itself. A single-node
+    # dev cluster runs out of CPU long before it runs out of GPU: four workers
+    # at 6 CPU each already exceed a 24-core box once the gateway, store and
+    # time-slicer are seated, so a two-job time-slicing run cannot be scheduled
+    # there at all. The overrides exist for that case and default to the values
+    # above everywhere else.
+    limits["memory"] = os.getenv("OPEN_RL_WORKER_MEMORY_LIMIT", memory_limit)
+    requests["memory"] = os.getenv("OPEN_RL_WORKER_MEMORY_REQUEST", memory_request)
+    requests["cpu"] = os.getenv("OPEN_RL_WORKER_CPU_REQUEST", cpu_request)
 
   def render_lora_pod(
     self,
