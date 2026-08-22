@@ -21,8 +21,12 @@ COPY pyproject.toml .
 COPY uv.lock .
 
 # Configure uv for Docker and caching
+# UV_NO_SYNC: the source is exposed through PYTHONPATH below rather than
+# installed, so the implicit sync `uv run` performs at container start only
+# rebuilds and reinstalls the project to no effect.
 ENV UV_LINK_MODE=copy \
-    UV_COMPILE_BYTECODE=1
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_SYNC=1
 
 # Install the CPU gateway dependencies plus the Kubernetes client used by the
 # cluster worker launcher. Keep the massive ML extras out of this image.

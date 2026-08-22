@@ -36,8 +36,20 @@ WORKDIR /app
 COPY pyproject.toml .
 COPY uv.lock .
 
-# Configure uv for Docker and caching
-ENV UV_LINK_MODE=copy
+# Configure uv for Docker and caching.
+#
+# UV_COMPILE_BYTECODE: without it the venv ships 24k .py files and no .pyc, so
+# every worker start recompiles the whole import graph and throws it away --
+# `import vllm` measured 12.9s cold against 5.6s with bytecode present, on every
+# trainer and sampler launch, for ~0.4GB of image. The gateway and client images
+# already set this.
+#
+# UV_NO_SYNC: the source is exposed through PYTHONPATH below rather than
+# installed, so the implicit sync `uv run` performs at container start only
+# rebuilds and reinstalls the project to no effect.
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_SYNC=1
 
 # Install dependencies using uv with BuildKit cache (fast dependency extraction)
 # --frozen ensures it uses the uv.lock exactly
