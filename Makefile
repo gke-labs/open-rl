@@ -3,7 +3,7 @@
 	cloud-deploy-gateway cloud-deploy-server \
 	cloud-rollout-gateway cloud-rollout-server cloud-rollout \
 	kind-host-setup kind-sync kind-create kind-gateway kind-deploy \
-	kind-client kind-e2e kind-status kind-logs kind-delete
+	kind-client kind-e2e kind-status kind-logs kind-prune kind-delete
 
 # ---------------------------------------------------------------------------
 # Knobs (override on the command line: make server BASE_MODEL=... SAMPLING_BACKEND=...)
@@ -238,6 +238,12 @@ kind-status:
 
 kind-logs:
 	ssh $(KIND_HOST) 'kubectl logs deployment/open-rl-gateway --tail=100'
+
+# Reclaim what republishing a mutable tag leaves behind: superseded registry
+# blobs and untagged node images. Leaves the BuildKit cache alone -- see the
+# script. Do not run it mid-build; a push racing the collector can lose blobs.
+kind-prune: kind-sync
+	ssh $(KIND_HOST) 'cd $(KIND_REPO) && ./dev/kind/prune.sh'
 
 kind-delete:
 	ssh $(KIND_HOST) 'kind delete cluster --name open-rl-dra'

@@ -74,6 +74,24 @@ Two consequences worth knowing:
   gateway stamps their image and pull policy at render time from
   `OPEN_RL_WORKER_IMAGE` / `OPEN_RL_WORKER_IMAGE_PULL_POLICY`.
 
+### Reclaiming the disk it accumulates
+
+A moved tag strands its old blobs in the registry and leaves the superseded
+image on the node as an untagged entry. Nothing collects either: a day of
+rebuilding the server image measured 24.3GB of registry backing 11.9GB of live
+images. `make kind-prune` (or `./dev/kind/prune.sh`) reclaims both, in about a
+minute, and leaves the BuildKit cache alone — that cache is what makes a
+one-line source change rebuild in seconds.
+
+It rebuilds the registry and re-pushes rather than running `registry
+garbage-collect`, which is **not safe here**: distribution 2.8 does not
+traverse OCI image indexes, and an index is what Docker's containerd store
+pushes. Collecting deletes the child manifests under the tagged index and
+leaves a registry that answers 200 on `:kind-dev` and 404 on every layer it
+points at, breaking images that were never stale. Re-pushing from the host's
+local images is the repair, so `prune.sh` refuses to touch the registry unless
+all three are present to put back.
+
 ## How GPUs reach the pods
 
 kind nodes are Docker containers, so a GPU has to be injected twice: once into
