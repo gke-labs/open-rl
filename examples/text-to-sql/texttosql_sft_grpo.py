@@ -484,7 +484,6 @@ class RlConfig:
 class Config:
   model: ModelConfig
   phase: str = "full"  # "full" | "sft_only" | "rl_only"
-  fine_tuning_type: str = os.getenv("OPEN_RL_FINE_TUNING_TYPE", "lora")
   base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
   seed: int = 30
   grad_clip_norm: float = 0.3
@@ -532,14 +531,7 @@ if __name__ == "__main__":
   log_dir = Path(config.log_dir.replace("{preset}", f"{preset}_{config.phase}"))
   metrics_path = log_dir / "metrics.jsonl"
   ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
-  default_headers = {}
-  if config.fine_tuning_type and config.fine_tuning_type != "lora":
-    default_headers["x-open-rl-fine-tuning-type"] = config.fine_tuning_type
-  service_client = tinker.ServiceClient(
-    api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"),
-    base_url=config.base_url,
-    default_headers=default_headers,
-  )
+  service_client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
   tokenizer = AutoTokenizer.from_pretrained(config.model.tokenizer_name)
 
   asyncio.run(run_training(preset, metrics_path))

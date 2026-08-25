@@ -10,15 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import chz
-from common.tinker_utils import (
-  LimitedDatasetBuilder,
-  force_rich_log_colors,
-  patch_tinker_default_headers,
-  resolve_base_url,
-)
 from tinker_cookbook import model_info
 from tinker_cookbook.recipes.math_rl.train import get_dataset_builder as get_math_dataset_builder
 from tinker_cookbook.rl import train as rl_train
+from tinker_utils import LimitedDatasetBuilder, force_rich_log_colors, resolve_base_url
 
 DEFAULT_CONFIG = Path(__file__).with_name("config.toml")
 FIXED_ENV = "gsm8k"
@@ -154,7 +149,6 @@ async def run_training(args: RunConfig) -> None:
 
 
 def main() -> None:
-  patch_tinker_default_headers()
   force_rich_log_colors()
   args = chz.entrypoint(RunConfig, allow_hyphens=True)
   try:

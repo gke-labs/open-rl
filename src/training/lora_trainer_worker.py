@@ -152,9 +152,6 @@ class LoraTrainingWorker(BaseTrainerWorker):
 
   def save_adapter(self, adapter_id: str, alias: str | None = None) -> None:
     """Save adapter weights to disk for reliability and sharing."""
-    if self.peft_model is None:
-      print(f"[LoRA] Cannot save adapter '{adapter_id}': no active PEFT model initialized.")
-      return
     try:
       tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
       save_path = os.path.join(tmp_dir, "peft", adapter_id)

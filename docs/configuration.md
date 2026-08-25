@@ -56,7 +56,6 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 | `BASE_MODEL` | unset | Hugging Face model id loaded by the trainer and, when using vLLM, by the sampler. |
 | `SAMPLING_BACKEND` | `torch` locally, `vllm` when distributed | Sampling backend selector. `torch` samples in the training process. `vllm` forwards sampling requests to a vLLM worker. |
 | `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
-| `OPEN_RL_FUTURE_TTL_S` | `300` | How long resolved request results stay readable by `retrieve_future` after a worker resolves them. |
 | `VLLM_URL` | `http://127.0.0.1:8001` | API server URL for the vLLM worker when `SAMPLING_BACKEND=vllm`. |
 
 ## Server paths
@@ -66,22 +65,6 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 | `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. |
 | `OPEN_RL_TRAIN_TOKEN_BUDGET` | `0` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `0` keeps the previous one-datum-at-a-time execution path. |
 | `CUDA_VISIBLE_DEVICES` | unset | Standard PyTorch GPU selector. Use different devices when the vLLM worker and trainer run on separate GPUs. |
-
-## Worker manager
-
-| Env var | Default | What it does |
-| --- | --- | --- |
-| `OPEN_RL_WORKER_MANAGER` | `local` | Trainer worker manager mode. Use `local` for subprocess workers or `kubernetes` for the DRA worker-manager deployment. |
-| `OPEN_RL_ACCEL_TIMESLICER_SOCKET` | `/tmp/open-rl/accel-timeslicer.sock` | Unix socket path for a local accelerator time-slicer. Used when `OPEN_RL_ACCEL_TIMESLICER_HOST` is unset. |
-| `OPEN_RL_ACCEL_TIMESLICER_HOST` | unset | Node-local accelerator time-slicer host for Kubernetes workers. When set, the worker uses TCP instead of the Unix socket; Kubernetes sets this from `status.hostIP`. |
-| `OPEN_RL_ACCEL_TIMESLICER_PORT` | `9753` | Node-local accelerator time-slicer TCP port for Kubernetes workers. |
-
-For local FFT subprocess mode, start `python -m accel_timeslicer.serve` before the
-workers run. The local launcher tags each worker with a time-slice job id and
-starts it in its own process group so the CUDA checkpoint backend can discover
-the active GPU PIDs. Kubernetes deploys the equivalent process with the
-`open-rl-accel-timeslicer` DaemonSet, which layers on top of the llm-d snapshot
-backend by default for physical checkpoint/restore.
 
 ## vLLM variables
 

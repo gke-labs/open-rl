@@ -34,9 +34,7 @@ spec:
       - name: trainer-worker
         image: ghcr.io/gke-labs/open-rl/server:latest
         imagePullPolicy: Always
-        # LoRA requests are enqueued under the per-base-model active-tenant set
-        # ("<base_model>-1"); drain that set rather than the legacy global one.
-        command: ["uv", "run", "python", "-m", "server.training_requests_processor", "--active-tenant-set-id", "$(BASE_MODEL)-1"]
+        command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
         env:
         - name: ENABLE_GCP_TRACE
           valueFrom:

@@ -42,24 +42,12 @@ cd open-rl
 
 ### 3. System Packages
 
-Ensure you have the required build tools, Python headers, Redis, and `uv` installed on the machine:
+Ensure you have the required build tools, Python headers, and `uv` installed on the machine:
 
 ```bash
-sudo apt update && sudo apt install -y build-essential python3.12-dev make redis-server
-sudo systemctl enable --now redis-server
+sudo apt update && sudo apt install -y build-essential python3.12-dev make
 # Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
-vLLM JIT-compiles LoRA kernels at startup and needs `nvcc`. The GPU VM images
-ship only the driver, so install the CUDA toolkit as well:
-
-```bash
-wget -q https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb
-sudo dpkg -i cuda-keyring_1.1-1_all.deb
-sudo apt-get update && sudo apt-get install -y cuda-toolkit-12-9
-export CUDA_HOME=/usr/local/cuda-12.9
-export PATH="$CUDA_HOME/bin:$PATH"
 ```
 
 ### 4. Sanity Check
@@ -76,32 +64,35 @@ All commands below assume you are in the **repository root** directory.
 
 ### 1. Patch vLLM
 
-Patch vLLM for Gemma 4 LoRA support.
+Patch vLLM `0.20.0` for Gemma 4 LoRA support.
 
 ```bash
 uv run --extra vllm python src/server/scripts/patch_vllm_lora_dedup.py
 ```
 
-### 2. Start the OpenRL Server
+### 2. Start the vLLM Sampler
 
-The gateway now launches a dedicated trainer and vLLM sampler process per model
-on demand (they share request queues and futures through Redis), so a single
-terminal starts everything:
+In your **first terminal session**, start the vLLM sampler on GPU 0:
 
 ```bash
-export REDIS_URL=redis://127.0.0.1:6379/0
+export CUDA_VISIBLE_DEVICES=0
+export BASE_MODEL=google/gemma-4-e2b
+export VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM
+
+# Recommended to avoid Hugging Face rate limits
+# export HF_TOKEN="your_huggingface_token"
+make vllm
+```
+
+### 3. Start the OpenRL Server
+
+In a **second terminal session**, start the OpenRL gateway and trainer on GPU 1:
+
+```bash
+export CUDA_VISIBLE_DEVICES=1
 export BASE_MODEL=google/gemma-4-e2b
 export SAMPLING_BACKEND=vllm
-export VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM
-export TRAINER_CUDA_VISIBLE_DEVICES=0
-export SAMPLER_CUDA_VISIBLE_DEVICES=1
-
-# Required for gated models such as google/gemma-4-e2b (and recommended
-# generally to avoid Hugging Face rate limits)
-# export HF_TOKEN="your_huggingface_token"
 make server
 ```
 
-The OpenRL server is now available at `http://127.0.0.1:9003`. Worker logs are
-written to `$OPEN_RL_TMP_DIR` (default `/tmp`) as `trainer_<model>.log` and
-`sampler_<model>.log`.
+The OpenRL server is now available at `http://127.0.0.1:9003`.

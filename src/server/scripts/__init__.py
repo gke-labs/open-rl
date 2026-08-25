@@ -1,1 +1,0 @@
-"""Server image helper scripts."""

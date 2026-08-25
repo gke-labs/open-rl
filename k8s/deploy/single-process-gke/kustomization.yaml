@@ -8,6 +8,5 @@ resources:
   - 04-deployment.yaml
 
 images:
-  - name: ghcr.io/gke-labs/open-rl/server
-    newName: gcr.io/cdrollouts-sunilarora/open-rl-server
-    newTag: 0.1.86
+  - name: gcr.io/cdrollouts-sunilarora/open-rl-server
+    newName: gcr.io/kk-diffs/open-rl-server

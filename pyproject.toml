@@ -24,44 +24,25 @@ dependencies = [
 
 [project.optional-dependencies]
 cpu = [
-    "cachetools",
-    "cbor2",
     "datasets",
-    "einops",
     "numpy",
-    "openai",
-    "openai_harmony",
     "peft",
-    "pillow",
-    "pybase64",
-    "pyzmq",
     "torch",
     "transformers>=5.5.4",
 ]
 gpu = [
     "datasets",
-    "flash-linear-attention==0.5.1",
     "numpy",
     "peft",
-    "tilelang>=0.1.9; sys_platform == 'linux'",
     "torch; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "transformers>=5.5.4",
 ]
 vllm = [
     "torch; sys_platform == 'linux'",
-    "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
-    "vllm==0.25.1; sys_platform == 'linux'",
-]
-# Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
-cluster = [
-    "kubernetes>=29",
-    "timeslice @ git+https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git@d03540a1c96af9d854bdaa3ef81fe435ad06a92f#subdirectory=pkg/client/python",
-]
-dev = [
-    "ruff>=0.5.0",
+    "vllm==0.20.0; sys_platform == 'linux'",
 ]
 
 [tool.setuptools.package-dir]
@@ -69,7 +50,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["server*", "training*", "accel_timeslicer*"]
+include = ["server*", "training*", "snapshot_agent*"]
 
 [tool.uv]
 override-dependencies = [
@@ -89,11 +70,6 @@ conflicts = [
 ]
 
 [[tool.uv.index]]
-name = "pypi"
-url = "https://pypi.org/simple"
-default = true
-
-[[tool.uv.index]]
 name = "torch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
@@ -105,7 +81,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "vllm-cu129"
-url = "https://wheels.vllm.ai/0.25.1/cu129"
+url = "https://wheels.vllm.ai/0.20.0/cu129"
 explicit = true
 
 [tool.uv.sources]
@@ -115,23 +91,10 @@ torch = [
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
-torchaudio = [
-    { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
-]
 torchvision = [
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
 vllm = [
     { index = "vllm-cu129", extra = "vllm", marker = "sys_platform == 'linux'" },
-]
-
-[tool.ruff]
-force-exclude = true
-exclude = [
-    ".git",
-    ".venv",
-    "__pycache__",
-    "scratch",
-    "scratch/**",
 ]

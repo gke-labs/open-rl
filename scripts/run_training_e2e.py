@@ -7,7 +7,7 @@ Scenarios ("tiny-" = minimal overfit/smoke tests; the rest are real workloads):
   lora-textsql          examples/text-to-sql/texttosql_sft_grpo.py (real RL recipe, trimmed)
   fft-gsm8k             examples/sft/gsm8k/gsm8k_sft.py + vLLM eval (min_accuracy gate)
   fft-gsm8k-x2          two concurrent fft-gsm8k jobs sharing one GPU through the
-                        accel timeslicer (asserts both workers checkpoint/restore)
+                        snapshot agent (asserts both workers checkpoint/restore)
 
 There is no FFT RL scenario: the FFT backend does not support sampling during
 training yet (no vLLM sampling mid-training).
@@ -36,7 +36,6 @@ import shlex
 import shutil
 import signal
 import socket
-import struct
 import subprocess
 import threading
 import time
@@ -54,44 +53,15 @@ GSM8K_ANSWER_RE = re.compile(r"-?\d[\d,]*")
 
 @chz.chz
 class RunConfig:
-  scenario: Literal[
-    "tiny-lora",
-    "tiny-fft",
-    "tiny-rl",
-    "tiny-fft-rl",
-    "tiny-fft-rl-x2",
-    "lora-textsql",
-    "lora-gsm8k-rl",
-    "lora-gsm8k-rl-x2",
-    "fft-gsm8k",
-    "fft-gsm8k-x2",
-    "fft-gsm8k-rl",
-    "fft-gsm8k-rl-x2",
-    "fft-gsm8k-rl-x2-compare",
-    "fft-gsm8k-rl-x2-diffing-compare",
-    "fft-gsm8k-rl-x3",
-    "fft-gsm8k-rl-x3-hetero-8b-0.6b",
-    "fft-gsm8k-rl-hetero",
-    "fft-textsql-rl",
-    "fft-textsql-rl-x2",
-    "lora-fft-gsm8k-rl-x4",
-  ]
-  sampling_backend: str = "vllm"
-  trainer_gpu: str = "0"
-  sampler_gpu: str = "1"
+  scenario: Literal["tiny-lora", "tiny-fft", "tiny-rl", "lora-textsql", "fft-gsm8k", "fft-gsm8k-x2"]
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
-  jitter_sec: int = 180
   steps: int | None = None
-  group_size: int = 8
-  groups_per_batch: int = 8
-  max_tokens: int = 512
   # Calibration (A100, 50 FFT steps on Qwen2.5-0.5B): measured 15.6% accuracy.
   # 100 examples + 5% floor keeps healthy-run flake risk below ~0.1% while
   # still failing a lobotomized checkpoint; eval costs ~15s in vLLM.
   eval_examples: int = 100
   min_accuracy: float = 0.05
-  weight_sync_strategy: str = ""
   extra: str = ""
   host: str = "127.0.0.1"
   port: int | None = None
@@ -112,7 +82,6 @@ class ManagedProcess:
 
 def unused_tcp_port() -> int:
   with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
     sock.bind(("127.0.0.1", 0))
     return int(sock.getsockname()[1])
 
@@ -151,27 +120,6 @@ def print_log_tail(path: Path, lines: int = 100) -> None:
     print(line)
 
 
-def cleanup_remote_models(base_url: str, outputs: list[str]) -> None:
-  """Find model IDs in recipe output and request worker cleanup via /api/v1/delete_model."""
-  if not base_url.startswith("http"):
-    return
-  model_ids = set()
-  for output in outputs:
-    if isinstance(output, str):
-      for match in re.finditer(r"(?:TrainingClient|ServiceClient) initialized for (?:model|session) ([a-f0-9-]+)", output):
-        model_ids.add(match.group(1))
-  for model_id in sorted(model_ids):
-    try:
-      url = f"{base_url}/api/v1/delete_model"
-      data = json.dumps({"model_id": model_id}).encode("utf-8")
-      req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-      with urllib.request.urlopen(req) as response:
-        response.read()
-      print(f"[training-e2e] successfully requested cleanup of workers for model {model_id}")
-    except Exception as exc:
-      print(f"[training-e2e] warning: failed to request worker cleanup for {model_id}: {exc}")
-
-
 def launch(
   processes: list[ManagedProcess],
   name: str,
@@ -182,30 +130,21 @@ def launch(
   timeout: float,
 ) -> None:
   print(f"[training-e2e] starting {name}: {' '.join(command)}")
-  process = subprocess.Popen(
-    command,
-    cwd=REPO_ROOT,
-    env=env,
-    stdout=subprocess.PIPE,
-    stderr=subprocess.STDOUT,
-    text=True,
-    start_new_session=True,
-  )
-
-  def stream_log():
-    with log_path.open("w", encoding="utf-8") as log_file:
-      for line in iter(process.stdout.readline, ""):
-        log_file.write(line)
-        log_file.flush()
-        print(f"[{name}] {line.rstrip()}")
-
-  t = threading.Thread(target=stream_log, daemon=True)
-  t.start()
-
+  with log_path.open("w", encoding="utf-8") as log_file:
+    process = subprocess.Popen(
+      command,
+      cwd=REPO_ROOT,
+      env=env,
+      stdout=log_file,
+      stderr=subprocess.STDOUT,
+      text=True,
+      start_new_session=True,
+    )
   processes.append(ManagedProcess(name=name, process=process, log_path=log_path))
   try:
     wait_until(name, ready, timeout)
   except Exception:
+    print_log_tail(log_path)
     raise
 
 
@@ -239,7 +178,7 @@ def base_env(config: RunConfig) -> dict[str, str]:
     "OPEN_RL_TMP_DIR": str(open_rl_tmp_dir(config)),
     "OPEN_RL_TRAIN_TOKEN_BUDGET": str(config.train_token_budget),
     "PYTHONUNBUFFERED": "1",
-    "SAMPLING_BACKEND": config.sampling_backend,
+    "SAMPLING_BACKEND": "torch",
     "TINKER_API_KEY": os.environ.get("TINKER_API_KEY", "tml-dummy-key"),
     "TOKENIZERS_PARALLELISM": "false",
   }
@@ -254,18 +193,10 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   port = config.port or unused_tcp_port()
   base_url = f"http://{config.host}:{port}"
   env = base_env(config)
-  env["TRAINER_CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
-  env["SAMPLER_CUDA_VISIBLE_DEVICES"] = config.sampler_gpu
-  if config.sampling_backend == "vllm":
-    env.pop("CUDA_VISIBLE_DEVICES", None)
-    env["VLLM_GPU_MEMORY_UTILIZATION"] = str(config.vllm_gpu_memory_utilization)
-  else:
-    env["CUDA_VISIBLE_DEVICES"] = config.trainer_gpu
 
-  need_redis = "fft" in config.scenario or config.sampling_backend == "vllm"
-  if need_redis:
+  if "fft" in config.scenario:
     if shutil.which("redis-server") is None:
-      raise RuntimeError("redis-server is required for multi-process e2e scenarios (vLLM sampling or FFT)")
+      raise RuntimeError("redis-server is required for FFT e2e scenarios")
     redis_port = unused_tcp_port()
     launch(
       processes,
@@ -276,28 +207,27 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
       lambda: redis_ok("127.0.0.1", redis_port),
       timeout=60,
     )
-    env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
-
-  if "fft" in config.scenario:
     if shutil.which("cuda-checkpoint") is None:
       raise RuntimeError(
         "cuda-checkpoint is required for FFT e2e scenarios (the snapshot agent checkpoints workers around every batch); "
         "install the binary matching your driver from https://github.com/NVIDIA/cuda-checkpoint"
       )
-    snapshot_socket = log_dir / "accel-timeslicer.sock"
+    snapshot_socket = log_dir / "snapshot-agent.sock"
     snapshot_socket.unlink(missing_ok=True)
     launch(
       processes,
-      "accel-timeslicer",
-      uv_run(config.uv_extra) + ["python", "-m", "accel_timeslicer.serve"],
-      {**base_env(config), "OPEN_RL_ACCEL_TIMESLICER_SOCKET": str(snapshot_socket)},
-      log_dir / "accel-timeslicer.log",
+      "snapshot-agent",
+      uv_run(config.uv_extra) + ["python", "-m", "snapshot_agent.serve"],
+      {**base_env(config), "OPEN_RL_SNAPSHOT_AGENT_SOCKET": str(snapshot_socket)},
+      log_dir / "snapshot-agent.log",
       snapshot_socket.is_socket,
       timeout=60,
     )
-    env["OPEN_RL_ACCEL_TIMESLICER_SOCKET"] = str(snapshot_socket)
+    env["OPEN_RL_SNAPSHOT_AGENT_SOCKET"] = str(snapshot_socket)
+    env["REDIS_URL"] = f"redis://127.0.0.1:{redis_port}/0"
     env["OPEN_RL_ENABLE_FFT"] = "true"
   else:
+    env.pop("REDIS_URL", None)
     env.pop("OPEN_RL_ENABLE_FFT", None)
 
   launch(
@@ -312,27 +242,13 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   return base_url
 
 
-def clean_cli_extra(extra: str) -> list[str]:
-  """Filter out open-rl specific weight_sync_strategy/diffing key-value options from CLI extras."""
-  return [token for token in shlex.split(extra) if not (token.startswith("weight_sync_strategy=") or token.startswith("jitter_sec="))]
-
-
 def examples_env(config: RunConfig) -> dict[str, str]:
   env = os.environ.copy()
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
   env["PYTHONUNBUFFERED"] = "1"
-  env.setdefault("TINKER_API_KEY", "tml-dummy-key")
-  for token in shlex.split(config.extra):
-    if token.startswith("weight_sync_strategy="):
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = token.split("=", 1)[1]
-  if config.weight_sync_strategy:
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
-  if config.scenario.startswith("fft") or "fft" in config.scenario:
-    env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-    env["OPEN_RL_IN_PLACE_DELTA"] = "1"
-    env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
-  existing_path = env.get("PYTHONPATH", "")
-  env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
+  # Keep examples isolated from the root server/eval venv. This also avoids
+  # creating examples/.venv on workspace mounts with tight file quotas.
+  env["UV_PROJECT_ENVIRONMENT"] = os.environ.get("OPEN_RL_EXAMPLES_UV_PROJECT_ENVIRONMENT", str(open_rl_tmp_dir(config) / "examples-venv"))
   return env
 
 
@@ -384,15 +300,15 @@ def run_example(config: RunConfig, script: list[str], defaults: dict[str, str], 
 
 
 def run_tiny(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  script = "tiny_rl" if "rl" in config.scenario else "tiny_sft"
+  script = "tiny_rl" if config.scenario == "tiny-rl" else "tiny_sft"
   defaults = {
     "base_model": config.base_model,
     "base_url": base_url,
     "log_dir": str(Path(config.log_dir) / config.scenario.replace("-", "_")),
   }
-  if "fft" in config.scenario:
-    # tiny SFT/RL default is tuned for LoRA adapters; full fine-tuning all
-    # params with Adam at that rate diverges.
+  if config.scenario == "tiny-fft":
+    # tiny_sft's 1e-3 default is tuned for LoRA adapters; full fine-tuning all
+    # params with Adam at that rate diverges (observed loss 0.93 -> 35).
     defaults["learning_rate"] = "1e-5"
   if config.steps is not None:
     defaults["steps"] = str(config.steps)
@@ -427,6 +343,8 @@ def resolve_eval_model_path(output: str) -> str:
   for line in reversed(output.splitlines()):
     if line.startswith("eval_model_path="):
       path = line.removeprefix("eval_model_path=").strip()
+      if not Path(path).exists():
+        raise RuntimeError(f"Eval model path does not exist: {path}")
       return path
   raise RuntimeError("GSM8K SFT finished without printing eval_model_path=...")
 
@@ -436,7 +354,7 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
     "base_model": config.base_model,
     "base_url": base_url,
     "log_path": str(Path(config.log_dir) / log_subdir),
-    "max_steps": str(config.steps if config.steps is not None else 10),
+    "max_steps": str(config.steps if config.steps is not None else 50),
     "batch": "1",
     "rank": "16",
     "max_len": "640",
@@ -446,17 +364,14 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
   return run_example(config, ["examples/sft/gsm8k/gsm8k_sft.py"], defaults, watch=watch, prefix=prefix)
 
 
-def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
-  paths = model_path if isinstance(model_path, list) else [model_path]
-  path_args = []
-  for p in paths:
-    path_args.extend(["--path", p])
+def run_gsm8k_eval(config: RunConfig, model_path: str) -> None:
   run_command(
-    ["uv", "--project", "examples", "run", "python", "examples/sft/gsm8k/vllm_eval.py"]
-    + path_args
+    uv_run(config.eval_uv_extra)
     + [
-      "--base-url",
-      config.base_url or "http://127.0.0.1:8000",
+      "python",
+      "examples/sft/gsm8k/vllm_eval.py",
+      "--path",
+      model_path,
       "--data",
       str(write_gsm8k_eval_data(config)),
       "--gpu-memory-utilization",
@@ -473,39 +388,24 @@ def run_gsm8k(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> 
 
 
 def check_snapshot_interleaving(config: RunConfig) -> None:
+  log_path = Path(config.log_dir) / "snapshot-agent.log"
   if config.base_url:
     print("[training-e2e] external backend; skipping snapshot agent interleave check")
     return
-
-  log_path = Path(config.log_dir) / "accel-timeslicer.log"
-  if not log_path.exists():
-    return
   text = log_path.read_text(encoding="utf-8", errors="replace")
-
-  checkpointed = set(re.findall(r"checkpointed workload (\S+) group \S+", text))
-  restored = set(re.findall(r"restored workload (\S+) group \S+", text))
-
-  cp_t = {workload for workload in checkpointed if ":trainer-" in workload or workload.startswith("trainer-")}
-  rs_t = {workload for workload in restored if ":trainer-" in workload or workload.startswith("trainer-")}
-  if len(cp_t) < 2 or len(rs_t) < 2:
+  checkpointed = set(re.findall(r"checkpointed pid (\d+)", text))
+  restored = set(re.findall(r"restored pid (\d+)", text))
+  if len(checkpointed) < 2 or len(restored) < 2:
     raise RuntimeError(
-      f"Expected both FFT trainer workers to interleave, but saw checkpoints {sorted(cp_t)} and restores {sorted(rs_t)} in {log_path}"
+      f"Expected both FFT workers to round-trip through the snapshot agent, "
+      f"but saw checkpointed pids {sorted(checkpointed)} and restored pids {sorted(restored)}; see {log_path}"
     )
-  print(f"[training-e2e] trainer accel timeslicer time-sliced: checkpointed workloads {sorted(cp_t)}, restored workloads {sorted(rs_t)}")
-
-  if config.sampling_backend == "vllm":
-    cp_s = {workload for workload in checkpointed if ":sampler-" in workload or workload.startswith("sampler-")}
-    rs_s = {workload for workload in restored if ":sampler-" in workload or workload.startswith("sampler-")}
-    if len(cp_s) < 2 or len(rs_s) < 2:
-      raise RuntimeError(
-        f"Expected both FFT sampler workers to interleave, but saw checkpoints {sorted(cp_s)} and restores {sorted(rs_s)} in {log_path}"
-      )
-    print(f"[training-e2e] sampler accel timeslicer time-sliced: checkpointed workloads {sorted(cp_s)}, restored workloads {sorted(rs_s)}")
+  print(f"[training-e2e] snapshot agent time-sliced workers: checkpointed pids {sorted(checkpointed)}, restored pids {sorted(restored)}")
 
 
 def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Two concurrent FFT jobs against the same backend: each create_model spawns
-  its own worker, and the accel timeslicer time-slices the GPU between them."""
+  its own worker, and the snapshot agent time-slices the GPU between them."""
   results: dict[str, str | BaseException] = {}
 
   def train(job: str) -> None:
@@ -525,453 +425,10 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
       raise RuntimeError(f"gsm8k {job} failed") from result
 
   check_snapshot_interleaving(config)
-  eval_paths = []
-  for _, result in sorted(results.items()):
-    assert isinstance(result, str)
-    eval_paths.append(resolve_eval_model_path(result))
-  print(f"[training-e2e] evaluating jobs in single micro-batched invocation: {eval_paths}")
-  run_gsm8k_eval(config, eval_paths)
-
-
-def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
-  if "gemma" in base_model.lower():
-    return "recipes.math_rl.train_gemma", "gemma4"
-  if "Qwen3" in base_model and "Instruct" not in base_model:
-    return "recipes.math_rl.train_cli", "qwen3"
-  if "Instruct" in base_model or "Qwen2.5" in base_model:
-    return "recipes.math_rl.train_cli", "qwen3_instruct"
-  return "recipes.math_rl.train_cli", "qwen3"
-
-
-def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  prefix = "lora" if "lora" in config.scenario else "fft"
-  lr = "1e-4" if "lora" in config.scenario else "1e-5"
-  log_path = str(open_rl_tmp_dir(config) / f"{prefix}_gsm8k_rl")
-  if os.path.exists(log_path):
-    shutil.rmtree(log_path)
-  module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
-  args = [
-    "env=gsm8k",
-    f"model_name={config.base_model}",
-    f"renderer_name={renderer_name}",
-    f"max_steps={config.steps if config.steps is not None else 2}",
-    f"base_url={base_url}",
-    f"log_path={log_path}",
-    f"group_size={config.group_size}",
-    f"groups_per_batch={config.groups_per_batch}",
-    f"max_tokens={config.max_tokens}",
-    f"learning_rate={lr}",
-    "temperature=1.0",
-    "eval_every=0",
-    "save_every=0",
-    *clean_cli_extra(config.extra),
-  ]
-  out = None
-  try:
-    out = run_command(
-      ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-      env=examples_env(config),
-      watch=watch,
-    )
-  finally:
-    cleanup_remote_models(base_url, [out] if out else [])
-
-
-def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run two concurrent RL jobs on GSM8K using standard tinker_cookbook math_rl CLI, check accel timeslicer time
-  slicing, and verify metrics."""
-  results: dict[str, str | BaseException] = {}
-  prefix = "lora" if "lora" in config.scenario else "fft"
-
-  def train(job: str) -> None:
-    try:
-      log_path = str(open_rl_tmp_dir(config) / f"{prefix}_gsm8k_rl_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
-      temp = "1.0"
-      lr = "1e-4" if "lora" in config.scenario else "1e-5"
-      args = [
-        "env=gsm8k",
-        f"model_name={config.base_model}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 2}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        f"group_size={config.group_size}",
-        f"groups_per_batch={config.groups_per_batch}",
-        f"max_tokens={config.max_tokens}",
-        f"learning_rate={lr}",
-        f"temperature={temp}",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-        env=examples_env(config),
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-x2 {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-
-def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run four concurrent RL jobs on GSM8K (2x LoRA Qwen3-0.6B on L4 + 2x FFT Qwen3-8B on H100)."""
-  results: dict[str, str | BaseException] = {}
-
-  fft_model = "Qwen/Qwen3-8B"
-  lora_model = "Qwen/Qwen3-0.6B"
-
-  def train(job: str, mode: str, job_model: str) -> None:
-    try:
-      log_path = str(open_rl_tmp_dir(config) / f"{mode}_gsm8k_rl_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(job_model)
-      temp = "1.0"
-      lr = "1e-4" if mode == "lora" else "1e-5"
-      args = [
-        "env=gsm8k",
-        f"model_name={job_model}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 10}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        f"group_size={config.group_size}",
-        f"groups_per_batch={config.groups_per_batch}",
-        f"max_tokens={config.max_tokens}",
-        f"learning_rate={lr}",
-        f"temperature={temp}",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      env = examples_env(config).copy()
-      if mode == "lora":
-        env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
-        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
-      else:
-        env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-        env["OPEN_RL_IN_PLACE_DELTA"] = "1"
-        env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
-
-      results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-        env=env,
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  jobs_config = [
-    ("lora-a", "lora", lora_model),
-    ("lora-b", "lora", lora_model),
-    ("fft-a", "fft", fft_model),
-    ("fft-b", "fft", fft_model),
-  ]
-  threads = [threading.Thread(target=train, args=(job, mode, model)) for job, mode, model in jobs_config]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"lora-fft-gsm8k-rl-x4 {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-
-def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Run two concurrent FFT RL jobs on GSM8K: Job A (Full Sync) vs Job B (Delta Sync)."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str, weight_sync_strategy: str) -> None:
-    try:
-      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_compare_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
-      args = [
-        "env=gsm8k",
-        f"model_name={config.base_model}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 30}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        f"group_size={config.group_size}",
-        f"groups_per_batch={config.groups_per_batch}",
-        f"max_tokens={config.max_tokens}",
-        "learning_rate=1e-5",
-        "temperature=1.0",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      env = examples_env(config)
-      env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync_strategy
-      results[job] = run_command(
-        [
-          "uv",
-          "--project",
-          "examples",
-          "run",
-          "python",
-          "-m",
-          module_name,
-          *args,
-        ],
-        env=env,
-        watch=watch,
-        prefix=f"[{job.upper()} ({weight_sync_strategy.upper()} SYNC)] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  threads = [
-    threading.Thread(target=train, args=("job-a", "full")),
-    threading.Thread(target=train, args=("job-b", "delta")),
-  ]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-x2-compare {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-  check_snapshot_interleaving(config)
-
-
-def run_gsm8k_rl_x3(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Three concurrent FFT RL jobs against the same backend with startup jitter to stagger execution."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str, delay_sec: int) -> None:
-    try:
-      if delay_sec > 0:
-        time.sleep(delay_sec)
-      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
-      temp = "1.0"
-      args = [
-        "env=gsm8k",
-        f"model_name={config.base_model}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 2}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        "group_size=8",
-        "groups_per_batch=24",
-        "max_tokens=512",
-        "learning_rate=1e-5",
-        f"temperature={temp}",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-        env=examples_env(config),
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  jobs_with_delay = [
-    ("job-a", 0),
-    ("job-b", config.jitter_sec),
-    ("job-c", config.jitter_sec * 2),
-  ]
-  threads = [threading.Thread(target=train, args=(job, delay)) for job, delay in jobs_with_delay]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-x3 {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-  check_snapshot_interleaving(config)
-
-
-def run_gsm8k_rl_hetero(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Three concurrent FFT RL jobs with heterogeneous model sizes (8B and 2x 4B) and asymmetric batch sizes to prevent platooning."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str, model_name: str, gpb: int, delay_sec: int) -> None:
-    try:
-      if delay_sec > 0:
-        time.sleep(delay_sec)
-      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(model_name)
-      temp = "1.0"
-      args = [
-        "env=gsm8k",
-        f"model_name={model_name}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 2}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        "group_size=8",
-        f"groups_per_batch={gpb}",
-        "max_tokens=512",
-        "learning_rate=1e-5",
-        f"temperature={temp}",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-        env=examples_env(config),
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  jobs_config = [
-    ("job-8b", "Qwen/Qwen3-8B", 24, 0),
-    ("job-4b", "Qwen/Qwen3-4B", 24, config.jitter_sec),
-    ("job-gemma-2b", "google/gemma-4-e2b", 16, config.jitter_sec * 2),
-  ]
-  threads = [threading.Thread(target=train, args=(job, model, gpb, delay)) for job, model, gpb, delay in jobs_config]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-hetero {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-  check_snapshot_interleaving(config)
-
-
-def run_gsm8k_rl_x3_hetero_8b_0_6b(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Three concurrent FFT RL jobs: 2x Qwen3-8B and 1x Qwen3-0.6B."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str, model_name: str, gpb: int, delay_sec: int) -> None:
-    try:
-      if delay_sec > 0:
-        time.sleep(delay_sec)
-      log_path = str(open_rl_tmp_dir(config) / f"fft_gsm8k_rl_{job}")
-      if os.path.exists(log_path):
-        shutil.rmtree(log_path)
-      module_name, renderer_name = _math_rl_train_module_and_renderer(model_name)
-      temp = "1.0"
-      args = [
-        "env=gsm8k",
-        f"model_name={model_name}",
-        f"renderer_name={renderer_name}",
-        f"max_steps={config.steps if config.steps is not None else 30}",
-        f"base_url={base_url}",
-        f"log_path={log_path}",
-        "group_size=8",
-        f"groups_per_batch={gpb}",
-        "max_tokens=512",
-        "learning_rate=1e-5",
-        f"temperature={temp}",
-        "eval_every=0",
-        "save_every=0",
-        *clean_cli_extra(config.extra),
-      ]
-      results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
-        env=examples_env(config),
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  jobs_config = [
-    ("job-a-8b", "Qwen/Qwen3-8B", 24, 0),
-    ("job-b-8b", "Qwen/Qwen3-8B", 24, config.jitter_sec),
-    ("job-c-0.6b", "Qwen/Qwen3-0.6B", 24, config.jitter_sec * 2),
-  ]
-  threads = [threading.Thread(target=train, args=(job, model, gpb, delay)) for job, model, gpb, delay in jobs_config]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  try:
-    for job, result in sorted(results.items()):
-      if isinstance(result, BaseException):
-        raise RuntimeError(f"fft-gsm8k-rl-x3-hetero-8b-0.6b {job} failed") from result
-  finally:
-    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
-
-  check_snapshot_interleaving(config)
-
-
-def run_tiny_fft_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Two concurrent FFT RL jobs against the same backend: each create_model spawns
-  its own trainer and dedicated sampler worker, and the accel timeslicer time-slices them."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str) -> None:
-    try:
-      script = "tiny_rl"
-      defaults = {
-        "base_model": config.base_model,
-        "base_url": base_url,
-        "log_dir": str(Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"),
-        "learning_rate": "1e-5",
-      }
-      if config.steps is not None:
-        defaults["steps"] = str(config.steps)
-      results[job] = run_example(config, [f"examples/tiny/{script}.py"], defaults, watch=watch, prefix=f"[{job}] ")
-    except BaseException as exc:
-      results[job] = exc
-
-  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
   for job, result in sorted(results.items()):
-    if isinstance(result, BaseException):
-      raise RuntimeError(f"tiny-fft-rl-x2 {job} failed") from result
-
-  check_snapshot_interleaving(config)
+    assert isinstance(result, str)
+    print(f"[training-e2e] evaluating {job}")
+    run_gsm8k_eval(config, resolve_eval_model_path(result))
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -988,7 +445,7 @@ def require_finite_metric(row: dict, key: str) -> float:
 
 
 def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  log_dir = Path(config.log_dir) / config.scenario.replace("-", "_")
+  log_dir = Path(config.log_dir) / "lora_textsql"
   defaults = {
     "phase": "rl_only",
     "base_url": base_url,
@@ -996,19 +453,18 @@ def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -
     "model.base_model": config.base_model,
     "model.tokenizer_name": config.base_model,
     "model.rank": "16",
-    "dataset.train_limit": "64",
-    "dataset.rl_train_limit": "64",
+    "dataset.train_limit": "16",
+    "dataset.rl_train_limit": "16",
     # Eval runs through the torch sampler (no vLLM during training), so keep it
     # small here; override with extra='dataset.eval_limit=N'.
     "dataset.eval_limit": "8",
     "dataset.eval_max_tokens": "64",
     "sft.steps": "0",
     "rl.steps": str(config.steps if config.steps is not None else 2),
-    "rl.prompts_per_step": "4",
-    "rl.samples_per_prompt": "4",
+    "rl.prompts_per_step": "2",
+    "rl.samples_per_prompt": "2",
     "rl.max_tokens": "64",
     "rl.eval_every": "1",
-    "fine_tuning_type": "full" if "fft" in config.scenario else "lora",
   }
   run_example(config, ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"], defaults, watch=watch)
 
@@ -1024,69 +480,6 @@ def run_textsql(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -
   print(f"[training-e2e] textsql rollouts={rollouts} final_execution_match={execution_match:.1%}")
 
 
-def run_textsql_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Two concurrent Text-to-SQL FFT RL jobs against the same backend: each create_model spawns
-  its own trainer and dedicated sampler worker, and the accel timeslicer time-slices them."""
-  results: dict[str, str | BaseException] = {}
-
-  def train(job: str) -> None:
-    try:
-      log_dir = Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"
-      if log_dir.exists():
-        shutil.rmtree(log_dir)
-      defaults = {
-        "phase": "rl_only",
-        "base_url": base_url,
-        "log_dir": str(log_dir),
-        "model.base_model": config.base_model,
-        "model.tokenizer_name": config.base_model,
-        "model.rank": "16",
-        "dataset.train_limit": "64",
-        "dataset.rl_train_limit": "64",
-        "dataset.eval_limit": "8",
-        "dataset.eval_max_tokens": "64",
-        "sft.steps": "0",
-        "rl.steps": str(config.steps if config.steps is not None else 2),
-        "rl.prompts_per_step": "4",
-        "rl.samples_per_prompt": "4",
-        "rl.max_tokens": "64",
-        "rl.eval_every": "1",
-      }
-      results[job] = run_example(
-        config,
-        ["examples/text-to-sql/texttosql_sft_grpo.py", "gemma4_e2b_rl_recipe"],
-        defaults,
-        watch=watch,
-        prefix=f"[{job}] ",
-      )
-    except BaseException as exc:
-      results[job] = exc
-
-  threads = [threading.Thread(target=train, args=(job,)) for job in ("job-a", "job-b")]
-  for thread in threads:
-    thread.start()
-  for thread in threads:
-    thread.join()
-
-  for job, result in sorted(results.items()):
-    if isinstance(result, BaseException):
-      raise RuntimeError(f"fft-textsql-rl-x2 {job} failed") from result
-
-    log_dir = Path(config.log_dir) / f"{config.scenario.replace('-', '_')}_{job}"
-    rows = read_jsonl(log_dir / "metrics.jsonl")
-    train_rows = [row for row in rows if row.get("phase") == "rl_train"]
-    eval_rows = [row for row in rows if row.get("phase") == "rl_eval"]
-    if not train_rows or not eval_rows:
-      raise RuntimeError(f"Text-to-SQL RL {job} must log rl_train and rl_eval metrics in {log_dir / 'metrics.jsonl'}")
-    rollouts = sum(int(require_finite_metric(row, "num_rollouts")) for row in train_rows)
-    if rollouts <= 0:
-      raise RuntimeError(f"Text-to-SQL RL {job} did not produce any trainable rollouts")
-    execution_match = require_finite_metric(eval_rows[-1], "execution_match")
-    print(f"[training-e2e] textsql {job} rollouts={rollouts} final_execution_match={execution_match:.1%}")
-
-  check_snapshot_interleaving(config)
-
-
 def main() -> None:
   config = chz.entrypoint(RunConfig, allow_hyphens=True)
   Path(config.log_dir).mkdir(parents=True, exist_ok=True)
@@ -1097,26 +490,8 @@ def main() -> None:
       run_gsm8k(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-x2":
       run_gsm8k_x2(config, base_url, processes)
-    elif config.scenario in {"fft-gsm8k-rl", "lora-gsm8k-rl"}:
-      run_gsm8k_rl(config, base_url, processes)
-    elif config.scenario in {"fft-gsm8k-rl-x2", "lora-gsm8k-rl-x2"}:
-      run_gsm8k_rl_x2(config, base_url, processes)
-    elif config.scenario == "lora-fft-gsm8k-rl-x4":
-      run_gsm8k_rl_x4_mixed(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-x2-compare":
-      run_gsm8k_rl_x2_compare(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-x3":
-      run_gsm8k_rl_x3(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-x3-hetero-8b-0.6b":
-      run_gsm8k_rl_x3_hetero_8b_0_6b(config, base_url, processes)
-    elif config.scenario == "fft-gsm8k-rl-hetero":
-      run_gsm8k_rl_hetero(config, base_url, processes)
-    elif config.scenario in {"lora-textsql", "fft-textsql-rl"}:
+    elif config.scenario == "lora-textsql":
       run_textsql(config, base_url, processes)
-    elif config.scenario == "fft-textsql-rl-x2":
-      run_textsql_rl_x2(config, base_url, processes)
-    elif config.scenario == "tiny-fft-rl-x2":
-      run_tiny_fft_rl_x2(config, base_url, processes)
     else:
       run_tiny(config, base_url, processes)
   finally:

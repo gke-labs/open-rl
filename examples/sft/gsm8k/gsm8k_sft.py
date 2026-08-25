@@ -38,11 +38,7 @@ class GSM8KDataset(SupervisedDatasetBuilder):
         loss_fn_inputs=cast(Any, {"target_tokens": tokens[1:], "weights": [float(w) for w in weights[1:]]}),
       )
 
-    eval_dataset = load_dataset("openai/gsm8k", "main", split="test[:16]")
-    return (
-      SupervisedDatasetFromHFDataset(dataset, self.batch_size, map_fn=make_datum),
-      SupervisedDatasetFromHFDataset(eval_dataset, self.batch_size, map_fn=make_datum),
-    )
+    return SupervisedDatasetFromHFDataset(dataset, self.batch_size, map_fn=make_datum), None
 
 
 @chz.chz
@@ -56,9 +52,8 @@ class Config:
   rank: int = 32
   max_len: int = 640
   seed: int = 0
-  max_steps: int | None = 10
+  max_steps: int | None = None
   save_every: int = 0
-  eval_every: int = 5
   behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "delete"
 
 
@@ -81,7 +76,7 @@ def main(config: Config) -> None:
         lora_rank=config.rank,
         base_url=config.base_url,
         save_every=config.save_every,
-        eval_every=config.eval_every,
+        eval_every=0,
         infrequent_eval_every=0,
         max_steps=config.max_steps,
       )
@@ -92,6 +87,8 @@ def main(config: Config) -> None:
     checkpoint = checkpoint_utils.get_last_checkpoint(config.log_path, required_key="state_path")
   if checkpoint is not None:
     path = checkpoint.sampler_path or checkpoint.state_path
+    if path and path.startswith("tinker://"):
+      path = str(Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")) / "sampler_full" / path.removeprefix("tinker://"))
     if path:
       print(f"eval_model_path={path}")
 

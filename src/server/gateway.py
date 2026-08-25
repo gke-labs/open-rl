@@ -1,29 +1,28 @@
 # This file contains the FastAPI server entry point and request handlers for the Open-RL API backend.
 
 import asyncio
-import json
 import logging
 import os
 import time
 import traceback
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any
 
 import httpx
-from fastapi import Depends, FastAPI, Request
+from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
 from server.store import get_store
-from server.worker_manager import WorkerManager, create_worker_manager
+from server.worker_launch_processor import (
+  FFTWorkerManager,
+  WorkerLaunchProcessor,
+)
 
 store = get_store()
-worker_manager: WorkerManager | None = None
 
 provider = TracerProvider()
 trace.set_tracer_provider(provider)
@@ -82,23 +81,6 @@ def sampler_weights_path(model_id: str, name: str) -> str:
   return f"tinker://{model_id}/sampler_weights/{name}"
 
 
-def resolve_sampler_weights_path(model_id: str) -> str:
-  """Resolves a model_id or tinker session reference to a fully-qualified step-specific weights path on disk."""
-  rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
-  local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
-  weights_path = local_path
-  if not os.path.basename(weights_path).startswith("sampler-"):
-    sampler_weights_dir = os.path.join(weights_path, "sampler_weights")
-    if os.path.exists(sampler_weights_dir):
-      try:
-        steps = [int(d.split("-")[1]) for d in os.listdir(sampler_weights_dir) if d.startswith("sampler-")]
-        if steps:
-          weights_path = os.path.join(sampler_weights_dir, f"sampler-{max(steps)}")
-      except Exception as e:
-        print(f"[GATEWAY] Warning: Failed parsing step subdirectories in {sampler_weights_dir}: {e}")
-  return weights_path
-
-
 def checkpoint_state_path(model_id: str, name: str) -> str:
   if os.path.isabs(name):
     return name
@@ -128,52 +110,6 @@ def is_sampler_weights_ref(model_id: str | None) -> bool:
   return len(parts) >= 3 and parts[1] == "sampler_weights"
 
 
-async def _extract_and_persist_model_metadata(
-  req: dict[str, Any],
-  request: Request | None = None,
-  default_fine_tuning_type: str = "lora",
-) -> str:
-  """Extract and normalize model configuration from headers and payload, persisting TrainingModelMetadata exactly once."""
-  base_model = req.get("base_model")
-  if not base_model and default_fine_tuning_type != "restored":
-    raise ValueError("base_model is required in request payload")
-
-  full_config = dict(req.get("full_config") or {})
-  lora_config = dict(req.get("lora_config") or {})
-
-  headers = request.headers if (request and hasattr(request, "headers")) else {}
-  weight_sync_cfg = extract_weight_sync_config(headers)
-
-  fine_tuning_type = default_fine_tuning_type
-  if request and hasattr(request, "headers") and "x-open-rl-fine-tuning-type" in request.headers:
-    h_val = (request.headers.get("x-open-rl-fine-tuning-type") or "").lower()
-    if h_val == "full":
-      fine_tuning_type = "full"
-    elif h_val == "lora":
-      fine_tuning_type = "lora"
-
-  if fine_tuning_type == "full" and not is_fft_enabled():
-    raise ValueError("Full Fine-Tuning (FFT) is disabled on this Open-RL Gateway instance")
-
-  if fine_tuning_type != "full" and default_fine_tuning_type != "restored":
-    fine_tuning_type = "lora"
-
-  full_config["weight_sync_strategy"] = weight_sync_cfg.strategy
-
-  model_id = str(uuid.uuid4())
-  meta_obj = TrainingModelMetadata(
-    base_model=base_model,
-    created_at=time.time(),
-    fine_tuning_type=fine_tuning_type,
-    weight_sync_config=weight_sync_cfg,
-    full_config=full_config,
-    lora_config=lora_config,
-  )
-  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(meta_obj.to_dict()))
-
-  return model_id
-
-
 def make_training_request(
   op: str,
   model_id: str | None,
@@ -190,53 +126,24 @@ def make_training_request(
   return request
 
 
-async def _resolve_active_set_id(model_id: str | None) -> str | None:
-  if not model_id or not hasattr(store, "get_model_metadata"):
-    return None
-  meta = await store.get_model_metadata(model_id)
-  if meta and meta.get("fine_tuning_type") == "lora" and meta.get("base_model"):
-    return f"{meta['base_model']}-1"
-  return None
-
-
 async def enqueue(request: dict) -> str:
   """Create a pending future, inject trace context, push to store. Returns req_id."""
   request_id = request["request_id"]
   carrier: dict = {}
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
-
-  active_set_id = await _resolve_active_set_id(request.get("model_id"))
-  await store.put_request({**request, "trace_context": carrier}, active_set_id=active_set_id)
+  await store.put_request({**request, "trace_context": carrier})
   return request_id
 
 
-async def launch_worker_and_enqueue(request: dict) -> str:
-  """Ensure the model's dedicated trainer worker exists, then enqueue onto its queue.
-
-  The launcher is idempotent per model_id, and Kubernetes (or the local process
-  table) owns the worker's lifecycle from here; there is no separate launch
-  queue. Launch failures resolve the future immediately so clients don't long-poll
-  a request that can never be served.
-  """
-  assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
+async def enqueue_worker_launch(request: dict) -> str:
+  """Create a pending future and push a create-model request to the worker launch queue."""
   request_id = request["request_id"]
+  carrier: dict = {}
+  propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
-  try:
-    await asyncio.to_thread(worker_manager.launch_trainer, request["model_id"])
-  except Exception as exc:
-    traceback.print_exc()
-    await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
-    return request_id
-  return await enqueue(request)
-
-
-async def ensure_sampler_launched(model_id: str) -> None:
-  if worker_manager is not None and get_sampler_backend() == "vllm":
-    try:
-      await asyncio.to_thread(worker_manager.launch_sampler, model_id)
-    except Exception:
-      traceback.print_exc()
+  await store.put_worker_launch_request({**request, "trace_context": carrier})
+  return request_id
 
 
 async def preflight_vllm() -> None:
@@ -271,7 +178,7 @@ def translate_future_result(result: dict) -> dict:
     }
     if "rank" in result:
       response["lora_rank"] = result["rank"]
-    elif result.get("fine_tuning_type") == "full":
+    elif result.get("training_kind") == "full":
       response["lora_rank"] = 16
     if result.get("base_model"):
       response["base_model"] = result["base_model"]
@@ -296,10 +203,13 @@ def translate_future_result(result: dict) -> dict:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-  global worker_manager
   task = None
-  if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
-    worker_manager = create_worker_manager()
+  fft_worker_manager = None
+  worker_launch_task = None
+  if is_fft_enabled():
+    fft_worker_manager = FFTWorkerManager()
+    worker_launch_processor = WorkerLaunchProcessor(store, fft_worker_manager)
+    worker_launch_task = asyncio.create_task(worker_launch_processor.run())
   if is_single_process_mode():
     base_model = os.getenv("BASE_MODEL")
     print("\n" + "=" * 50)
@@ -322,9 +232,10 @@ async def lifespan(_: FastAPI):
   finally:
     if task is not None:
       task.cancel()
-    if worker_manager is not None:
-      worker_manager.shutdown_all()
-      worker_manager = None
+    if worker_launch_task is not None:
+      worker_launch_task.cancel()
+    if fft_worker_manager is not None:
+      fft_worker_manager.shutdown_all()
 
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
@@ -367,69 +278,36 @@ async def session_heartbeat(_: dict):
   return {"type": "session_heartbeat"}
 
 
-def _get_request(request: Request) -> Request:
-  return request
-
-
 @app.post("/api/v1/create_model")
-async def create_model(
-  req: dict[str, Any],
-  request: Request | None = Depends(_get_request),  # noqa: B008
-) -> dict[str, Any]:
+async def create_model(req: dict):
   """ServiceClient.create_lora_training_client_async()"""
-  try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="lora")
-  except ValueError as exc:
-    return JSONResponse(status_code=400, content={"error": str(exc)})
-
+  base_model = req.get("base_model")
+  if not base_model:
+    return JSONResponse(status_code=400, content={"error": "base_model is required"})
+  model_id = str(uuid.uuid4())
   command = make_training_request(
     "create_model",
     model_id,
-    {},
+    {
+      "base_model": base_model,
+      "lora_config": req.get("lora_config") or {},
+      "full_config": req.get("full_config") or {},
+    },
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
+  req_id = await enqueue_worker_launch(command) if is_fft_enabled() else await enqueue(command)
   return {"request_id": req_id}
 
 
-@app.post("/api/v1/delete_model")
-async def delete_model(req: dict):
-  model_id = req.get("model_id")
-  if not model_id:
-    return JSONResponse(status_code=400, content={"error": "model_id is required"})
-  meta_dict = None
-  try:
-    raw_meta = await store.get_value(f"open_rl:model_meta:{model_id}")
-    if raw_meta:
-      meta_dict = json.loads(raw_meta)
-  except Exception:
-    pass
-  is_lora = meta_dict and meta_dict.get("fine_tuning_type") == "lora"
-  if is_fft_enabled() and not is_lora:
-    print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
-    await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
-    await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
-  now = time.time()
-  await store.update_job_metadata(model_id, {"status": "completed", "completed_at": now, "updated_at": now})
-  return {"status": "ok"}
-
-
 @app.post("/api/v1/create_model_from_state")
-async def create_model_from_state(
-  req: dict[str, Any],
-  request: Request | None = Depends(_get_request),  # noqa: B008
-) -> dict[str, Any]:
+async def create_model_from_state(req: dict):
   """ServiceClient.create_training_client_from_state_async()"""
   state_path = req.get("state_path")
   if not state_path:
     return JSONResponse(status_code=400, content={"error": "state_path is required"})
   # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
   resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
-  try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="restored")
-  except ValueError as exc:
-    return JSONResponse(status_code=400, content={"error": str(exc)})
-
+  model_id = str(uuid.uuid4())
   command = make_training_request(
     "create_model_from_state",
     model_id,
@@ -439,7 +317,7 @@ async def create_model_from_state(
     },
     request_id=model_id,
   )
-  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
+  req_id = await enqueue_worker_launch(command) if is_fft_enabled() else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -480,24 +358,6 @@ async def retrieve_future(req: dict):
 
 
 # *** TrainingClient endpoints ***
-@app.post("/api/v1/forward")
-async def forward(req: dict):
-  """TrainingClient.forward_async()"""
-  fwd_input = req.get("forward_input") or req.get("forward_backward_input") or {}
-  req_id = await enqueue(
-    make_training_request(
-      "forward_backward",
-      req.get("model_id"),
-      {
-        "data": fwd_input.get("data", []),
-        "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
-        "loss_config": fwd_input.get("loss_fn_config", {}),
-      },
-    )
-  )
-  return {"request_id": req_id}
-
-
 @app.post("/api/v1/forward_backward")
 async def forward_backward(req: dict):
   """TrainingClient.forward_backward_async()"""
@@ -541,7 +401,6 @@ async def save_weights_for_sampler(req: dict):
   if not model_id:
     return JSONResponse(status_code=400, content={"error": "model_id is required"})
 
-  await ensure_sampler_launched(model_id)
   seq_id = req.get("sampling_session_seq_id") or int(time.time() * 1000)
   alias = req.get("name") or req.get("alias") or req.get("path")
 
@@ -627,34 +486,10 @@ async def create_sampling_session(req: dict):
 
   if model_path and model_path.startswith("tinker://"):
     sess_id = model_path
-    path = model_path[len("tinker://") :]
-    parts = path.split("/")
-    target_model_id = parts[0]
   elif base_model:
     sess_id = base_model
-    target_model_id = base_model
   else:
     sess_id = model_id or "samp-session-live-123"
-    target_model_id = sess_id
-
-  model_meta = await store.get_model_metadata(target_model_id) if target_model_id else None
-  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
-  ready_check_id = (model_meta.get("base_model") or target_model_id) if (fine_tuning_type == "lora" and model_meta) else target_model_id
-
-  if get_sampler_backend() == "vllm" and ready_check_id:
-    await ensure_sampler_launched(ready_check_id)
-    s = get_store()
-    if hasattr(s, "redis"):
-      print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
-      start_time = time.monotonic()
-      while True:
-        is_ready = await s.redis.get(f"open_rl:sampler_ready:{ready_check_id}")
-        if is_ready == "1" or is_ready == b"1":
-          print(f"[GATEWAY] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
-          break
-        if time.monotonic() - start_time > 300:
-          raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
-        await asyncio.sleep(1)
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
@@ -677,13 +512,12 @@ async def asample(req: dict):
 
   model_id = req.get("model_id") or req.get("sampling_session_id")
   base_model_id = base_model_id_from_sampling_ref(model_id)
-  lookup_id = base_model_id or model_id
 
   if get_sampler_backend() == "torch":
     req_id = await enqueue(
       make_training_request(
         "sample",
-        lookup_id,
+        base_model_id or model_id,
         {
           "prompt_tokens": prompt,
           "max_tokens": max_tokens,
@@ -697,44 +531,40 @@ async def asample(req: dict):
 
   # vLLM backend
   req_id = str(uuid.uuid4())
-  carrier: dict = {}
-  propagate.inject(carrier)
   await store.set_future(req_id, {"status": "pending"})
 
-  model_meta = await store.get_model_metadata(lookup_id)
-  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
+  lora_path = os.path.join(TMP_DIR, "peft", base_model_id, base_model_id) if is_sampler_weights_ref(model_id) else None
+  headers: dict[str, str] = {"Content-Type": "application/json"}
+  propagate.inject(headers)
 
-  if fine_tuning_type == "lora":
-    weights_path = None
-    lora_id = model_id
-    peft_dir = os.path.join(TMP_DIR, "peft", lookup_id, lookup_id)
-    lora_path = peft_dir if os.path.exists(peft_dir) else None
-    queue_id = (model_meta.get("base_model") if model_meta else None) or lookup_id
-  else:
-    resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
-    weights_path = resolved_path
-    lora_id = None
-    lora_path = None
-    queue_id = lookup_id
+  try:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+      resp = await client.post(
+        f"{VLLM_URL.rstrip('/')}/generate",
+        json={
+          "request_id": req_id,
+          "prompt_token_ids": prompt,
+          "max_tokens": max_tokens,
+          "temperature": temperature,
+          "stop": stop,
+          "top_p": top_p,
+          "top_k": top_k,
+          "num_samples": num_samples,
+          "lora_id": model_id,
+          "lora_path": lora_path,
+          "include_prompt_logprobs": include_prompt_logprobs,
+        },
+        headers=headers,
+      )
+      resp.raise_for_status()
+      data = resp.json()
+      if data.get("type") != "RequestFailedResponse":
+        data["type"] = "sample"
+      await store.set_future(req_id, data)
+  except Exception as e:
+    traceback.print_exc()
+    await store.set_future(req_id, {"type": "RequestFailedResponse", "error_message": str(e)})
 
-  sampling_req = {
-    "request_id": req_id,
-    "prompt_token_ids": prompt,
-    "max_tokens": max_tokens,
-    "temperature": temperature,
-    "stop": stop,
-    "top_p": top_p,
-    "top_k": top_k,
-    "num_samples": num_samples,
-    "lora_id": lora_id,
-    "lora_path": lora_path,
-    "weights_path": weights_path,
-    "include_prompt_logprobs": include_prompt_logprobs,
-    "model_id": queue_id,
-    "trace_context": carrier,
-  }
-
-  await store.put_sampling_request(sampling_req)
   return {"request_id": req_id}
 
 

@@ -95,66 +95,47 @@ def main(config: Config) -> None:
     # PEFT warning and vLLM cannot load lm_head adapter weights at all.
     train_unembed=False,
   )
+  tokenizer = trainer.get_tokenizer()
+  prompt_tokens = tokenizer.encode(config.prompt, add_special_tokens=False)
+  prompt = types.ModelInput.from_ints(tokens=prompt_tokens)
+  sampling_params = types.SamplingParams(max_tokens=config.max_tokens, temperature=config.temperature)
 
-  try:
-    tokenizer = trainer.get_tokenizer()
-    prompt_tokens = tokenizer.encode(config.prompt, add_special_tokens=False)
-    prompt = types.ModelInput.from_ints(tokens=prompt_tokens)
-    sampling_params = types.SamplingParams(max_tokens=config.max_tokens, temperature=config.temperature)
+  mean_reward = 0.0
+  for step in range(1, config.steps + 1):
+    sampler = trainer.save_weights_and_get_sampling_client()
+    sequences = sampler.sample(prompt=prompt, num_samples=config.samples_per_prompt, sampling_params=sampling_params).result().sequences
 
-    mean_reward = 0.0
-    for step in range(1, config.steps + 1):
-      sampler = trainer.save_weights_and_get_sampling_client()
-      sequences = sampler.sample(prompt=prompt, num_samples=config.samples_per_prompt, sampling_params=sampling_params).result().sequences
+    rewards = []
+    for sequence in sequences:
+      tokens, logprobs = list(sequence.tokens), list(sequence.logprobs or [])
+      if not tokens or len(tokens) != len(logprobs):
+        raise RuntimeError(f"Sampler must return aligned tokens and logprobs, got {len(tokens)} tokens and {len(logprobs)} logprobs")
+      rewards.append(1.0 if config.target in tokenizer.decode(tokens) else 0.0)
 
-      rewards = []
-      for sequence in sequences:
-        tokens, logprobs = list(sequence.tokens), list(sequence.logprobs or [])
-        if not tokens or len(tokens) != len(logprobs):
-          raise RuntimeError(f"Sampler must return aligned tokens and logprobs, got {len(tokens)} tokens and {len(logprobs)} logprobs")
-        rewards.append(1.0 if config.target in tokenizer.decode(tokens) else 0.0)
+    # Group-centered advantages; when every reward ties, fall back to a uniform
+    # positive advantage so the update still exercises a nonzero gradient.
+    mean_reward = statistics.fmean(rewards)
+    advantages = [reward - mean_reward for reward in rewards]
+    if all(abs(advantage) < 1e-8 for advantage in advantages):
+      advantages = [1.0] * len(rewards)
 
-      # Group-centered advantages; when every reward ties, fall back to a uniform
-      # positive advantage so the update still exercises a nonzero gradient.
-      mean_reward = statistics.fmean(rewards)
-      advantages = [reward - mean_reward for reward in rewards]
-      if all(abs(advantage) < 1e-8 for advantage in advantages):
-        advantages = [1.0] * len(rewards)
+    datums = [
+      build_datum(prompt_tokens, list(sequence.tokens), list(sequence.logprobs or []), advantage)
+      for sequence, advantage in zip(sequences, advantages)
+    ]
+    fwdbwd = trainer.forward_backward(datums, config.loss_fn).result()
+    trainer.optim_step(types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm)).result()
 
-      datums = [
-        build_datum(prompt_tokens, list(sequence.tokens), list(sequence.logprobs or []), advantage)
-        for sequence, advantage in zip(sequences, advantages)
-      ]
-      fwdbwd = trainer.forward_backward(datums, config.loss_fn).result()
-      trainer.optim_step(types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm)).result()
+    loss = float(fwdbwd.metrics.get("loss:mean", 0.0))
+    if not math.isfinite(loss):
+      raise RuntimeError(f"Loss must be finite, got {loss!r}")
+    write_metric(log_dir, {"phase": "train", "step": step, "loss": loss, "mean_reward": mean_reward, "num_datums": len(datums)})
+    print(f"[tiny-rl] step={step:02d}/{config.steps} loss={loss:.6f} mean_reward={mean_reward:.2f} datums={len(datums)}")
 
-      loss = float(fwdbwd.metrics.get("loss:mean", 0.0))
-      if not math.isfinite(loss):
-        raise RuntimeError(f"Loss must be finite, got {loss!r}")
-      write_metric(log_dir, {"phase": "train", "step": step, "loss": loss, "mean_reward": mean_reward, "num_datums": len(datums)})
-      print(f"[tiny-rl] step={step:02d}/{config.steps} loss={loss:.6f} mean_reward={mean_reward:.2f} datums={len(datums)}")
-
-    final_state_path = trainer.save_state("tiny-rl-final").result().path
-    write_metric(log_dir, {"phase": "final", "step": config.steps, "final_state_path": final_state_path, "mean_reward": mean_reward})
-    print(f"[tiny-rl] mean_reward={mean_reward:.2f}")
-    print(f"final_state_path={final_state_path}")
-  finally:
-    import json
-    import urllib.request
-
-    # The upstream Tinker SDK does not expose a delete_model() method. We make a
-    # direct HTTP POST call to Open-RL's custom /api/v1/delete_model gateway
-    # endpoint to signal background trainer and sampler worker processes to exit.
-    try:
-      model_id = trainer._guaranteed_model_id()
-      url = f"{config.base_url}/api/v1/delete_model"
-      data = json.dumps({"model_id": model_id}).encode("utf-8")
-      req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-      with urllib.request.urlopen(req) as response:
-        response.read()
-      print(f"[tiny-rl] successfully requested cleanup of workers for model {model_id}")
-    except Exception as exc:
-      print(f"[tiny-rl] warning: failed to request worker cleanup: {exc}")
+  final_state_path = trainer.save_state("tiny-rl-final").result().path
+  write_metric(log_dir, {"phase": "final", "step": config.steps, "final_state_path": final_state_path, "mean_reward": mean_reward})
+  print(f"[tiny-rl] mean_reward={mean_reward:.2f}")
+  print(f"final_state_path={final_state_path}")
 
 
 if __name__ == "__main__":

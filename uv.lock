@@ -8,8 +8,7 @@ resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm'",
     "sys_platform == 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
     "sys_platform == 'emscripten' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
-    "sys_platform == 'darwin' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
     "sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra != 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
     "sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra != 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-cpu' and extra != 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
@@ -40,9 +39,9 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/ca/14/787e5498cd062640f0f3d92ef4ae4063174f76f9afd29d13fc52a319daae/accelerate-1.13.0.tar.gz", hash = "sha256:d631b4e0f5b3de4aff2d7e9e6857d164810dfc3237d54d017f075122d057b236", size = 402835, upload-time = "2026-03-04T19:34:12.359Z" }
@@ -64,14 +63,14 @@ name = "aiohttp"
 version = "3.14.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aiohappyeyeballs" },
-    { name = "aiosignal" },
-    { name = "attrs" },
-    { name = "frozenlist" },
-    { name = "multidict" },
-    { name = "propcache" },
-    { name = "typing-extensions" },
-    { name = "yarl" },
+    { name = "aiohappyeyeballs", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "aiosignal", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "attrs", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "frozenlist", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "multidict", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "propcache", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "yarl", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/82/78/8ea7308cac6934de8c74a14f3d5f65d1c89287426688be79538d0e5c013d/aiohttp-3.14.1.tar.gz", hash = "sha256:307f2cff90a764d329e77040603fa032db89c5c24fdad50c4c15334cba744035", size = 7955794, upload-time = "2026-06-07T21:09:35.529Z" }
 wheels = [
@@ -100,8 +99,8 @@ name = "aiosignal"
 version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "frozenlist" },
-    { name = "typing-extensions" },
+    { name = "frozenlist", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/61/62/06741b579156360248d1ec624842ad0edf697050bbaf7c3e46394e106ad1/aiosignal-1.4.0.tar.gz", hash = "sha256:f47eecd9468083c2029cc99945502cb7708b082c232f9aca65da147157b251c7", size = 25007, upload-time = "2025-07-03T22:54:43.528Z" }
 wheels = [
@@ -163,7 +162,7 @@ name = "apache-tvm-ffi"
 version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/6f/60/1e787a0b5ebf318483235be2a689ee367173983067e441b8379564f667c0/apache_tvm_ffi-0.1.9.tar.gz", hash = "sha256:d2d402587e8906de0a07f4746aa78f3d452c7efe3625d4bb39ac2ad693bce530", size = 2513731, upload-time = "2026-02-27T19:28:06.602Z" }
 wheels = [
@@ -348,7 +347,7 @@ wheels = [
 
 [[package]]
 name = "compressed-tensors"
-version = "0.17.0"
+version = "0.15.0.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "loguru", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -356,48 +355,46 @@ dependencies = [
     { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "transformers", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2c/9e/d7f18bd9a0354088abc11a0c1f2c7698f7c49e5a709faedf6a46e388f693/compressed_tensors-0.17.0.tar.gz", hash = "sha256:15c20d06bdbcf35b51fc99fd125e7b9be1e1855567c33b7a46dfac26ad6fb126", size = 257091, upload-time = "2026-06-03T16:49:17.208Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/1b/c3c4a98ec5f2727656336f07a0c35862195c310d8eb0b2fa5b4be6848680/compressed_tensors-0.15.0.1.tar.gz", hash = "sha256:a8e93054e8a5ec49c980b09ed36c4c1249b4a8ee167920a8e461c4da26e78d99", size = 229412, upload-time = "2026-04-10T14:23:54.708Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/35/63/6edf0415b072fff0bf8b546074dea3f0f9b148e49b601ac98bdc60a76c68/compressed_tensors-0.17.0-py3-none-any.whl", hash = "sha256:4a1b89b508f7efb8ffb4eee8a6e69e0452d9b080cae130146025c64fbe9fa9aa", size = 211714, upload-time = "2026-06-03T16:49:15.672Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/52/93833dc1610e017ac5b7dcd59b8304d8ef67d1114c2d124e728a2cbbea12/compressed_tensors-0.15.0.1-py3-none-any.whl", hash = "sha256:e1b1f322e82e475715e242bad46925a304ea8e5c98b5055a15b8eb22fb6bfea9", size = 194260, upload-time = "2026-04-10T14:23:53.098Z" },
 ]
 
 [[package]]
 name = "cryptography"
-version = "48.0.0"
+version = "50.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cffi", marker = "platform_python_implementation != 'PyPy' or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/a9/db8f313fdcd85d767d4973515e1db101f9c71f95fced83233de224673757/cryptography-48.0.0.tar.gz", hash = "sha256:5c3932f4436d1cccb036cb0eaef46e6e2db91035166f1ad6505c3c9d5a635920", size = 832984, upload-time = "2026-05-04T22:59:38.133Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/de/41/6cbdcf9142d00fe82836fbb51e503e58088575cf7a0fe1dbff6695bf0840/cryptography-50.0.0.tar.gz", hash = "sha256:eeac2acb5a20ed25e0ad6d1df9891a520b78b404266b6d11778f25d5d691a6c9", size = 880201, upload-time = "2026-07-31T14:25:10.11Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/df/3d/01f6dd9190170a5a241e0e98c2d04be3664a9e6f5b9b872cde63aff1c3dd/cryptography-48.0.0-cp311-abi3-macosx_10_9_universal2.whl", hash = "sha256:0c558d2cdffd8f4bbb30fc7134c74d2ca9a476f830bb053074498fbc86f41ed6", size = 8001587, upload-time = "2026-05-04T22:57:36.803Z" },
-    { url = "https://files.pythonhosted.org/packages/b2/6e/e90527eef33f309beb811cf7c982c3aeffcce8e3edb178baa4ca3ae4a6fa/cryptography-48.0.0-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:f5333311663ea94f75dd408665686aaf426563556bb5283554a3539177e03b8c", size = 4690433, upload-time = "2026-05-04T22:57:40.373Z" },
-    { url = "https://files.pythonhosted.org/packages/90/04/673510ed51ddff56575f306cf1617d80411ee76831ccd3097599140efdfe/cryptography-48.0.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7995ef305d7165c3f11ae07f2517e5a4f1d5c18da1376a0a9ed496336b69e5f3", size = 4710620, upload-time = "2026-05-04T22:57:42.935Z" },
-    { url = "https://files.pythonhosted.org/packages/14/d5/e9c4ef932c8d800490c34d8bd589d64a31d5890e27ec9e9ad532be893294/cryptography-48.0.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:40ba1f85eaa6959837b1d51c9767e230e14612eea4ef110ee8854ada22da1bf5", size = 4696283, upload-time = "2026-05-04T22:57:45.294Z" },
-    { url = "https://files.pythonhosted.org/packages/0c/29/174b9dfb60b12d59ecfc6cfa04bc88c21b42a54f01b8aae09bb6e51e4c7f/cryptography-48.0.0-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:369a6348999f94bbd53435c894377b20ab95f25a9065c283570e70150d8abc3c", size = 5296573, upload-time = "2026-05-04T22:57:47.933Z" },
-    { url = "https://files.pythonhosted.org/packages/95/38/0d29a6fd7d0d1373f0c0c88a04ba20e359b257753ac497564cd660fc1d55/cryptography-48.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a0e692c683f4df67815a2d258b324e66f4738bd7a96a218c826dce4f4bd05d8f", size = 4743677, upload-time = "2026-05-04T22:57:50.067Z" },
-    { url = "https://files.pythonhosted.org/packages/30/be/eef653013d5c63b6a490529e0316f9ac14a37602965d4903efed1399f32b/cryptography-48.0.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:18349bbc56f4743c8b12dc32e2bccb2cf83ee8b69a3bba74ef8ae857e26b3d25", size = 4330808, upload-time = "2026-05-04T22:57:52.301Z" },
-    { url = "https://files.pythonhosted.org/packages/84/9e/500463e87abb7a0a0f9f256ec21123ecde0a7b5541a15e840ea54551fd81/cryptography-48.0.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:7e8eac43dfca5c4cccc6dad9a80504436fca53bb9bc3100a2386d730fbe6b602", size = 4695941, upload-time = "2026-05-04T22:57:54.603Z" },
-    { url = "https://files.pythonhosted.org/packages/e3/dc/7303087450c2ec9e7fbb750e17c2abfbc658f23cbd0e54009509b7cc4091/cryptography-48.0.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:9ccdac7d40688ecb5a3b4a604b8a88c8002e3442d6c60aead1db2a89a041560c", size = 5252579, upload-time = "2026-05-04T22:57:57.207Z" },
-    { url = "https://files.pythonhosted.org/packages/d0/c0/7101d3b7215edcdc90c45da544961fd8ed2d6448f77577460fa75a8443f7/cryptography-48.0.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:bd72e68b06bb1e96913f97dd4901119bc17f39d4586a5adf2d3e47bc2b9d58b5", size = 4743326, upload-time = "2026-05-04T22:57:59.535Z" },
-    { url = "https://files.pythonhosted.org/packages/ac/d8/5b833bad13016f562ab9d063d68199a4bd121d18458e439515601d3357ec/cryptography-48.0.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:59baa2cb386c4f0b9905bd6eb4c2a79a69a128408fd31d32ca4d7102d4156321", size = 4826672, upload-time = "2026-05-04T22:58:01.996Z" },
-    { url = "https://files.pythonhosted.org/packages/98/e1/7074eb8bf3c135558c73fc2bcf0f5633f912e6fb87e868a55c454080ef09/cryptography-48.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:9249e3cd978541d665967ac2cb2787fd6a62bddf1e75b3e347a594d7dacf4f74", size = 4972574, upload-time = "2026-05-04T22:58:03.968Z" },
-    { url = "https://files.pythonhosted.org/packages/04/70/e5a1b41d325f797f39427aa44ef8baf0be500065ab6d8e10369d850d4a4f/cryptography-48.0.0-cp311-abi3-win32.whl", hash = "sha256:9c459db21422be75e2809370b829a87eb37f74cd785fc4aa9ea1e5f43b47cda4", size = 3294868, upload-time = "2026-05-04T22:58:06.467Z" },
-    { url = "https://files.pythonhosted.org/packages/f4/ac/8ac51b4a5fc5932eb7ee5c517ba7dc8cd834f0048962b6b352f00f41ebf9/cryptography-48.0.0-cp311-abi3-win_amd64.whl", hash = "sha256:5b012212e08b8dd5edc78ef54da83dd9892fd9105323b3993eff6bea65dc21d7", size = 3817107, upload-time = "2026-05-04T22:58:08.845Z" },
-    { url = "https://files.pythonhosted.org/packages/f2/63/61d4a4e1c6b6bab6ce1e213cd36a24c415d90e76d78c5eb8577c5541d2e8/cryptography-48.0.0-cp39-abi3-macosx_10_9_universal2.whl", hash = "sha256:58d00498e8933e4a194f3076aee1b4a97dfec1a6da444535755822fe5d8b0b86", size = 7983482, upload-time = "2026-05-04T22:58:43.769Z" },
-    { url = "https://files.pythonhosted.org/packages/d5/ac/f5b5995b87770c693e2596559ffafe195b4033a57f14a82268a2842953f3/cryptography-48.0.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:614d0949f4790582d2cc25553abd09dd723025f0c0e7c67376a1d77196743d6e", size = 4683266, upload-time = "2026-05-04T22:58:46.064Z" },
-    { url = "https://files.pythonhosted.org/packages/ec/c6/8b14f67e18338fbc4adb76f66c001f5c3610b3e2d1837f268f47a347dbbb/cryptography-48.0.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:7ce4bfae76319a532a2dc68f82cc32f5676ee792a983187dac07183690e5c66f", size = 4696228, upload-time = "2026-05-04T22:58:48.22Z" },
-    { url = "https://files.pythonhosted.org/packages/ea/73/f808fbae9514bd91b47875b003f13e284c8c6bdfd904b7944e803937eec1/cryptography-48.0.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:2eb992bbd4661238c5a397594c83f5b4dc2bc5b848c365c8f991b6780efcc5c7", size = 4689097, upload-time = "2026-05-04T22:58:50.9Z" },
-    { url = "https://files.pythonhosted.org/packages/93/01/d86632d7d28db8ae83221995752eeb6639ffb374c2d22955648cf8d52797/cryptography-48.0.0-cp39-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:22a5cb272895dce158b2cacdfdc3debd299019659f42947dbdac6f32d68fe832", size = 5283582, upload-time = "2026-05-04T22:58:53.017Z" },
-    { url = "https://files.pythonhosted.org/packages/02/e1/50edc7a50334807cc4791fc4a0ce7468b4a1416d9138eab358bfc9a3d70b/cryptography-48.0.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:2b4d59804e8408e2fea7d1fbaf218e5ec984325221db76e6a241a9abd6cdd95c", size = 4730479, upload-time = "2026-05-04T22:58:55.611Z" },
-    { url = "https://files.pythonhosted.org/packages/6f/af/99a582b1b1641ff5911ac559beb45097cf79efd4ead4657f578ef1af2d47/cryptography-48.0.0-cp39-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:984a20b0f62a26f48a3396c72e4bc34c66e356d356bf370053066b3b6d54634a", size = 4326481, upload-time = "2026-05-04T22:58:57.607Z" },
-    { url = "https://files.pythonhosted.org/packages/90/ee/89aa26a06ef0a7d7611788ffd571a7c50e368cc6a4d5eef8b4884e866edb/cryptography-48.0.0-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:5a5ed8fde7a1d09376ca0b40e68cd59c69fe23b1f9768bd5824f54681626032a", size = 4688713, upload-time = "2026-05-04T22:59:00.077Z" },
-    { url = "https://files.pythonhosted.org/packages/70/ba/bcb1b0bb7a33d4c7c0c4d4c7874b4a62ae4f56113a5f4baefa362dfb1f0f/cryptography-48.0.0-cp39-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:8cd666227ef7af430aa5914a9910e0ddd703e75f039cef0825cd0da71b6b711a", size = 5238165, upload-time = "2026-05-04T22:59:02.317Z" },
-    { url = "https://files.pythonhosted.org/packages/c9/70/ca4003b1ce5ca3dc3186ada51908c8a9b9ff7d5cab83cc0d43ee14ec144f/cryptography-48.0.0-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:9071196d81abc88b3516ac8cdfad32e2b66dd4a5393a8e68a961e9161ddc6239", size = 4729947, upload-time = "2026-05-04T22:59:05.255Z" },
-    { url = "https://files.pythonhosted.org/packages/44/a0/4ec7cf774207905aef1a8d11c3750d5a1db805eb380ee4e16df317870128/cryptography-48.0.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:1e2d54c8be6152856a36f0882ab231e70f8ec7f14e93cf87db8a2ed056bf160c", size = 4822059, upload-time = "2026-05-04T22:59:07.802Z" },
-    { url = "https://files.pythonhosted.org/packages/1e/75/a2e55f99c16fcac7b5d6c1eb19ad8e00799854d6be5ca845f9259eae1681/cryptography-48.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:a5da777e32ffed6f85a7b2b3f7c5cbc88c146bfcd0a1d7baf5fcc6c52ee35dd4", size = 4960575, upload-time = "2026-05-04T22:59:09.851Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/23/6e6f32143ab5d8b36ca848a502c4bcd477ae75b9e1677e3530d669062578/cryptography-48.0.0-cp39-abi3-win32.whl", hash = "sha256:77a2ccbbe917f6710e05ba9adaa25fb5075620bf3ea6fb751997875aff4ae4bd", size = 3279117, upload-time = "2026-05-04T22:59:12.019Z" },
-    { url = "https://files.pythonhosted.org/packages/9d/9a/0fea98a70cf1749d41d738836f6349d97945f7c89433a259a6c2642eefeb/cryptography-48.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:16cd65b9330583e4619939b3a3843eec1e6e789744bb01e7c7e2e62e33c239c8", size = 3792100, upload-time = "2026-05-04T22:59:14.884Z" },
+    { url = "https://files.pythonhosted.org/packages/c5/5c/59086b4aac5e879d38ddbcf74e4be7ade89cebc3eb199a55da998c3bb46a/cryptography-50.0.0-cp311-abi3-macosx_11_0_arm64.whl", hash = "sha256:031e2d5dd4bb9caa3ca9c82e5a197fd8ae680232cee62603d1a813f3f07e3d03", size = 4001252, upload-time = "2026-07-31T14:23:33.331Z" },
+    { url = "https://files.pythonhosted.org/packages/57/ef/8f2df13c7216bcad3e1c74e07f6e193d93e998e114f524a53877c9af27ad/cryptography-50.0.0-cp311-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:fd9192b7b70c573d7f214eb1ae35e00d359f6f5e4b27c7e21e30de1fc6204645", size = 4719554, upload-time = "2026-07-31T14:23:35.611Z" },
+    { url = "https://files.pythonhosted.org/packages/d9/41/029086c34d91052fc3b88bcc8056f709a7c915c7a23b235a54eb800b1c97/cryptography-50.0.0-cp311-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:06a32a980526a6ab9a4b9bf8f7385800791e2bb960903cb6b530e4817509a3b7", size = 4702130, upload-time = "2026-07-31T14:23:37.635Z" },
+    { url = "https://files.pythonhosted.org/packages/7d/ff/b6ce0954962e7f7b969f850a883744197bb3910bdfd7b6da162eab7d9f68/cryptography-50.0.0-cp311-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:a1b30560f2acc95aa8b2e06e716a13dbfc97314747b80d9707e307f77b40d6b3", size = 4725244, upload-time = "2026-07-31T14:23:39.471Z" },
+    { url = "https://files.pythonhosted.org/packages/06/1e/63a1027cb7fec360a182208e1b7767d5aa1fe57be3d6aa856e69a321edc0/cryptography-50.0.0-cp311-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:8d89f3976b10b4ce31118de72329025f70d2c6ead14a8217c5514dd2c6d5a78f", size = 5342265, upload-time = "2026-07-31T14:23:41.286Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/72/a1116d683a6d7ece94590013882515de087edf9ef0e6292aae615a44df73/cryptography-50.0.0-cp311-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:b42a28c1844fd9de8f3f7d540e36b66f3a9c83fceac7170ebc7a6a19edd9dcae", size = 4734609, upload-time = "2026-07-31T14:23:43.139Z" },
+    { url = "https://files.pythonhosted.org/packages/15/37/36a9c479bbe49acea2636c7fd3360d20f7b7e079c300352011c44850b181/cryptography-50.0.0-cp311-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:900131fafd8aead39ac7dd3a7e833be754c17a95cfd91221636949fe4eb0aa8a", size = 4356517, upload-time = "2026-07-31T14:23:44.939Z" },
+    { url = "https://files.pythonhosted.org/packages/32/98/8a151d64367204cbc63ec65d37502f1d9c53cf4bfc6ec3c532614dbec60d/cryptography-50.0.0-cp311-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:07949c449a1abcf60d1ee6e88956d89404c7df3c8258f46589e912988e551987", size = 4724529, upload-time = "2026-07-31T14:23:46.93Z" },
+    { url = "https://files.pythonhosted.org/packages/22/f6/ec13b470172126464a86bf54d2294a46d29837fc51ba3e45d4047946fb5e/cryptography-50.0.0-cp311-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:f89831ef99dd7dd169ab06d63a831adb9e20a87aac6d380266bbda5823349169", size = 5299852, upload-time = "2026-07-31T14:23:48.851Z" },
+    { url = "https://files.pythonhosted.org/packages/da/3a/f05e32c99d440c9bb891ea0e36c9091891e36be5a9a87ab2ee6ea20729f6/cryptography-50.0.0-cp311-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:82148ec5bddac30b51a5b3c1945075f896fa022cb93f8e4a01e9f6ee95292c5f", size = 4734462, upload-time = "2026-07-31T14:23:50.861Z" },
+    { url = "https://files.pythonhosted.org/packages/ca/dc/bd72b26be8953f80625f63151efd38eee71c76ca6cf591c08ff34615a79e/cryptography-50.0.0-cp311-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:1489e263a8048bb8b6a8bac662eb2d402ea5d2b7b4699b72f385f1e2772db105", size = 4852708, upload-time = "2026-07-31T14:23:52.715Z" },
+    { url = "https://files.pythonhosted.org/packages/27/20/c930314a2ab476d15dec966ec87e2e9637bb02b06106b12c0396c57bb603/cryptography-50.0.0-cp311-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:7cec5b856506da6defb290f30c9ee687d5f5e8cb0bd3f6459dde43b0b4fa40ef", size = 5004179, upload-time = "2026-07-31T14:23:54.887Z" },
+    { url = "https://files.pythonhosted.org/packages/32/2e/c9db68a0c4bfa28e310707527c0ee3a2bd254104d2e02e68f368e197aa4c/cryptography-50.0.0-cp311-abi3-win_amd64.whl", hash = "sha256:bd1c592e4d5974f0d08d4888e432157adba757c66da0246918e43677fafa2d30", size = 3840395, upload-time = "2026-07-31T14:23:56.677Z" },
+    { url = "https://files.pythonhosted.org/packages/03/37/73d005be173aff344af30e9fd2a576575cb2391a7101d9cd3842e1fa8cce/cryptography-50.0.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:ccdc4a71a4dabae05de219404f9f4abc38e3b58422177ff93d0da05967dafa07", size = 4036009, upload-time = "2026-07-31T14:24:24.122Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/c6/7a6202a534e32103a285b7834a120869557fe198d51d7cfe59754c8bda9c/cryptography-50.0.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:910e1d2668e7de9648f2bcee30e180db2a6b15c30f887d7c4c93ddf96e3992e3", size = 4745252, upload-time = "2026-07-31T14:24:26.118Z" },
+    { url = "https://files.pythonhosted.org/packages/85/4f/0fa8c2f4428198f15d9ff8d63400e27afbf94ce833f6108da1eb3753f945/cryptography-50.0.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a91296cb61e8df6f86d0c19cc4068228da256bf59bf86049fbd821084565327f", size = 4728939, upload-time = "2026-07-31T14:24:27.994Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/63/54dd723490ba2dc09b299682c10b38db38f159728bcaae8c591b8af2f22d/cryptography-50.0.0-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e722f16708d854fe924790e051061f6704a472c3bac347b6fd88033ea8dd0dc5", size = 4748483, upload-time = "2026-07-31T14:24:30.254Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/dd/7c77d26285cc7f6991efce64a0f5b4f9383bfa5dd8c5033003eaf7db4cdb/cryptography-50.0.0-cp39-abi3-manylinux_2_28_ppc64le.whl", hash = "sha256:d764dcf130c428ef66786f866dd750f53182bc608813489915e9fc106bb0c82f", size = 5367599, upload-time = "2026-07-31T14:24:32.457Z" },
+    { url = "https://files.pythonhosted.org/packages/46/c9/f60aed34c013f317f92817b6c171c2d22a78270fa41109bd4b08af26b194/cryptography-50.0.0-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:105110f43a471dbd0060b9c9516cb8a6a79233631a04cc2ba16f28323ac6e025", size = 4762647, upload-time = "2026-07-31T14:24:34.599Z" },
+    { url = "https://files.pythonhosted.org/packages/be/f3/f9a0173b139372c3a48ed98154b45cc6b9de17c789d5ab552e621c293609/cryptography-50.0.0-cp39-abi3-manylinux_2_31_armv7l.whl", hash = "sha256:828743d939e9629bc267b8e2d08d8bb67cd4319c771a33d4b18b22dd8fb7440a", size = 4385197, upload-time = "2026-07-31T14:24:36.647Z" },
+    { url = "https://files.pythonhosted.org/packages/d8/36/83bb81f6e569bc38e1e4a7bc80f29b46bb9601920bc455fc8e888f5d5742/cryptography-50.0.0-cp39-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:2a8183b489dc1f7f80f135780fadc1108f14b31b8a40411c7a5b17425f65f28b", size = 4748095, upload-time = "2026-07-31T14:24:39.493Z" },
+    { url = "https://files.pythonhosted.org/packages/6b/16/d3008eff98c764979865834c3d386d4fd041b5f52e7f34fc29ac1a5eb515/cryptography-50.0.0-cp39-abi3-manylinux_2_34_ppc64le.whl", hash = "sha256:6e7d61120573a7f2cd94cc095f9e81f6967c61ccdf194285aa143ecec8e0b708", size = 5325948, upload-time = "2026-07-31T14:24:41.556Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/f8/d97f9603efda3888187bfdb893f26c41be4735c10631d05d284ee6b047c4/cryptography-50.0.0-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:37fdb0d0111f1e2ff07139dfb79f1b49531f8e213c46f1163dd7642979b58c47", size = 4762400, upload-time = "2026-07-31T14:24:43.636Z" },
+    { url = "https://files.pythonhosted.org/packages/64/a2/4615c8f7d81a00b1d6e6afe19f694e1543582349fb5f4076f6cb5dc36485/cryptography-50.0.0-cp39-abi3-musllinux_1_2_aarch64.whl", hash = "sha256:c87f62a3d3b9888ed0fdde100ec06aa61ca9cd44bad9057d1dff9a516b5f5bb9", size = 4878208, upload-time = "2026-07-31T14:24:45.522Z" },
+    { url = "https://files.pythonhosted.org/packages/d2/1a/efcfb02f91407149a0dacffffab791f7e19bf6385f63b3666dc8b5e5c9c8/cryptography-50.0.0-cp39-abi3-musllinux_1_2_x86_64.whl", hash = "sha256:65c2c3add92b45fd0709db8594536aea39c2a67af0e27ffcf049c498501140b7", size = 5037050, upload-time = "2026-07-31T14:24:47.697Z" },
+    { url = "https://files.pythonhosted.org/packages/57/30/4a22984d4f1bdfb8c054f07a92bc176b97a3134cc1d6c4b3bffb1f3688b4/cryptography-50.0.0-cp39-abi3-win_amd64.whl", hash = "sha256:d24fead1d4d076e1bfb006dcec392074a3cd8d7b4fc8a595aa64073b2b7a96ba", size = 3874135, upload-time = "2026-07-31T14:24:50.085Z" },
 ]
 
 [[package]]
@@ -405,7 +402,7 @@ name = "cuda-bindings"
 version = "12.9.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "cuda-pathfinder", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/32/45/557d4ed1fa54f0c7db8aee083229f624990d69f7d00f55477eed5c7e169a/cuda_bindings-12.9.7-cp312-cp312-manylinux_2_24_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:0666d3c082ef8f4b2d670950589373550e9f3bf564d635dd883f24a0b40402ff", size = 7071026, upload-time = "2026-05-27T18:44:13.356Z" },
@@ -434,22 +431,15 @@ wheels = [
 
 [[package]]
 name = "cuda-tile"
-version = "1.3.0"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f3/49/4592bc94ca05a07c7947ea114fd12734c8497f2daffee9faa79a03e39fb5/cuda_tile-1.3.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:375316b64c51ee7cfadb2f170a30c1547bc41eb39f1e233a6556713857d2e81f", size = 245744, upload-time = "2026-04-20T15:52:09.621Z" },
-    { url = "https://files.pythonhosted.org/packages/40/76/84cb68be463c827bf79da9fa0aa5140838de6455ef6f438bbe0ffa75d378/cuda_tile-1.3.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:e4865acbff1172aaee304bf9c550586088d8b4545a384423597a590899386709", size = 247301, upload-time = "2026-04-20T15:51:04.042Z" },
-    { url = "https://files.pythonhosted.org/packages/db/6f/d2fd16c2b0d878021dc703eea5f8fe09599d6b04bdc2531a36fc617751fd/cuda_tile-1.3.0-cp312-cp312-win_amd64.whl", hash = "sha256:93e20ed31e46e5bf704fb31d13e1c08338d2177838798876f7ee9ec4384b75ba", size = 240923, upload-time = "2026-04-20T15:52:14.939Z" },
-]
-
-[package.optional-dependencies]
-tileiras = [
-    { name = "nvidia-cuda-nvcc", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cuda-tileiras", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-nvvm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { url = "https://files.pythonhosted.org/packages/42/93/64ef40d3982dcda7a97ebfa3e3bb9045b573d4eb3877fa5d1fa3cd2541d3/cuda_tile-1.4.0-cp312-cp312-manylinux2014_aarch64.whl", hash = "sha256:9e358a85a153820aa0a51d0e09346d884a3c14b88c0313d20d0fb9f53952abae", size = 280953, upload-time = "2026-05-27T17:46:53.03Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/9a/7fbdbdb30c375f80818941165adfc4f1dc6cebaf937c6a9081a02d5871f0/cuda_tile-1.4.0-cp312-cp312-manylinux2014_x86_64.whl", hash = "sha256:1d9d99b6fa57366af3f8707ac4fd91411275af2ee736996a60620240fcf92070", size = 282503, upload-time = "2026-05-27T17:45:05.543Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/bb/4152dc08a8de5bcdc4b9d80b6917216289526f6e786b09ee80d4df27bcfb/cuda_tile-1.4.0-cp312-cp312-win_amd64.whl", hash = "sha256:616f13cbc7af6caa7b92430b85ba0a429d1f96ca9e7e04a29d89114cfe859663", size = 269813, upload-time = "2026-05-27T17:46:20.583Z" },
 ]
 
 [[package]]
@@ -585,15 +575,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz", hash = "sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015", size = 29341, upload-time = "2026-04-14T04:09:19.867Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a7/5f/ed01f9a3cdffbd5a008556fc7b2a08ddb1cc6ace7effa7340604b1d16699/docstring_parser-0.18.0-py3-none-any.whl", hash = "sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b", size = 22484, upload-time = "2026-04-14T04:09:18.638Z" },
-]
-
-[[package]]
-name = "durationpy"
-version = "0.10"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/9d/a4/e44218c2b394e31a6dd0d6b095c4e1f32d0be54c2a4b250032d717647bab/durationpy-0.10.tar.gz", hash = "sha256:1fa6893409a6e739c9c72334fc65cca1f355dbdd93405d30f726deb5bde42fba", size = 3335, upload-time = "2025-05-17T13:52:37.26Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b0/0d/9feae160378a3553fa9a339b0e9c1a048e147a4127210e286ef18b730f03/durationpy-0.10-py3-none-any.whl", hash = "sha256:3b41e1b601234296b4fb368338fdcd3e13e0b4fb5b67345948f4f2bf9868b286", size = 3922, upload-time = "2025-05-17T13:52:36.463Z" },
 ]
 
 [[package]]
@@ -735,46 +716,21 @@ wheels = [
 ]
 
 [[package]]
-name = "fla-core"
-version = "0.5.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "einops" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4e/62/99e149f19a447ce809d7f4fa64ae61c073da337505b9db7f389502470820/fla_core-0.5.1.tar.gz", hash = "sha256:7f3cf56edfbaa9115f4937d1181372e5c7b11809ad8eb2e411fffc3caf729f48", size = 498800, upload-time = "2026-06-18T18:17:15.377Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/78/a55ee7a62515dcb9220770dd99dfe59ac6599da8af84ad1d20f9f407df4d/fla_core-0.5.1-py3-none-any.whl", hash = "sha256:02150d34aa1e37f6b8ed9b2feec5d29af93680573e5077ed981238179c11fb06", size = 702955, upload-time = "2026-06-18T18:17:12.229Z" },
-]
-
-[[package]]
-name = "flash-linear-attention"
-version = "0.5.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "fla-core" },
-    { name = "transformers" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/e8/8f115be585a046795e4a1f7ade727889219bb66b8d96cc668b8c9e437c0e/flash_linear_attention-0.5.1.tar.gz", hash = "sha256:8840fd4c37de8b0612dc8fd493867f3d330672ba2f17c024a2ce37239634e247", size = 221733, upload-time = "2026-06-18T18:17:16.661Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/68/3c/5819fb19dc071302ca818616a4e64d4454e1f1193929eb8365c8d38e9052/flash_linear_attention-0.5.1-py3-none-any.whl", hash = "sha256:9022862f0a238752372c81290694b8b2ed1cb2d13fc40d340ffeeb554d6bee5c", size = 403096, upload-time = "2026-06-18T18:17:14.025Z" },
-]
-
-[[package]]
 name = "flashinfer-cubin"
-version = "0.6.13"
+version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/43/ce916b4cdec4705173e222ca29c68e09004b47526888746094c5ffb29fca/flashinfer_cubin-0.6.13-py3-none-any.whl", hash = "sha256:41e4848c2d09d220e8394489b2fb6cfec6b6ad09f897b5ab8b39fc23055f6c24", size = 457984995, upload-time = "2026-06-25T00:29:26.08Z" },
+    { url = "https://files.pythonhosted.org/packages/11/b7/5e3b1a8c67031b421a8bd29c2bc29b900a550bb3392e8bda18bb15b5e476/flashinfer_cubin-0.6.8.post1-py3-none-any.whl", hash = "sha256:43636d4cd39e694a83d76a89f87fefcdf4cecb4c4f7dd22dac25ec368c1e901f", size = 295154113, upload-time = "2026-04-18T18:28:21.738Z" },
 ]
 
 [[package]]
 name = "flashinfer-python"
-version = "0.6.13"
+version = "0.6.8.post1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "apache-tvm-ffi", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "click", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "cuda-tile", extra = ["tileiras"], marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "cuda-tile", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "einops", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "ninja", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -787,9 +743,9 @@ dependencies = [
     { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1e/f7/7f6dd2b03f4277509dfd1e5c7a8ec1de2662fd245d2e663f44a3493882b1/flashinfer_python-0.6.13.tar.gz", hash = "sha256:8a6d7d3708c7c87952390ec4e3aabe6e1c356defa8c7211b26bccaa355a61c59", size = 9638085, upload-time = "2026-06-24T22:46:29.391Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/1e/2760fef9e74abc4480961048e5790b4c9e955872fb4d7d97900cfddced5a/flashinfer_python-0.6.8.post1.tar.gz", hash = "sha256:b18e4121baf9b93fa9a9f368ba9b981a0342895f50ab9dddc224aeb964ed346f", size = 6675885, upload-time = "2026-04-18T18:28:13.299Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e4/50/e8920ed7f68e0116a385e3ab814ac2f0010579852fc483bfb48819d11976/flashinfer_python-0.6.13-py3-none-any.whl", hash = "sha256:239e6ddc3cbbaf0bee251861a8c7c69438b1171830d69ddfa133ddea4494850d", size = 14191198, upload-time = "2026-06-24T22:46:26.565Z" },
+    { url = "https://files.pythonhosted.org/packages/73/6d/1e8a8533913e33a50a486332ce0673f4fdb860f6eb9ed450327c5c1762cb/flashinfer_python-0.6.8.post1-py3-none-any.whl", hash = "sha256:818f9b8cc2fe66c42a1f6264be4841ac8821ada703685a02cfccb2b5124a710b", size = 9385316, upload-time = "2026-04-18T18:28:10.285Z" },
 ]
 
 [[package]]
@@ -829,6 +785,21 @@ wheels = [
 [package.optional-dependencies]
 http = [
     { name = "aiohttp" },
+]
+
+[[package]]
+name = "gguf"
+version = "0.19.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "pyyaml", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "requests", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/48/ae/17f1308ae45cd7b08ebb521747d5b23f4efc4d172038a4e228dd5106c3ff/gguf-0.19.0.tar.gz", hash = "sha256:dbadcd6cc7ccd44256f2229fe7c2dff5e8aa5cf0612ab987fd2b1a57e428923f", size = 111220, upload-time = "2026-05-06T13:04:03.667Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b3/bb/d71d6da82763528c2c2ed6b59a9d6142c6595545a4c448e2085d155e88c2/gguf-0.19.0-py3-none-any.whl", hash = "sha256:70bcd10edfe697fb2dad6e40af2234b9d8ece9a41a99761405121ebda1c3c1cd", size = 118475, upload-time = "2026-05-06T13:04:02.588Z" },
 ]
 
 [[package]]
@@ -896,23 +867,23 @@ wheels = [
 
 [[package]]
 name = "grpcio"
-version = "1.81.1"
+version = "1.81.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b0/b5/1ff353970a87eda4c98251e34d2dfd214abd4982dc89119c9252a2a482d2/grpcio-1.81.1.tar.gz", hash = "sha256:6fa10a767143a5e82e8eaab53918af0cd8909a57a27f8cb2288b80a613ac671b", size = 13026582, upload-time = "2026-06-11T12:46:51.673Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/f3/23f47b24f8d8c2028eba501db3acfbb2f592cbb5995eaa6e363a627b74d7/grpcio-1.81.0.tar.gz", hash = "sha256:a5acd7efd3b1fe9b4eb0bcaaa1507eed68a0ad0678b654c3f7b464df9ba9dca5", size = 13032272, upload-time = "2026-06-01T05:56:22.827Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/85/07/9a979c81738863a738dc23d65177056e71fbb2db817740ed870b33434e7a/grpcio-1.81.1-cp312-cp312-linux_armv7l.whl", hash = "sha256:8b39472beafc0bdcafc4c8c73ad082ebfdb449d566897a61e7acb4fa88089115", size = 6053264, upload-time = "2026-06-11T12:45:21.017Z" },
-    { url = "https://files.pythonhosted.org/packages/75/95/539706ca0d3bd40dbad583dc56fd883da941f37556b629132da5762781b9/grpcio-1.81.1-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:12b7524c88d4026d3dcb7b0ebe16b6714f3b4af402ddd0f0639ab064a00c87c3", size = 12052560, upload-time = "2026-06-11T12:45:23.652Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/44/f257b7e0bd69c93b06c6cb8ac8d1b901ccb42bedabd83c1a4c77a71f8810/grpcio-1.81.1-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1e123f9b37edb8375fd74130d1f69c944bbf0a7b06761ae7211154b8759e94d2", size = 6595983, upload-time = "2026-06-11T12:45:26.963Z" },
-    { url = "https://files.pythonhosted.org/packages/b9/f3/19782aa04c960968bef8c5539329d8e3bbc3364e2e46d19eb5e5cc5e43b7/grpcio-1.81.1-cp312-cp312-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:2c2e2ae6867c2966b8daccc836d54a13218e0007e9a490aeb81dd05be64d22d7", size = 7303455, upload-time = "2026-06-11T12:45:29.707Z" },
-    { url = "https://files.pythonhosted.org/packages/eb/8c/dea020b6d91508cd84463917a63149ec196ee7db505d032ae43fcb3303b9/grpcio-1.81.1-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:766bc7c9a9c340342f4c864ccbda8e78111e4751f13b895812b9c148fb79e9d0", size = 6809167, upload-time = "2026-06-11T12:45:32.52Z" },
-    { url = "https://files.pythonhosted.org/packages/1c/c7/3030dd940408083bd32cd95d634777a71605ade4887154d93e8a89244946/grpcio-1.81.1-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:b259a04a737cb3496be0901328eb8b7552ed8df4865d8c8f1cf1bffcfc0776a3", size = 7412536, upload-time = "2026-06-11T12:45:35.403Z" },
-    { url = "https://files.pythonhosted.org/packages/e0/dd/1172a9e42b168edcafefad6115346ef619a3fc02158bb170e66ced24bcdd/grpcio-1.81.1-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:85b10a45b8993d195c4f3ff57025b8d1e11834909ee475c403bfa60cb4caefaf", size = 8408276, upload-time = "2026-06-11T12:45:37.78Z" },
-    { url = "https://files.pythonhosted.org/packages/25/7a/71437c7f3596e5246155c515852795a85a1a8d228190212432b13b97a95d/grpcio-1.81.1-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:8ea1936c26b99999b27479853039a7f34713f56c49375ad52b38535ec93a796c", size = 7849660, upload-time = "2026-06-11T12:45:40.627Z" },
-    { url = "https://files.pythonhosted.org/packages/65/40/7debc0da45d2efebafb82da75644be347497fe4ee250514b8cd3b86ae8bf/grpcio-1.81.1-cp312-cp312-win32.whl", hash = "sha256:a185a04039df6cae8648bc8ab6d6fde7bf94f7188ecf7828e76ac52eef1e41d6", size = 4185819, upload-time = "2026-06-11T12:45:43.027Z" },
-    { url = "https://files.pythonhosted.org/packages/2e/b9/8fe3ba5ed462067774ebc1f9c7f26aa7ebcc280ddd476be107153de1339e/grpcio-1.81.1-cp312-cp312-win_amd64.whl", hash = "sha256:3ad74f8bb1a18963914c5452d289422830b39459e8776ebbcd207be1fbfb1d94", size = 4930461, upload-time = "2026-06-11T12:45:45.775Z" },
+    { url = "https://files.pythonhosted.org/packages/82/d5/896a3aaf07068d707d88b282a04914b872db4d32d3c7e6d88e43a3b911fa/grpcio-1.81.0-cp312-cp312-linux_armv7l.whl", hash = "sha256:57b3b0e73a518fa286959b40c3eddd02703504ca186e8b7b2945954519bd8b2c", size = 6053538, upload-time = "2026-06-01T05:54:58.965Z" },
+    { url = "https://files.pythonhosted.org/packages/68/6a/7e3eafa4727cd405ff917605ed2949e2af162f233f5cbdd773723a5fea7d/grpcio-1.81.0-cp312-cp312-macosx_11_0_universal2.whl", hash = "sha256:8bb1789c94322a13336a2b6c58d9c14d68f8628b6e24205a799c69f5bf8516ce", size = 12053447, upload-time = "2026-06-01T05:55:01.862Z" },
+    { url = "https://files.pythonhosted.org/packages/16/79/a4302aa82428de48a922421f522b027a1a727ab4d0926368454aa953d36d/grpcio-1.81.0-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:e4d053900a0d24b75d7521139a3872150301b3d6bde3bed5e12318fb25791e4d", size = 6595872, upload-time = "2026-06-01T05:55:04.946Z" },
+    { url = "https://files.pythonhosted.org/packages/b4/1f/7ff2850eaefbecf99af3f624dbb28dd1ad6c5fd4c1d8c26909ed6482673b/grpcio-1.81.0-cp312-cp312-manylinux2014_i686.manylinux_2_17_i686.whl", hash = "sha256:db217c2e52931719f9937bd12082cd4d7b495b35803d5760686975c285924bf8", size = 7303857, upload-time = "2026-06-01T05:55:07.205Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/98/1f3896a9baae1f2aedf4e99c55291d6fa1f30ad9603d63bc18bda967b53e/grpcio-1.81.0-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:19f201da7b4e5c0559198abe5a97157e726f3abe6e8f5e832d4a50740f6dcc22", size = 6809676, upload-time = "2026-06-01T05:55:09.513Z" },
+    { url = "https://files.pythonhosted.org/packages/34/8b/3441983718095208c5d797fd3239882e97ea89a629f41c8df94b4eef4df9/grpcio-1.81.0-cp312-cp312-musllinux_1_2_aarch64.whl", hash = "sha256:275144b0115353339dbb8a6f28a9cf8997b5bf40e37f8f66ac0b0ea57e95b43f", size = 7412654, upload-time = "2026-06-01T05:55:12.777Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/98/1eddf07df6e4fe85cf67502a793f7b05468b2dca3d1ef35b972cf5d54468/grpcio-1.81.0-cp312-cp312-musllinux_1_2_i686.whl", hash = "sha256:5192857589f223e5a98ff0e31f6e551b19040e647d17bfe10116c8a2ce3b8696", size = 8408026, upload-time = "2026-06-01T05:55:15.514Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/73/3860341e6a1f5347be6ab35c6c0e1e3a8eb59d010388207fd561dcf01a88/grpcio-1.81.0-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:c6ff087cb1f563f47b504b4e29e684129fc5ae4863faf3ebca08a327764ee6cb", size = 7849498, upload-time = "2026-06-01T05:55:18.078Z" },
+    { url = "https://files.pythonhosted.org/packages/ae/3f/0ea06bd85c701966aa3f8f37314f2ed83520d2b7590f42d643d445d8bc8b/grpcio-1.81.0-cp312-cp312-win32.whl", hash = "sha256:98c6240f563178fc5877bd50e6ff274463e53e1472128f4110742450739659fa", size = 4184161, upload-time = "2026-06-01T05:55:20.127Z" },
+    { url = "https://files.pythonhosted.org/packages/39/e3/a7c387406827a86f99ad7838b995bf9b4a182ffe2d2c439ed2873efec952/grpcio-1.81.0-cp312-cp312-win_amd64.whl", hash = "sha256:87e33b7afcfb3585121b5f007d2c52b8c534104d18f556e840d35193ca2a9141", size = 4929958, upload-time = "2026-06-01T05:55:22.736Z" },
 ]
 
 [[package]]
@@ -1028,35 +999,6 @@ wheels = [
 ]
 
 [[package]]
-name = "humming-kernels"
-version = "0.1.10"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "cuda-bindings", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-ml-py", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "pyelftools", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "safetensors", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "tabulate", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "triton", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/51/4f/6977a31451c3f7aa1deaa76506d6cdeb74ef418ad8bcba2e98f7510b26ec/humming_kernels-0.1.10.tar.gz", hash = "sha256:da3e46fb9fc9eba2a9327c2e8135ead68e390c955acd7449f97ee7c71666c8b1", size = 220110, upload-time = "2026-07-02T10:22:57.687Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/63/ba/869bc24591d2b4fb0d8da821528072971052a934af077a11f77a0f2b3e79/humming_kernels-0.1.10-py3-none-any.whl", hash = "sha256:4ded0998ff085afeddde70baf93f97c2929969ec3d4a63a52cfec5072bc972b4", size = 184889, upload-time = "2026-07-02T10:22:56.031Z" },
-]
-
-[package.optional-dependencies]
-cu12 = [
-    { name = "nvidia-cuda-cccl-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cuda-nvcc-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cuda-nvrtc-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cuda-runtime-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-
-[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -1168,27 +1110,6 @@ wheels = [
 ]
 
 [[package]]
-name = "kubernetes"
-version = "36.0.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiohttp" },
-    { name = "certifi" },
-    { name = "durationpy" },
-    { name = "python-dateutil" },
-    { name = "pyyaml" },
-    { name = "requests" },
-    { name = "requests-oauthlib" },
-    { name = "six" },
-    { name = "urllib3" },
-    { name = "websocket-client" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/57/8b538af5076bc3372949d76f70ba3449bdfe52f9e6488170fa5d4f7cbe70/kubernetes-36.0.2.tar.gz", hash = "sha256:03551fcb49cae1f708f63624041e37403545b7aaed10cbf54e2b01a37a5438e3", size = 2336738, upload-time = "2026-06-01T18:20:30.785Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/2c/5c160dbdef7123f8cc97fd8ece7e0198627a426a2a49614845e9086feb8d/kubernetes-36.0.2-py2.py3-none-any.whl", hash = "sha256:faf9b5241b58de0c4a5069f2a0ffc8ac06fece7215156cd3d3ba081a78a858b6", size = 4617568, upload-time = "2026-06-01T18:20:28.737Z" },
-]
-
-[[package]]
 name = "lark"
 version = "1.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -1199,18 +1120,17 @@ wheels = [
 
 [[package]]
 name = "llguidance"
-version = "1.7.6"
+version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/da/91/6bc8bb503dc259e46d253b5424385a54fe06c38a4c7a12befe69a3c2455a/llguidance-1.7.6.tar.gz", hash = "sha256:db7febbe412ed2015501904646750071d7e00e6df7f85c4b956ad4f206fd2df7", size = 1156574, upload-time = "2026-06-03T20:13:25.316Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/95/48/3f7a9d3ff1b36bba92b5107a3a21286821227afe9ea464736133994d61fb/llguidance-1.3.0.tar.gz", hash = "sha256:861249afd51dc325646834462ea827e57a5c2b2042e108e6aae7059fdad9104d", size = 1070460, upload-time = "2025-10-20T19:58:44.164Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/1d/5a9a13421b1f3f1c1acf82beb63ed72fa4d302e65099b72f4a4fe5a098ab/llguidance-1.7.6-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:eabf4572c8731734c0444c353b9ea06bc5c156986d2ff0a4ec0499159271381f", size = 3227892, upload-time = "2026-06-03T20:13:09.533Z" },
-    { url = "https://files.pythonhosted.org/packages/46/fe/bb185f11bad82f2637e3cd8cbf6b200cbb6ed56ac395de47ea05a60d4649/llguidance-1.7.6-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:9c54c899db8cb4b4fba128a7d844730066576c70d806c95ada92b2bd2d6ab498", size = 3138127, upload-time = "2026-06-03T20:13:11.649Z" },
-    { url = "https://files.pythonhosted.org/packages/51/b9/dc76d7716e04dc7b3427cae52eaa32bd20771382d4d1dd9f4538a9dd2086/llguidance-1.7.6-cp39-abi3-manylinux_2_31_aarch64.whl", hash = "sha256:e70fa25ed550c2b50c2fd70baa9e2808b4ecb859d01e453bd5459aff62ba38c3", size = 2899993, upload-time = "2026-06-03T20:13:13.563Z" },
-    { url = "https://files.pythonhosted.org/packages/1a/64/d74336f22242ef94356a456057d4ff1be7c1bc9c7dbc867171c6982a5512/llguidance-1.7.6-cp39-abi3-manylinux_2_31_x86_64.whl", hash = "sha256:ceec951d29a74309984e3be0fe7f5f56c1362434cd937abd517b259a60908b1e", size = 3074809, upload-time = "2026-06-03T20:13:15.498Z" },
-    { url = "https://files.pythonhosted.org/packages/13/e9/8b449baf0c4c8c7ea94a0514f8ec725a8d1e8d23a1d1e0d67b6b3835281c/llguidance-1.7.6-cp39-abi3-manylinux_2_34_i686.whl", hash = "sha256:0fda51daa7951217ca164f735e96a1929d9aefb804a0b28ee43b16173e1c7325", size = 3319900, upload-time = "2026-06-03T20:13:17.58Z" },
-    { url = "https://files.pythonhosted.org/packages/47/e6/6b61cecced5233739bc85e463d68d67d4b4c29fb6f91bd12e6b6a65647e3/llguidance-1.7.6-cp39-abi3-manylinux_2_39_riscv64.whl", hash = "sha256:e9f68206e0f3f89aceabb90aa1f8ed570db22fb7cb1fd9ebf96fa7727a65af55", size = 3603845, upload-time = "2026-06-03T20:13:19.473Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/3b/70e2093f1b1b76469fa306a498295e94da115dec1e6c488094a02f66837e/llguidance-1.7.6-cp39-abi3-win32.whl", hash = "sha256:1158cfce353d331859054aad80a5543167da8b45e01c18f93272027a155df449", size = 2615095, upload-time = "2026-06-03T20:13:21.512Z" },
-    { url = "https://files.pythonhosted.org/packages/49/37/99d700f0e2c83acf25a8d8946b2bee9f5eac47bc530bfbd53ba3126c667f/llguidance-1.7.6-cp39-abi3-win_amd64.whl", hash = "sha256:ace7e81cd31950a87186356ab24bd7f75fbc10a05ca9d9f7f8748f931963f763", size = 2879207, upload-time = "2026-06-03T20:13:23.341Z" },
+    { url = "https://files.pythonhosted.org/packages/3b/33/be5acb85cd8cdc4afde33d9c234eece9f318e087920255af3c05864cd3e7/llguidance-1.3.0-cp39-abi3-macosx_10_12_x86_64.whl", hash = "sha256:f7685222660a762e481ac633d49cc559c64980fe2ee59c8f932a5bb5cbc0c2c2", size = 3220647, upload-time = "2025-10-20T19:58:42.542Z" },
+    { url = "https://files.pythonhosted.org/packages/82/e6/b48bda5b15efeaeb62bd0dba8fc6a01d4ae5457a85dbb5d18632385fe15c/llguidance-1.3.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:098030ff0687261a3f1bd54cf21fe951fc861d56d37a0671250dd36677eaf224", size = 3099830, upload-time = "2025-10-20T19:58:40.826Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/11/44389d3d1526d7a5c38ffd587a5ebc61d7bee443ac1dea95f2089ad58f5f/llguidance-1.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:6f6caca5d78db7f76e1fbb0fff8607b861c32d47fa3d5dee2fc49de27ee269df", size = 2835242, upload-time = "2025-10-20T19:58:34.518Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/ca/53ea256396405e4dee70d5a4a35e18543408e18bb16b251d6ca6b5d80310/llguidance-1.3.0-cp39-abi3-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:0612bb3f034d2487b6e8f9561f02a94a6039d88273bf0c5c539a3bd3895e47d2", size = 3297480, upload-time = "2025-10-20T19:58:37.033Z" },
+    { url = "https://files.pythonhosted.org/packages/83/a8/1ff2bedb8f9acb46a2d2d603415d272bb622c142ea86f5b95445cc6e366c/llguidance-1.3.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:bc17e9dd602c3879bf91664a64bf72f54c74dbfbeb24ccfab6a5fe435b12f7aa", size = 3033133, upload-time = "2025-10-20T19:58:38.721Z" },
+    { url = "https://files.pythonhosted.org/packages/d7/a7/9b8086c0cfdddf3f6d47b173a404fa7ac46272f7affbee082c36740f4f1c/llguidance-1.3.0-cp39-abi3-win32.whl", hash = "sha256:2f6f558485a43e273fc5c6c974a9a3ace5d5e170076db9b40e0560e41c3ff18f", size = 2598109, upload-time = "2025-10-20T19:58:47.656Z" },
+    { url = "https://files.pythonhosted.org/packages/5a/7e/809349638231f469b9056c0e1bfd924d5ef5558b3b3ec72d093b6fad33b1/llguidance-1.3.0-cp39-abi3-win_amd64.whl", hash = "sha256:1d1cd1c8618d1a13605d3e057c978651e551c8c469b481ee4041f1d6c436002d", size = 2789946, upload-time = "2025-10-20T19:58:45.958Z" },
 ]
 
 [[package]]
@@ -1286,7 +1206,7 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.27.2"
+version = "1.28.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -1304,9 +1224,9 @@ dependencies = [
     { name = "typing-inspection", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "uvicorn", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/27/3c/347cf965d313f5d41764e7d46bea6ffe7d9ef13b983cc429b0340962a082/mcp-1.27.2.tar.gz", hash = "sha256:8e02db104096d1c25b28e64bde29a5c32b31bc241710213e12fd4d84985bdfef", size = 621116, upload-time = "2026-05-29T17:16:04.039Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/6e/77/9450b8f251a13affb6281997d0523c4615f8a8b35d0b21ff30db3a5aac9d/mcp-1.28.1.tar.gz", hash = "sha256:d51e36a5f5644faea4f85ea649bfffa6bc6c26770d42798ad6a3de3d2ba69683", size = 638501, upload-time = "2026-06-26T12:57:29.093Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c9/11/252c6f971dc4f16af1d98a1c469d8ba523aab00d1bb76b4d3bc1ff32eacc/mcp-1.27.2-py3-none-any.whl", hash = "sha256:d6ff5160c6ca65d93013626efb3fc249de683c30b2d8570755ceddd490344de5", size = 220498, upload-time = "2026-05-29T17:16:02.442Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/5e/d118fce19f87a2e7d8101c35c8ae0ec289098a4df0ff244cec23e415aca0/mcp-1.28.1-py3-none-any.whl", hash = "sha256:2726bca5e7193f61c5dde8b12500a6de2d9acf6d1a1c0be9e8c2e706437991df", size = 222620, upload-time = "2026-06-26T12:57:27.218Z" },
 ]
 
 [[package]]
@@ -1320,7 +1240,7 @@ wheels = [
 
 [[package]]
 name = "mistral-common"
-version = "1.11.5"
+version = "1.11.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "jsonschema", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -1332,9 +1252,9 @@ dependencies = [
     { name = "tiktoken", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/e3/35/1e6e07189a7277be308fac5f83893cbf6784b76351d6f4b4da155b7ef4f9/mistral_common-1.11.5.tar.gz", hash = "sha256:ef8c03ad8359fa1386d66ee08d534d8f4a65a6955c9b24bd5caa2e005066cdec", size = 6383849, upload-time = "2026-06-26T12:45:39.469Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2e/03/3c5d4c9430da406f8444f9a7b058a6aa89c525fb068a57fe2ab8b04a6d08/mistral_common-1.11.3.tar.gz", hash = "sha256:6437e128fc8a307318440839ca14ddf2e8060056b062233ec0db10352651374c", size = 6360629, upload-time = "2026-06-04T09:01:11.131Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/86/de5ad2ab2e3d140f33e4dc615f9fe2b4ae2136c9d2d75306625f9735a71e/mistral_common-1.11.5-py3-none-any.whl", hash = "sha256:7c1b09f43a589027315840bfd6f3528d5abf520eed701f8d8b7a922d6e5b855e", size = 6551345, upload-time = "2026-06-26T12:45:36.997Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/76/dbfdf9c59e2a4b0116587626a3768c2a3b2ba1758b5756743918c2337fdc/mistral_common-1.11.3-py3-none-any.whl", hash = "sha256:dbfcef9d0c892727ee08a080f0c1039baed5430b291f5425ffd88892bf09e52c", size = 6533154, upload-time = "2026-06-04T09:01:14.186Z" },
 ]
 
 [package.optional-dependencies]
@@ -1347,7 +1267,7 @@ name = "ml-dtypes"
 version = "0.5.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/0e/4a/c27b42ed9b1c7d13d9ba8b6905dece787d6259152f2309338aed29b2447b/ml_dtypes-0.5.4.tar.gz", hash = "sha256:8ab06a50fb9bf9666dd0fe5dfb4676fa2b0ac0f31ecff72a6c3af8e22c063453", size = 692314, upload-time = "2025-11-17T22:32:31.031Z" }
 wheels = [
@@ -1524,26 +1444,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-cuda-cccl-cu12"
-version = "12.9.27"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/61/7e/82e49956b046bdc506c789235c587d9b3ef58b8bc1782258c1e247229647/nvidia_cuda_cccl_cu12-12.9.27-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:d7898b38aa68beaa234d48f0868273702342a196d6e2e9d0ef058dca2390ebea", size = 3152245, upload-time = "2025-05-01T19:32:04.802Z" },
-    { url = "https://files.pythonhosted.org/packages/18/2a/d4cd8506d2044e082f8cd921be57392e6a9b5ccd3ffdf050362430a3d5d5/nvidia_cuda_cccl_cu12-12.9.27-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:37869e17ce2e1ecec6eddf1927cca0f8c34e64fd848d40453df559091e2d7117", size = 3152243, upload-time = "2025-05-01T19:32:13.955Z" },
-    { url = "https://files.pythonhosted.org/packages/ce/9b/1daf405620c7ac371b76b823c6336dd742673d41a150d9a04eec2c690379/nvidia_cuda_cccl_cu12-12.9.27-py3-none-win_amd64.whl", hash = "sha256:72106f95a9bb3be18472806b4f663ebf0f9248a86d14b4ae3305725b855d9d92", size = 3152175, upload-time = "2025-05-01T19:45:11.372Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-crt"
-version = "13.3.73"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/fa/41/2089e411507d66458d67208bdd1bc562d492bb6458c3d2aea4603072a219/nvidia_cuda_crt-13.3.73-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:60aacc0b5e1e8b40c62abe4d1ab16440add91b99bd2f17f62dd091586b73d166", size = 157353, upload-time = "2026-06-29T16:42:38.163Z" },
-    { url = "https://files.pythonhosted.org/packages/7e/ce/16d76f4b5b3f7460f5ebd17516685495c149c66651ffdd381f90e4d4e65c/nvidia_cuda_crt-13.3.73-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:df14a17ae1c5c3171265411212246654d780f89344ea85344466c6b955247543", size = 157352, upload-time = "2026-06-29T16:43:09.209Z" },
-    { url = "https://files.pythonhosted.org/packages/49/b3/6791ffba6f4b8e0d3ed875285aad8078ee407afa464ecd934ae298c205b1/nvidia_cuda_crt-13.3.73-py3-none-win_amd64.whl", hash = "sha256:af04e75148db1f0eea30958f33a9ec5a5a2dc2afa99ca4323f9a93b840602ca5", size = 158286, upload-time = "2026-06-29T17:09:28.621Z" },
-]
-
-[[package]]
 name = "nvidia-cuda-cupti-cu12"
 version = "12.9.79"
 source = { registry = "https://pypi.org/simple" }
@@ -1551,31 +1451,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/b4/78/351b5c8cdbd9a6b4fb0d6ee73fb176dcdc1b6b6ad47c2ffff5ae8ca4a1f7/nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_aarch64.whl", hash = "sha256:791853b030602c6a11d08b5578edfb957cadea06e9d3b26adbf8d036135a4afe", size = 10077166, upload-time = "2025-06-05T20:01:01.385Z" },
     { url = "https://files.pythonhosted.org/packages/c1/2e/b84e32197e33f39907b455b83395a017e697c07a449a2b15fd07fc1c9981/nvidia_cuda_cupti_cu12-12.9.79-py3-none-manylinux_2_25_x86_64.whl", hash = "sha256:096bcf334f13e1984ba36685ad4c1d6347db214de03dbb6eebb237b41d9d934f", size = 10814997, upload-time = "2025-06-05T20:01:10.168Z" },
     { url = "https://files.pythonhosted.org/packages/3b/b4/298983ab1a83de500f77d0add86d16d63b19d1a82c59f8eaf04f90445703/nvidia_cuda_cupti_cu12-12.9.79-py3-none-win_amd64.whl", hash = "sha256:1848a9380067560d5bee10ed240eecc22991713e672c0515f9c3d9396adf93c8", size = 7730496, upload-time = "2025-06-05T20:11:26.444Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-nvcc"
-version = "13.2.78"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cuda-crt", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cuda-runtime", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-nvvm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ec/df/faf551572ae1359290afa5cb05d2c4b7e6674b07b8283b20eab4dbad15f6/nvidia_cuda_nvcc-13.2.78-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:dfc76950c775cd00ce588f15192f08c9b858c0dcfa7da685acf39a3d0d8f588b", size = 38713559, upload-time = "2026-04-13T09:42:17.478Z" },
-    { url = "https://files.pythonhosted.org/packages/65/0f/c7c7d538c61794130e759ad74710ab5aa8cab1f700ee1754381f8c665605/nvidia_cuda_nvcc-13.2.78-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:c3bd144dd9b6b25e062589acb7bbd43d93d3120c72fad71da808f9817aba1239", size = 44040318, upload-time = "2026-04-13T09:42:50.457Z" },
-    { url = "https://files.pythonhosted.org/packages/aa/f1/533329b960fad3d800a50e89f43a2e1b8dade07457ce340d4f0858203dcc/nvidia_cuda_nvcc-13.2.78-py3-none-win_amd64.whl", hash = "sha256:6bc1047a44ff0751b0506cb6d8c7565edb0d3ff71f69d562333c9d1c540dcfd1", size = 32002789, upload-time = "2026-04-13T10:05:40.376Z" },
-]
-
-[[package]]
-name = "nvidia-cuda-nvcc-cu12"
-version = "12.9.86"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/25/48/b54a06168a2190572a312bfe4ce443687773eb61367ced31e064953dd2f7/nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:5d6a0d32fdc7ea39917c20065614ae93add6f577d840233237ff08e9a38f58f0", size = 40546229, upload-time = "2025-06-05T20:01:53.357Z" },
-    { url = "https://files.pythonhosted.org/packages/d6/5c/8cc072436787104bbbcbde1f76ab4a0d89e68f7cebc758dd2ad7913a43d0/nvidia_cuda_nvcc_cu12-12.9.86-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:44e1eca4d08926193a558d2434b1bf83d57b4d5743e0c431c0c83d51da1df62b", size = 39411138, upload-time = "2025-06-05T20:01:43.182Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/9e/c71c53655a65d7531c89421c282359e2f626838762f1ce6180ea0bbebd29/nvidia_cuda_nvcc_cu12-12.9.86-py3-none-win_amd64.whl", hash = "sha256:8ed7f0b17dea662755395be029376db3b94fed5cbb17c2d35cc866c5b1b84099", size = 34669845, upload-time = "2025-06-05T20:11:56.308Z" },
 ]
 
 [[package]]
@@ -1589,16 +1464,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-cuda-runtime"
-version = "13.3.29"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/e5/c1a221c8e6fecd071b80ea44c20fc253ae24f56e15e3f77cfbc3fb76e724/nvidia_cuda_runtime-13.3.29-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:73291e19c9dd919c140c91bda2f80b0eca487da5ee30a086ef7bc4918ecb90ea", size = 2356574, upload-time = "2026-05-26T16:29:56.333Z" },
-    { url = "https://files.pythonhosted.org/packages/97/be/5699b6e642b372f7d24c59c2f41383e2696825e20bab85f7399c7c6a56f7/nvidia_cuda_runtime-13.3.29-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:e04420616e72f563167a7733272992d7e6df6dc5cb54b2f94f9f1520ea9e30c1", size = 2339786, upload-time = "2026-05-26T16:30:21.584Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/27/b53a5e0397842a5c11f0e1a39d4e5b2f22638a4126e83b3c4e196f62c969/nvidia_cuda_runtime-13.3.29-py3-none-win_amd64.whl", hash = "sha256:0667ec61c3d897388efa305ed4f7609ace88849a753ba9c6311d06dca55fff4f", size = 2630354, upload-time = "2026-05-26T17:00:05.389Z" },
-]
-
-[[package]]
 name = "nvidia-cuda-runtime-cu12"
 version = "12.9.79"
 source = { registry = "https://pypi.org/simple" }
@@ -1609,25 +1474,11 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-cuda-tileiras"
-version = "13.2.78"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "nvidia-cuda-nvcc", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-nvvm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/04/eb26cc1d67c653f5dbe8c13fd6da9c1e844b097147051b5052ac5e6d4047/nvidia_cuda_tileiras-13.2.78-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:658299efca52a20496b425efb0b19cb1ea7d57406a18d3f5024d4df92d5b54c1", size = 36418791, upload-time = "2026-04-13T09:48:30.107Z" },
-    { url = "https://files.pythonhosted.org/packages/7f/b8/c8a96862268943c7cf30a014fe2d8f70c651d30fbfa790d54c3e347b6fa1/nvidia_cuda_tileiras-13.2.78-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:5ce7c140a518aa8dfe033e7176f593617ed2fece0e50331e2a14dafd236723fd", size = 36970479, upload-time = "2026-04-13T09:48:49.919Z" },
-    { url = "https://files.pythonhosted.org/packages/7d/fe/b335cced71eae02f2145ace20905640a0642d83e3b78841e95ff0e4e99ea/nvidia_cuda_tileiras-13.2.78-py3-none-win_amd64.whl", hash = "sha256:f4615627b994465da4ecd43d3d1cc3f372c22db2665acbe705987f43adf3f606", size = 29385080, upload-time = "2026-04-13T10:08:44.45Z" },
-]
-
-[[package]]
 name = "nvidia-cudnn-cu12"
 version = "9.17.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/da/55/9987152bd99746b6d5d899a3e920f72f565f5adb4835dc44899382482e2c/nvidia_cudnn_cu12-9.17.1.4-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:d18d61bdd596fca0dbe459c129f6eb7a24ed2e6de1d7988b0a37ac63184ee05d", size = 646648394, upload-time = "2025-12-22T16:42:08.8Z" },
@@ -1637,12 +1488,12 @@ wheels = [
 
 [[package]]
 name = "nvidia-cudnn-frontend"
-version = "1.26.0"
+version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/c4/3f587b73ac2eb6e391aebffb7a7a9ac9ed70e1e0e6a1d90ec0fdcb1a516f/nvidia_cudnn_frontend-1.26.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:ee50df3468f672aa31402fde4c911ad545d08e1d5e133e15bc55c3679d9fd9ca", size = 3471242, upload-time = "2026-07-07T20:55:30.929Z" },
-    { url = "https://files.pythonhosted.org/packages/9b/31/64818fbaa117456349241b42ddfaef3ae6b050f5e99bb0e9d78eb831279b/nvidia_cudnn_frontend-1.26.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:1a1223c4e2e8bbe6f620148d6848f4eb773dd94bef534d5b748e91232b5be618", size = 3627033, upload-time = "2026-07-07T20:55:47.089Z" },
-    { url = "https://files.pythonhosted.org/packages/f9/99/04a37f34b271ed157c6108c3191bd1993ab3fad8d5d66516970bd1e7c12d/nvidia_cudnn_frontend-1.26.0-cp312-cp312-win_amd64.whl", hash = "sha256:7f104a40cb6f25cf01b7d7e84cb99af7dedd32b1cb8264384c2f363b7a3f7fb6", size = 2998730, upload-time = "2026-07-07T20:56:09.848Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/b4/604e230378680ee117849a4e1045baca092f93161a829291a84d5acce70c/nvidia_cudnn_frontend-1.18.0-cp312-cp312-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:310b417f2848a83d1437203fcaeea320a74fb7f28af20bf42bf5afc9c01f1c12", size = 2027408, upload-time = "2026-01-27T23:32:46.576Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/52/08f98262e77b1cbcc834cc1a5db494d0661ea1dbdea58c2e2d51a57fdaca/nvidia_cudnn_frontend-1.18.0-cp312-cp312-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:6c023539ca6de99234cf5102c3ec0d6af817f5396fc93028a22ba5b834a35b8a", size = 2159245, upload-time = "2026-01-27T23:07:32.664Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/1f/751a5a8cfdc95fb4dc556192d37369ae488c30c473fe9a3ec720b23d07ea/nvidia_cudnn_frontend-1.18.0-cp312-cp312-win_amd64.whl", hash = "sha256:e13f7dd46cdb4762dde87f181f06d1c5e15e9478bbdd547bfa74d9b11f415aae", size = 1591041, upload-time = "2026-01-27T23:09:04.118Z" },
 ]
 
 [[package]]
@@ -1650,7 +1501,7 @@ name = "nvidia-cufft-cu12"
 version = "11.4.1.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/9b/2b/76445b0af890da61b501fde30650a1a4bd910607261b209cccb5235d3daa/nvidia_cufft_cu12-11.4.1.4-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:1a28c9b12260a1aa7a8fd12f5ebd82d027963d635ba82ff39a1acfa7c4c0fbcf", size = 200822453, upload-time = "2025-06-05T20:05:27.889Z" },
@@ -1682,9 +1533,9 @@ name = "nvidia-cusolver-cu12"
 version = "11.7.5.82"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "nvidia-cusparse-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-cublas-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-cusparse-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/03/99/686ff9bf3a82a531c62b1a5c614476e8dfa24a9d89067aeedf3592ee4538/nvidia_cusolver_cu12-11.7.5.82-py3-none-manylinux_2_27_aarch64.whl", hash = "sha256:62efa83e4ace59a4c734d052bb72158e888aa7b770e1a5f601682f16fe5b4fd2", size = 337869834, upload-time = "2025-06-05T20:06:53.125Z" },
@@ -1697,7 +1548,7 @@ name = "nvidia-cusparse-cu12"
 version = "12.5.10.65"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "nvidia-nvjitlink-cu12", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5e/6f/8710fbd17cdd1d0fc3fea7d36d5b65ce1933611c31e1861da330206b253a/nvidia_cusparse_cu12-12.5.10.65-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:221c73e7482dd93eda44e65ce567c031c07e2f93f6fa0ecd3ba876a195023e83", size = 366359408, upload-time = "2025-06-05T20:07:42.501Z" },
@@ -1788,36 +1639,6 @@ wheels = [
 ]
 
 [[package]]
-name = "nvidia-nvvm"
-version = "13.2.78"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/e8/1f/930d63ccc8adcdf27bfc051a24e3e4da2cf6ef987848d6d1d642e29d704b/nvidia_nvvm-13.2.78-py3-none-manylinux2010_x86_64.manylinux_2_12_x86_64.whl", hash = "sha256:f5aa433631109bbdec81802c5b5f319bf10bc891fe2f212e4e445845211d6f77", size = 64279462, upload-time = "2026-04-13T10:02:25.719Z" },
-    { url = "https://files.pythonhosted.org/packages/8b/fd/db44b7a662a6af75a9a0683ca4580c855a3f5fcfdf1261b0ddb9fce0ee26/nvidia_nvvm-13.2.78-py3-none-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:88075f87a361a1dce95c799cabc028f7093af616a5702dcfb74eba4045dbbd5f", size = 61886055, upload-time = "2026-04-13T10:02:00.345Z" },
-    { url = "https://files.pythonhosted.org/packages/35/b9/c3862fd1073326c61233f05e816c17a28ab86a361db1b7561c7f33ac3af4/nvidia_nvvm-13.2.78-py3-none-win_amd64.whl", hash = "sha256:cf8e91654e74285e9c574b3a45b92928c0a6d135928906cf11ce470bbec6a8ec", size = 56752219, upload-time = "2026-04-13T10:15:11.102Z" },
-]
-
-[[package]]
-name = "nvtx"
-version = "0.2.15"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/92/dd/692765e87de30bae1522cdffaa0f2b52949658a92a0fa6d96b1a01eae9d2/nvtx-0.2.15.tar.gz", hash = "sha256:2287d3be05b85661deb386f878d1f536c2e532774aa9ec7a50c434942ed81ae5", size = 121230, upload-time = "2026-03-18T10:01:25.547Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c2/07/698355285a03a366ef63ea9762fc1feef3f9f25483e1655408f72d827090/nvtx-0.2.15-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:2cc530cd0f1a2c14a3a7e683833db509888ac5ed4ead94e5c9e2c7317c6937a7", size = 807159, upload-time = "2026-03-18T10:09:49.232Z" },
-    { url = "https://files.pythonhosted.org/packages/c0/d1/08f22448d83481408d663065764ba583df091a7de629ed38fc97e522f1af/nvtx-0.2.15-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:3ca8030a6d197952318013dd1c12c22da1d4b9feb76ba72e0fcd449961183c2c", size = 806187, upload-time = "2026-03-18T10:13:32.972Z" },
-    { url = "https://files.pythonhosted.org/packages/54/23/c97c39e3b7ba256aa343cb828ca0d1c8421f705ca84795658ecd14ca95ed/nvtx-0.2.15-cp312-cp312-win_amd64.whl", hash = "sha256:70a1e768964e0520b68ccabc4df391cc227537c45936a7eba6507bc65e617e00", size = 129178, upload-time = "2026-03-18T10:02:55.299Z" },
-]
-
-[[package]]
-name = "oauthlib"
-version = "3.3.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0b/5f/19930f824ffeb0ad4372da4812c50edbd1434f678c90c2733e1188edfc63/oauthlib-3.3.1.tar.gz", hash = "sha256:0f0f8aa759826a193cf66c12ea1af1637f87b9b4622d46e866952bb022e538c9", size = 185918, upload-time = "2025-06-19T22:48:08.269Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/be/9c/92789c596b8df838baa98fa71844d84283302f7604ed565dafe5a6b5041a/oauthlib-3.3.1-py3-none-any.whl", hash = "sha256:88119c938d2b8fb88561af5f6ee0eec8cc8d552b7bb1f712743136eb7523b7a1", size = 160065, upload-time = "2025-06-19T22:48:06.508Z" },
-]
-
-[[package]]
 name = "open-rl"
 version = "0.0.1"
 source = { editable = "." }
@@ -1836,35 +1657,18 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-cluster = [
-    { name = "kubernetes" },
-    { name = "timeslice" },
-]
 cpu = [
-    { name = "cachetools" },
-    { name = "cbor2" },
     { name = "datasets" },
-    { name = "einops" },
     { name = "numpy" },
-    { name = "openai" },
-    { name = "openai-harmony" },
     { name = "peft" },
-    { name = "pillow" },
-    { name = "pybase64" },
-    { name = "pyzmq" },
     { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "transformers" },
 ]
-dev = [
-    { name = "ruff" },
-]
 gpu = [
     { name = "datasets" },
-    { name = "flash-linear-attention" },
     { name = "numpy" },
     { name = "peft" },
-    { name = "tilelang", marker = "sys_platform == 'linux'" },
     { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "sys_platform == 'linux'" },
     { name = "torchvision", marker = "sys_platform == 'linux'" },
     { name = "transformers" },
@@ -1872,69 +1676,54 @@ gpu = [
 vllm = [
     { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "sys_platform == 'linux'" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux'" },
-    { name = "torchaudio", marker = "sys_platform == 'linux'" },
     { name = "torchvision", marker = "sys_platform == 'linux'" },
     { name = "vllm", marker = "sys_platform == 'linux'" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "cachetools", marker = "extra == 'cpu'" },
-    { name = "cbor2", marker = "extra == 'cpu'" },
     { name = "chz", specifier = ">=0.4.0" },
     { name = "datasets", marker = "extra == 'cpu'" },
     { name = "datasets", marker = "extra == 'gpu'" },
-    { name = "einops", marker = "extra == 'cpu'" },
     { name = "fastapi" },
-    { name = "flash-linear-attention", marker = "extra == 'gpu'", specifier = "==0.5.1" },
     { name = "httpx" },
-    { name = "kubernetes", marker = "extra == 'cluster'", specifier = ">=29" },
     { name = "numpy", marker = "extra == 'cpu'" },
     { name = "numpy", marker = "extra == 'gpu'" },
-    { name = "openai", marker = "extra == 'cpu'" },
-    { name = "openai-harmony", marker = "extra == 'cpu'" },
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-gcp-trace" },
     { name = "opentelemetry-instrumentation-fastapi" },
     { name = "opentelemetry-sdk" },
     { name = "peft", marker = "extra == 'cpu'" },
     { name = "peft", marker = "extra == 'gpu'" },
-    { name = "pillow", marker = "extra == 'cpu'" },
-    { name = "pybase64", marker = "extra == 'cpu'" },
     { name = "pydantic" },
-    { name = "pyzmq", marker = "extra == 'cpu'" },
     { name = "redis", specifier = ">=5.0.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
-    { name = "tilelang", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=0.1.9" },
-    { name = "timeslice", marker = "extra == 'cluster'", git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=d03540a1c96af9d854bdaa3ef81fe435ad06a92f" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "gpu" } },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
     { name = "torch", marker = "extra == 'cpu'", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "open-rl", extra = "cpu" } },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux' and extra == 'vllm'" },
-    { name = "torchaudio", marker = "sys_platform == 'linux' and extra == 'vllm'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "gpu" } },
     { name = "torchvision", marker = "sys_platform == 'linux' and extra == 'vllm'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
     { name = "tqdm", specifier = ">=4.50" },
     { name = "transformers", marker = "extra == 'cpu'", specifier = ">=5.5.4" },
     { name = "transformers", marker = "extra == 'gpu'", specifier = ">=5.5.4" },
     { name = "uvicorn" },
-    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = "==0.25.1", index = "https://wheels.vllm.ai/0.25.1/cu129", conflict = { package = "open-rl", extra = "vllm" } },
+    { name = "vllm", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = "==0.20.0", index = "https://wheels.vllm.ai/0.20.0/cu129", conflict = { package = "open-rl", extra = "vllm" } },
 ]
-provides-extras = ["cpu", "gpu", "vllm", "cluster", "dev"]
+provides-extras = ["cpu", "gpu", "vllm"]
 
 [[package]]
 name = "openai"
 version = "2.41.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "anyio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "distro", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "httpx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "jiter", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "sniffio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
+    { name = "anyio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "distro", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "httpx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "jiter", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "sniffio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3c/a6/5815fe2e2aca74b36c650d1bd43b69827cee568073d0d2d9b6fc5aaac80c/openai-2.41.0.tar.gz", hash = "sha256:db5c362acd6604b84f076abbefa66826ea4b46ecba2954ed866e6a149a1352c0", size = 783525, upload-time = "2026-06-03T22:39:40.719Z" }
 wheels = [
@@ -1946,7 +1735,7 @@ name = "openai-harmony"
 version = "0.0.8"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu'" },
+    { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/3e/92/2d038d096f29179c7c9571b431f9e739f87a487121901725e23fe338dd9d/openai_harmony-0.0.8.tar.gz", hash = "sha256:6e43f98e6c242fa2de6f8ea12eab24af63fa2ed3e89c06341fb9d92632c5cbdf", size = 284777, upload-time = "2025-11-05T19:07:06.727Z" }
 wheels = [
@@ -2260,9 +2049,9 @@ dependencies = [
     { name = "psutil" },
     { name = "pyyaml" },
     { name = "safetensors" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "torch", version = "2.12.0", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.12.0", source = { registry = "https://pypi.org/simple" }, marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "torch", version = "2.12.0+cpu", source = { registry = "https://download.pytorch.org/whl/cpu" }, marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "tqdm" },
     { name = "transformers" },
@@ -2408,11 +2197,11 @@ wheels = [
 
 [[package]]
 name = "pyasn1"
-version = "0.6.3"
+version = "0.6.4"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/5c/5f/6583902b6f79b399c9c40674ac384fd9cd77805f9e6205075f828ef11fb2/pyasn1-0.6.3.tar.gz", hash = "sha256:697a8ecd6d98891189184ca1fa05d1bb00e2f84b5977c481452050549c8a72cf", size = 148685, upload-time = "2026-03-17T01:06:53.382Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a4/9a/23310166d960def5897e91fe20e5b724601b02a22e84ba1f94232c0b7f67/pyasn1-0.6.4.tar.gz", hash = "sha256:9c447d8431c947fe4c8febc4ed9e760bc29011a5b01e5c74b67025bd9fb8ce81", size = 151262, upload-time = "2026-07-09T01:12:33.988Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/a0/7d793dce3fa811fe047d6ae2431c672364b462850c6235ae306c0efd025f/pyasn1-0.6.3-py3-none-any.whl", hash = "sha256:a80184d120f0864a52a073acc6fc642847d0be408e7c7252f31390c0f4eadcde", size = 83997, upload-time = "2026-03-17T01:06:52.036Z" },
+    { url = "https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl", hash = "sha256:deda9277cfd454080ec40b207fb6df82206a3a2688735233cdcd8d3d565f088b", size = 84410, upload-time = "2026-07-09T01:12:32.92Z" },
 ]
 
 [[package]]
@@ -2547,25 +2336,16 @@ pycountry = [
 
 [[package]]
 name = "pydantic-settings"
-version = "2.14.1"
+version = "2.14.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "python-dotenv", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "typing-inspection", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/07/60/1d1e59c9c90d54591469ada7d268251f71c24bdb765f1a8a832cee8c6653/pydantic_settings-2.14.1.tar.gz", hash = "sha256:e874d3bec7e787b0c9958277956ed9b4dd5de6a80e162188fdaff7c5e26fd5fa", size = 235551, upload-time = "2026-05-08T13:40:06.542Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5c/b5/8f48e906c3e0205276e8bd8cb7512217a87b2685304d64be27cad5b3019f/pydantic_settings-2.14.2.tar.gz", hash = "sha256:c19dd64b19097f1de80184f0cc7b0272a13ae6e170cbf240a3e27e381ed14a5f", size = 237700, upload-time = "2026-06-19T13:44:56.324Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/8d/f1af3832f5e6eb13ba94ee809e72b8ecb5eef226d27ee0bef7d963d943c7/pydantic_settings-2.14.1-py3-none-any.whl", hash = "sha256:6e3c7edfd8277687cdc598f56e5cff0e9bfff0910a3749deaa8d4401c3a2b9de", size = 60964, upload-time = "2026-05-08T13:40:04.958Z" },
-]
-
-[[package]]
-name = "pyelftools"
-version = "0.33"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/a3/11/767522582afab1b884d277de0e6e011640cb9d7292a38694b4b1a1df1ae8/pyelftools-0.33.tar.gz", hash = "sha256:660d82dcbeb8e83d1702bd97f223f761625da06111c0cc988eac6b8ab0c1b61f", size = 15068655, upload-time = "2026-05-29T12:56:22.553Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/46/2a/f9697576603dae937727827505a6126a066affb227034e77e6f9068910da/pyelftools-0.33-py3-none-any.whl", hash = "sha256:f215ad5f47d3f1373a21496a6c9e0707c622840d0622f23ff7ce08678b020036", size = 201178, upload-time = "2026-05-29T12:56:20.587Z" },
+    { url = "https://files.pythonhosted.org/packages/77/c1/6e422f34e569cf8e18df68d1939c81c099d2b61e4f7d9621c8a77560799c/pydantic_settings-2.14.2-py3-none-any.whl", hash = "sha256:a20c97b37910b6550d5ea50fbcc2d4187defe58cd57070b73863d069419c9440", size = 61715, upload-time = "2026-06-19T13:44:55.02Z" },
 ]
 
 [[package]]
@@ -2589,17 +2369,6 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-
-[[package]]
-name = "pynvvideocodec"
-version = "2.0.4"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/1c/78f6fdf85133157a6a3405eab5ef4c2bc8048194dbda1c91bb9b8645bb36/pynvvideocodec-2.0.4-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:bad9e25f494abdcfa8f9dffa33a840509eda3ffcdf6e7cf6465d73be307c0c82", size = 28630316, upload-time = "2026-07-08T04:25:54.596Z" },
-    { url = "https://files.pythonhosted.org/packages/ca/49/98da271686e00676f41b1197ba5431ddc341b96d8efb68ea9d68e2b0d870/pynvvideocodec-2.0.4-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b59cec7a1a3f78fad13fead78cad8b6d9686827f9ff4477080245457675a01d0", size = 43176147, upload-time = "2026-05-27T04:04:08.297Z" },
-    { url = "https://files.pythonhosted.org/packages/42/80/7b13c12fd5f3243b01190130ce098a44ddf62e030e6ed712911cbfe40311/pynvvideocodec-2.0.4-cp312-cp312-manylinux_2_34_aarch64.whl", hash = "sha256:a0daa28b09705806c8c6b26326df217c45e60c0a12a673ea3ea6ee5e2e7193b0", size = 35754893, upload-time = "2026-05-27T04:04:43.866Z" },
-    { url = "https://files.pythonhosted.org/packages/76/50/eb1571ab1cee8ebb8a7bdfc355078beebe4b2bb2e5c6ad5d0e18ab8585db/pynvvideocodec-2.0.4-cp312-cp312-win_amd64.whl", hash = "sha256:46e2adb82dc6ac333d3535cc76e4e25c7e8d80dd272b1aba0c28702b861d5261", size = 25692590, upload-time = "2026-05-27T04:05:17.164Z" },
 ]
 
 [[package]]
@@ -2674,7 +2443,7 @@ name = "pyzmq"
 version = "27.1.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "cffi", marker = "(implementation_name == 'pypy' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (implementation_name == 'pypy' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (implementation_name == 'pypy' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (implementation_name == 'pypy' and extra == 'extra-7-open-rl-cpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "cffi", marker = "(implementation_name == 'pypy' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (implementation_name == 'pypy' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (implementation_name == 'pypy' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/04/0b/3c9baedbdf613ecaa7aa07027780b8867f57b6293b6ee50de316c9f3222b/pyzmq-27.1.0.tar.gz", hash = "sha256:ac0765e3d44455adb6ddbf4417dcce460fc40a05978c08efdf2948072f6db540", size = 281750, upload-time = "2025-09-08T23:10:18.157Z" }
 wheels = [
@@ -2769,19 +2538,6 @@ wheels = [
 ]
 
 [[package]]
-name = "requests-oauthlib"
-version = "2.0.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "oauthlib" },
-    { name = "requests" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/42/f2/05f29bc3913aea15eb670be136045bf5c5bbf4b99ecb839da9b422bb2c85/requests-oauthlib-2.0.0.tar.gz", hash = "sha256:b3dffaebd884d8cd778494369603a9e7b58d29111bf6b41bdc2dcd87203af4e9", size = 55650, upload-time = "2024-03-22T20:32:29.939Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3b/5d/63d4ae3b9daea098d5d6f5da83984853c1bbacd5dc826764b249fe119d24/requests_oauthlib-2.0.0-py2.py3-none-any.whl", hash = "sha256:7dd8a5c40426b779b0868c404bdef9768deccf22749cde15852df527e6269b36", size = 24179, upload-time = "2024-03-22T20:32:28.055Z" },
-]
-
-[[package]]
 name = "rich"
 version = "15.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2852,31 +2608,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/04/1d/9d12b0a337bab46f4769f8857f4007e3b2d639e14f9a44a0efe157696e64/rpds_py-2026.5.1-cp312-cp312-win32.whl", hash = "sha256:6736718bd4fc49cbcb538ba30516fdbef161522acefb739657d48b97bd864fed", size = 212734, upload-time = "2026-05-28T11:59:29.689Z" },
     { url = "https://files.pythonhosted.org/packages/c5/93/e4116f2de7f56bc7406a76033dc501811ddeb22b7f056b92d632871ebb0c/rpds_py-2026.5.1-cp312-cp312-win_amd64.whl", hash = "sha256:0a7d1eec967df0e9b22614a5e177622e0c89611d03727fa0cb48e45028907870", size = 229045, upload-time = "2026-05-28T11:59:31.033Z" },
     { url = "https://files.pythonhosted.org/packages/cb/53/6c3419d85eb2ec5938a37627c585b42d76a63bb731d6e42ed4b079ebf486/rpds_py-2026.5.1-cp312-cp312-win_arm64.whl", hash = "sha256:1841d067089e117142d79b98aa0df2f08b52f2ecc1819dd2700636c0db74a473", size = 223967, upload-time = "2026-05-28T11:59:32.318Z" },
-]
-
-[[package]]
-name = "ruff"
-version = "0.15.20"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/43/dc/35b341fc554ba02f217fc10da57d1a75168cfbcf75b0ef2202176d4c4f2d/ruff-0.15.20.tar.gz", hash = "sha256:1416eb04349192646b54de98f146c4f59afe37d0decfc02c3cbbf396f3a28566", size = 4755489, upload-time = "2026-06-25T17:20:37.578Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/94/d9/2d5014f0253ba541d2061d9fa7193f48e941c8b21bb88a7ff9bbe0bd0596/ruff-0.15.20-py3-none-linux_armv6l.whl", hash = "sha256:00e188c53e499c3c1637f73c91dcf2fb56d576cab76ce1be50a27c4e80e37078", size = 10839665, upload-time = "2026-06-25T17:19:44.702Z" },
-    { url = "https://files.pythonhosted.org/packages/c6/d3/ac1798ba64f670698867fcfc591d50e7e421bef137db564858f619a30fcf/ruff-0.15.20-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:9ebd1fd9b9c95fc0bd7b2761aebec1f030013d2e193a2901b224af68fe47251b", size = 11208649, upload-time = "2026-06-25T17:19:48.787Z" },
-    { url = "https://files.pythonhosted.org/packages/47/47/d3ac899991202095dfcf3d5176be4272642be3cf981a2f1a30f72a2afb95/ruff-0.15.20-py3-none-macosx_11_0_arm64.whl", hash = "sha256:c5b16cdd67ca108185cd36dce98c576350c03b1660a751de725fb049193a0632", size = 10622638, upload-time = "2026-06-25T17:19:51.354Z" },
-    { url = "https://files.pythonhosted.org/packages/33/13/4e043fe30aa94d4ff5213a9881fc296d12960f5971b234a5263fdc225312/ruff-0.15.20-py3-none-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:3413bb3c3d2ca6a8208f1f4809cd2dca3c6de6d0b491c0e70847672bde6e6efd", size = 10984227, upload-time = "2026-06-25T17:19:54.044Z" },
-    { url = "https://files.pythonhosted.org/packages/76/e6/92e7bf40388bc5800073b96564f56264f7e48bfd1a498f5ced6ae6d5a769/ruff-0.15.20-py3-none-manylinux_2_17_armv7l.manylinux2014_armv7l.whl", hash = "sha256:bd7ec42b3bb3da066488db093308a69c4ac5ee6d2af333a86ba6e2eb2e7dd44b", size = 10622882, upload-time = "2026-06-25T17:19:57.037Z" },
-    { url = "https://files.pythonhosted.org/packages/13/7a/43460be3f24495a3aa46d4b16873e2c4941b3b5f0b00cf88c03b7b94b339/ruff-0.15.20-py3-none-manylinux_2_17_i686.manylinux2014_i686.whl", hash = "sha256:e1a36ad0eb77fba9aabfb69ede54de6f376d04ac18ebea022847046d340a8267", size = 11474808, upload-time = "2026-06-25T17:20:00.357Z" },
-    { url = "https://files.pythonhosted.org/packages/27/a0/f37077884873221c6b33b4ab49eb18f9f88e54a16a25a5bca59bef46dd66/ruff-0.15.20-py3-none-manylinux_2_17_ppc64le.manylinux2014_ppc64le.whl", hash = "sha256:b6df3b1e4610432f0386dba04d853b5f08cbbc903410c6fcc02f620f05aff53c", size = 12293094, upload-time = "2026-06-25T17:20:03.446Z" },
-    { url = "https://files.pythonhosted.org/packages/a6/74/165545b60256a9704c21ac0ec4a0d07933b320812f9584836c9f4aca4292/ruff-0.15.20-py3-none-manylinux_2_17_s390x.manylinux2014_s390x.whl", hash = "sha256:e89f198a1ea6ef0d727c1cf16088bc91a6cb0ab947dedc966715691647186eae", size = 11526176, upload-time = "2026-06-25T17:20:06.301Z" },
-    { url = "https://files.pythonhosted.org/packages/86/b1/a976a136d40ade83ce743578399865f57001003a409acadc0ecbb3051082/ruff-0.15.20-py3-none-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:309809086c2acb67624950a3c8133e80f32d0d3e27106c0cd60ff26657c9f24b", size = 11520767, upload-time = "2026-06-25T17:20:09.191Z" },
-    { url = "https://files.pythonhosted.org/packages/19/0f/f032696cb01c9b54c0263fa393474d7758f1cdc021a01b04e3cbc2500999/ruff-0.15.20-py3-none-manylinux_2_31_riscv64.whl", hash = "sha256:2d2374caa2f2c2f9e2b7da0a50802cfb8b79f55a9b5e49379f564544fbf56487", size = 11500132, upload-time = "2026-06-25T17:20:13.602Z" },
-    { url = "https://files.pythonhosted.org/packages/4b/f4/51b1a14bc69e8c224b15dab9cce8e99b425e0455d462caa2b3c9be2b6a8e/ruff-0.15.20-py3-none-musllinux_1_2_aarch64.whl", hash = "sha256:a1ed17b65293e0c2f22fc387bc13198a5de94bf4429589b0ff6946b0feaf21a3", size = 10943828, upload-time = "2026-06-25T17:20:16.635Z" },
-    { url = "https://files.pythonhosted.org/packages/71/4b/fe267640783cd02bf6c5cc290b1df1051be2ec294c678b5c15fe19e52343/ruff-0.15.20-py3-none-musllinux_1_2_armv7l.whl", hash = "sha256:f701305e66b38ea6c91882490eb73459796808e4c6362a1b765255e0cdcd4053", size = 10645418, upload-time = "2026-06-25T17:20:19.4Z" },
-    { url = "https://files.pythonhosted.org/packages/b0/c0/a65aa4ec2f5e87a1df32dc3ec1fede434fe3dfd5cbcf3b503cafc676ab54/ruff-0.15.20-py3-none-musllinux_1_2_i686.whl", hash = "sha256:5b9c0c367ad8e5d0d5b5b8537864c469a0a0e55417aadfbeca41fa61333be9f4", size = 11211770, upload-time = "2026-06-25T17:20:22.033Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/a4/0caa331d954ae2723d729d351c989cb4ca8b6077d5c6c2cb6de75e98c041/ruff-0.15.20-py3-none-musllinux_1_2_x86_64.whl", hash = "sha256:01cc00dd58f0df339d0e902219dd53990ea99996a0344e5d9cc8d45d5307e460", size = 11618698, upload-time = "2026-06-25T17:20:25.259Z" },
-    { url = "https://files.pythonhosted.org/packages/10/9b/5f14927848d2fd4aa891fd88d883788c5a7baba561c7874732364045708c/ruff-0.15.20-py3-none-win32.whl", hash = "sha256:ed65ef510e43a137207e0f01cfcf998aeddb1aeeda5c9d35023e910284d7cf21", size = 10857322, upload-time = "2026-06-25T17:20:28.612Z" },
-    { url = "https://files.pythonhosted.org/packages/fa/f0/fe47c501f9dea92a26d788ff98bb5d92ed4cb4c88792c5c88af6b697dc8e/ruff-0.15.20-py3-none-win_amd64.whl", hash = "sha256:a525c81c70fb0380344dd1d8745d8cc1c890b7fc94a58d5a07bd8eb9557b8415", size = 11993274, upload-time = "2026-06-25T17:20:31.871Z" },
-    { url = "https://files.pythonhosted.org/packages/d7/2b/9555445e1201d92b3195f45cdb153a0b68f24e0a4273f6e3d5ab46e212bb/ruff-0.15.20-py3-none-win_arm64.whl", hash = "sha256:2f5b2a6d614e8700388806a14996c40fab2c47b819ef57d790a34878858ed9ca", size = 11343498, upload-time = "2026-06-25T17:20:35.03Z" },
 ]
 
 [[package]]
@@ -2999,15 +2730,15 @@ wheels = [
 
 [[package]]
 name = "starlette"
-version = "1.2.1"
+version = "1.3.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/25/44/ec35f1b6e83094b997da438a02c8c9b0ade2b1e84cfc48bd4656780760a6/starlette-1.2.1.tar.gz", hash = "sha256:9b9b5ebb992e67d6093741e63c2f59e4f6fff986f81163c087867bd7b924b3f6", size = 2701854, upload-time = "2026-05-31T01:07:51.847Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/eb/e3/7c1dc7381d9f8ab7d854328ebfa884e62cb3f3d8549ddfd37c7814f42afa/starlette-1.3.1.tar.gz", hash = "sha256:05d0213193f2fbaae60e2ecb593b4add4262ad4e46536b54abe36f11a71724e0", size = 2703240, upload-time = "2026-06-12T09:23:11.602Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1c/54/196d0c1db10af76baa4f64894448505d60d3cdf70ef92cbb35f46a4e4c71/starlette-1.2.1-py3-none-any.whl", hash = "sha256:4de0082d08c8f6764a85a54cf1120d6939507a19905c7768acad2a9f875d2b89", size = 73350, upload-time = "2026-05-31T01:07:50.09Z" },
+    { url = "https://files.pythonhosted.org/packages/ec/bb/2799cc2ede3ed41131f8975621e7213dfc7ef4acbbaadfa440f32500c370/starlette-1.3.1-py3-none-any.whl", hash = "sha256:c7372aae11c3c3f26a42df7bd626cec2f47d03483d261d369516a615a53714c6", size = 73632, upload-time = "2026-06-12T09:23:10.017Z" },
 ]
 
 [[package]]
@@ -3064,31 +2795,22 @@ name = "tilelang"
 version = "0.1.9"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "apache-tvm-ffi", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "cloudpickle", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "ml-dtypes", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "psutil", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "torch-c-dlpack-ext", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "z3-solver", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "apache-tvm-ffi", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "cloudpickle", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "ml-dtypes", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "psutil", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "torch-c-dlpack-ext", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
+    { name = "z3-solver", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/56/70/5051f65821baa30a3d61fc48f8ba10c776490315e8c90f82559b92089756/tilelang-0.1.9.tar.gz", hash = "sha256:287f727c913bb648fcf6c1968809ba3390e55eeed257a5c6bb9a80bc05966af4", size = 93395292, upload-time = "2026-04-22T09:19:11.988Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/90/db/4dd76da8c8585c605639a21bc098d504e317fe324a72f01ce3c7370250b4/tilelang-0.1.9-cp38-abi3-macosx_11_0_arm64.whl", hash = "sha256:00ed594fdeb229c5505b9ffa895c3c5daeb28641c78f783fa1f724cf1e08cecd", size = 36599020, upload-time = "2026-04-22T09:14:39.366Z" },
     { url = "https://files.pythonhosted.org/packages/f7/8a/1cbeee79d62abaa02441c2d00621554e41aa62dbf3b94a4feb3867184b01/tilelang-0.1.9-cp38-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:4bbccfe9035aed775ffafb6dc25a5994504b24e2c5d95d0f39643edfafa7bf12", size = 45419374, upload-time = "2026-04-22T09:15:56.014Z" },
     { url = "https://files.pythonhosted.org/packages/c6/a7/f4bfb86f87e107703146e703204cec2c0eae2492b633e0052b0ace3febb6/tilelang-0.1.9-cp38-abi3-manylinux_2_34_aarch64.whl", hash = "sha256:77ab0ee2f40f66ea015b6b21426d482751e28cbc635ef9d1198cbd6502454a7c", size = 42110365, upload-time = "2026-04-22T09:17:18.292Z" },
-]
-
-[[package]]
-name = "timeslice"
-version = "0.2.1"
-source = { git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=d03540a1c96af9d854bdaa3ef81fe435ad06a92f#d03540a1c96af9d854bdaa3ef81fe435ad06a92f" }
-dependencies = [
-    { name = "grpcio" },
-    { name = "protobuf" },
 ]
 
 [[package]]
@@ -3118,53 +2840,29 @@ wheels = [
 ]
 
 [[package]]
-name = "tokenspeed-mla"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "apache-tvm-ffi", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvidia-cutlass-dsl", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "tokenspeed-triton", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-]
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/42/20/4110d624d81d63f0bee2f19dba7ea0e1d8a31ea50147e6c1db82223c88a4/tokenspeed_mla-0.1.2-py3-none-manylinux_2_28_aarch64.whl", hash = "sha256:592590f36d85e624ecdc5e357ff35e29e761e6d879900dce8b67a6785c8ce75c", size = 743769, upload-time = "2026-05-13T03:30:54.486Z" },
-    { url = "https://files.pythonhosted.org/packages/84/01/4bf8b74ead3e8e7c1c809435396254c067a33fde48acc20f602aae622d97/tokenspeed_mla-0.1.2-py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:c9466a351fe039792e56cf49f3e79744c1dc28c7af10306a02e62b8e92fa5985", size = 748681, upload-time = "2026-05-13T03:30:56.718Z" },
-]
-
-[[package]]
-name = "tokenspeed-triton"
-version = "3.8.10.post20260709"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/37/ae03fedaac904f6f5427b7cfbad53659b6c4a79b4534bd1e53753c558a89/tokenspeed_triton-3.8.10.post20260709-cp312-abi3-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:8aa9ba218151ee67a1277ac50fafb80dfd0b42165d7f068d66131e0ea6f2418f", size = 82900142, upload-time = "2026-07-10T15:28:57.821Z" },
-    { url = "https://files.pythonhosted.org/packages/73/cf/6d0bb055e0fff9ef9284ec5455ea5f4d8d2e76f89cc4c853f7be69fdeef8/tokenspeed_triton-3.8.10.post20260709-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:15040e5514671ceb05a22dbead49030cf87ac3becb47361a67ed2f779433d04d", size = 87150923, upload-time = "2026-07-10T15:29:07.961Z" },
-]
-
-[[package]]
 name = "torch"
 version = "2.11.0+cu129"
 source = { registry = "https://download.pytorch.org/whl/cu129" }
 resolution-markers = [
     "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm'",
-    "sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
+    "sys_platform != 'emscripten' and sys_platform != 'win32' and extra != 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm'",
     "sys_platform != 'darwin' and extra != 'extra-7-open-rl-cpu' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm'",
 ]
 dependencies = [
     { name = "cuda-bindings", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "cuda-toolkit", extra = ["cublas", "cudart", "cufft", "cufile", "cupti", "curand", "cusolver", "cusparse", "nvjitlink", "nvrtc", "nvtx"], marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "filelock", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "fsspec", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "jinja2", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "networkx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "filelock", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "fsspec", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "jinja2", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "networkx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "nvidia-cudnn-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "nvidia-cusparselt-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "nvidia-nccl-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "nvidia-nvshmem-cu12", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "setuptools", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "sympy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "setuptools", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "sympy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
     { name = "triton", marker = "(sys_platform == 'linux' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'linux' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu129/torch-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2d053729aa4ca5daa466dc1418fd3770f221017cb94d0d5c0c60c15b2eeedffd", upload-time = "2026-04-27T18:41:08Z" },
@@ -3201,13 +2899,13 @@ resolution-markers = [
     "sys_platform == 'emscripten'",
 ]
 dependencies = [
-    { name = "filelock", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "fsspec", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "jinja2", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "networkx", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "setuptools", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "sympy", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "typing-extensions", marker = "(sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "filelock", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "fsspec", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "jinja2", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "networkx", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "setuptools", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "sympy", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "typing-extensions", marker = "(sys_platform == 'emscripten' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ef/bb/285d643f254731294c9b595a007eac39db4600a98682d7bca688f42ca164/torch-2.12.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:b41339df93d491435e790ff8bcbae1c0ce777175889bfd1281d119862793e6a2", size = 88010197, upload-time = "2026-05-13T14:55:35.414Z" },
@@ -3247,7 +2945,7 @@ name = "torch-c-dlpack-ext"
 version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/37/de/921b6491efce5c389a5ef9bbed3d2d6660005840dae488124173180859ab/torch_c_dlpack_ext-0.1.5.tar.gz", hash = "sha256:d06f0357d575d22a168cc77acb9020fc4bae30968ceb6718a055dcbe92bacabe", size = 12913, upload-time = "2026-01-12T11:25:08.484Z" }
 wheels = [
@@ -3259,22 +2957,13 @@ wheels = [
 
 [[package]]
 name = "torchaudio"
-version = "2.11.0+cu129"
-source = { registry = "https://download.pytorch.org/whl/cu129" }
-wheels = [
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:8ad3f5b9348ed1b49ff9a180c3898e1b1bd8712ac8007cb60783dbd0c46dc479", upload-time = "2026-03-23T15:50:25Z" },
-    { url = "https://download-r2.pytorch.org/whl/cu129/torchaudio-2.11.0%2Bcu129-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:de4105653562f031edd6ddf7dd1485f07db6ac62cdc90d17364648cd3c89eb5a", upload-time = "2026-03-23T15:50:25Z" },
-]
-
-[[package]]
-name = "torchcodec"
-version = "0.14.0"
+version = "2.11.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/36/72/b24c76e0090b930b0dfd3a0a40bf207485a0a9a92d1b9617318b5ec52279/torchcodec-0.14.0-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:849b55c16d3d9791f07c7ff5ef6168a94bbd981e2e9e581999c9a2a8a660c61c", size = 4586357, upload-time = "2026-06-03T12:41:36.222Z" },
-    { url = "https://files.pythonhosted.org/packages/10/ba/8e643dbc3ef7a195eb7abeabc19eba3c3f32f9a0e2919fd5b6d3939a2c24/torchcodec-0.14.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:db8740f5380d4345e7b1586ac957cde6dbce5be0a9079b9a8f8e5dad528af841", size = 2684769, upload-time = "2026-06-03T12:41:37.807Z" },
-    { url = "https://files.pythonhosted.org/packages/39/f4/1bc51a86fda6359ae64fb8e772512dbab01546bd27e14d715c29bd416813/torchcodec-0.14.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:9a8770b44ef71ef6a94581b9b1691370bfbc766396ecbb754967eceeb83fe58e", size = 2950986, upload-time = "2026-06-03T12:41:39.409Z" },
-    { url = "https://files.pythonhosted.org/packages/0f/7b/f9cf0b8f6c1d9033158d11494c4111d8e102122649330f6d48d18263a4d8/torchcodec-0.14.0-cp312-cp312-win_amd64.whl", hash = "sha256:c299a5309d883e2d9cdcf11e297e2859fade5b20254c716f31e77fa57e4f455e", size = 3142677, upload-time = "2026-06-03T12:41:41.195Z" },
+    { url = "https://files.pythonhosted.org/packages/f1/b1/77658817acacd01a72b714440c62f419efc4d90170e704e8e7a2c0918988/torchaudio-2.11.0-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:a1cf1acc883bee9cb906a933572fed6a8a933f86ef34e9ea7d803f72317e8c1b", size = 684226, upload-time = "2026-03-23T18:13:40.023Z" },
+    { url = "https://files.pythonhosted.org/packages/78/28/c7adc053039f286c2aca0038b766cbe3294e66fec6b29a820e95128f9ede/torchaudio-2.11.0-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:bc653defca1c16154398517a1adc98d0fb7f1dd08e58ced217558d213c2c6e29", size = 1626670, upload-time = "2026-03-23T18:13:42.162Z" },
+    { url = "https://files.pythonhosted.org/packages/88/d8/d6d0f896e064aa67377484efef4911cdcc07bce2929474e1417cc0af18c2/torchaudio-2.11.0-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:6503c0bdb29daf2e6281bb70ea2dfe2c3553b782b619eb5d73bdadd8a3f7cecf", size = 1771992, upload-time = "2026-03-23T18:13:33.188Z" },
+    { url = "https://files.pythonhosted.org/packages/23/a8/941277ecc39f7a0a169d554302a1f1afd87c1d94a8aec828891916cea59a/torchaudio-2.11.0-cp312-cp312-win_amd64.whl", hash = "sha256:478110f981e5d40a8d82221732c57a56c85a1d5895fb8fe646e86ee15eded3bd", size = 328663, upload-time = "2026-03-23T18:13:19.218Z" },
 ]
 
 [[package]]
@@ -3282,9 +2971,9 @@ name = "torchvision"
 version = "0.26.0+cu129"
 source = { registry = "https://download.pytorch.org/whl/cu129" }
 dependencies = [
-    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "pillow", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
-    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "pillow", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-gpu') or (sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'darwin' and extra == 'extra-7-open-rl-gpu' and extra != 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm')" },
 ]
 wheels = [
     { url = "https://download-r2.pytorch.org/whl/cu129/torchvision-0.26.0%2Bcu129-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:9a5971c2eb3ed439b685b81dfe3bd48d35adbf1027caa2cc0acaa4031d3374e9", upload-time = "2026-04-09T23:21:44Z" },
@@ -3426,8 +3115,8 @@ wheels = [
 
 [[package]]
 name = "vllm"
-version = "0.25.1+cu129"
-source = { registry = "https://wheels.vllm.ai/0.25.1/cu129" }
+version = "0.20.0+cu129"
+source = { registry = "https://wheels.vllm.ai/0.20.0/cu129" }
 dependencies = [
     { name = "aiohttp", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "anthropic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -3445,9 +3134,8 @@ dependencies = [
     { name = "filelock", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "flashinfer-cubin", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "flashinfer-python", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "humming-kernels", extra = ["cu12"], marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu' and extra == 'extra-7-open-rl-vllm') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-gpu') or (extra == 'extra-7-open-rl-cpu' and extra == 'extra-7-open-rl-vllm')" },
+    { name = "gguf", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "ijson", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "jsonschema", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "lark", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "llguidance", marker = "(platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'arm64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'arm64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'x86_64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'x86_64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "lm-format-enforcer", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -3460,7 +3148,6 @@ dependencies = [
     { name = "numpy", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "nvidia-cudnn-frontend", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "nvidia-cutlass-dsl", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "nvtx", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "openai", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "openai-harmony", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "opencv-python-headless", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -3478,26 +3165,21 @@ dependencies = [
     { name = "py-cpuinfo", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "pybase64", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "pydantic", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "pynvvideocodec", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "python-json-logger", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "pyyaml", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "pyzmq", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "quack-kernels", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "regex", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "requests", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "safetensors", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "sentencepiece", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "setproctitle", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "setuptools", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "six", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "starlette", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "tiktoken", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "tilelang", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "tokenizers", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "tokenspeed-mla", marker = "sys_platform == 'linux'" },
     { name = "torch", version = "2.11.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "torchaudio", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
-    { name = "torchcodec", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "torchvision", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "tqdm", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
     { name = "transformers", marker = "(sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
@@ -3506,8 +3188,8 @@ dependencies = [
     { name = "xgrammar", marker = "(platform_machine == 'aarch64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'arm64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'ppc64le' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 's390x' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'x86_64' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32') or (platform_machine == 'aarch64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'arm64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 's390x' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'x86_64' and sys_platform == 'emscripten' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'aarch64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'arm64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'ppc64le' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 's390x' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu') or (platform_machine == 'x86_64' and sys_platform == 'win32' and extra != 'extra-7-open-rl-gpu')" },
 ]
 wheels = [
-    { url = "https://wheels.vllm.ai/752a3a504485790a2e8491cacbb35c137339ad34/vllm-0.25.1%2Bcu129-cp38-abi3-manylinux_2_28_aarch64.whl" },
-    { url = "https://wheels.vllm.ai/752a3a504485790a2e8491cacbb35c137339ad34/vllm-0.25.1%2Bcu129-cp38-abi3-manylinux_2_28_x86_64.whl" },
+    { url = "https://wheels.vllm.ai/88d34c6409e9fb3c7b8ca0c04756f061d2099eb1/vllm-0.20.0%2Bcu129-cp38-abi3-manylinux_2_31_aarch64.whl" },
+    { url = "https://wheels.vllm.ai/88d34c6409e9fb3c7b8ca0c04756f061d2099eb1/vllm-0.20.0%2Bcu129-cp38-abi3-manylinux_2_31_x86_64.whl" },
 ]
 
 [[package]]
@@ -3533,15 +3215,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/fa/08/d9e2e0f9e8e6791d33aefc694ad7eefa7f901f63caff84a81ded38692f9c/watchfiles-1.2.0-cp312-cp312-win32.whl", hash = "sha256:7a2cffd17d27d2ecbb310c2b1d8174f222a5495b1a721894afa88ec11e25b898", size = 275480, upload-time = "2026-05-18T04:30:31.307Z" },
     { url = "https://files.pythonhosted.org/packages/1c/e6/9d42569c0102645cc8cea5d8c7d8a1e9d4ada2cb7f05f75e554b8aa2202a/watchfiles-1.2.0-cp312-cp312-win_amd64.whl", hash = "sha256:f155b3a1b2a5fc89cdc70d47ee5d54e3b75e88efa34982028a35daef9ba00379", size = 288718, upload-time = "2026-05-18T04:32:10.745Z" },
     { url = "https://files.pythonhosted.org/packages/0a/26/88e0dc6ee3898169d7fa22bb6a69cabf2502d2ee25cb8c876d1262d204f8/watchfiles-1.2.0-cp312-cp312-win_arm64.whl", hash = "sha256:8fa585ede612ee9f9e91b18bebf9ba11b9ae29a4e3a0d0cf6fca3e382133f0d5", size = 281026, upload-time = "2026-05-18T04:30:22.23Z" },
-]
-
-[[package]]
-name = "websocket-client"
-version = "1.9.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/2c/41/aa4bf9664e4cda14c3b39865b12251e8e7d239f4cd0e3cc1b6c2ccde25c1/websocket_client-1.9.0.tar.gz", hash = "sha256:9e813624b6eb619999a97dc7958469217c3176312b3a16a4bd1bc7e08a46ec98", size = 70576, upload-time = "2025-10-07T21:16:36.495Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/db/b10e48aa8fff7407e67470363eac595018441cf32d5e1001567a7aeba5d2/websocket_client-1.9.0-py3-none-any.whl", hash = "sha256:af248a825037ef591efbf6ed20cc5faa03d3b47b9e5a2230a529eeee1c1fc3ef", size = 82616, upload-time = "2025-10-07T21:16:34.951Z" },
 ]
 
 [[package]]
@@ -3645,9 +3318,9 @@ name = "yarl"
 version = "1.24.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "idna" },
-    { name = "multidict" },
-    { name = "propcache" },
+    { name = "idna", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "multidict", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
+    { name = "propcache", marker = "(sys_platform != 'darwin' and extra == 'extra-7-open-rl-vllm') or extra == 'extra-7-open-rl-cpu' or extra == 'extra-7-open-rl-gpu'" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/79/12/1e8f37460ea0f7eb59c221fdaf0ed75e7ac43e97f8093b9c6f411df50a78/yarl-1.24.2.tar.gz", hash = "sha256:9ac374123c6fd7abf64d1fec93962b0bd4ee2c19751755a762a72dd96c0378f8", size = 210798, upload-time = "2026-05-19T21:31:05.599Z" }
 wheels = [

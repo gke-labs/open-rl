@@ -51,11 +51,6 @@ spec:
               key: ENABLE_GCP_TRACE
         - name: REDIS_URL
           value: "redis://redis-service:6379"
-        # Standing vllm-worker/trainer-worker deployments own the workers here;
-        # without this the gateway would spawn trainer subprocesses in its own
-        # (GPU-less) container via the default LocalWorkerManager.
-        - name: OPEN_RL_WORKER_MANAGER
-          value: "none"
         - name: VLLM_URL
           value: "http://vllm-service:8001"
         - name: BASE_MODEL

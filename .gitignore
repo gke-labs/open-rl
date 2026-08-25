@@ -7,18 +7,13 @@ env/
 **/venv/
 
 # Training Logs & Plots
-scratch/
-docs/scratch/
-VERSION
 *.txt
 *.png
 *.log
 
 # Python Cache
 __pycache__/
-**/__pycache__/
 *.py[cod]
-**/*.py[cod]
 *$py.class
 *.so
 .Python
@@ -57,7 +52,3 @@ Thumbs.db
 !examples/rl/text-to-sql/results/*.png
 !examples/tinker-cookbook/plots/*.png
 !examples/harvey_labs/assets/*.png
-
-# Local benchmark run outputs
-runs/
-*.pyc
