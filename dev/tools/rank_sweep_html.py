@@ -62,6 +62,36 @@ def _dash_attr(pattern: str) -> str:
   return f' stroke-dasharray="{pattern}"' if pattern else ""
 
 
+# Head-room past the plot so end labels overflowing the viewBox are not cropped.
+LABEL_OVERFLOW = 260
+
+
+def reveal(marks: str, key: str, x: float, width: float, height: float, dur: float = 1.8) -> str:
+  """Wrap plotted marks in a clip rect that widens, so the chart draws itself.
+
+  A clip is used rather than the usual stroke-dashoffset trick because the
+  replicate lines already carry a dash pattern for identity, and animating
+  dashoffset would destroy it. Clipping also sweeps every series together,
+  including the raw underlay and the end labels, which is the point: the
+  reveal reads as training progressing, not as lines being drawn one by one.
+
+  The animation begins on demand (``begin="indefinite"``) so it can be tied to
+  the chart scrolling into view and replayed.
+  """
+  # End labels sit past the right edge of the viewBox and stay visible only
+  # because the SVG does not clip overflow. The reveal rect therefore has to
+  # extend well beyond the plot, or it would crop them permanently. The JS also
+  # drops the clip once the sweep finishes, so nothing depends on this margin.
+  full = width + LABEL_OVERFLOW
+  return (
+    f'<clipPath id="clip-{key}"><rect x="{x:.1f}" y="0" height="{height:.0f}" width="0">'
+    f'<animate id="anim-{key}" attributeName="width" from="0" to="{full:.1f}" '
+    f'dur="{dur}s" fill="freeze" begin="indefinite" calcMode="spline" '
+    f'keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></rect></clipPath>'
+    f'<g id="marks-{key}" clip-path="url(#clip-{key})">{marks}</g>'
+  )
+
+
 W, H = 720, 380
 PAD_L, PAD_R, PAD_T, PAD_B = 56, 96, 16, 40
 # Minimum vertical separation between end labels before they overprint.
@@ -122,6 +152,7 @@ def reward_chart(df, smooth: int, idx: int = 0) -> str:
     return _scale(reward, ymin, ymax, H - PAD_B, PAD_T)
 
   parts = []
+  marks = []
   end_labels = []
   # Horizontal grid + y labels.
   for t in [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]:
@@ -146,8 +177,8 @@ def reward_chart(df, smooth: int, idx: int = 0) -> str:
     dash = _dash_attr(dashes[replicate])
     raw_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, raw, strict=False))
     roll_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, rolled, strict=False))
-    parts.append(f'<polyline class="raw" data-config="{config}" points="{raw_pts}"/>')
-    parts.append(f'<polyline class="line" data-config="{config}"{dash} points="{roll_pts}"/>')
+    marks.append(f'<polyline class="raw" data-config="{config}" points="{raw_pts}"/>')
+    marks.append(f'<polyline class="line" data-config="{config}"{dash} points="{roll_pts}"/>')
     end_labels.append({"config": config, "text": run_label(config, replicate), "x": px(steps[-1]) + 8, "y": py(rolled[-1]) + 4})
 
   # Direct labels carry identity so it never rests on colour alone -- but runs
@@ -160,8 +191,11 @@ def reward_chart(df, smooth: int, idx: int = 0) -> str:
     if gap < LABEL_GAP:
       end_labels[i]["y"] = end_labels[i - 1]["y"] + LABEL_GAP
   for item in end_labels:
-    parts.append(f'<text class="endlabel" data-config="{item["config"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["text"]}</text>')
+    marks.append(f'<text class="endlabel" data-config="{item["config"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["text"]}</text>')
 
+  # Axes stay put; only the data sweeps in. Crosshair and hit area sit outside
+  # the clip so hovering works whether or not the reveal has finished.
+  parts.append(reveal("".join(marks), f"r{idx}", PAD_L, W - PAD_L, H))
   parts.append(f'<line id="crosshair-{idx}" class="crosshair" x1="0" y1="{PAD_T}" x2="0" y2="{H - PAD_B}" style="opacity:0"/>')
   parts.append(f'<rect id="hitarea-{idx}" x="{PAD_L}" y="{PAD_T}" width="{W - PAD_L - PAD_R}" height="{H - PAD_T - PAD_B}" fill="transparent"/>')
 
@@ -170,7 +204,7 @@ def reward_chart(df, smooth: int, idx: int = 0) -> str:
   return svg, cfg
 
 
-def gap_chart(gaps, floor: float = float("nan")) -> str:
+def gap_chart(gaps, floor: float = float("nan"), idx: int = 0) -> str:
   """Gap to FullFT at successive matched-step checkpoints, against the replicate spread."""
   checkpoints = [c for c, _ in gaps]
   w, h = 720, 260
@@ -190,6 +224,7 @@ def gap_chart(gaps, floor: float = float("nan")) -> str:
   parts.append(f'<text class="tick" x="{w - pad_r + 8}" y="{py(0) + 4:.1f}">parity</text>')
   for i, c in enumerate(checkpoints):
     parts.append(f'<text class="tick" x="{px(i):.1f}" y="{h - pad_b + 20}" text-anchor="middle">{c}</text>')
+  marks = []
   tracked = [c for c in config_order({k for _, v in gaps for k in v}) if c != "fullft"]
   # The noise band makes the chart readable on its own: a marker inside it is
   # not distinguishable from seed variation, whatever its distance from zero.
@@ -200,13 +235,14 @@ def gap_chart(gaps, floor: float = float("nan")) -> str:
     parts.append(f'<text class="tick" x="{w - pad_r + 8}" y="{py(floor) - 4:.1f}">replicate spread</text>')
   for name in tracked:
     pts = " ".join(f"{px(i):.1f},{py(v[name]):.1f}" for i, (_, v) in enumerate(gaps) if name in v)
-    parts.append(f'<polyline class="line" data-config="{name}" points="{pts}"/>')
+    marks.append(f'<polyline class="line" data-config="{name}" points="{pts}"/>')
     for i, (_, v) in enumerate(gaps):
       if name in v:
-        parts.append(f'<circle class="dot" data-config="{name}" cx="{px(i):.1f}" cy="{py(v[name]):.1f}" r="4.5"/>')
+        marks.append(f'<circle class="dot" data-config="{name}" cx="{px(i):.1f}" cy="{py(v[name]):.1f}" r="4.5"/>')
     last = gaps[-1][1]
     lx, ly = px(len(checkpoints) - 1) + 8, py(last[name]) + 4
-    parts.append(f'<text class="endlabel" data-config="{name}" x="{lx:.1f}" y="{ly:.1f}">{config_label(name)}</text>')
+    marks.append(f'<text class="endlabel" data-config="{name}" x="{lx:.1f}" y="{ly:.1f}">{config_label(name)}</text>')
+  parts.append(reveal("".join(marks), f"g{idx}", pad_l, w - pad_l, h))
   return f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Gap to full fine-tuning at successive checkpoints">{"".join(parts)}</svg>'
 
 
@@ -258,6 +294,10 @@ a{color:inherit;text-decoration:underline;text-underline-offset:2px;text-decorat
 .lede{font-size:1.1rem;color:var(--ink)}
 figure{margin:2.2rem 0;padding:0}
 figcaption{color:var(--ink2);font-size:.9rem;line-height:1.5;margin-top:.7rem}
+.replay{background:none;border:1px solid var(--rule);border-radius:5px;color:var(--ink2);
+cursor:pointer;font:12px ui-sans-serif,system-ui,sans-serif;padding:.25rem .6rem;margin-top:.5rem}
+.replay:hover{border-color:var(--ink2);color:var(--ink)}
+@media (prefers-reduced-motion:reduce){.replay{display:none}}
 svg{width:100%;height:auto;display:block;overflow:visible}
 .grid{stroke:var(--rule);stroke-width:1}
 .zero{stroke:var(--ink2);stroke-width:1;stroke-dasharray:4 4;opacity:.6}
@@ -288,6 +328,50 @@ footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--rule);color
 """
 
 JS = """
+// Chart reveal. Each animated chart has a clip rect whose width is driven by a
+// SMIL <animate>; playing it sweeps the data in from the left. Charts play once
+// when first scrolled into view, and the replay button re-runs them.
+const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function revealPlay(key) {
+  const anim = document.getElementById('anim-' + key);
+  if (!anim) return;
+  const rect = anim.parentNode;
+  if (reduceMotion) { rect.setAttribute('width', anim.getAttribute('to')); return; }
+  const marks = document.getElementById('marks-' + key);
+  if (marks) marks.setAttribute('clip-path', 'url(#clip-' + key + ')');
+  try { anim.beginElement(); } catch (e) { rect.setAttribute('width', anim.getAttribute('to')); }
+}
+// Once the sweep is done the clip has no job left, and keeping it risks
+// cropping anything that renders outside the viewBox.
+document.querySelectorAll('[id^="anim-"]').forEach((anim) => {
+  anim.addEventListener('endEvent', () => {
+    const m = document.getElementById('marks-' + anim.id.slice(5));
+    if (m) m.removeAttribute('clip-path');
+  });
+});
+document.querySelectorAll('[id^="anim-"]').forEach((anim) => {
+  const key = anim.id.slice(5);
+  const svg = anim.closest('svg');
+  if (!svg) return;
+  if (reduceMotion) { revealPlay(key); return; }
+  // Charts already on screen at load still animate; the observer fires immediately
+  // for those, so there is no separate first-paint path to keep in sync.
+  const io = new IntersectionObserver((entries) => {
+    entries.forEach((e) => {
+      if (e.isIntersecting) { revealPlay(key); io.disconnect(); }
+    });
+  }, { threshold: 0.35 });
+  io.observe(svg);
+});
+// A chart inside a closed <details> has zero size, so the observer never fires.
+// Play it when the disclosure opens instead.
+document.querySelectorAll('details[data-reveal]').forEach((d) => {
+  d.addEventListener('toggle', () => { if (d.open) revealPlay(d.dataset.reveal); });
+});
+document.querySelectorAll('.replay').forEach((b) => {
+  b.addEventListener('click', () => b.dataset.keys.split(',').forEach(revealPlay));
+});
+
 const CHARTS = %CHARTS%;
 const NAMES = %NAMES%;
 const tip = document.getElementById('tip');
@@ -682,6 +766,7 @@ def density_chart(density, groups, idx_base: int = 90) -> str:
 
   # One hue per model group; replicates of a group share it and split by dash.
   hues = {g: PALETTE[i % len(PALETTE)] for i, g in enumerate(groups)}
+  marks = []
   labels = []
   for _run, g in density.groupby("run"):
     g = g.sort_values("step")
@@ -689,7 +774,7 @@ def density_chart(density, groups, idx_base: int = 90) -> str:
     rep = str(g["replicate"].iloc[0])
     pts = " ".join(f"{px(float(s)):.1f},{py(float(v)):.1f}" for s, v in zip(g["step"], g["density_pct"], strict=False))
     dash = _dash_attr("" if rep == "a" else "5 3")
-    parts.append(f'<polyline class="line" stroke="{hues[grp][0]}"{dash} points="{pts}"/>')
+    marks.append(f'<polyline class="line" stroke="{hues[grp][0]}"{dash} points="{pts}"/>')
     labels.append(
       {"x": px(float(g["step"].iloc[-1])) + 8, "y": py(float(g["density_pct"].iloc[-1])) + 4, "t": f"{groups[grp]} ({rep})", "c": hues[grp][0]}
     )
@@ -698,7 +783,8 @@ def density_chart(density, groups, idx_base: int = 90) -> str:
     if labels[i]["y"] - labels[i - 1]["y"] < LABEL_GAP:
       labels[i]["y"] = labels[i - 1]["y"] + LABEL_GAP
   for item in labels:
-    parts.append(f'<text class="endlabel" fill="{item["c"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["t"]}</text>')
+    marks.append(f'<text class="endlabel" fill="{item["c"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["t"]}</text>')
+  parts.append(reveal("".join(marks), "d0", pad_l, w - pad_l, h))
   return f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Delta density against training step">{"".join(parts)}</svg>'
 
 
@@ -779,6 +865,7 @@ disk rather than inferred from the element counts.</p>
 <figcaption><strong>Figure 3.</strong> Fraction of parameters changed per step, both full
 fine-tuning replicates at each model size. Replicates share a colour and separate by dash
 pattern.</figcaption>
+<button class="replay" data-keys="d0">Replay</button>
 </figure>
 
 <p>The shape is the same at both sizes: the first step rewrites more than a tenth of the
@@ -930,7 +1017,7 @@ def render(experiments, out: Path, smooth: int, tail: int, density=None, max_tok
     gap_rows = "".join(
       f'<tr><td class="num">{c}</td>' + "".join(f'<td class="num">{v.get(t, 0):+.3f}</td>' for t in tracked) + "</tr>" for c, v in exp["gaps"]
     )
-    gap_svg = gap_chart(exp["gaps"], noise_floor(exp["configs"])) if exp["gaps"] else ""
+    gap_svg = gap_chart(exp["gaps"], noise_floor(exp["configs"]), idx=i) if exp["gaps"] else ""
     n_runs = exp["df"]["run"].nunique()
     reps = exp["summary"]["replicate"].notna().any()
     caption_extra = " Replicates of one configuration share a colour and separate by dash pattern." if reps else ""
@@ -943,6 +1030,7 @@ def render(experiments, out: Path, smooth: int, tail: int, density=None, max_tok
 {chart}
 <figcaption><strong>Figure {i + 1}.</strong> Reward against training step for {exp["model"]},
 {n_runs} runs, {smooth}-step rolling mean over the raw per-step values.{caption_extra}</figcaption>
+<button class="replay" data-keys="r{i}">Replay</button>
 </figure>
 
 {_summary_table(exp["configs"], tail)}
@@ -961,7 +1049,7 @@ many steps the window covers. Recomputing the comparison over several windows sh
 much of the verdict rests on that choice.</p>
 {_sensitivity_table(exp["df"])}</details>
 
-<details open><summary>Gap to full fine-tuning at successive checkpoints</summary>
+<details open data-reveal="g{i}"><summary>Gap to full fine-tuning at successive checkpoints</summary>
 {gap_svg}
 <table><thead><tr><th>Matched steps</th>{gap_head}</tr></thead>
 <tbody>{gap_rows}</tbody></table></details>
