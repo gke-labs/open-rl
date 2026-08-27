@@ -64,9 +64,12 @@ def _dash_attr(pattern: str) -> str:
 
 # Head-room past the plot so end labels overflowing the viewBox are not cropped.
 LABEL_OVERFLOW = 260
+# Sweep duration. Linear, so it reads as elapsed training rather than an
+# easing flourish, and long enough to actually watch.
+REVEAL_SECONDS = 4.5
 
 
-def reveal(marks: str, key: str, x: float, width: float, height: float, dur: float = 1.8) -> str:
+def reveal(marks: str, key: str, x: float, width: float, height: float, dur: float = REVEAL_SECONDS) -> str:
   """Wrap plotted marks in a clip rect that widens, so the chart draws itself.
 
   A clip is used rather than the usual stroke-dashoffset trick because the
@@ -86,8 +89,7 @@ def reveal(marks: str, key: str, x: float, width: float, height: float, dur: flo
   return (
     f'<clipPath id="clip-{key}"><rect x="{x:.1f}" y="0" height="{height:.0f}" width="0">'
     f'<animate id="anim-{key}" attributeName="width" from="0" to="{full:.1f}" '
-    f'dur="{dur}s" fill="freeze" begin="indefinite" calcMode="spline" '
-    f'keyTimes="0;1" keySplines="0.25 0.1 0.25 1"/></rect></clipPath>'
+    f'dur="{dur}s" fill="freeze" begin="indefinite"/></rect></clipPath>'
     f'<g id="marks-{key}" clip-path="url(#clip-{key})">{marks}</g>'
   )
 
@@ -389,10 +391,14 @@ for (const cfg of CHARTS) {
     cross.setAttribute('x1', xSvg); cross.setAttribute('x2', xSvg);
     cross.style.opacity = 1;
     let rows = '';
+    // Keyed by run, but colour and label belong to the configuration -- the run
+    // name is not a CSS variable and is not in NAMES.
     for (const name of Object.keys(cfg.series)) {
       const s = cfg.series[name];
       const i = s.steps.indexOf(step);
-      if (i >= 0) rows += `<div><span class="swatch" style="background:var(--${name})"></span>${NAMES[name]} <b>${s.rolled[i].toFixed(3)}</b></div>`;
+      if (i < 0) continue;
+      const sw = `<span class="swatch" style="background:var(--c-${s.config})"></span>`;
+      rows += `<div>${sw}${s.label} <b>${s.rolled[i].toFixed(3)}</b></div>`;
     }
     tip.innerHTML = `<div style="color:var(--ink2);margin-bottom:.3rem">step ${step}</div>${rows}`;
     tip.style.left = (e.clientX + 14) + 'px';
