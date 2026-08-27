@@ -180,6 +180,9 @@ th{color:var(--ink2);font-weight:600}
 tbody tr:last-child td{border-bottom:none}
 .num{font-variant-numeric:tabular-nums}
 .callout{border-left:2px solid var(--rule);padding:.1rem 0 .1rem 1.1rem;color:var(--ink2);margin:1.6rem 0}
+ul{margin:0 0 1.1rem;padding-left:1.2rem;color:var(--ink2)}
+li{margin:0 0 .35rem}
+code{font:.88em ui-monospace,SFMono-Regular,Menlo,monospace;background:rgba(0,0,0,.04);padding:.1em .3em;border-radius:3px}
 details{margin:1.2rem 0;font:14px ui-sans-serif,system-ui,sans-serif;color:var(--ink2)}
 summary{cursor:pointer}
 #tip{position:fixed;pointer-events:none;opacity:0;background:var(--surface);border:1px solid var(--rule);
@@ -288,6 +291,126 @@ def run_pace_note(df, summary) -> str:
       f"what the paper did."
     )
   return "Neither run reached 0.9 within the run, so the pace comparison below is limited to the lower thresholds. No run leads consistently."
+
+
+def _is_lora(name: str) -> bool:
+  return "lora" in name or "-r" in name
+
+
+def sharing_costs(experiments) -> list[str]:
+  """Per-experiment sentence: how many adapters shared a worker, and what it cost.
+
+  Derived rather than written down, because the multiplier depends on how many
+  runs the scheduler happened to pack onto one device -- which is the property
+  this section is about.
+  """
+  out = []
+  for exp in experiments:
+    s = exp["summary"]
+    lora = s[s["run"].astype(str).map(_is_lora)]
+    fft = s[~s["run"].astype(str).map(_is_lora)]
+    if lora.empty or fft.empty:
+      continue
+    shared, solo = float(lora["sec_per_step"].mean()), float(fft["sec_per_step"].mean())
+    out.append(
+      f"{exp['model']}: {len(lora)} LoRA runs on one trainer and one sampler at "
+      f"{shared:.0f}s per step, against {solo:.0f}s for full fine-tuning on its own "
+      f"GPU &mdash; {shared / solo:.1f}&times; for sharing."
+    )
+  return out
+
+
+def limits(total: int, largest: int) -> list[tuple[str, str, str, str, str]]:
+  """The three limitations, with the counts this run actually produced."""
+  return [
+    (
+      "Finished jobs keep their workers",
+      "Partway through, with the shorter runs complete, every worker Pod "
+      "belonging to a finished run was still going, holding its ResourceClaim. Two H100 "
+      "nodes and three L4 nodes were pinned by work that had already stopped.",
+      "The Kubernetes worker manager implements a per-model <code>shutdown()</code>, but the "
+      "only caller is <code>shutdown_all()</code>, which is a no-op in that subclass. Nothing "
+      "runs when a training job ends. The claim reconciler collects only claims with no "
+      "referencing Pod, so a Pod that outlives its job keeps the claim alive indefinitely.",
+      "Call <code>shutdown()</code> when a worker's last active job finishes; the existing "
+      "reconciler then reclaims the claim on its next pass. The one subtlety is that LoRA "
+      "workers are multi-tenant, so this needs a per-worker count of live adapters rather "
+      "than a per-job hook.",
+      "Small",
+    ),
+    (
+      "LoRA runs on one base model cannot spread across workers",
+      f"The {largest} LoRA runs on the larger model shared a single trainer Pod and a single "
+      f"sampler Pod, time-sliced {largest} ways, while other GPUs of the same tier were free.",
+      "A worker Pod's name is derived from the base model with a fixed replica suffix, so "
+      "every LoRA job on a given base model resolves to the same Pod. There is no way to "
+      "ask for a second worker on that model. <code>OPEN_RL_MAX_WORKERS_PER_CLAIM</code> "
+      "caps Pods per claim, which has no effect when the packing happens inside one Pod.",
+      "Thread a replica index through Pod naming and claim selection, and add a policy for "
+      "how many adapters a worker takes before a new one opens. Packing is the right default "
+      "under contention &mdash; N adapters on one device hold one copy of the frozen base "
+      "weights instead of N &mdash; so the policy needs a capacity signal, not a fixed cap.",
+      "Moderate",
+    ),
+    (
+      "Placement is decided once and never revisited",
+      f"As the full fine-tuning runs finished, their H100s went idle and stayed idle. The LoRA "
+      f"runs continued {largest}-way time-sliced next to free hardware for the rest of the "
+      f"experiment.",
+      "Claim selection runs once, at first launch. Base-model affinity is tried before any "
+      "capacity test, and nothing re-evaluates the decision afterwards. A job that starts "
+      "under contention stays packed even when the contention clears.",
+      "Two paths. The cheaper one is admission-time sequencing: hold jobs in a queue and "
+      "launch as capacity frees, instead of starting every job at once. The complete one is "
+      "migrating a live adapter &mdash; checkpoint, relaunch on the freed device, resume. The "
+      "snapshot and restore machinery already exists; nothing drives it for rebalancing.",
+      "Large",
+    ),
+  ]
+
+
+def scheduling_section(experiments) -> str:
+  """Limitations in the placement layer that this run exposed, and what fixing them takes."""
+  total = sum(len(exp["summary"]) for exp in experiments)
+  largest = max(
+    (int(exp["summary"]["run"].astype(str).map(_is_lora).sum()) for exp in experiments),
+    default=0,
+  )
+  entries = limits(total, largest)
+  costs = "".join(f"<li>{c}</li>" for c in sharing_costs(experiments))
+  blocks = ""
+  for i, (title, observed, cause, fix, _size) in enumerate(entries, 1):
+    blocks += (
+      f"<h3>{i}. {title}</h3>"
+      f"<p><strong>Observed.</strong> {observed}</p>"
+      f"<p><strong>Cause.</strong> {cause}</p>"
+      f"<p><strong>Change required.</strong> {fix}</p>"
+    )
+  rows = "".join(f"<tr><td>{t}</td><td>{s}</td></tr>" for t, _, _, _, s in entries)
+  return f"""
+<h2>Scheduling limitations this run exposed</h2>
+<p>The experiment was designed as a full crossing of model size, fine-tuning mode and
+replicate seed, and submitted as {total} concurrent jobs. Not all of them fit the
+available hardware. The ones that did not ran roughly twice as slowly as they needed to,
+and were still going long after the rest had finished. The reasons are properties of the placement
+layer rather than of the experiment, and they are worth separating from the scientific
+caveats above, because they would apply to any workload of this shape.</p>
+<p>The cost of sharing a device is visible in the per-step times:</p>
+<ul>{costs}</ul>
+<p>Sharing is not itself a defect &mdash; it is the reason LoRA is cheaper here, and under
+real contention it is the correct choice. What follows are three places where the system
+shares when it does not have to, listed in increasing order of what changing them
+involves.</p>
+{blocks}
+<h3>Summary</h3>
+<table><thead><tr><th>Limitation</th><th>Effort to address</th></tr></thead>
+<tbody>{rows}</tbody></table>
+<p>One theme connects them: the harness accepted a topology it could only serve badly and
+gave no indication that it had done so. Nothing reported that {largest} of the {total} runs
+would land on one device, either when the jobs were admitted or while they ran. A
+placement summary at submission time would have surfaced this before the run rather than
+after it, and is smaller work than any of the three fixes above.</p>
+"""
 
 
 def render(experiments, out: Path, smooth: int, tail: int) -> None:
@@ -409,7 +532,7 @@ frozen weights inside the fraction of the device vLLM is given.</p>
 them on four H100s. In both cases the two LoRA runs shared one trainer and one sampler,
 holding two adapters of different rank on the same device. That is the cost argument for
 LoRA in this setting: the same result on half the hardware.</p>
-
+{scheduling_section(experiments)}
 <details><summary>Full data ({total_rows} rows)</summary>
 <table><thead><tr><th>Model</th><th>Run</th><th>Step</th><th>Reward</th><th>Seconds</th></tr></thead>
 <tbody>{data_rows}</tbody></table></details>
