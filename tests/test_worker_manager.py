@@ -465,9 +465,22 @@ class EstimateMemoryTierTest(unittest.TestCase):
     self.assertLess(worker_manager.KNOWN_PARAMETER_COUNTS["qwen3-1.7b"], threshold)
     self.assertGreater(worker_manager.KNOWN_PARAMETER_COUNTS["qwen3-4b"], threshold)
 
-  def test_lora_tiers_are_unchanged(self) -> None:
-    self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-8B", "lora"), "24gb")
-    self.assertEqual(worker_manager.estimate_memory_tier("meta-llama/Llama-3-70B", "lora"), "80gb")
+  def test_lora_is_sized_by_the_frozen_base_weights(self) -> None:
+    # A LoRA worker holds the base model in bf16; the adapter is negligible. The
+    # binding constraint is the sampler fitting those weights inside the slice
+    # of the device vLLM is given.
+    self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-4B", "lora"), "24gb")
+    self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-8B", "lora"), "80gb")
+
+  def test_lora_needs_less_gpu_than_full_fine_tuning(self) -> None:
+    # Same model, different mode: 4B carries 8GB of weights for LoRA but ~48GB
+    # of weights, gradients and optimizer state for a full fine-tune.
+    self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-4B", "lora"), "24gb")
+    self.assertEqual(worker_manager.estimate_memory_tier("Qwen/Qwen3-4B", "full"), "80gb")
+
+  def test_unknown_models_stay_conservative_for_lora_too(self) -> None:
+    with self.assertLogs("server.worker_manager", level="WARNING"):
+      self.assertEqual(worker_manager.estimate_memory_tier("meta-llama/Llama-3-70B", "lora"), "80gb")
 
 
 if __name__ == "__main__":
