@@ -29,6 +29,19 @@ import pandas as pd
 
 REWARD_KEY = "env/all/reward/total"
 
+# Diagnostics carried alongside reward. The reward decomposition and generation
+# length are what distinguish "learning slowly" from "producing unusable
+# rollouts", and compute_delta_diff only exists for full fine-tuning.
+EXTRA_KEYS = {
+  "format": "env/all/format",
+  "correct": "env/all/correct",
+  "ac_tokens_per_turn": "env/all/ac_tokens_per_turn",
+  "frac_all_bad": "env/all/by_group/frac_all_bad",
+  "grad_norm": "grad_norm:mean",
+  "time/compute_delta_diff": "time/compute_delta_diff",
+  "time/total": "time/total",
+}
+
 # Validated categorical palette. Colour tracks the configuration under test, so
 # a configuration keeps its hue no matter which others are present; replicates
 # of one configuration share a colour and differ by line style.
@@ -103,19 +116,19 @@ def load_runs(runs_dir: Path, group: str | None = None) -> pd.DataFrame:
         continue
       if REWARD_KEY not in rec:
         continue
-      rows.append(
-        {
-          "run": name,
-          "group": run_group,
-          "config": config,
-          "replicate": replicate,
-          "step": rec.get("step"),
-          "reward": rec[REWARD_KEY],
-          "entropy": rec.get("optim/entropy"),
-          "kl": rec.get("optim/kl_sample_train_v1"),
-          "step_seconds": rec.get("time/total"),
-        }
-      )
+      row = {
+        "run": name,
+        "group": run_group,
+        "config": config,
+        "replicate": replicate,
+        "step": rec.get("step"),
+        "reward": rec[REWARD_KEY],
+        "entropy": rec.get("optim/entropy"),
+        "kl": rec.get("optim/kl_sample_train_v1"),
+        "step_seconds": rec.get("time/total"),
+      }
+      row.update({col: rec.get(key) for col, key in EXTRA_KEYS.items()})
+      rows.append(row)
   if not rows:
     where = f"{runs_dir}" + (f" (group={group})" if group else "")
     raise SystemExit(f"No metrics.jsonl with '{REWARD_KEY}' found under {where}")

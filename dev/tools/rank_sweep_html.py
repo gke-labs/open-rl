@@ -13,6 +13,7 @@ import re
 from datetime import date
 from pathlib import Path
 
+import pandas as pd
 from rank_sweep_report import config_order, load_runs, noise_floor, summarize, summarize_configs
 
 # Validated categorical palette, light / dark pairs. Slots are handed out in
@@ -528,6 +529,77 @@ def limits(total: int, largest: int) -> list[tuple[str, str, str, str, str]]:
   ]
 
 
+def _early_table(exp, keys, steps=(0, 2, 4, 9, 14, 19, 29, 39)) -> str:
+  """Per-configuration trajectory of a few diagnostic series over selected steps."""
+  df = exp["df"]
+  head = "".join(f'<th class="num">{s}</th>' for s in steps)
+  body = ""
+  for label, key, fmt in keys:
+    if key not in df.columns:
+      continue
+    for config in config_order(df["config"]):
+      sub = df[df["config"] == config]
+      means = sub.groupby("step")[key].mean()
+      cells = "".join(f'<td class="num">{means[s]:{fmt}}</td>' if s in means.index else '<td class="num">&mdash;</td>' for s in steps)
+      body += f"<tr><td>{label}</td><td>{config_label(config)}</td>{cells}</tr>"
+  return f"<table><thead><tr><th>Series</th><th>Configuration</th>{head}</tr></thead><tbody>{body}</tbody></table>"
+
+
+def early_training_section(experiments, max_tokens: int) -> str:
+  """Why full fine-tuning led early at one model size and not the other."""
+  if len(experiments) < 2:
+    return ""
+  big = experiments[-1]
+  small = experiments[0]
+  keys = [
+    ("Format score", "format", ".2f"),
+    ("Action tokens/turn", "ac_tokens_per_turn", ".0f"),
+    ("Groups scoring zero", "frac_all_bad", ".2f"),
+  ]
+  return f"""
+<h2>Why full fine-tuning led early at {big["model"]}</h2>
+<p>The endpoint tables say the configurations agree. The pace tables say full fine-tuning
+got there first at {big["model"]} and not at {small["model"]}. That asymmetry has a
+specific cause, and it is not capacity.</p>
+
+<p>At {big["model"]}, LoRA's reward goes <em>negative</em> around step 2 and stays near
+zero until roughly step 14 before recovering. Full fine-tuning never dips. Decomposing
+reward into its parts shows what happens.</p>
+
+<h3>{big["model"]}</h3>
+{_early_table(big, keys)}
+
+<p>The format score collapses for both LoRA ranks &mdash; from 0.17 to about 0.02 by step
+2 &mdash; while full fine-tuning's climbs. Generation length explains it: the sampler is
+capped at {max_tokens} tokens, and the LoRA runs stay against that cap for a dozen steps
+while full fine-tuning's outputs shorten steadily from the start. Responses that run to
+the cap are truncated before they emit the answer in the expected form, so they score
+zero on format and on correctness.</p>
+
+<p>The consequence compounds. With most completions failing, whole groups score
+identically, and a group whose rewards are constant carries no advantage signal and is
+filtered out. Around two thirds of groups are in that state for the LoRA runs through the early
+steps, against a quarter to a third for full fine-tuning. The LoRA runs were not learning more slowly
+from the same data; they were learning from a fraction of it.</p>
+
+<h3>{small["model"]}</h3>
+{_early_table(small, keys)}
+
+<p>Nothing comparable happens here. Every configuration shortens its outputs from the
+first steps, format climbs monotonically, and the fraction of dead groups stays low. That
+is why the pace gap is absent at this size.</p>
+
+<div class="callout">
+<p>This bounds what the sample-efficiency half of the comparison is worth. The paper's
+claim covers sample efficiency, and on these settings LoRA does reach a given reward
+later at {big["model"]}. But the mechanism is an interaction between the learning rate,
+the token cap and early generation length &mdash; not the adapter's capacity to represent
+the update. A run with a larger token budget, or with each configuration swept to its own
+learning rate as the paper did, would be needed to separate the two. We did neither.</p>
+</div>
+"""
+
+
 def scheduling_section(experiments) -> str:
   """Limitations in the placement layer that this run exposed, and what fixing them takes."""
   total = sum(len(exp["summary"]) for exp in experiments)
@@ -573,6 +645,153 @@ after it, and is smaller work than any of the three fixes above.</p>
 
 
 LORA_LR, FFT_LR = "1e-4", "1e-5"
+# Sparse delta payload: bf16 values plus int32 indices, verified against the
+# on-disk safetensors size.
+DELTA_BYTES_PER_ELEMENT = 6
+DENSE_BYTES_PER_ELEMENT = 2
+
+
+def density_chart(density, groups, idx_base: int = 90) -> str:
+  """Delta density against step, one line per full fine-tuning run.
+
+  Plotted on the same step axis as the reward curves so the two can be read
+  together: the update starts broad and narrows as training settles.
+  """
+  if density is None or density.empty:
+    return ""
+  w, h = 720, 300
+  pad_l, pad_r, pad_t, pad_b = 56, 96, 16, 40
+  xmax = float(density["step"].max())
+  ymax = max(1.0, float(density["density_pct"].max()) * 1.08)
+
+  def px(s):
+    return _scale(s, 0, xmax, pad_l, w - pad_r)
+
+  def py(v):
+    return _scale(v, 0, ymax, h - pad_b, pad_t)
+
+  parts = []
+  for t in range(0, int(ymax) + 2, 3):
+    if t > ymax:
+      break
+    y = py(t)
+    parts.append(f'<line class="grid" x1="{pad_l}" y1="{y:.1f}" x2="{w - pad_r}" y2="{y:.1f}"/>')
+    parts.append(f'<text class="tick" x="{pad_l - 10}" y="{y + 4:.1f}" text-anchor="end">{t}%</text>')
+  for t in range(0, int(xmax) + 1, 10):
+    parts.append(f'<text class="tick" x="{px(t):.1f}" y="{h - pad_b + 20}" text-anchor="middle">{t}</text>')
+
+  # One hue per model group; replicates of a group share it and split by dash.
+  hues = {g: PALETTE[i % len(PALETTE)] for i, g in enumerate(groups)}
+  labels = []
+  for _run, g in density.groupby("run"):
+    g = g.sort_values("step")
+    grp = str(g["group"].iloc[0])
+    rep = str(g["replicate"].iloc[0])
+    pts = " ".join(f"{px(float(s)):.1f},{py(float(v)):.1f}" for s, v in zip(g["step"], g["density_pct"], strict=False))
+    dash = _dash_attr("" if rep == "a" else "5 3")
+    parts.append(f'<polyline class="line" stroke="{hues[grp][0]}"{dash} points="{pts}"/>')
+    labels.append(
+      {"x": px(float(g["step"].iloc[-1])) + 8, "y": py(float(g["density_pct"].iloc[-1])) + 4, "t": f"{groups[grp]} ({rep})", "c": hues[grp][0]}
+    )
+  labels.sort(key=lambda item: item["y"])
+  for i in range(1, len(labels)):
+    if labels[i]["y"] - labels[i - 1]["y"] < LABEL_GAP:
+      labels[i]["y"] = labels[i - 1]["y"] + LABEL_GAP
+  for item in labels:
+    parts.append(f'<text class="endlabel" fill="{item["c"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["t"]}</text>')
+  return f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Delta density against training step">{"".join(parts)}</svg>'
+
+
+def _weight_sync_table(density, groups) -> str:
+  rows = ""
+  for grp, g in density.groupby("group"):
+    per_run = []
+    for _run, r in g.groupby("run"):
+      r = r.sort_values("step")
+      first = float(r["density_pct"].iloc[0])
+      med = float(r["density_pct"].median())
+      last = float(r["density_pct"].iloc[-1])
+      med_changed = float(r["changed_elements"].median())
+      total = float(r["total_elements"].iloc[0])
+      per_run.append((first, med, last, med_changed, total))
+    n = len(per_run)
+
+    def avg(i, rows=per_run, count=n):
+      return sum(p[i] for p in rows) / count
+
+    total = per_run[0][4]
+    med_bytes = avg(3) * DELTA_BYTES_PER_ELEMENT
+    dense = total * DENSE_BYTES_PER_ELEMENT
+    rows += (
+      f"<tr><td>{groups.get(str(grp), grp)}</td>"
+      f'<td class="num">{total / 1e9:.2f}B</td>'
+      f'<td class="num">{avg(0):.1f}%</td>'
+      f'<td class="num">{avg(1):.2f}%</td>'
+      f'<td class="num">{avg(2):.2f}%</td>'
+      f'<td class="num">{med_bytes / 1e9:.2f} GB</td>'
+      f'<td class="num">{dense / 1e9:.1f} GB</td>'
+      f'<td class="num">{dense / med_bytes:.0f}&times;</td></tr>'
+    )
+  return (
+    "<table><thead><tr><th>Model</th><th>Parameters</th><th>Density<br>step 1</th>"
+    "<th>Density<br>median</th><th>Density<br>final</th><th>Median<br>transfer</th>"
+    "<th>Dense<br>equivalent</th><th>Saving</th></tr></thead>"
+    f"<tbody>{rows}</tbody></table>"
+  )
+
+
+def weight_sync_section(experiments, density, groups) -> str:
+  """What full fine-tuning actually ships to the sampler each step."""
+  if density is None or density.empty:
+    return ""
+  timing = ""
+  for exp in experiments:
+    df = exp["df"]
+    if "time/compute_delta_diff" not in df.columns:
+      continue
+    fft = df[df["config"] == "fullft"]
+    diff = fft["time/compute_delta_diff"].dropna()
+    total = fft["time/total"].dropna()
+    if diff.empty:
+      continue
+    timing += (
+      f"<li>{exp['model']}: {diff.mean():.2f}s to compute the delta, against "
+      f"{total.mean():.0f}s for the whole step &mdash; {100 * diff.mean() / total.mean():.1f}% of it.</li>"
+    )
+  return f"""
+<h2>What full fine-tuning ships each step</h2>
+<p>Full fine-tuning keeps the trainer and the sampler in step by sending a sparse delta:
+the subset of parameters that changed, as values plus indices, rather than the whole
+tensor. LoRA has no equivalent, since it ships adapter weights that are small by
+construction. This section is therefore about the cost full fine-tuning pays to stay
+current, and it is the concrete form of the overhead LoRA avoids.</p>
+
+{_weight_sync_table(density, groups)}
+
+<p>The saving is real but smaller than "sparse" suggests, because the payload is
+{DELTA_BYTES_PER_ELEMENT} bytes per changed element &mdash; a bf16 value and an int32
+index &mdash; so indices cost twice what the values do. Halving the index width would cut
+a third off the transfer. These figures were checked against the safetensors files on
+disk rather than inferred from the element counts.</p>
+
+<figure>
+{density_chart(density, groups)}
+<figcaption><strong>Figure 3.</strong> Fraction of parameters changed per step, both full
+fine-tuning replicates at each model size. Replicates share a colour and separate by dash
+pattern.</figcaption>
+</figure>
+
+<p>The shape is the same at both sizes: the first step rewrites more than a tenth of the
+model, and within five steps the update settles to two or three percent. The two
+replicates track each other closely, so this is a property of the training run rather
+than of a seed. Density never reaches zero, which is why every step pays a transfer.</p>
+
+<ul>{timing}</ul>
+
+<p>Computing the delta is not the expensive part. The transfer and the sampler-side patch
+are, and they scale with density &mdash; so the first few steps, where density is highest,
+are also the slowest to synchronise.</p>
+"""
 
 
 def _method(experiments, all_configs) -> tuple[str, str, str]:
@@ -696,9 +915,10 @@ def _lede(experiments) -> str:
   return head + " Repeat seeds are what make these statements possible: they measure the noise floor rather than assuming it."
 
 
-def render(experiments, out: Path, smooth: int, tail: int) -> None:
+def render(experiments, out: Path, smooth: int, tail: int, density=None, max_tokens: int = 512) -> None:
   """experiments: list of dicts with label, model, df, summary, configs, gaps, notes."""
   all_configs = config_order([c for exp in experiments for c in exp["df"]["config"]])
+  groups = {str(e["df"]["group"].iloc[0]): e["model"] for e in experiments if e["df"]["group"].notna().any()}
   names = json.dumps({c: config_label(c) for c in all_configs})
   cfgs, sections = [], []
 
@@ -815,6 +1035,8 @@ count: a 0.6B full fine-tune fits a 24&nbsp;GB L4, while an 8B one needs an 80&n
 H100, and an 8B LoRA worker needs one too, because the sampler must hold 16.4&nbsp;GB of
 frozen weights inside the fraction of the device vLLM is given.</p>
 <p>{placement_note}</p>
+{early_training_section(experiments, max_tokens)}
+{weight_sync_section(experiments, density, groups)}
 {scheduling_section(experiments)}
 <details><summary>Full data ({total_rows} rows)</summary>
 <table><thead><tr><th>Model</th><th>Run</th><th>Step</th><th>Reward</th><th>Seconds</th></tr></thead>
@@ -881,7 +1103,10 @@ def main() -> None:
   ap.add_argument("--out", type=Path, default=Path("report.html"))
   ap.add_argument("--tail", type=int, default=10)
   ap.add_argument("--smooth", type=int, default=5)
+  ap.add_argument("--density", type=Path, help="CSV of per-step sparse-delta density for the full fine-tuning runs")
+  ap.add_argument("--max-tokens", type=int, default=512, help="sampler token cap the runs used")
   args = ap.parse_args()
+  density = pd.read_csv(args.density) if args.density else None
 
   experiments = []
   for spec in args.run:
@@ -902,7 +1127,7 @@ def main() -> None:
         "note": _note(configs),
       }
     )
-  render(experiments, args.out, args.smooth, args.tail)
+  render(experiments, args.out, args.smooth, args.tail, density=density, max_tokens=args.max_tokens)
 
 
 if __name__ == "__main__":

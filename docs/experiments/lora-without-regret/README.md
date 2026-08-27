@@ -42,13 +42,45 @@ than any gap being measured, so "within noise" there describes the noise, not
 the ranks. It is included because it shows what an underpowered version of this
 experiment looks like.
 
-**Pace differed from final performance.** At 8B, full fine-tuning crossed 0.9 at
-step 19, rank 32 at 25 and rank 1 at 27. Over the first 15 steps full
-fine-tuning averaged 0.48 against rank 1's 0.15. The paper's claim covers sample
-efficiency as well as final performance, so this is a real difference; two
-untested explanations would produce it, LoRA initialising B at zero so its
-effective learning rate ramps up, and our use of a fixed 10× learning-rate ratio
-rather than sweeping each configuration to its own optimum.
+**Pace differed from final performance, and we found why.** At 8B, full
+fine-tuning crossed 0.9 at step 19, rank 32 at 25 and rank 1 at 27. Over the
+first 15 steps full fine-tuning averaged 0.48 against rank 1's 0.15.
+
+That gap is not a capacity effect. Decomposing the reward shows LoRA's format
+score collapsing from 0.17 to 0.02 by step 2 at 8B while full fine-tuning's
+climbs. Generation length is the cause: the sampler is capped at 512 tokens, and
+the LoRA runs sit against that cap for a dozen steps while full fine-tuning's
+outputs shorten from the start. Truncated responses never emit the answer
+format, so they score zero — and because whole groups then score identically,
+their advantage signal is constant and they get filtered. Around two thirds of
+groups are dead for the LoRA runs early on, against a quarter to a third for
+full fine-tuning. They were learning from less data, not learning more slowly
+from the same data.
+
+None of this happens at 0.6B, which is why the pace gap is absent there. The
+interaction is between learning rate, token cap and initial verbosity; deciding
+whether any of it is intrinsic to LoRA would need a larger token budget or a
+per-configuration learning-rate sweep, neither of which we ran.
+
+## Weight sync
+
+Full fine-tuning keeps the sampler current with a sparse delta — changed
+parameters as values plus indices. LoRA has no equivalent. Per-step density,
+recovered from the state metadata each save writes:
+
+| Model | Params | Step 1 | Median | Final | Median transfer | Dense | Saving |
+|---|---|---|---|---|---|---|---|
+| Qwen3-8B | 8.19B | 12.9% | 3.18% | 1.99% | 1.56 GB | 16.4 GB | 10× |
+| Qwen3-0.6B | 0.60B | 11.7% | 2.47% | 2.10% | 0.09 GB | 1.2 GB | 13× |
+
+The first step rewrites more than a tenth of the model; within five steps it
+settles to two or three percent, and never reaches zero. Replicates track each
+other closely, so this is a property of training rather than of a seed.
+
+Two things worth noting. The payload is 6 bytes per changed element (bf16 value,
+int32 index), so indices cost twice what the values do — a narrower index type
+would cut a third off the transfer. And computing the delta is not the expensive
+part: 1.65s of a 128s step at 8B. The transfer and sampler-side patch are.
 
 ## What these runs do not show
 
@@ -82,6 +114,7 @@ metrics-0.6b/*.jsonl   raw per-run metrics, Qwen3-0.6B (fft/r1/r32 × a/b)
 metrics-8b/*.jsonl     raw per-run metrics, Qwen3-8B
 rank_sweep-0.6b.csv    tidy extract (run, group, config, replicate, step, reward, ...)
 rank_sweep-8b.csv      same, 8B
+delta_density.csv      per-step sparse-delta density for the four FFT runs
 ```
 
 Raw metrics are kept so the analysis can be rebuilt without re-running. The
@@ -101,7 +134,9 @@ cd dev/tools
 uv run python rank_sweep_report.py --runs-dir <dir> --group large --out-dir out
 uv run python rank_sweep_html.py \
   --run "Qwen3-0.6B on L4=Qwen3-0.6B=<dir>=small" \
-  --run "Qwen3-8B on H100=Qwen3-8B=<dir>=large" --out report.html
+  --run "Qwen3-8B on H100=Qwen3-8B=<dir>=large" \
+  --density <repo>/docs/experiments/lora-without-regret/delta_density.csv \
+  --out report.html
 ```
 
 ## Run conditions
