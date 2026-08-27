@@ -8,6 +8,8 @@ kind: Kustomization
 #   - local-path PVC instead of an RWX Filestore class
 #   - DCGM/PodMonitoring dropped (GKE-release image, gke-accelerator node
 #     selector, and a Google Managed Prometheus CRD that does not exist here)
+#   - the llm-d snapshot agent reads the driver from the node's own root rather
+#     than COS's /home/kubernetes/bin/nvidia bundle
 #   - images point at locally built tags in the cluster-local registry
 #
 # Images are set with explicit patches rather than an `images:` transformer.
@@ -62,6 +64,44 @@ patches:
       kind: PodMonitoring
       metadata:
         name: nvidia-dcgm-exporter-scraper
+
+  # The vendored llm-d chart mounts COS's driver bundle,
+  # /home/kubernetes/bin/nvidia, and reads its libraries through
+  # LD_LIBRARY_PATH=/usr/local/nvidia/lib64. That layout is GKE's. A kind node
+  # keeps the driver in the ordinary system location, and the mount declares
+  # `type: Directory`, so the kubelet refuses to invent the missing path and the
+  # pod sits in ContainerCreating -- with empty logs, because the container never
+  # starts. Repoint the same volume at the node's real driver root and drop the
+  # lib64 suffix, since the libraries sit directly in the mounted directory.
+  # dev/kind/create-cluster.sh installs the DRA driver with nvidiaDriverRoot=/
+  # for the same reason.
+  #
+  # Patched by name, not by index: `volumes` merges on name and `env` on name,
+  # so neither depends on the order the upstream chart happens to render. The
+  # volumeMount is deliberately left alone -- that list merges on mountPath, so
+  # naming a new one would append a second mount instead of moving the first.
+  - target:
+      kind: DaemonSet
+      name: snapshot-agent
+    patch: |
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: snapshot-agent
+        namespace: timeslice-system
+      spec:
+        template:
+          spec:
+            containers:
+              - name: snapshot-agent
+                env:
+                  - name: LD_LIBRARY_PATH
+                    value: /usr/local/nvidia
+            volumes:
+              - name: nvidia-driver
+                hostPath:
+                  path: /usr/lib/x86_64-linux-gnu
+                  type: Directory
 
   # Must match what dev/kind/load-images.sh builds and pushes.
   #
