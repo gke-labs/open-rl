@@ -9,17 +9,57 @@
 import argparse
 import html
 import json
+import re
 from datetime import date
 from pathlib import Path
 
-from rank_sweep_report import RUN_ORDER, load_runs, summarize
+from rank_sweep_report import config_order, load_runs, noise_floor, summarize, summarize_configs
 
-# Validated categorical slots 1-3 (light / dark), from the design-system palette.
-SERIES = {
-  "fullft": ("#2a78d6", "#3987e5", "Full fine-tuning"),
-  "lora-r32": ("#eb6834", "#d95926", "LoRA rank 32"),
-  "lora-r1": ("#1baf7a", "#199e70", "LoRA rank 1"),
-}
+# Validated categorical palette, light / dark pairs. Slots are handed out in
+# configuration order, so a configuration keeps its hue across every chart and
+# across reports that contain different subsets.
+PALETTE = [
+  ("#2a78d6", "#3987e5"),
+  ("#eb6834", "#d95926"),
+  ("#1baf7a", "#199e70"),
+  ("#9457c9", "#a06fd4"),
+  ("#c9a227", "#d9b53a"),
+  ("#3aa3a3", "#48b5b5"),
+]
+# Replicates of one configuration share a colour and separate by dash pattern.
+DASHES = ["", "5 3", "1 3", "7 3 2 3"]
+
+
+def config_label(config: str) -> str:
+  if config == "fullft":
+    return "Full fine-tuning"
+  m = re.match(r"lora-r(\d+)$", config)
+  return f"LoRA rank {m.group(1)}" if m else config
+
+
+def run_label(config: str, replicate) -> str:
+  base = config_label(config)
+  return base if replicate in (None, "") or _isnan(replicate) else f"{base} ({replicate})"
+
+
+def _isnan(v) -> bool:
+  return v != v
+
+
+def palette_for(configs) -> dict[str, tuple[str, str]]:
+  return {c: PALETTE[i % len(PALETTE)] for i, c in enumerate(config_order(configs))}
+
+
+def dash_for(replicates) -> dict:
+  present = sorted({r for r in replicates if r is not None and not _isnan(r)})
+  out = {r: DASHES[i % len(DASHES)] for i, r in enumerate(present)}
+  out[None] = ""
+  return out
+
+
+def _dash_attr(pattern: str) -> str:
+  return f' stroke-dasharray="{pattern}"' if pattern else ""
+
 
 W, H = 720, 380
 PAD_L, PAD_R, PAD_T, PAD_B = 56, 96, 16, 40
@@ -41,8 +81,36 @@ def _rolling(vals, window):
   return out
 
 
+def _runs_in_order(df):
+  """(run, config, replicate) tuples, configurations in claim order, replicates alphabetical."""
+  seen = df[["run", "config", "replicate"]].drop_duplicates()
+  order = config_order(seen["config"])
+  rows = []
+  for config in order:
+    sub = seen[seen["config"] == config].sort_values("replicate", na_position="first")
+    for _, r in sub.iterrows():
+      rep = None if r["replicate"] is None or _isnan(r["replicate"]) else r["replicate"]
+      rows.append((str(r["run"]), config, rep))
+  return rows
+
+
+def config_series(df, smooth: int):
+  """Reward per step averaged over replicates, per configuration.
+
+  Pace and gap comparisons use this rather than a single replicate, so a lucky
+  seed cannot decide when a configuration is said to have crossed a threshold.
+  """
+  out = {}
+  for config in config_order(df["config"]):
+    sub = df[df["config"] == config]
+    means = sub.groupby("step")["reward"].mean().sort_index()
+    out[config] = (list(means.index), _rolling([float(v) for v in means], smooth))
+  return out
+
+
 def reward_chart(df, smooth: int, idx: int = 0) -> str:
-  run_names = [a for a in RUN_ORDER if a in set(df["run"])]
+  runs = _runs_in_order(df)
+  dashes = dash_for(df["replicate"])
   xmax = float(df["step"].max())
   ymin, ymax = 0.0, max(1.0, float(df["reward"].max()) * 1.05)
 
@@ -67,45 +135,49 @@ def reward_chart(df, smooth: int, idx: int = 0) -> str:
     parts.append(f'<text class="tick" x="{x:.1f}" y="{H - PAD_B + 20}" text-anchor="middle">{t}</text>')
 
   series_json = {}
-  for name in run_names:
+  for name, config, replicate in runs:
     g = df[df["run"] == name].sort_values("step")
     steps = [float(s) for s in g["step"]]
     raw = [float(v) for v in g["reward"]]
     rolled = _rolling(raw, smooth)
-    series_json[name] = {"steps": steps, "raw": raw, "rolled": rolled}
+    series_json[name] = {"steps": steps, "raw": raw, "rolled": rolled, "config": config, "label": run_label(config, replicate)}
 
+    dash = _dash_attr(dashes[replicate])
     raw_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, raw, strict=False))
     roll_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, rolled, strict=False))
-    parts.append(f'<polyline class="raw" data-run="{name}" points="{raw_pts}"/>')
-    parts.append(f'<polyline class="line" data-run="{name}" points="{roll_pts}"/>')
-    end_labels.append({"run": name, "x": px(steps[-1]) + 8, "y": py(rolled[-1]) + 4})
+    parts.append(f'<polyline class="raw" data-config="{config}" points="{raw_pts}"/>')
+    parts.append(f'<polyline class="line" data-config="{config}"{dash} points="{roll_pts}"/>')
+    end_labels.append({"config": config, "text": run_label(config, replicate), "x": px(steps[-1]) + 8, "y": py(rolled[-1]) + 4})
 
   # Direct labels carry identity so it never rests on colour alone -- but runs
   # that converge finish at the same height and would overprint each other.
-  # Push them apart, keeping their vertical order.
+  # Push them apart, keeping their vertical order. With replicates there are
+  # twice as many labels, so this matters more than it did.
   end_labels.sort(key=lambda item: item["y"])
   for i in range(1, len(end_labels)):
     gap = end_labels[i]["y"] - end_labels[i - 1]["y"]
     if gap < LABEL_GAP:
       end_labels[i]["y"] = end_labels[i - 1]["y"] + LABEL_GAP
   for item in end_labels:
-    parts.append(f'<text class="endlabel" data-run="{item["run"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{SERIES[item["run"]][2]}</text>')
+    parts.append(f'<text class="endlabel" data-config="{item["config"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{item["text"]}</text>')
 
   parts.append(f'<line id="crosshair-{idx}" class="crosshair" x1="0" y1="{PAD_T}" x2="0" y2="{H - PAD_B}" style="opacity:0"/>')
   parts.append(f'<rect id="hitarea-{idx}" x="{PAD_L}" y="{PAD_T}" width="{W - PAD_L - PAD_R}" height="{H - PAD_T - PAD_B}" fill="transparent"/>')
 
-  svg = f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Reward versus training step for three runs">{"".join(parts)}</svg>'
+  svg = f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Reward versus training step for {len(runs)} runs">{"".join(parts)}</svg>'
   cfg = json.dumps({"idx": idx, "series": series_json, "padL": PAD_L, "padR": PAD_R, "w": W, "xmax": xmax})
   return svg, cfg
 
 
-def gap_chart(gaps) -> str:
-  """Gap to FullFT at successive matched-step checkpoints, with a zero line."""
+def gap_chart(gaps, floor: float = float("nan")) -> str:
+  """Gap to FullFT at successive matched-step checkpoints, against the replicate spread."""
   checkpoints = [c for c, _ in gaps]
   w, h = 720, 260
   pad_l, pad_r, pad_t, pad_b = 56, 92, 16, 38
+  extent = floor if floor == floor else 0.0
   lo = min(min(v.values()) for _, v in gaps) - 0.03
   hi = max(max(v.values()) for _, v in gaps) + 0.03
+  lo, hi = min(lo, -extent - 0.01), max(hi, extent + 0.01)
 
   def px(i):
     return _scale(i, 0, max(1, len(checkpoints) - 1), pad_l, w - pad_r)
@@ -117,36 +189,61 @@ def gap_chart(gaps) -> str:
   parts.append(f'<text class="tick" x="{w - pad_r + 8}" y="{py(0) + 4:.1f}">parity</text>')
   for i, c in enumerate(checkpoints):
     parts.append(f'<text class="tick" x="{px(i):.1f}" y="{h - pad_b + 20}" text-anchor="middle">{c}</text>')
-  for name in ("lora-r32", "lora-r1"):
+  tracked = [c for c in config_order({k for _, v in gaps for k in v}) if c != "fullft"]
+  # The noise band makes the chart readable on its own: a marker inside it is
+  # not distinguishable from seed variation, whatever its distance from zero.
+  if floor == floor and floor > 0:
+    parts.insert(
+      0, f'<rect class="band" x="{pad_l}" y="{py(floor):.1f}" width="{w - pad_l - pad_r:.1f}" height="{abs(py(-floor) - py(floor)):.1f}"/>'
+    )
+    parts.append(f'<text class="tick" x="{w - pad_r + 8}" y="{py(floor) - 4:.1f}">replicate spread</text>')
+  for name in tracked:
     pts = " ".join(f"{px(i):.1f},{py(v[name]):.1f}" for i, (_, v) in enumerate(gaps) if name in v)
-    parts.append(f'<polyline class="line" data-run="{name}" points="{pts}"/>')
+    parts.append(f'<polyline class="line" data-config="{name}" points="{pts}"/>')
     for i, (_, v) in enumerate(gaps):
       if name in v:
-        parts.append(f'<circle class="dot" data-run="{name}" cx="{px(i):.1f}" cy="{py(v[name]):.1f}" r="4.5"/>')
+        parts.append(f'<circle class="dot" data-config="{name}" cx="{px(i):.1f}" cy="{py(v[name]):.1f}" r="4.5"/>')
     last = gaps[-1][1]
     lx, ly = px(len(checkpoints) - 1) + 8, py(last[name]) + 4
-    parts.append(f'<text class="endlabel" data-run="{name}" x="{lx:.1f}" y="{ly:.1f}">{SERIES[name][2]}</text>')
+    parts.append(f'<text class="endlabel" data-config="{name}" x="{lx:.1f}" y="{ly:.1f}">{config_label(name)}</text>')
   return f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Gap to full fine-tuning at successive checkpoints">{"".join(parts)}</svg>'
 
 
 def build_gaps(df, tail: int):
-  """Recompute the summary at several matched-step checkpoints."""
+  """Gap of each configuration's mean to full fine-tuning, at matched-step checkpoints.
+
+  Replicates are folded in before the gap is taken, so this tracks the
+  configuration rather than whichever seed happened to be ahead.
+  """
   common = int(df.groupby("run")["step"].count().min())
   checkpoints = [c for c in (6, 14, 28, common) if c <= common]
   out = []
   for c in checkpoints:
     sub = df[df["step"] < c]
     summary, _ = summarize(sub, min(tail, max(1, c // 3)))
-    ref = float(summary.loc[summary["run"] == "fullft", "tail_mean"].iloc[0])
-    out.append((c, {str(r["run"]): float(r["tail_mean"]) - ref for _, r in summary.iterrows() if r["run"] != "fullft"}))
+    configs = summarize_configs(summary)
+    if "gap_vs_fullft" not in configs:
+      continue
+    out.append((c, {str(r["config"]): float(r["gap_vs_fullft"]) for _, r in configs.iterrows() if r["config"] != "fullft"}))
   return out
 
 
+def color_css(configs) -> str:
+  """Custom properties and stroke rules for whichever configurations are present.
+
+  Generated rather than fixed, so a sweep that adds a rank does not need the
+  stylesheet edited alongside it.
+  """
+  pal = palette_for(configs)
+  light = "".join(f"--c-{c}:{v[0]};" for c, v in pal.items())
+  dark = "".join(f"--c-{c}:{v[1]};" for c, v in pal.items())
+  strokes = "".join(f"[data-config={c}]{{stroke:var(--c-{c})}}circle[data-config={c}]{{fill:var(--c-{c})}}" for c in pal)
+  return f":root{{{light}}}@media (prefers-color-scheme:dark){{:root{{{dark}}}}}{strokes}text.endlabel{{stroke:none}}"
+
+
 CSS = """
-:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--rule:#e6e5e0;
---fullft:#2a78d6;--lora-r32:#eb6834;--lora-r1:#1baf7a}
-@media (prefers-color-scheme:dark){:root{--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--rule:#33322f;
---fullft:#3987e5;--lora-r32:#d95926;--lora-r1:#199e70}}
+:root{--surface:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--rule:#e6e5e0}
+@media (prefers-color-scheme:dark){:root{--surface:#1a1a19;--ink:#fff;--ink2:#c3c2b7;--rule:#33322f}}
 *{box-sizing:border-box}
 body{background:var(--surface);color:var(--ink);margin:0;
 font:17px/1.65 ui-serif,Georgia,"Times New Roman",serif;-webkit-font-smoothing:antialiased}
@@ -168,9 +265,7 @@ svg{width:100%;height:auto;display:block;overflow:visible}
 .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .endlabel{font:12px ui-sans-serif,system-ui,sans-serif;fill:var(--ink2)}
 .crosshair{stroke:var(--ink2);stroke-width:1;stroke-dasharray:3 3}
-[data-run=fullft]{stroke:var(--fullft)}[data-run=lora-r32]{stroke:var(--lora-r32)}[data-run=lora-r1]{stroke:var(--lora-r1)}
-circle[data-run=fullft]{fill:var(--fullft)}circle[data-run=lora-r32]{fill:var(--lora-r32)}circle[data-run=lora-r1]{fill:var(--lora-r1)}
-text.endlabel{stroke:none}
+.band{fill:var(--ink2);opacity:.07}
 .legend{display:flex;gap:1.4rem;flex-wrap:wrap;font:13px ui-sans-serif,system-ui,sans-serif;color:var(--ink2);margin:.2rem 0 .4rem}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:.45rem;vertical-align:-1px}
 table{border-collapse:collapse;width:100%;font:14px ui-sans-serif,system-ui,sans-serif;margin:1.2rem 0}
@@ -225,15 +320,12 @@ for (const cfg of CHARTS) {
 
 
 def steps_to_thresholds(df, smooth: int):
-  """First step at which each run's rolling mean crosses each threshold."""
+  """First step at which each configuration's replicate-averaged mean crosses each threshold."""
   out = []
-  for name in [a for a in RUN_ORDER if a in set(df["run"])]:
-    g = df[df["run"] == name].sort_values("step")
-    rolled = _rolling([float(v) for v in g["reward"]], smooth)
-    row = {"run": name, "early": sum(rolled[:15]) / min(15, len(rolled))}
+  for config, (_steps, rolled) in config_series(df, smooth).items():
+    row = {"config": config, "early": sum(rolled[:15]) / min(15, len(rolled))}
     for th in (0.5, 0.8, 0.9):
-      hit = next((i for i, v in enumerate(rolled) if v >= th), None)
-      row[th] = hit
+      row[th] = next((i for i, v in enumerate(rolled) if v >= th), None)
     out.append(row)
   return out
 
@@ -242,42 +334,68 @@ def _pace_table(df, smooth: int) -> str:
   rows = ""
   for r in steps_to_thresholds(df, smooth):
     cells = "".join(f'<td class="num">{"&mdash;" if r[th] is None else r[th]}</td>' for th in (0.5, 0.8, 0.9))
-    rows += f'<tr><td>{SERIES[r["run"]][2]}</td><td class="num">{r["early"]:.3f}</td>{cells}</tr>'
+    rows += f'<tr><td>{config_label(r["config"])}</td><td class="num">{r["early"]:.3f}</td>{cells}</tr>'
   return (
-    "<table><thead><tr><th>Run</th><th>Mean reward<br>steps 0-14</th>"
+    "<table><thead><tr><th>Configuration</th><th>Mean reward<br>steps 0-14</th>"
     "<th>Step to 0.5</th><th>Step to 0.8</th><th>Step to 0.9</th></tr></thead>"
     f"<tbody>{rows}</tbody></table>"
   )
 
 
-def _summary_table(summary, tail: int) -> str:
+def _summary_table(configs, tail: int) -> str:
+  """Per configuration, with the replicate spread beside the gap it has to beat."""
+  floor = noise_floor(configs)
+  rows = ""
+  for _, r in configs.iterrows():
+    name = str(r["config"])
+    gap = r.get("gap_vs_fullft", 0.0)
+    spread = r["spread"]
+    spread_txt = "&mdash;" if spread != spread else f"{spread:.4f}"
+    if name == "fullft":
+      gap_txt, verdict = "&mdash;", "reference"
+    else:
+      gap_txt = f"{gap:+.4f}"
+      verdict = "&mdash;" if floor != floor else ("within noise" if abs(gap) <= floor else "exceeds noise")
+    rows += (
+      f"<tr><td>{config_label(name)}</td>"
+      f'<td class="num">{r["mean"]:.3f}</td>'
+      f'<td class="num">{spread_txt}</td>'
+      f'<td class="num">{gap_txt}</td>'
+      f"<td>{verdict}</td>"
+      f'<td class="num">{r["sec_per_step"]:.0f}s</td></tr>'
+    )
+  return (
+    f"<table><thead><tr><th>Configuration</th><th>Mean reward<br>(last {tail})</th>"
+    f"<th>Replicate<br>spread</th><th>Gap vs FullFT</th><th>Verdict</th><th>Per step</th></tr></thead>"
+    f"<tbody>{rows}</tbody></table>"
+  )
+
+
+def _runs_table(summary, tail: int) -> str:
+  """Every individual run, so the folded table above can be checked against it."""
   rows = ""
   for _, r in summary.iterrows():
-    name = str(r["run"])
-    gap = r.get("gap_vs_fullft", 0.0)
-    gap_txt = "&mdash;" if name == "fullft" else f"{gap:+.4f}"
     rows += (
-      f"<tr><td>{SERIES[name][2]}</td>"
+      f"<tr><td>{run_label(str(r['config']), r['replicate'])}</td>"
       f'<td class="num">{r["tail_mean"]:.3f}</td>'
       f'<td class="num">{r["tail_std"]:.3f}</td>'
-      f'<td class="num">{gap_txt}</td>'
       f'<td class="num">{r["final"]:.3f}</td>'
       f'<td class="num">{r["sec_per_step"]:.0f}s</td></tr>'
     )
   return (
-    f"<table><thead><tr><th>Run</th><th>Mean reward<br>(last {tail})</th><th>&plusmn;&nbsp;std</th>"
-    f"<th>Gap vs FullFT</th><th>Final</th><th>Per step</th></tr></thead>"
+    f"<table><thead><tr><th>Run</th><th>Mean reward<br>(last {tail})</th>"
+    f"<th>&plusmn;&nbsp;std</th><th>Final</th><th>Per step</th></tr></thead>"
     f"<tbody>{rows}</tbody></table>"
   )
 
 
 def _legend(df) -> str:
-  return "".join(f'<span><span class="swatch" style="background:var(--{a})"></span>{SERIES[a][2]}</span>' for a in RUN_ORDER if a in set(df["run"]))
+  return "".join(f'<span><span class="swatch" style="background:var(--c-{c})"></span>{config_label(c)}</span>' for c in config_order(df["config"]))
 
 
 def run_pace_note(df, summary) -> str:
-  """Describe how quickly each run got there, which the endpoint table hides."""
-  pace = {r["run"]: r for r in steps_to_thresholds(df, 5)}
+  """Describe how quickly each configuration got there, which the endpoint table hides."""
+  pace = {r["config"]: r for r in steps_to_thresholds(df, 5)}
   ff, r1 = pace.get("fullft", {}), pace.get("lora-r1", {})
   if ff.get(0.9) is not None and r1.get(0.9) is not None:
     return (
@@ -293,8 +411,8 @@ def run_pace_note(df, summary) -> str:
   return "Neither run reached 0.9 within the run, so the pace comparison below is limited to the lower thresholds. No run leads consistently."
 
 
-def _is_lora(name: str) -> bool:
-  return "lora" in name or "-r" in name
+def _lora_count(summary) -> int:
+  return int(summary[summary["config"] != "fullft"]["run"].nunique())
 
 
 def sharing_costs(experiments) -> list[str]:
@@ -307,15 +425,14 @@ def sharing_costs(experiments) -> list[str]:
   out = []
   for exp in experiments:
     s = exp["summary"]
-    lora = s[s["run"].astype(str).map(_is_lora)]
-    fft = s[~s["run"].astype(str).map(_is_lora)]
+    lora, fft = s[s["config"] != "fullft"], s[s["config"] == "fullft"]
     if lora.empty or fft.empty:
       continue
     shared, solo = float(lora["sec_per_step"].mean()), float(fft["sec_per_step"].mean())
     out.append(
-      f"{exp['model']}: {len(lora)} LoRA runs on one trainer and one sampler at "
-      f"{shared:.0f}s per step, against {solo:.0f}s for full fine-tuning on its own "
-      f"GPU &mdash; {shared / solo:.1f}&times; for sharing."
+      f"{exp['model']}: {_lora_count(s)} LoRA runs on one trainer and one sampler at "
+      f"{shared:.0f}s per step, against {solo:.0f}s for full fine-tuning &mdash; "
+      f"{shared / solo:.1f}&times; for sharing."
     )
   return out
 
@@ -373,7 +490,7 @@ def scheduling_section(experiments) -> str:
   """Limitations in the placement layer that this run exposed, and what fixing them takes."""
   total = sum(len(exp["summary"]) for exp in experiments)
   largest = max(
-    (int(exp["summary"]["run"].astype(str).map(_is_lora).sum()) for exp in experiments),
+    (_lora_count(exp["summary"]) for exp in experiments),
     default=0,
   )
   entries = limits(total, largest)
@@ -413,18 +530,130 @@ after it, and is smaller work than any of the three fixes above.</p>
 """
 
 
+LORA_LR, FFT_LR = "1e-4", "1e-5"
+
+
+def _method(experiments, all_configs) -> tuple[str, str, str]:
+  """The Method paragraph, configuration table and seed caveat, sized to the data."""
+  n_configs = len(all_configs)
+  reps = max((int(e["configs"]["replicates"].max()) for e in experiments), default=1)
+  if reps > 1:
+    note = (
+      f"{n_configs} configurations per experiment, each run {reps} times under a different "
+      f"data-shuffling seed. Only the fine-tuning mode, the LoRA rank and the seed differ."
+    )
+    caveat = (
+      f"Each configuration was run {reps} times. The replicate spread bounds how much two runs "
+      f"differing only in seed disagree, which is what makes a gap interpretable; with {reps} "
+      f"seeds it is a coarse estimate, not a confidence interval."
+    )
+  else:
+    note = f"{n_configs} runs per experiment, differing only in the fine-tuning mode and the LoRA rank."
+    caveat = (
+      "One seed per configuration. The reported deviation bounds step-to-step noise within a "
+      "run, not variation between seeds, so a gap of this size is not evidence in either "
+      "direction."
+    )
+  rows = "".join(
+    f"<tr><td>{config_label(c)}</td><td>{'full' if c == 'fullft' else 'lora'}</td>"
+    f'<td class="num">{"&mdash;" if c == "fullft" else c.removeprefix("lora-r")}</td>'
+    f'<td class="num">{FFT_LR if c == "fullft" else LORA_LR}</td>'
+    f'<td class="num">{reps}</td></tr>'
+    for c in all_configs
+  )
+  table = (
+    "<table><thead><tr><th>Configuration</th><th>Mode</th><th>Rank</th>"
+    f"<th>Learning rate</th><th>Seeds</th></tr></thead><tbody>{rows}</tbody></table>"
+  )
+  return note, table, caveat
+
+
+def _episodes(exp) -> int:
+  return int(exp["summary"]["steps"].min()) * 64
+
+
+def _episode_note(experiments) -> str:
+  """How many episodes each experiment actually saw, against the paper's scale."""
+  parts = [f"the {e['model']} runs saw about {_episodes(e):,}" for e in experiments]
+  return " and ".join(parts) + " each."
+
+
+def _ceiling_note(experiments) -> str:
+  """Where each model plateaued: the reason agreement here is cheap to obtain."""
+  bits = []
+  for e in experiments:
+    best = float(e["configs"]["mean"].max())
+    bits.append(f"{e['model']} reaches {best:.2f}")
+  return "Both models largely solve GSM8K at these settings &mdash; " + ", and ".join(bits) + "."
+
+
+def _placement_note(experiments) -> str:
+  """What the scheduler actually did with these runs, counted from the data."""
+  bits = []
+  for e in experiments:
+    s = e["summary"]
+    n_lora = _lora_count(s)
+    n_fft = int(s[s["config"] == "fullft"]["run"].nunique())
+    bits.append(
+      f"the {e['model']} experiment gave each of its {n_fft} full fine-tuning runs a separate "
+      f"worker, and placed all {n_lora} LoRA runs on one trainer and one sampler as {n_lora} "
+      f"adapters"
+    )
+  return (
+    "In practice, " + "; ".join(bits) + ". Packing adapters is the cost argument for LoRA in "
+    "this setting &mdash; several adapters hold one copy of the frozen base weights rather "
+    "than one copy each &mdash; and it is also why the LoRA runs took longer per step. The "
+    "full fine-tuning workers were not dedicated either: replicates of one configuration were "
+    "placed two to a claim, so the per-step figures below are not single-tenant numbers for "
+    "any configuration."
+  )
+
+
+def _lede(experiments) -> str:
+  """Headline the experiment with the tightest noise floor -- the one that can decide anything."""
+  scale = "at two model sizes" if len(experiments) == 2 else f"across {len(experiments)} experiments"
+  intro = (
+    'Thinking Machines report in <a href="https://thinkingmachines.ai/blog/lora/">LoRA '
+    "Without Regret</a> that for reinforcement learning, LoRA matches full fine-tuning even "
+    f"at rank&nbsp;1. We ran that comparison {scale}, with every run training at the same "
+    "time on one Kubernetes cluster."
+  )
+  scored = [(noise_floor(e["configs"]), e) for e in experiments]
+  scored = [(f, e) for f, e in scored if f == f]
+  if not scored:
+    return intro
+  floor, best = min(scored, key=lambda t: t[0])
+  cfg = best["configs"]
+  lora = cfg[cfg["config"] != "fullft"]
+  worst = lora.loc[lora["gap_vs_fullft"].abs().idxmax()]
+  gap = float(worst["gap_vs_fullft"])
+  verdict = "inside" if abs(gap) <= floor else "outside"
+  return (
+    f"{intro} In the {best['model']} experiment, the largest gap between a LoRA configuration "
+    f"and full fine-tuning was {gap:+.3f}, against a replicate spread of {floor:.3f} between "
+    f"two runs differing only in seed &mdash; {verdict} the noise floor. Repeat seeds are what "
+    f"make that statement possible: they measure the floor rather than assuming it."
+  )
+
+
 def render(experiments, out: Path, smooth: int, tail: int) -> None:
-  """experiments: list of dicts with label, model, df, summary, gaps, notes."""
-  names = json.dumps({a: SERIES[a][2] for a in SERIES})
+  """experiments: list of dicts with label, model, df, summary, configs, gaps, notes."""
+  all_configs = config_order([c for exp in experiments for c in exp["df"]["config"]])
+  names = json.dumps({c: config_label(c) for c in all_configs})
   cfgs, sections = [], []
 
   for i, exp in enumerate(experiments):
     chart, cfg = reward_chart(exp["df"], smooth, idx=i)
     cfgs.append(cfg)
+    tracked = [c for c in config_order(exp["df"]["config"]) if c != "fullft"]
+    gap_head = "".join(f"<th>{config_label(c)}</th>" for c in tracked)
     gap_rows = "".join(
-      f'<tr><td class="num">{c}</td><td class="num">{v.get("lora-r32", 0):+.3f}</td><td class="num">{v.get("lora-r1", 0):+.3f}</td></tr>'
-      for c, v in exp["gaps"]
+      f'<tr><td class="num">{c}</td>' + "".join(f'<td class="num">{v.get(t, 0):+.3f}</td>' for t in tracked) + "</tr>" for c, v in exp["gaps"]
     )
+    gap_svg = gap_chart(exp["gaps"], noise_floor(exp["configs"])) if exp["gaps"] else ""
+    n_runs = exp["df"]["run"].nunique()
+    reps = exp["summary"]["replicate"].notna().any()
+    caption_extra = " Replicates of one configuration share a colour and separate by dash pattern." if reps else ""
     sections.append(f"""
 <h2>{exp["label"]}</h2>
 <p>{exp["intro"]}</p>
@@ -433,10 +662,10 @@ def render(experiments, out: Path, smooth: int, tail: int) -> None:
 <div class="legend">{_legend(exp["df"])}</div>
 {chart}
 <figcaption><strong>Figure {i + 1}.</strong> Reward against training step for {exp["model"]},
-{smooth}-step rolling mean over the raw per-step values.</figcaption>
+{n_runs} runs, {smooth}-step rolling mean over the raw per-step values.{caption_extra}</figcaption>
 </figure>
 
-{_summary_table(exp["summary"], tail)}
+{_summary_table(exp["configs"], tail)}
 
 <p>{exp["note"]}</p>
 
@@ -444,8 +673,11 @@ def render(experiments, out: Path, smooth: int, tail: int) -> None:
 <p>{exp["pace_note"]}</p>
 {_pace_table(exp["df"], smooth)}
 
-<details><summary>Gap to full fine-tuning at successive checkpoints</summary>
-<table><thead><tr><th>Matched steps</th><th>LoRA rank 32</th><th>LoRA rank 1</th></tr></thead>
+<details><summary>Individual runs</summary>{_runs_table(exp["summary"], tail)}</details>
+
+<details open><summary>Gap to full fine-tuning at successive checkpoints</summary>
+{gap_svg}
+<table><thead><tr><th>Matched steps</th>{gap_head}</tr></thead>
 <tbody>{gap_rows}</tbody></table></details>
 """)
 
@@ -459,26 +691,24 @@ def render(experiments, out: Path, smooth: int, tail: int) -> None:
         f'<td class="num">{r["step_seconds"]:.1f}</td></tr>'
       )
   total_rows = sum(len(e["df"]) for e in experiments)
+  lede = _lede(experiments)
+  method_note, config_table, seed_caveat = _method(experiments, all_configs)
+  episode_note = _episode_note(experiments)
+  ceiling_note = _ceiling_note(experiments)
+  placement_note = _placement_note(experiments)
 
   doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Reproducing LoRA Without Regret on GSM8K RL</title>
-<style>{CSS}</style></head>
+<style>{CSS}{color_css(all_configs)}</style></head>
 <body><main>
 
 <h1>Reproducing LoRA Without Regret</h1>
 <p class="byline">Rank 1 against full fine-tuning on GSM8K RL, run concurrently on Open-RL
 &middot; {date.today().isoformat()}</p>
 
-<p class="lede">Thinking Machines report in
-<a href="https://thinkingmachines.ai/blog/lora/">LoRA Without Regret</a> that for
-reinforcement learning, LoRA matches full fine-tuning even at rank&nbsp;1. We ran that
-comparison twice, at 0.6B and 8B parameters, with all runs training at the same time on
-one Kubernetes cluster. At 8B, rank&nbsp;1 finished within 0.015 of full fine-tuning,
-against a per-run step-to-step deviation of 0.06. It took longer to get there: full
-fine-tuning passed 0.9 at step 18 and rank&nbsp;1 at step 28. Final performance matched;
-sample efficiency, on these settings, did not.</p>
+<p class="lede">{lede}</p>
 
 <h2>The claim</h2>
 <p>A policy gradient extracts on the order of one bit per episode. Supervised learning
@@ -487,39 +717,29 @@ an adapter with millions of parameters has enough capacity for an RL run carryin
 hundred thousand bits, and rank should not affect the outcome.</p>
 
 <h2>Method</h2>
-<p>Three runs per experiment, identical in dataset, group size, batch, token limit,
-temperature, step count and seed. Only the fine-tuning mode and the LoRA rank differ.
-Learning rates keep the paper's ratio of about 10&times; between LoRA and full
-fine-tuning: equalising them would place each run at a different distance from its own
-optimum.</p>
+<p>{method_note} Everything else is held fixed: dataset, group size, batch, token limit,
+temperature and step count. Learning rates keep the paper's ratio of about 10&times;
+between LoRA and full fine-tuning &mdash; equalising them would place each configuration
+at a different distance from its own optimum.</p>
 
-<table><thead><tr><th>Run</th><th>Mode</th><th>Rank</th><th>Learning rate</th></tr></thead>
-<tbody>
-<tr><td>Full fine-tuning</td><td>full</td><td class="num">&mdash;</td><td class="num">1e-5</td></tr>
-<tr><td>LoRA rank 32</td><td>lora</td><td class="num">32</td><td class="num">1e-4</td></tr>
-<tr><td>LoRA rank 1</td><td>lora</td><td class="num">1</td><td class="num">1e-4</td></tr>
-</tbody></table>
+{config_table}
 
 <p>The runs execute at the same time rather than in sequence. They then share cluster state,
 dataset and GPU contention, which removes the drift between separate runs. The scheduler
-places the two LoRA runs on a single worker as two adapters, because they share a base
-model; full fine-tuning takes its own workers. Comparisons are made per step, not per
-second, since the shared runs progress at about half the rate.</p>
+places LoRA runs sharing a base model on a single worker as separate adapters; full
+fine-tuning takes its own workers. Comparisons are made per step, not per second, since
+the shared runs progress at a fraction of the rate.</p>
 {"".join(sections)}
 <h2>What these runs do not show</h2>
 <div class="callout">
-<p>Each step covers 64 episodes, so the 0.6B run saw about 3,200 and the 8B run about
-2,560. The paper's MATH experiment used roughly 320,000. By its own information argument,
-capacity binds when episode-bits approach adapter parameters, and these runs are two to
-three orders of magnitude short of that. They show that rank&nbsp;1 trains and keeps pace;
-they do not test the capacity limit.</p>
-<p>Both models largely solve GSM8K at these settings &mdash; 0.6B plateaus near 0.75 by
-step 20, and 8B reaches 0.95. Once every run is at its ceiling, agreement between runs is
-easy to obtain. A harder task is needed for a result that could fail.</p>
-<p>One seed per run. The reported deviation bounds step-to-step noise within a run, not
-variation between seeds, so a gap of this size is not evidence in either direction.
-The authors used Llama for GSM8K because Qwen's pretraining includes a large amount of
-mathematics; these runs used Qwen.</p>
+<p>Each step covers 64 episodes, so {episode_note} The paper's MATH experiment used roughly
+320,000. By its own information argument, capacity binds when episode-bits approach
+adapter parameters, and these runs are two to three orders of magnitude short of that.
+They show that rank&nbsp;1 trains and keeps pace; they do not test the capacity limit.</p>
+<p>{ceiling_note} Once every run is at its ceiling, agreement between runs is easy to
+obtain. A harder task is needed for a result that could fail.</p>
+<p>{seed_caveat} The authors used Llama for GSM8K because Qwen's pretraining includes a
+large amount of mathematics; these runs used Qwen.</p>
 </div>
 
 <h2>Infrastructure</h2>
@@ -528,10 +748,7 @@ the claim's device selector decides placement. The tier comes from the model's p
 count: a 0.6B full fine-tune fits a 24&nbsp;GB L4, while an 8B one needs an 80&nbsp;GB
 H100, and an 8B LoRA worker needs one too, because the sampler must hold 16.4&nbsp;GB of
 frozen weights inside the fraction of the device vLLM is given.</p>
-<p>The 0.6B experiment therefore ran three runs on four L4s, and the 8B experiment ran
-them on four H100s. In both cases the two LoRA runs shared one trainer and one sampler,
-holding two adapters of different rank on the same device. That is the cost argument for
-LoRA in this setting: the same result on half the hardware.</p>
+<p>{placement_note}</p>
 {scheduling_section(experiments)}
 <details><summary>Full data ({total_rows} rows)</summary>
 <table><thead><tr><th>Model</th><th>Run</th><th>Step</th><th>Reward</th><th>Seconds</th></tr></thead>
@@ -548,9 +765,52 @@ LoRA in this setting: the same result on half the hardware.</p>
   print(f"wrote {out}  ({out.stat().st_size // 1024} KB, self-contained)")
 
 
+def _intro(df, summary, configs, common: int) -> str:
+  by_config = configs.set_index(configs["config"].astype(str))
+  n_runs = df["run"].nunique()
+  parts = [f"{n_runs} runs, {common} steps each, {common * 64:,} episodes per run."]
+  if "fullft" in by_config.index:
+    lora = configs[configs["config"] != "fullft"]
+    solo = float(by_config.loc["fullft", "sec_per_step"])
+    n_lora = int(summary[summary["config"] != "fullft"]["run"].nunique())
+    if not lora.empty:
+      shared = float(lora["sec_per_step"].mean())
+      parts.append(f"Full fine-tuning ran at {solo:.0f}s per step; the {n_lora} LoRA runs shared one trainer and one sampler at {shared:.0f}s each.")
+  return " ".join(parts)
+
+
+def _note(configs) -> str:
+  floor = noise_floor(configs)
+  lora = configs[configs["config"] != "fullft"]
+  if lora.empty or "gap_vs_fullft" not in configs:
+    return ""
+  worst = lora.loc[lora["gap_vs_fullft"].abs().idxmax()]
+  gap = float(worst["gap_vs_fullft"])
+  if floor != floor:
+    return (
+      f"The largest gap to full fine-tuning is {gap:+.3f}. With one seed per configuration "
+      f"there is nothing to compare that against, so it is not evidence in either direction."
+    )
+  verdict = (
+    "smaller than the distance between two runs that differ only in seed, so it is not distinguishable from noise"
+    if abs(gap) <= floor
+    else "larger than the distance between two runs that differ only in seed, so it is not explained by seed variation alone"
+  )
+  return (
+    f"The largest gap to full fine-tuning is {gap:+.3f} ({config_label(str(worst['config']))}), "
+    f"against a replicate spread of {floor:.3f}. That gap is {verdict}."
+  )
+
+
 def main() -> None:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--run", action="append", required=True, metavar="LABEL=MODEL=DIR", help="repeatable")
+  ap.add_argument(
+    "--run",
+    action="append",
+    required=True,
+    metavar="LABEL=MODEL=DIR[=GROUP]",
+    help="repeatable; GROUP keeps only runs from one model size when a directory holds several",
+  )
   ap.add_argument("--out", type=Path, default=Path("report.html"))
   ap.add_argument("--tail", type=int, default=10)
   ap.add_argument("--smooth", type=int, default=5)
@@ -558,31 +818,21 @@ def main() -> None:
 
   experiments = []
   for spec in args.run:
-    label, model, path = spec.split("=", 2)
-    df = load_runs(Path(path))
+    label, model, path, *rest = spec.split("=", 3)
+    df = load_runs(Path(path), group=rest[0] if rest else None)
     summary, common = summarize(df, args.tail)
-    by_run = summary.set_index(summary["run"].astype(str))
-    gaps = build_gaps(df, args.tail)
-    spread = max(abs(float(by_run.loc[a, "gap_vs_fullft"])) for a in ("lora-r32", "lora-r1"))
-    worst_std = float(summary["tail_std"].max())
+    configs = summarize_configs(summary)
     experiments.append(
       {
         "label": html.escape(label),
         "model": html.escape(model),
         "df": df,
         "summary": summary,
-        "gaps": gaps,
-        "intro": (
-          f"{common} steps per run, {common * 64:,} episodes. Full fine-tuning ran on its own "
-          f"GPU at {float(by_run.loc['fullft', 'sec_per_step']):.0f}s per step; the two LoRA runs "
-          f"shared one at {float(by_run.loc['lora-r1', 'sec_per_step']):.0f}s each."
-        ),
+        "configs": configs,
+        "gaps": build_gaps(df, args.tail),
+        "intro": _intro(df, summary, configs, common),
         "pace_note": run_pace_note(df, summary),
-        "note": (
-          f"The largest gap between a run and full fine-tuning is {spread:.3f}, against a "
-          f"within-run step-to-step deviation of up to {worst_std:.3f}. The runs differ by less "
-          f"than any one of them varies between steps."
-        ),
+        "note": _note(configs),
       }
     )
   render(experiments, args.out, args.smooth, args.tail)
