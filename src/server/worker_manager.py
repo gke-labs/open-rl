@@ -58,12 +58,31 @@ def _fetch_metadata_from_store(model_id: str) -> TrainingModelMetadata | None:
 
 # A bf16 full fine-tune holds 2 bytes of weights, 2 of gradients and 8 of fp32
 # AdamW moments per parameter. Activations, the sampler's KV cache and reload
-# buffers come on top, so only part of a tier's VRAM is budgeted here. The
-# pinned-DRAM weight shadow is host memory and does not count.
+# buffers come on top, so only part of a tier's VRAM is budgeted here.
+#
+# Conservative: the FFT trainer offloads optimizer state and the weight shadow
+# to pinned host DRAM, so real VRAM use is lower than 12 bytes/param implies.
+# Sizing up rather than down is the safe direction -- too large a GPU wastes
+# capacity, too small a one OOMs mid-run -- but it does mean a model near the
+# boundary is sent to the larger tier than it strictly needs.
 FFT_VRAM_BYTES_PER_PARAM = 12
 # Of the 24gb tier's 23 GiB usable, leave headroom for everything above. 20 GiB
 # admits FFT up to ~1.7B params, which keeps the Qwen2.5-1.5B anchor on an L4.
 TIER_24GB_FFT_BUDGET_BYTES = 20 * 1024**3
+
+# A LoRA worker holds the frozen base model in bf16; the adapter, its gradients
+# and its optimizer state are negligible beside it. What actually decides the
+# tier is whether the *sampler* can hold those weights plus a KV cache: vLLM is
+# given a fraction of the device (VLLM_GPU_MEMORY_UTILIZATION, 0.70 in the
+# shipped pod templates) and must fit the whole model inside it.
+#
+# 8B in bf16 is 16.4 GB against an L4's ~15.7 GB at that utilization, so it
+# cannot load at all -- which is why sizing LoRA by a parameter-count threshold
+# was wrong. Size it by weights against the budget the sampler actually gets.
+LORA_VRAM_BYTES_PER_PARAM = 2
+# Of the 24gb tier's 23 GiB, what vLLM is handed at the shipped utilization,
+# minus room for the KV cache and activations it has to fit alongside.
+TIER_24GB_LORA_BUDGET_BYTES = 13 * 1024**3
 
 # Raw parameter counts for the models this project runs. Approximate on purpose:
 # they only have to land on the correct side of the 24gb budget below (~1.7B).
@@ -125,6 +144,26 @@ def _fits_24gb_fft(params: int) -> bool:
   return params * FFT_VRAM_BYTES_PER_PARAM <= TIER_24GB_FFT_BUDGET_BYTES
 
 
+def _fits_24gb_lora(params: int) -> bool:
+  return params * LORA_VRAM_BYTES_PER_PARAM <= TIER_24GB_LORA_BUDGET_BYTES
+
+
+def _lora_memory_tier(base_model: str) -> str:
+  """Tier for a LoRA fine-tune, sized from the frozen base model's weights.
+
+  An unknown model resolves to '80gb', for the same reason full fine-tuning
+  does: the sampler failing to load is worse than an oversized GPU.
+  """
+  params = known_parameter_count(base_model)
+  if params is None:
+    logger.warning(
+      "No known parameter count for %r; using the 80gb tier. Add it to KNOWN_PARAMETER_COUNTS to run it on a smaller GPU.",
+      base_model,
+    )
+    return "80gb"
+  return "24gb" if _fits_24gb_lora(params) else "80gb"
+
+
 def _fft_memory_tier(base_model: str) -> str:
   """Tier for a full fine-tune, sized from the model's parameter count.
 
@@ -142,28 +181,25 @@ def _fft_memory_tier(base_model: str) -> str:
 
 
 def estimate_memory_tier(base_model: str, fine_tuning_type: str = "lora") -> str:
-  """Estimate VRAM memory tier ('24gb' or '80gb') based on base model scale and fine-tuning type.
+  """Estimate the VRAM memory tier ('24gb' or '80gb') a workload needs.
+
+  Both modes are sized from the model's parameter count, differing only in
+  bytes per parameter: a full fine-tune carries weights, gradients and
+  optimizer state, while a LoRA worker carries only the frozen base weights.
 
   Anchors:
     - Qwen3-0.6B / Qwen2.5-0.5B / Qwen2.5-1.5B (LoRA or FFT): '24gb' (NVIDIA L4)
-    - Qwen3-8B / Qwen2.5-7B (LoRA): '24gb' (NVIDIA L4)
-    - Qwen3-8B / Qwen2.5-7B (Full Fine-Tuning): '80gb' (NVIDIA H100)
-    - 14B+ models (LoRA or FFT): '80gb' (NVIDIA H100)
+    - Qwen3-4B (LoRA): '24gb'; (Full Fine-Tuning): '80gb'
+    - Qwen3-8B (LoRA or Full Fine-Tuning): '80gb' (NVIDIA H100)
 
-  Full fine-tuning is sized from the model's parameter count. When that cannot
-  be established the tier stays '80gb': an FFT sent to too small a GPU dies on
-  an OOM mid-run, while one sent to too large a GPU merely wastes it.
+  An unknown model resolves to '80gb' in either mode: a workload sent to too
+  small a GPU dies -- OOM mid-run for a trainer, a sampler that cannot load its
+  weights at all -- while one sent to too large a GPU merely wastes it.
   """
-  model_lower = (base_model or "").lower()
-
   if fine_tuning_type == "full":
     return _fft_memory_tier(base_model)
 
-  # LoRA fine-tuning memory scaling
-  if any(size in model_lower for size in ["14b", "32b", "70b"]):
-    return "80gb"
-
-  return "24gb"
+  return _lora_memory_tier(base_model)
 
 
 def get_model_target_info(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
