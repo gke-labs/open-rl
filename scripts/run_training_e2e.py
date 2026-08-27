@@ -84,7 +84,7 @@ class RunConfig:
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
   # Second model for gsm8k-rl-rank-sweep-mega: base_model supplies the small
-  # arms, this the large ones, so both size tiers run in one invocation.
+  # runs, this the large ones, so both size tiers run in one invocation.
   mega_large_model: str = "Qwen/Qwen3-8B"
   jitter_sec: int = 180
   steps: int | None = None
@@ -705,10 +705,10 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
 
 
 def run_gsm8k_rl_rank_sweep_mega(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
-  """Both model sizes, both LoRA ranks, and replicate arms, all training at once.
+  """Both model sizes, both LoRA ranks, and replicate runs, all training at once.
 
   Extends gsm8k-rl-rank-sweep (docs/designs/012) with the thing that experiment
-  could not answer: how much two *identical* configurations differ. Every arm is
+  could not answer: how much two *identical* configurations differ. Every run is
   run twice under a different data-shuffling seed, so the spread between
   replicates measures the noise floor directly. The decision rule needs no
   statistics -- if the gap between the two full fine-tuning replicates is as
@@ -718,7 +718,7 @@ def run_gsm8k_rl_rank_sweep_mega(config: RunConfig, base_url: str, watch: list[M
   Twelve jobs on eight GPUs. Per model, the two LoRA ranks and their replicates
   multiplex as four adapters on one trainer and one sampler, while the four full
   fine-tuning jobs pack two-per-claim onto a trainer and a sampler claim. The
-  0.6B arms size to the 24gb tier and the 8B arms to 80gb, so the two halves run
+  0.6B runs size to the 24gb tier and the 8B runs to 80gb, so the two halves run
   on separate hardware and do not contend.
   """
   results: dict[str, str | BaseException] = {}
@@ -770,15 +770,15 @@ def run_gsm8k_rl_rank_sweep_mega(config: RunConfig, base_url: str, watch: list[M
       results[job] = exc
 
   models = {"small": config.base_model, "large": config.mega_large_model}
-  arms = []
+  runs = []
   for size, model_name in models.items():
     for mode, rank in (("lora", 1), ("lora", 32), ("fft", None)):
       for replicate, seed in enumerate((0, 1)):
         tag = f"r{rank}" if rank is not None else "fft"
-        arms.append((f"{size}-{tag}-{chr(97 + replicate)}", model_name, mode, rank, seed))
+        runs.append((f"{size}-{tag}-{chr(97 + replicate)}", model_name, mode, rank, seed))
 
-  print(f"[training-e2e] mega sweep: {len(arms)} arms -> {', '.join(a[0] for a in arms)}")
-  threads = [threading.Thread(target=train, args=arm) for arm in arms]
+  print(f"[training-e2e] mega sweep: {len(runs)} runs -> {', '.join(r[0] for r in runs)}")
+  threads = [threading.Thread(target=train, args=run) for run in runs]
   for thread in threads:
     thread.start()
   for thread in threads:
@@ -800,14 +800,14 @@ def run_gsm8k_rl_rank_sweep(config: RunConfig, base_url: str, watch: list[Manage
   at rank 1, because a policy gradient carries O(1) bits per episode against
   O(tokens) for supervised learning. See docs/designs/012.
 
-  The arms run concurrently on purpose. They then share cluster state, dataset
+  The runs execute concurrently on purpose. They then share cluster state, dataset
   and time-slicer contention, which controls the comparison more tightly than
-  sequential runs whose conditions drift -- and the two LoRA arms land on one
+  sequential runs whose conditions drift -- and the two LoRA runs land on one
   shared worker as separate adapters, which is the multi-tenant path this
   project exists to exercise.
 
   Learning rates stay asymmetric at the paper's ~10x ratio (1e-4 LoRA against
-  1e-5 FullFT). Equalizing them would compare each arm at a different distance
+  1e-5 FullFT). Equalizing them would compare each run at a different distance
   from its own optimum, which is the more misleading experiment.
   """
   results: dict[str, str | BaseException] = {}
@@ -834,7 +834,7 @@ def run_gsm8k_rl_rank_sweep(config: RunConfig, base_url: str, watch: list[Manage
         "save_every=0",
       ]
       # Rank is per-adapter: the LoRA trainer builds a separate PEFT config per
-      # model_id, so arms at different ranks coexist on one shared worker.
+      # model_id, so runs at different ranks coexist on one shared worker.
       if rank is not None:
         args.append(f"lora_rank={rank}")
       args.extend(clean_cli_extra(config.extra))
@@ -857,12 +857,12 @@ def run_gsm8k_rl_rank_sweep(config: RunConfig, base_url: str, watch: list[Manage
     except BaseException as exc:
       results[job] = exc
 
-  arms = [
+  runs = [
     ("fullft", "fft", None),
     ("lora-r32", "lora", 32),
     ("lora-r1", "lora", 1),
   ]
-  threads = [threading.Thread(target=train, args=arm) for arm in arms]
+  threads = [threading.Thread(target=train, args=run) for run in runs]
   for thread in threads:
     thread.start()
   for thread in threads:

@@ -12,7 +12,7 @@ import json
 from datetime import date
 from pathlib import Path
 
-from rank_sweep_report import ARM_ORDER, load_arms, summarize
+from rank_sweep_report import RUN_ORDER, load_runs, summarize
 
 # Validated categorical slots 1-3 (light / dark), from the design-system palette.
 SERIES = {
@@ -41,8 +41,8 @@ def _rolling(vals, window):
   return out
 
 
-def reward_chart(df, smooth: int) -> str:
-  arms = [a for a in ARM_ORDER if a in set(df["arm"])]
+def reward_chart(df, smooth: int, idx: int = 0) -> str:
+  run_names = [a for a in RUN_ORDER if a in set(df["run"])]
   xmax = float(df["step"].max())
   ymin, ymax = 0.0, max(1.0, float(df["reward"].max()) * 1.05)
 
@@ -67,20 +67,20 @@ def reward_chart(df, smooth: int) -> str:
     parts.append(f'<text class="tick" x="{x:.1f}" y="{H - PAD_B + 20}" text-anchor="middle">{t}</text>')
 
   series_json = {}
-  for arm in arms:
-    g = df[df["arm"] == arm].sort_values("step")
+  for name in run_names:
+    g = df[df["run"] == name].sort_values("step")
     steps = [float(s) for s in g["step"]]
     raw = [float(v) for v in g["reward"]]
     rolled = _rolling(raw, smooth)
-    series_json[arm] = {"steps": steps, "raw": raw, "rolled": rolled}
+    series_json[name] = {"steps": steps, "raw": raw, "rolled": rolled}
 
     raw_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, raw, strict=False))
     roll_pts = " ".join(f"{px(s):.1f},{py(v):.1f}" for s, v in zip(steps, rolled, strict=False))
-    parts.append(f'<polyline class="raw" data-arm="{arm}" points="{raw_pts}"/>')
-    parts.append(f'<polyline class="line" data-arm="{arm}" points="{roll_pts}"/>')
-    end_labels.append({"arm": arm, "x": px(steps[-1]) + 8, "y": py(rolled[-1]) + 4})
+    parts.append(f'<polyline class="raw" data-run="{name}" points="{raw_pts}"/>')
+    parts.append(f'<polyline class="line" data-run="{name}" points="{roll_pts}"/>')
+    end_labels.append({"run": name, "x": px(steps[-1]) + 8, "y": py(rolled[-1]) + 4})
 
-  # Direct labels carry identity so it never rests on colour alone -- but arms
+  # Direct labels carry identity so it never rests on colour alone -- but runs
   # that converge finish at the same height and would overprint each other.
   # Push them apart, keeping their vertical order.
   end_labels.sort(key=lambda item: item["y"])
@@ -89,13 +89,13 @@ def reward_chart(df, smooth: int) -> str:
     if gap < LABEL_GAP:
       end_labels[i]["y"] = end_labels[i - 1]["y"] + LABEL_GAP
   for item in end_labels:
-    parts.append(f'<text class="endlabel" data-arm="{item["arm"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{SERIES[item["arm"]][2]}</text>')
+    parts.append(f'<text class="endlabel" data-run="{item["run"]}" x="{item["x"]:.1f}" y="{item["y"]:.1f}">{SERIES[item["run"]][2]}</text>')
 
-  parts.append(f'<line id="crosshair" class="crosshair" x1="0" y1="{PAD_T}" x2="0" y2="{H - PAD_B}" style="opacity:0"/>')
-  parts.append(f'<rect id="hitarea" x="{PAD_L}" y="{PAD_T}" width="{W - PAD_L - PAD_R}" height="{H - PAD_T - PAD_B}" fill="transparent"/>')
+  parts.append(f'<line id="crosshair-{idx}" class="crosshair" x1="0" y1="{PAD_T}" x2="0" y2="{H - PAD_B}" style="opacity:0"/>')
+  parts.append(f'<rect id="hitarea-{idx}" x="{PAD_L}" y="{PAD_T}" width="{W - PAD_L - PAD_R}" height="{H - PAD_T - PAD_B}" fill="transparent"/>')
 
-  svg = f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Reward versus training step for three arms">{"".join(parts)}</svg>'
-  cfg = json.dumps({"series": series_json, "padL": PAD_L, "padR": PAD_R, "w": W, "xmax": xmax})
+  svg = f'<svg viewBox="0 0 {W} {H}" role="img" aria-label="Reward versus training step for three runs">{"".join(parts)}</svg>'
+  cfg = json.dumps({"idx": idx, "series": series_json, "padL": PAD_L, "padR": PAD_R, "w": W, "xmax": xmax})
   return svg, cfg
 
 
@@ -117,28 +117,28 @@ def gap_chart(gaps) -> str:
   parts.append(f'<text class="tick" x="{w - pad_r + 8}" y="{py(0) + 4:.1f}">parity</text>')
   for i, c in enumerate(checkpoints):
     parts.append(f'<text class="tick" x="{px(i):.1f}" y="{h - pad_b + 20}" text-anchor="middle">{c}</text>')
-  for arm in ("lora-r32", "lora-r1"):
-    pts = " ".join(f"{px(i):.1f},{py(v[arm]):.1f}" for i, (_, v) in enumerate(gaps) if arm in v)
-    parts.append(f'<polyline class="line" data-arm="{arm}" points="{pts}"/>')
+  for name in ("lora-r32", "lora-r1"):
+    pts = " ".join(f"{px(i):.1f},{py(v[name]):.1f}" for i, (_, v) in enumerate(gaps) if name in v)
+    parts.append(f'<polyline class="line" data-run="{name}" points="{pts}"/>')
     for i, (_, v) in enumerate(gaps):
-      if arm in v:
-        parts.append(f'<circle class="dot" data-arm="{arm}" cx="{px(i):.1f}" cy="{py(v[arm]):.1f}" r="4.5"/>')
+      if name in v:
+        parts.append(f'<circle class="dot" data-run="{name}" cx="{px(i):.1f}" cy="{py(v[name]):.1f}" r="4.5"/>')
     last = gaps[-1][1]
-    lx, ly = px(len(checkpoints) - 1) + 8, py(last[arm]) + 4
-    parts.append(f'<text class="endlabel" data-arm="{arm}" x="{lx:.1f}" y="{ly:.1f}">{SERIES[arm][2]}</text>')
+    lx, ly = px(len(checkpoints) - 1) + 8, py(last[name]) + 4
+    parts.append(f'<text class="endlabel" data-run="{name}" x="{lx:.1f}" y="{ly:.1f}">{SERIES[name][2]}</text>')
   return f'<svg viewBox="0 0 {w} {h}" role="img" aria-label="Gap to full fine-tuning at successive checkpoints">{"".join(parts)}</svg>'
 
 
 def build_gaps(df, tail: int):
   """Recompute the summary at several matched-step checkpoints."""
-  common = int(df.groupby("arm")["step"].count().min())
+  common = int(df.groupby("run")["step"].count().min())
   checkpoints = [c for c in (6, 14, 28, common) if c <= common]
   out = []
   for c in checkpoints:
     sub = df[df["step"] < c]
     summary, _ = summarize(sub, min(tail, max(1, c // 3)))
-    ref = float(summary.loc[summary["arm"] == "fullft", "tail_mean"].iloc[0])
-    out.append((c, {str(r["arm"]): float(r["tail_mean"]) - ref for _, r in summary.iterrows() if r["arm"] != "fullft"}))
+    ref = float(summary.loc[summary["run"] == "fullft", "tail_mean"].iloc[0])
+    out.append((c, {str(r["run"]): float(r["tail_mean"]) - ref for _, r in summary.iterrows() if r["run"] != "fullft"}))
   return out
 
 
@@ -168,8 +168,8 @@ svg{width:100%;height:auto;display:block;overflow:visible}
 .line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .endlabel{font:12px ui-sans-serif,system-ui,sans-serif;fill:var(--ink2)}
 .crosshair{stroke:var(--ink2);stroke-width:1;stroke-dasharray:3 3}
-[data-arm=fullft]{stroke:var(--fullft)}[data-arm=lora-r32]{stroke:var(--lora-r32)}[data-arm=lora-r1]{stroke:var(--lora-r1)}
-circle[data-arm=fullft]{fill:var(--fullft)}circle[data-arm=lora-r32]{fill:var(--lora-r32)}circle[data-arm=lora-r1]{fill:var(--lora-r1)}
+[data-run=fullft]{stroke:var(--fullft)}[data-run=lora-r32]{stroke:var(--lora-r32)}[data-run=lora-r1]{stroke:var(--lora-r1)}
+circle[data-run=fullft]{fill:var(--fullft)}circle[data-run=lora-r32]{fill:var(--lora-r32)}circle[data-run=lora-r1]{fill:var(--lora-r1)}
 text.endlabel{stroke:none}
 .legend{display:flex;gap:1.4rem;flex-wrap:wrap;font:13px ui-sans-serif,system-ui,sans-serif;color:var(--ink2);margin:.2rem 0 .4rem}
 .swatch{display:inline-block;width:11px;height:11px;border-radius:2px;margin-right:.45rem;vertical-align:-1px}
@@ -189,13 +189,14 @@ footer{margin-top:4rem;padding-top:1.5rem;border-top:1px solid var(--rule);color
 """
 
 JS = """
-const cfg = %CFG%;
-const svg = document.querySelector('#rewardchart svg');
-const hit = document.getElementById('hitarea');
-const cross = document.getElementById('crosshair');
-const tip = document.getElementById('tip');
+const CHARTS = %CHARTS%;
 const NAMES = %NAMES%;
-if (hit) {
+const tip = document.getElementById('tip');
+for (const cfg of CHARTS) {
+  const hit = document.getElementById('hitarea-' + cfg.idx);
+  const cross = document.getElementById('crosshair-' + cfg.idx);
+  if (!hit) continue;
+  const svg = hit.ownerSVGElement;
   hit.addEventListener('mousemove', (e) => {
     const box = svg.getBoundingClientRect();
     const scale = cfg.w / box.width;
@@ -205,10 +206,10 @@ if (hit) {
     cross.setAttribute('x1', xSvg); cross.setAttribute('x2', xSvg);
     cross.style.opacity = 1;
     let rows = '';
-    for (const arm of Object.keys(cfg.series)) {
-      const s = cfg.series[arm];
+    for (const name of Object.keys(cfg.series)) {
+      const s = cfg.series[name];
       const i = s.steps.indexOf(step);
-      if (i >= 0) rows += `<div><span class="swatch" style="background:var(--${arm})"></span>${NAMES[arm]} <b>${s.rolled[i].toFixed(3)}</b></div>`;
+      if (i >= 0) rows += `<div><span class="swatch" style="background:var(--${name})"></span>${NAMES[name]} <b>${s.rolled[i].toFixed(3)}</b></div>`;
     }
     tip.innerHTML = `<div style="color:var(--ink2);margin-bottom:.3rem">step ${step}</div>${rows}`;
     tip.style.left = (e.clientX + 14) + 'px';
@@ -220,132 +221,204 @@ if (hit) {
 """
 
 
-def render(df, summary, gaps, smooth: int, tail: int, out: Path, meta: dict) -> None:
-  chart_svg, cfg = reward_chart(df, smooth)
-  names = json.dumps({a: SERIES[a][2] for a in SERIES})
+def steps_to_thresholds(df, smooth: int):
+  """First step at which each run's rolling mean crosses each threshold."""
+  out = []
+  for name in [a for a in RUN_ORDER if a in set(df["run"])]:
+    g = df[df["run"] == name].sort_values("step")
+    rolled = _rolling([float(v) for v in g["reward"]], smooth)
+    row = {"run": name, "early": sum(rolled[:15]) / min(15, len(rolled))}
+    for th in (0.5, 0.8, 0.9):
+      hit = next((i for i, v in enumerate(rolled) if v >= th), None)
+      row[th] = hit
+    out.append(row)
+  return out
 
-  legend = "".join(f'<span><span class="swatch" style="background:var(--{a})"></span>{SERIES[a][2]}</span>' for a in ARM_ORDER if a in set(df["arm"]))
 
+def _pace_table(df, smooth: int) -> str:
+  rows = ""
+  for r in steps_to_thresholds(df, smooth):
+    cells = "".join(f'<td class="num">{"&mdash;" if r[th] is None else r[th]}</td>' for th in (0.5, 0.8, 0.9))
+    rows += f'<tr><td>{SERIES[r["run"]][2]}</td><td class="num">{r["early"]:.3f}</td>{cells}</tr>'
+  return (
+    "<table><thead><tr><th>Run</th><th>Mean reward<br>steps 0-14</th>"
+    "<th>Step to 0.5</th><th>Step to 0.8</th><th>Step to 0.9</th></tr></thead>"
+    f"<tbody>{rows}</tbody></table>"
+  )
+
+
+def _summary_table(summary, tail: int) -> str:
   rows = ""
   for _, r in summary.iterrows():
-    arm = str(r["arm"])
+    name = str(r["run"])
     gap = r.get("gap_vs_fullft", 0.0)
-    gap_txt = "&mdash;" if arm == "fullft" else f"{gap:+.3f}"
+    gap_txt = "&mdash;" if name == "fullft" else f"{gap:+.4f}"
     rows += (
-      f"<tr><td>{SERIES[arm][2]}</td>"
+      f"<tr><td>{SERIES[name][2]}</td>"
       f'<td class="num">{r["tail_mean"]:.3f}</td>'
       f'<td class="num">{r["tail_std"]:.3f}</td>'
       f'<td class="num">{gap_txt}</td>'
       f'<td class="num">{r["final"]:.3f}</td>'
-      f'<td class="num">{r["sec_per_step"]:.1f}s</td></tr>'
+      f'<td class="num">{r["sec_per_step"]:.0f}s</td></tr>'
     )
+  return (
+    f"<table><thead><tr><th>Run</th><th>Mean reward<br>(last {tail})</th><th>&plusmn;&nbsp;std</th>"
+    f"<th>Gap vs FullFT</th><th>Final</th><th>Per step</th></tr></thead>"
+    f"<tbody>{rows}</tbody></table>"
+  )
 
-  gap_rows = ""
-  for c, v in gaps:
-    gap_rows += f'<tr><td class="num">{c}</td><td class="num">{v.get("lora-r32", 0):+.3f}</td><td class="num">{v.get("lora-r1", 0):+.3f}</td></tr>'
+
+def _legend(df) -> str:
+  return "".join(f'<span><span class="swatch" style="background:var(--{a})"></span>{SERIES[a][2]}</span>' for a in RUN_ORDER if a in set(df["run"]))
+
+
+def run_pace_note(df, summary) -> str:
+  """Describe how quickly each run got there, which the endpoint table hides."""
+  pace = {r["run"]: r for r in steps_to_thresholds(df, 5)}
+  ff, r1 = pace.get("fullft", {}), pace.get("lora-r1", {})
+  if ff.get(0.9) is not None and r1.get(0.9) is not None:
+    return (
+      f"The endpoints agree, but the paths differ. Full fine-tuning reached 0.9 at step "
+      f"{ff[0.9]}; LoRA rank 1 needed {r1[0.9]}. Over the first 15 steps full fine-tuning "
+      f"averaged {ff['early']:.2f} against rank 1's {r1['early']:.2f}. The paper's claim covers "
+      f"sample efficiency as well as final performance, so this is a difference worth naming. "
+      f"Two things plausibly account for it and neither is tested here: LoRA initialises B at "
+      f"zero, so its effective learning rate ramps up over the first steps, and we used a fixed "
+      f"10&times; learning-rate ratio rather than sweeping each run to its own optimum, which is "
+      f"what the paper did."
+    )
+  return "Neither run reached 0.9 within the run, so the pace comparison below is limited to the lower thresholds. No run leads consistently."
+
+
+def render(experiments, out: Path, smooth: int, tail: int) -> None:
+  """experiments: list of dicts with label, model, df, summary, gaps, notes."""
+  names = json.dumps({a: SERIES[a][2] for a in SERIES})
+  cfgs, sections = [], []
+
+  for i, exp in enumerate(experiments):
+    chart, cfg = reward_chart(exp["df"], smooth, idx=i)
+    cfgs.append(cfg)
+    gap_rows = "".join(
+      f'<tr><td class="num">{c}</td><td class="num">{v.get("lora-r32", 0):+.3f}</td><td class="num">{v.get("lora-r1", 0):+.3f}</td></tr>'
+      for c, v in exp["gaps"]
+    )
+    sections.append(f"""
+<h2>{exp["label"]}</h2>
+<p>{exp["intro"]}</p>
+
+<figure>
+<div class="legend">{_legend(exp["df"])}</div>
+{chart}
+<figcaption><strong>Figure {i + 1}.</strong> Reward against training step for {exp["model"]},
+{smooth}-step rolling mean over the raw per-step values.</figcaption>
+</figure>
+
+{_summary_table(exp["summary"], tail)}
+
+<p>{exp["note"]}</p>
+
+<h3>Pace</h3>
+<p>{exp["pace_note"]}</p>
+{_pace_table(exp["df"], smooth)}
+
+<details><summary>Gap to full fine-tuning at successive checkpoints</summary>
+<table><thead><tr><th>Matched steps</th><th>LoRA rank 32</th><th>LoRA rank 1</th></tr></thead>
+<tbody>{gap_rows}</tbody></table></details>
+""")
 
   data_rows = ""
-  for _, r in df.iterrows():
-    data_rows += (
-      f'<tr><td>{r["arm"]}</td><td class="num">{int(r["step"])}</td>'
-      f'<td class="num">{r["reward"]:.4f}</td>'
-      f'<td class="num">{r["step_seconds"]:.1f}</td></tr>'
-    )
+  for e in experiments:
+    for _, r in e["df"].iterrows():
+      data_rows += (
+        f"<tr><td>{e['model']}</td><td>{r['run']}</td>"
+        f'<td class="num">{int(r["step"])}</td>'
+        f'<td class="num">{r["reward"]:.4f}</td>'
+        f'<td class="num">{r["step_seconds"]:.1f}</td></tr>'
+      )
+  total_rows = sum(len(e["df"]) for e in experiments)
 
   doc = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Does rank 1 keep up? Reproducing LoRA Without Regret on GSM8K RL</title>
+<title>Reproducing LoRA Without Regret on GSM8K RL</title>
 <style>{CSS}</style></head>
 <body><main>
 
-<h1>Does rank&nbsp;1 keep up?</h1>
-<p class="byline">Reproducing the reinforcement-learning claim from
-<a href="https://thinkingmachines.ai/blog/lora/">LoRA Without Regret</a> on Open-RL &middot; {meta["date"]}</p>
+<h1>Reproducing LoRA Without Regret</h1>
+<p class="byline">Rank 1 against full fine-tuning on GSM8K RL, run concurrently on Open-RL
+&middot; {date.today().isoformat()}</p>
 
-<p class="lede">Thinking Machines report that for reinforcement learning, LoRA matches full
-fine-tuning <em>even at rank&nbsp;1</em>. We ran all three arms concurrently on one
-Kubernetes cluster. Over 50 steps of GSM8K RL, rank&nbsp;1 finished within
-<strong>0.013</strong> of full fine-tuning &mdash; roughly a tenth of the run-to-run noise.</p>
+<p class="lede">Thinking Machines report in
+<a href="https://thinkingmachines.ai/blog/lora/">LoRA Without Regret</a> that for
+reinforcement learning, LoRA matches full fine-tuning even at rank&nbsp;1. We ran that
+comparison twice, at 0.6B and 8B parameters, with all runs training at the same time on
+one Kubernetes cluster. At 8B, rank&nbsp;1 finished within 0.015 of full fine-tuning,
+against a per-run step-to-step deviation of 0.06. It took longer to get there: full
+fine-tuning passed 0.9 at step 18 and rank&nbsp;1 at step 28. Final performance matched;
+sample efficiency, on these settings, did not.</p>
 
 <h2>The claim</h2>
-<p>A policy gradient extracts on the order of one bit per episode, against O(tokens)
-for supervised learning &mdash; about a thousandfold less information per token. The
-argument follows: an adapter holding millions of parameters has ample capacity for
-an RL run carrying a few hundred thousand bits, so rank should not matter.</p>
+<p>A policy gradient extracts on the order of one bit per episode. Supervised learning
+extracts O(tokens) per example, roughly a thousand times more per token. If that holds,
+an adapter with millions of parameters has enough capacity for an RL run carrying a few
+hundred thousand bits, and rank should not affect the outcome.</p>
 
-<h2>Setup</h2>
-<p>Three arms on <span class="num">{meta["model"]}</span>, identical in dataset, group size,
-batch, token limit, temperature and step count. Only the mode and rank differ. Learning
-rates keep the paper&rsquo;s ~10&times; ratio &mdash; equalising them would compare each arm at a
-different distance from its own optimum.</p>
+<h2>Method</h2>
+<p>Three runs per experiment, identical in dataset, group size, batch, token limit,
+temperature, step count and seed. Only the fine-tuning mode and the LoRA rank differ.
+Learning rates keep the paper's ratio of about 10&times; between LoRA and full
+fine-tuning: equalising them would place each run at a different distance from its own
+optimum.</p>
 
-<table><thead><tr><th>Arm</th><th>Rank</th><th>Learning rate</th><th>GPU</th></tr></thead>
+<table><thead><tr><th>Run</th><th>Mode</th><th>Rank</th><th>Learning rate</th></tr></thead>
 <tbody>
-<tr><td>Full fine-tuning</td><td class="num">&mdash;</td><td class="num">1e-5</td><td>dedicated L4</td></tr>
-<tr><td>LoRA rank 32</td><td class="num">32</td><td class="num">1e-4</td><td>shared L4</td></tr>
-<tr><td>LoRA rank 1</td><td class="num">1</td><td class="num">1e-4</td><td>shared L4</td></tr>
+<tr><td>Full fine-tuning</td><td>full</td><td class="num">&mdash;</td><td class="num">1e-5</td></tr>
+<tr><td>LoRA rank 32</td><td>lora</td><td class="num">32</td><td class="num">1e-4</td></tr>
+<tr><td>LoRA rank 1</td><td>lora</td><td class="num">1</td><td class="num">1e-4</td></tr>
 </tbody></table>
 
-<p>The arms ran <em>at the same time</em>, which is a tighter control than sequential runs
-whose cluster conditions drift. Both LoRA arms were placed on a single GPU as two
-adapters by the scheduler&rsquo;s base-model affinity; full fine-tuning held its own.</p>
-
-<h2>Result</h2>
-
-<figure id="rewardchart">
-<div class="legend">{legend}</div>
-{chart_svg}
-<figcaption><strong>Figure 1.</strong> Reward against training step, {smooth}-step rolling mean,
-with the raw per-step reward underneath. All three arms climb from ~0.15 to ~0.85 and stay
-interleaved throughout; no arm separates.</figcaption>
-</figure>
-
-<table><thead><tr><th>Arm</th><th>Mean reward<br>(last {tail})</th><th>&plusmn;&nbsp;std</th>
-<th>Gap vs FullFT</th><th>Final</th><th>Per step</th></tr></thead>
-<tbody>{rows}</tbody></table>
-
-<p>The spread between arms is smaller than the step-to-step deviation <em>within</em> any one
-of them. That is the quantitative form of &ldquo;indistinguishable&rdquo;.</p>
-
-<figure>
-{gap_chart(gaps)}
-<figcaption><strong>Figure 2.</strong> Each LoRA arm&rsquo;s gap to full fine-tuning, recomputed at
-successive matched-step checkpoints. Rank&nbsp;1 starts worst and converges to parity; the
-ordering is not monotonic in rank at any point, which is what noise looks like.</figcaption>
-</figure>
-
-<table><thead><tr><th>Matched steps</th><th>LoRA rank 32</th><th>LoRA rank 1</th></tr></thead>
-<tbody>{gap_rows}</tbody></table>
-
-<h2>What this does not show</h2>
+<p>The runs execute at the same time rather than in sequence. They then share cluster state,
+dataset and GPU contention, which removes the drift between separate runs. The scheduler
+places the two LoRA runs on a single worker as two adapters, because they share a base
+model; full fine-tuning takes its own workers. Comparisons are made per step, not per
+second, since the shared runs progress at about half the rate.</p>
+{"".join(sections)}
+<h2>What these runs do not show</h2>
 <div class="callout">
-<p>At {meta["episodes"]:,} episodes this run is about <strong>1%</strong> of the paper&rsquo;s MATH
-experiment (~320,000 episodes). By their own information argument, capacity binds only as
-episode-bits approach adapter parameters &mdash; we are two to three orders of magnitude away.
-This result shows rank&nbsp;1 <em>trains and tracks</em>; it cannot test the capacity claim.</p>
-<p>One seed per arm. The spread bounds within-run noise, not seed-to-seed variance, so a gap
-of this size is not evidence either way. And the authors deliberately used Llama for GSM8K
-because Qwen&rsquo;s math-heavy pretraining confounds the measurement &mdash; we used Qwen.</p>
+<p>Each step covers 64 episodes, so the 0.6B run saw about 3,200 and the 8B run about
+2,560. The paper's MATH experiment used roughly 320,000. By its own information argument,
+capacity binds when episode-bits approach adapter parameters, and these runs are two to
+three orders of magnitude short of that. They show that rank&nbsp;1 trains and keeps pace;
+they do not test the capacity limit.</p>
+<p>Both models largely solve GSM8K at these settings &mdash; 0.6B plateaus near 0.75 by
+step 20, and 8B reaches 0.95. Once every run is at its ceiling, agreement between runs is
+easy to obtain. A harder task is needed for a result that could fail.</p>
+<p>One seed per run. The reported deviation bounds step-to-step noise within a run, not
+variation between seeds, so a gap of this size is not evidence in either direction.
+The authors used Llama for GSM8K because Qwen's pretraining includes a large amount of
+mathematics; these runs used Qwen.</p>
 </div>
 
-<h2>The systems half</h2>
-<p>Three concurrent RL jobs ran on four L4 GPUs. Full fine-tuning held a GPU to itself at
-<span class="num">{meta["fullft_sec"]:.0f}s</span> per step; the two LoRA arms shared one and took
-<span class="num">{meta["lora_sec"]:.0f}s</span> each &mdash; almost exactly 2&times;, so the difference is
-time-slicing rather than LoRA being slower. Two adapters of different rank coexisted on one
-device throughout, which is what makes the equal-performance result cheap: the same answer
-on half the hardware.</p>
+<h2>Infrastructure</h2>
+<p>Each run's trainer and sampler request a GPU through a Kubernetes ResourceClaim, and
+the claim's device selector decides placement. The tier comes from the model's parameter
+count: a 0.6B full fine-tune fits a 24&nbsp;GB L4, while an 8B one needs an 80&nbsp;GB
+H100, and an 8B LoRA worker needs one too, because the sampler must hold 16.4&nbsp;GB of
+frozen weights inside the fraction of the device vLLM is given.</p>
+<p>The 0.6B experiment therefore ran three runs on four L4s, and the 8B experiment ran
+them on four H100s. In both cases the two LoRA runs shared one trainer and one sampler,
+holding two adapters of different rank on the same device. That is the cost argument for
+LoRA in this setting: the same result on half the hardware.</p>
 
-<details><summary>Full data ({len(df)} rows)</summary>
-<table><thead><tr><th>Arm</th><th>Step</th><th>Reward</th><th>Seconds</th></tr></thead>
+<details><summary>Full data ({total_rows} rows)</summary>
+<table><thead><tr><th>Model</th><th>Run</th><th>Step</th><th>Reward</th><th>Seconds</th></tr></thead>
 <tbody>{data_rows}</tbody></table></details>
 
-<footer>Generated from per-arm <code>metrics.jsonl</code> by
-<code>dev/tools/rank_sweep_html.py</code>. Scenario: <code>{meta["scenario"]}</code>.</footer>
+<footer>Generated by <code>dev/tools/rank_sweep_html.py</code> from each run's
+<code>metrics.jsonl</code>. Scenario: <code>gsm8k-rl-rank-sweep</code>.</footer>
 </main>
 <div id="tip"></div>
-<script>{JS.replace("%CFG%", cfg).replace("%NAMES%", names)}</script>
+<script>{JS.replace("%CHARTS%", "[" + ",".join(cfgs) + "]").replace("%NAMES%", names)}</script>
 </body></html>
 """
   out.write_text(doc)
@@ -354,27 +427,42 @@ on half the hardware.</p>
 
 def main() -> None:
   ap = argparse.ArgumentParser(description=__doc__)
-  ap.add_argument("--runs-dir", required=True, type=Path)
-  ap.add_argument("--out", type=Path, default=Path("rank_sweep_report.html"))
+  ap.add_argument("--run", action="append", required=True, metavar="LABEL=MODEL=DIR", help="repeatable")
+  ap.add_argument("--out", type=Path, default=Path("report.html"))
   ap.add_argument("--tail", type=int, default=10)
   ap.add_argument("--smooth", type=int, default=5)
-  ap.add_argument("--model", default="Qwen/Qwen3-0.6B")
-  ap.add_argument("--scenario", default="gsm8k-rl-rank-sweep")
   args = ap.parse_args()
 
-  df = load_arms(args.runs_dir)
-  summary, common = summarize(df, args.tail)
-  gaps = build_gaps(df, args.tail)
-  by_arm = summary.set_index(summary["arm"].astype(str))
-  meta = {
-    "date": date.today().isoformat(),
-    "model": html.escape(args.model),
-    "scenario": html.escape(args.scenario),
-    "episodes": common * 64,
-    "fullft_sec": float(by_arm.loc["fullft", "sec_per_step"]),
-    "lora_sec": float(by_arm.loc["lora-r1", "sec_per_step"]),
-  }
-  render(df, summary, gaps, args.smooth, args.tail, args.out, meta)
+  experiments = []
+  for spec in args.run:
+    label, model, path = spec.split("=", 2)
+    df = load_runs(Path(path))
+    summary, common = summarize(df, args.tail)
+    by_run = summary.set_index(summary["run"].astype(str))
+    gaps = build_gaps(df, args.tail)
+    spread = max(abs(float(by_run.loc[a, "gap_vs_fullft"])) for a in ("lora-r32", "lora-r1"))
+    worst_std = float(summary["tail_std"].max())
+    experiments.append(
+      {
+        "label": html.escape(label),
+        "model": html.escape(model),
+        "df": df,
+        "summary": summary,
+        "gaps": gaps,
+        "intro": (
+          f"{common} steps per run, {common * 64:,} episodes. Full fine-tuning ran on its own "
+          f"GPU at {float(by_run.loc['fullft', 'sec_per_step']):.0f}s per step; the two LoRA runs "
+          f"shared one at {float(by_run.loc['lora-r1', 'sec_per_step']):.0f}s each."
+        ),
+        "pace_note": run_pace_note(df, summary),
+        "note": (
+          f"The largest gap between a run and full fine-tuning is {spread:.3f}, against a "
+          f"within-run step-to-step deviation of up to {worst_std:.3f}. The runs differ by less "
+          f"than any one of them varies between steps."
+        ),
+      }
+    )
+  render(experiments, args.out, args.smooth, args.tail)
 
 
 if __name__ == "__main__":
