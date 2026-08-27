@@ -58,7 +58,9 @@ vllm = [
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
     "kubernetes>=29",
-    "timeslice @ git+https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git@d03540a1c96af9d854bdaa3ef81fe435ad06a92f#subdirectory=pkg/client/python",
+    # Kept in step with the snapshot-agent image deployed in
+    # docs/setup/gke-fft-timeslice.md: both come from this upstream commit.
+    "timeslice @ git+https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git@7a3e86f423fc6dd720ea20da04346ad667afc50a#subdirectory=pkg/client/python",
 ]
 dev = [
     "ruff>=0.5.0",

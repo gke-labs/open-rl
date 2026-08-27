@@ -5,6 +5,7 @@ kind: Kustomization
 # GPU workloads reference the same DRA ResourceClaim, pinning them to one
 # physical GPU allocation. There is no static trainer worker in this variant.
 resources:
+  - 00-llmd-snapshot-agent.yaml
   - 01-shared-pvc.yaml
   - 02-redis.yaml
   - 03-rbac.yaml

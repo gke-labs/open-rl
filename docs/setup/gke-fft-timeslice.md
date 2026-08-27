@@ -201,8 +201,9 @@ the relevant pod and process set.
   needs it) with the Filestore CSI driver enabled (see
   [gke-setup.md](gke-setup.md) for the base cluster, CPU pool, and PVC details).
 - llm-d's snapshot-agent running on each trainer GPU node and reachable from the
-  OpenRL time slicer at `127.0.0.1:9001`. OpenRL owns acquire/release ordering;
-  llm-d owns physical snapshot/restore.
+  OpenRL time slicer at `127.0.0.1:9001`. It ships in the kustomize bundle
+  (`00-llmd-snapshot-agent.yaml`). OpenRL owns acquire/release ordering; llm-d
+  owns physical snapshot/restore.
 - A working NVIDIA GPU driver on the DRA node. The llm-d snapshot path uses
   CUDA checkpointing under the hood, so use driver **r570 or newer**.
 - The **NVIDIA DRA GPU driver** (Helm chart `nvidia-dra-driver-gpu` >= 25.8.0)
@@ -274,38 +275,6 @@ Notes:
   plugin's [time-slicing config](https://github.com/NVIDIA/k8s-device-plugin#shared-access-to-gpus-with-cuda-time-slicing)
   (`replicas: 2`) plus the node label.
 
-## Setup 1.5: Install and deploy llm-d Snapshot Agent DaemonSet
-
-Because `open-rl-accel-timeslicer` runs with `--backend llmd` in cluster deployments, it delegates physical kernel-level CUDA process freezing and unfreezing (`cuda-checkpoint`) to `llmd-snapshot-agent` over gRPC on `127.0.0.1:9001`.
-
-To build and deploy the official `llmd-snapshot-agent` DaemonSet on GPU nodes:
-
-1. **Clone the official `llm-d-rl-time-slicing` repository:**
-   ```bash
-   git clone https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git ~/.cache/checkouts/github.com/llm-d-incubation/llm-d-rl-time-slicing
-   cd ~/.cache/checkouts/github.com/llm-d-incubation/llm-d-rl-time-slicing
-   ```
-
-2. **Build and push the Go Daemon container image:**
-   *(Note: The Dockerfile requires a pre-built `bin/` directory. Ensure `bin/` exists before running Docker build).*
-   ```bash
-   mkdir -p bin/
-   DOCKER_BUILDKIT=1 docker build -t gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent:latest -f deploy/snapshot-agent/Dockerfile .
-   docker push gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent:latest
-   ```
-
-3. **Deploy the Helm Chart into `timeslice-system`:**
-   ```bash
-   helm template snapshot-agent deploy/snapshot-agent/ \
-     --namespace timeslice-system \
-     --set image.repository=gcr.io/<YOUR_GCP_PROJECT>/llmd-snapshot-agent \
-     --set image.tag=latest \
-     --set tolerations[0].key=nvidia.com/gpu \
-     --set tolerations[0].operator=Exists \
-     --set tolerations[0].effect=NoSchedule | kubectl apply -f -
-   ```
-   Verify both DaemonSet Pods (`llmd-snapshot-agent-*`) transition to `Running` and actively listen on TCP `9001` across all target GPU nodes.
-
 ## Setup 2: Build, push, and deploy OpenRL
 
 ```bash
@@ -314,9 +283,9 @@ make deploy-fft-timeslice
 ```
 
 `k8s/deploy/distributed-fft-timeslice/` deploys Redis, the shared PVC, the
-shared GPU `ResourceClaim`, the node-local OpenRL time-slicer DaemonSet, and the
-gateway with `OPEN_RL_ENABLE_FFT=true` and
-`OPEN_RL_WORKER_MANAGER=kubernetes`.
+shared GPU `ResourceClaim`, the llm-d Snapshot Agent DaemonSet, the node-local
+OpenRL time-slicer DaemonSet, and the gateway with `OPEN_RL_ENABLE_FFT=true`
+and `OPEN_RL_WORKER_MANAGER=kubernetes`.
 The deployment assumes one base model per rollout: set `BASE_MODEL` in
 `kustomization.yaml`, and the gateway uses that value for `get_info` and
 `create_model` requests that do not explicitly pass a base model.
@@ -341,6 +310,9 @@ When multiple training jobs share physical GPUs via the Accelerator Time-Slicer,
 - **Client Toggle:** Configured via `cpu_offload: bool = True` inside `FFTConfig`.
 - **Symmetric Primitives:** `sleep()` transfers model parameters and initialized AdamW optimizer states (`exp_avg`, `exp_avg_sq`) to pinned host memory (`.to("cpu", non_blocking=True).pin_memory()`) while replacing GPU tensors with empty shells (`torch.empty(0, ...)`). `wake_up()` reloads pinned shadow tensors back to CUDA instantly before processing training requests.
 
+### llm-d Snapshot Agent
+Because `open-rl-accel-timeslicer` runs with `--backend llmd` in the cluster, it delegates the physical kernel-level CUDA freeze/thaw (`cuda-checkpoint`) to the llm-d Snapshot Agent over gRPC on `127.0.0.1:9001`. The rollout includes `00-llmd-snapshot-agent.yaml`, which deploys that agent as a DaemonSet in `timeslice-system` on every node labeled `nvidia.com/gpu.present=true`, running the image upstream CI publishes to `ghcr.io/llm-d-incubation/llm-d-rl-time-slicing/snapshot-agent` and pinned by digest. There is nothing to build or install by hand; the manifest's header comment covers moving to a newer agent build.
+
 ### DCGM GPU Observability
 The Kustomize rollout includes `10-dcgm-monitoring.yaml`, deploying the NVIDIA DCGM Exporter DaemonSet and a Google Cloud Monitoring `PodMonitoring` custom resource to scrape GPU utilization, VRAM usage, clock speeds, and temperature metrics every 10 seconds.
 
@@ -361,6 +333,11 @@ make test e2e fft-gsm8k BASE_URL=http://127.0.0.1:8000
   `ResourceClaim`, so they should be schedulable onto the node that owns that
   claim. If only later pods are pending, check pod events for PVC attach limits,
   node selectors, taints, image pull errors, or an unallocated claim.
+- **No snapshot agent on a GPU node**: `kubectl get pods -n timeslice-system -l
+  app.kubernetes.io/name=snapshot-agent -o wide` should show a `Running` pod
+  listening on TCP `9001` for every GPU node. The DaemonSet selects
+  `nvidia.com/gpu.present=true` and mounts the host NVIDIA driver directory, so
+  it never starts on the CPU pool.
 - **Trainer worker fails on first CUDA batch with snapshot errors**: check the
   trainer worker pod logs, the `open-rl-accel-timeslicer` DaemonSet logs, and the
   llm-d snapshot-agent logs. The worker should connect to

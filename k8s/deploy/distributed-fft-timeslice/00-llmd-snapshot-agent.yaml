@@ -1,0 +1,162 @@
+# llm-d Snapshot Agent: the node-local daemon that performs the physical
+# CUDA checkpoint/restore (cuda-checkpoint) that open-rl-accel-timeslicer
+# drives over gRPC on 127.0.0.1:9001. It discovers the target pod's PIDs from
+# the timeslice.io/job-id label that the worker pod template stamps.
+#
+# Rendered from the upstream chart at llm-d-incubation/llm-d-rl-time-slicing
+# commit 7a3e86f4 (deploy/snapshot-agent, chart 0.1.0) — the same commit the
+# timeslice client is pinned to in pyproject.toml. The chart is not published
+# anywhere, so it has to be re-rendered from a checkout:
+#
+#   git clone https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git
+#   helm template snapshot-agent deploy/snapshot-agent/ \
+#     --namespace timeslice-system \
+#     --set-string "nodeSelector.nvidia\.com/gpu\.present=true" \
+#     --set 'tolerations[0].key=nvidia.com/gpu' \
+#     --set 'tolerations[0].operator=Exists' \
+#     --set 'tolerations[0].effect=NoSchedule'
+#
+# Then re-apply these three edits by hand:
+#   1. Add back the Namespace below — it lives in the parent chart, so the
+#      subchart render omits it and the apply fails on a fresh cluster.
+#   2. Replace the :latest tag with a digest (crane digest <image>:latest).
+#   3. Bump the timeslice client pin in pyproject.toml to the same upstream
+#      commit, so the client and the agent stay paired.
+#
+# Temporary: pinned by digest because upstream publishes no release. Swap with
+# a version tag once they cut one (llm-d-incubation/llm-d-rl-time-slicing#179);
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: timeslice-system
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: snapshot-agent
+  namespace: timeslice-system
+  labels:
+    helm.sh/chart: snapshot-agent-0.1.0
+    app.kubernetes.io/name: snapshot-agent
+    app.kubernetes.io/instance: snapshot-agent
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: snapshot-agent
+  labels:
+    helm.sh/chart: snapshot-agent-0.1.0
+    app.kubernetes.io/name: snapshot-agent
+    app.kubernetes.io/instance: snapshot-agent
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  # Permission to query the kubelet via the API server proxy
+  - apiGroups: [""]
+    resources: ["nodes/proxy"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: snapshot-agent
+  labels:
+    helm.sh/chart: snapshot-agent-0.1.0
+    app.kubernetes.io/name: snapshot-agent
+    app.kubernetes.io/instance: snapshot-agent
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: snapshot-agent
+subjects:
+  - kind: ServiceAccount
+    name: snapshot-agent
+    namespace: timeslice-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: snapshot-agent
+  namespace: timeslice-system
+  labels:
+    helm.sh/chart: snapshot-agent-0.1.0
+    app.kubernetes.io/name: snapshot-agent
+    app.kubernetes.io/instance: snapshot-agent
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: snapshot-agent
+      app.kubernetes.io/instance: snapshot-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: snapshot-agent
+        app.kubernetes.io/instance: snapshot-agent
+    spec:
+      serviceAccountName: snapshot-agent
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: snapshot-agent
+          securityContext:
+            privileged: true
+          # Pinned by digest: the upstream :latest tag is rebuilt on every
+          # merge to their main. This digest is commit 7a3e86f4.
+          image: "ghcr.io/llm-d-incubation/llm-d-rl-time-slicing/snapshot-agent@sha256:a84a7bd39bc913371afcb9b550adfc3ce91240142b2a71b77745943413b6552b"
+          imagePullPolicy: Always
+          env:
+            - name: DEPLOYMENT_MODE
+              value: "k8s"
+            - name: PATH
+              value: /usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: AGENT_PORT
+              value: "9001"
+            - name: LD_LIBRARY_PATH
+              value: /usr/local/nvidia/lib64
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: "all"
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: "compute,utility"
+          ports:
+            - name: grpc
+              containerPort: 9001
+              protocol: TCP
+          resources:
+            {}
+          volumeMounts:
+            - name: nvidia-driver
+              mountPath: /usr/local/nvidia
+              readOnly: true
+            - name: nvidia-devices
+              mountPath: /dev
+      volumes:
+        - name: nvidia-driver
+          hostPath:
+            path: /home/kubernetes/bin/nvidia
+            type: Directory
+        - name: nvidia-devices
+          hostPath:
+            path: /dev
+            type: Directory
+      nodeSelector:
+        nvidia.com/gpu.present: "true"
+      tolerations:
+        - effect: NoSchedule
+          key: nvidia.com/gpu
+          operator: Exists
