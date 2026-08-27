@@ -10,49 +10,78 @@ browser.
 
 ## Results
 
-Two experiments, three runs each (full fine-tuning, LoRA rank 32, LoRA rank 1),
-all training concurrently on one cluster. Mean reward over the last 10
-steps:
+Twelve runs: two model sizes × three configurations (full fine-tuning, LoRA
+rank 32, LoRA rank 1) × two seeds, all training concurrently on one cluster.
+Running each configuration twice is what makes the comparison readable — the
+spread between two runs that differ only in their data-shuffling seed is the
+reference any gap has to beat.
 
-| Model | FullFT | LoRA r32 | LoRA r1 | Largest gap | Per-run std |
-|---|---|---|---|---|---|
-| Qwen3-0.6B, 50 steps, L4 | 0.703 | 0.787 | 0.716 | 0.084 | 0.12–0.16 |
-| Qwen3-8B, 40 steps, H100 | 0.953 | 0.948 | 0.938 | 0.015 | 0.06–0.07 |
+Mean reward over the last 10 of 40 steps:
 
-In both experiments the runs differ by less than any one of them varies between
-steps. The 8B experiment is the tighter result: a smaller spread against a lower noise floor.
+| Model | FullFT | LoRA r32 | LoRA r1 | Replicate spread |
+|---|---|---|---|---|
+| Qwen3-0.6B, L4 | 0.697 | 0.694 | 0.718 | 0.033–0.042 |
+| Qwen3-8B, H100 | 0.934 | 0.957 | 0.936 | 0.013–0.016 |
 
-**Final performance matched; pace did not.** At 8B, full fine-tuning crossed 0.9
-at step 18, LoRA rank 32 at step 24 and rank 1 at step 28. Over the first 15
-steps full fine-tuning averaged 0.58 against rank 1's 0.09. The paper's claim
-covers sample efficiency as well as final performance, so this is a difference,
-though two untested explanations would produce it: LoRA initialises B at zero so
-its effective learning rate ramps up early, and we used a fixed 10× learning-rate
-ratio rather than sweeping each run to its own optimum as the paper did.
+**At 8B, rank 1 matched full fine-tuning.** The gap is +0.002 against a
+replicate spread of 0.016 — far inside the noise. That is the paper's claim,
+reproduced at the lowest possible rank.
+
+Two things complicate a clean headline, and the report states both:
+
+- **Rank 32 finished 0.023 above full fine-tuning**, which exceeds the spread.
+  LoRA ahead of full fine-tuning is not a failure of the claim under test, but
+  it does mean the two are not indistinguishable at this rank.
+- **The verdict moves with the tail window.** At 8B the rank-32 excess is
+  significant at windows of 5, 10 and 15 steps and not at 20. Reward is at a
+  ceiling by then, so the tail mean is unstable. The report shows the full
+  sensitivity table rather than one window's answer.
+
+**The 0.6B half decides nothing.** Its replicate spread (0.033–0.042) is wider
+than any gap being measured, so "within noise" there describes the noise, not
+the ranks. It is included because it shows what an underpowered version of this
+experiment looks like.
+
+**Pace differed from final performance.** At 8B, full fine-tuning crossed 0.9 at
+step 19, rank 32 at 25 and rank 1 at 27. Over the first 15 steps full
+fine-tuning averaged 0.48 against rank 1's 0.15. The paper's claim covers sample
+efficiency as well as final performance, so this is a real difference; two
+untested explanations would produce it, LoRA initialising B at zero so its
+effective learning rate ramps up, and our use of a fixed 10× learning-rate ratio
+rather than sweeping each configuration to its own optimum.
 
 ## What these runs do not show
 
-Each step covers 64 episodes, so the runs saw ~3,200 and ~2,560 episodes against
-the paper's ~320,000 for MATH. Capacity binds when episode-bits approach adapter
+Each step covers 64 episodes, so each run saw about 2,560 episodes against the
+paper's ~320,000 for MATH. Capacity binds when episode-bits approach adapter
 parameters, and these are two to three orders of magnitude short, so they show
 rank 1 trains and keeps pace rather than testing the capacity limit.
 
-Both models largely solve GSM8K at these settings — 0.6B plateaus near 0.75 by
-step 20, 8B reaches 0.95 — so agreement between runs is easy to obtain. A harder
-task is needed for a result that could fail.
+Both models largely solve GSM8K at these settings. Once every run is at its
+ceiling, agreement is easy to obtain and the tail mean gets noisy — which is
+what the sensitivity table is about. A harder task is needed for a result that
+could fail cleanly.
 
-One seed per run; the reported deviation bounds within-run noise, not seed
-variance. The authors used Llama for GSM8K because Qwen's pretraining is
+Two seeds bound the noise floor coarsely; that is an estimate, not a confidence
+interval. The authors used Llama for GSM8K because Qwen's pretraining is
 mathematics-heavy; these runs used Qwen.
+
+## Scheduling limitations
+
+The report has a section on three placement-layer limitations this run exposed:
+finished jobs never release their workers, LoRA runs sharing a base model cannot
+spread across workers, and placement is never revisited as capacity frees. Those
+are why the four 8B LoRA runs took 288s per step against 134s for full
+fine-tuning, and finished hours after the rest.
 
 ## Files
 
 ```
 report.html            the write-up, self-contained
-metrics-0.6b/*.jsonl   raw per-run metrics, Qwen3-0.6B run
-metrics-8b/*.jsonl     raw per-run metrics, Qwen3-8B run
-rank_sweep-0.6b.csv    tidy extract (run, step, reward, entropy, kl, seconds)
-rank_sweep-8b.csv      same, 8B run
+metrics-0.6b/*.jsonl   raw per-run metrics, Qwen3-0.6B (fft/r1/r32 × a/b)
+metrics-8b/*.jsonl     raw per-run metrics, Qwen3-8B
+rank_sweep-0.6b.csv    tidy extract (run, group, config, replicate, step, reward, ...)
+rank_sweep-8b.csv      same, 8B
 ```
 
 Raw metrics are kept so the analysis can be rebuilt without re-running. The
@@ -64,16 +93,15 @@ record.
 
 ```bash
 # Cluster with the open-rl gateway deployed:
-make cluster-e2e E2E_SCENARIO=gsm8k-rl-rank-sweep \
-  E2E_ARGS="base_model=Qwen/Qwen3-8B steps=40"
+make cluster-e2e E2E_SCENARIO=gsm8k-rl-rank-sweep-mega E2E_ARGS="steps=40"
 
-# Analysis. Each --run is LABEL=MODEL=DIR, and DIR holds one subdirectory per
-# run containing metrics.jsonl (the files here are flattened for readability).
+# Analysis. DIR holds one subdirectory per run; GROUP selects a model size when
+# one directory holds several (the files here are flattened for readability).
 cd dev/tools
-uv run python rank_sweep_report.py --runs-dir <dir> --out-dir out
+uv run python rank_sweep_report.py --runs-dir <dir> --group large --out-dir out
 uv run python rank_sweep_html.py \
-  --run "Qwen3-0.6B on L4=Qwen3-0.6B=<dir>" \
-  --run "Qwen3-8B on H100=Qwen3-8B=<dir>" --out report.html
+  --run "Qwen3-0.6B on L4=Qwen3-0.6B=<dir>=small" \
+  --run "Qwen3-8B on H100=Qwen3-8B=<dir>=large" --out report.html
 ```
 
 ## Run conditions
@@ -82,9 +110,10 @@ uv run python rank_sweep_html.py \
   model: a 0.6B full fine-tune fits a 24GB L4; an 8B one needs an 80GB H100, as
   does an 8B LoRA worker, because the sampler must hold 16.4GB of frozen weights
   inside the fraction of the device vLLM is given.
-- Placement: full fine-tuning held its own trainer and sampler claims; the two
-  LoRA runs shared one trainer and one sampler as separate adapters, by
-  base-model affinity.
-- Throughput: 0.6B 42s/step dedicated against 88s shared; 8B 89s against 160s.
-  The roughly 2× is time-slicing between the two LoRA runs, not LoRA being
-  slower.
+- Placement: the four LoRA runs of one model size shared a single trainer and a
+  single sampler as four adapters, by base-model affinity. The two full
+  fine-tuning replicates took separate workers, but were packed two to a claim,
+  so no configuration here had a dedicated GPU.
+- Throughput: 0.6B 58s/step for full fine-tuning against 128s for the shared
+  LoRA runs; 8B 134s against 288s. The roughly 2× is time-slicing, not LoRA
+  being slower.

@@ -411,6 +411,48 @@ def run_pace_note(df, summary) -> str:
   return "Neither run reached 0.9 within the run, so the pace comparison below is limited to the lower thresholds. No run leads consistently."
 
 
+def tail_sensitivity(df, windows=(5, 10, 15, 20)):
+  """Gap and noise floor recomputed over several tail windows.
+
+  Reward sits near a ceiling by the end of these runs, so the tail mean moves
+  with the window chosen. Showing the dependence is the honest alternative to
+  picking one window and reporting its verdict as the result.
+  """
+  rows = []
+  for w in windows:
+    summary, common = summarize(df, w)
+    if w > common:
+      continue
+    configs = summarize_configs(summary)
+    if "gap_vs_fullft" not in configs:
+      continue
+    floor = noise_floor(configs)
+    gaps = {str(r["config"]): float(r["gap_vs_fullft"]) for _, r in configs.iterrows() if r["config"] != "fullft"}
+    rows.append((w, floor, gaps))
+  return rows
+
+
+def _sensitivity_table(df) -> str:
+  rows = tail_sensitivity(df)
+  if not rows:
+    return ""
+  tracked = config_order({k for _, _, g in rows for k in g})
+  head = "".join(f"<th>{config_label(c)}</th>" for c in tracked)
+  body = ""
+  for w, floor, gaps in rows:
+    cells = ""
+    for c in tracked:
+      gap = gaps.get(c, 0.0)
+      mark = "" if floor != floor or abs(gap) <= floor else " *"
+      cells += f'<td class="num">{gap:+.4f}{mark}</td>'
+    body += f'<tr><td class="num">{w}</td><td class="num">{floor:.4f}</td>{cells}</tr>'
+  return (
+    f"<table><thead><tr><th>Tail window</th><th>Replicate spread</th>{head}</tr></thead>"
+    f"<tbody>{body}</tbody></table>"
+    "<p>An asterisk marks a gap larger than the replicate spread at that window.</p>"
+  )
+
+
 def _lora_count(summary) -> int:
   return int(summary[summary["config"] != "fullft"]["run"].nunique())
 
@@ -624,16 +666,34 @@ def _lede(experiments) -> str:
     return intro
   floor, best = min(scored, key=lambda t: t[0])
   cfg = best["configs"]
-  lora = cfg[cfg["config"] != "fullft"]
-  worst = lora.loc[lora["gap_vs_fullft"].abs().idxmax()]
-  gap = float(worst["gap_vs_fullft"])
-  verdict = "inside" if abs(gap) <= floor else "outside"
-  return (
-    f"{intro} In the {best['model']} experiment, the largest gap between a LoRA configuration "
-    f"and full fine-tuning was {gap:+.3f}, against a replicate spread of {floor:.3f} between "
-    f"two runs differing only in seed &mdash; {verdict} the noise floor. Repeat seeds are what "
-    f"make that statement possible: they measure the floor rather than assuming it."
+  # Rank 1 is the configuration the claim is about, so it leads regardless of
+  # which configuration happens to sit furthest from the reference.
+  target = "lora-r1" if "lora-r1" in set(cfg["config"].astype(str)) else None
+  if target is None:
+    return intro
+  gap = float(cfg.loc[cfg["config"] == target, "gap_vs_fullft"].iloc[0])
+  head = (
+    f"{intro} In the {best['model']} experiment, LoRA rank&nbsp;1 finished {abs(gap):.3f} "
+    f"{'above' if gap > 0 else 'below'} full fine-tuning, against a spread of {floor:.3f} "
+    f"between two runs differing only in seed. That is the paper's claim reproduced: at the "
+    f"lowest possible rank, the difference is smaller than the noise the measurement carries."
+    if abs(gap) <= floor
+    else f"{intro} In the {best['model']} experiment, LoRA rank&nbsp;1 finished {abs(gap):.3f} "
+    f"{'above' if gap > 0 else 'below'} full fine-tuning, against a spread of {floor:.3f} "
+    f"between two runs differing only in seed &mdash; a difference larger than the noise."
   )
+  others = cfg[(cfg["config"] != "fullft") & (cfg["config"].astype(str) != target)]
+  outside = [r for _, r in others.iterrows() if abs(float(r["gap_vs_fullft"])) > floor]
+  if outside:
+    r = max(outside, key=lambda r: abs(float(r["gap_vs_fullft"])))
+    g = float(r["gap_vs_fullft"])
+    head += (
+      f" {config_label(str(r['config']))} sat {abs(g):.3f} "
+      f"{'above' if g > 0 else 'below'} full fine-tuning, which does exceed that spread; "
+      f"the direction matters, since LoRA ahead of full fine-tuning is not a failure of the "
+      f"claim under test."
+    )
+  return head + " Repeat seeds are what make these statements possible: they measure the noise floor rather than assuming it."
 
 
 def render(experiments, out: Path, smooth: int, tail: int) -> None:
@@ -674,6 +734,12 @@ def render(experiments, out: Path, smooth: int, tail: int) -> None:
 {_pace_table(exp["df"], smooth)}
 
 <details><summary>Individual runs</summary>{_runs_table(exp["summary"], tail)}</details>
+
+<details><summary>Sensitivity to the tail window</summary>
+<p>Reward is near its ceiling by the end of these runs, so the tail mean depends on how
+many steps the window covers. Recomputing the comparison over several windows shows how
+much of the verdict rests on that choice.</p>
+{_sensitivity_table(exp["df"])}</details>
 
 <details open><summary>Gap to full fine-tuning at successive checkpoints</summary>
 {gap_svg}
@@ -797,8 +863,9 @@ def _note(configs) -> str:
     else "larger than the distance between two runs that differ only in seed, so it is not explained by seed variation alone"
   )
   return (
-    f"The largest gap to full fine-tuning is {gap:+.3f} ({config_label(str(worst['config']))}), "
-    f"against a replicate spread of {floor:.3f}. That gap is {verdict}."
+    f"The largest gap to full fine-tuning is {abs(gap):.3f}, with "
+    f"{config_label(str(worst['config']))} {'above' if gap > 0 else 'below'} it, against a "
+    f"replicate spread of {floor:.3f}. That gap is {verdict}."
   )
 
 
