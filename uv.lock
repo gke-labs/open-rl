@@ -1906,7 +1906,7 @@ requires-dist = [
     { name = "redis", specifier = ">=5.0.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5.0" },
     { name = "tilelang", marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=0.1.9" },
-    { name = "timeslice", marker = "extra == 'cluster'", git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=7a3e86f423fc6dd720ea20da04346ad667afc50a" },
+    { name = "timeslice", marker = "extra == 'cluster'", git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=v0.1.0" },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'gpu'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "gpu" } },
     { name = "torch", marker = "sys_platform == 'linux' and extra == 'vllm'", index = "https://download.pytorch.org/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
     { name = "torch", marker = "extra == 'cpu'", index = "https://download.pytorch.org/whl/cpu", conflict = { package = "open-rl", extra = "cpu" } },
@@ -3085,7 +3085,7 @@ wheels = [
 [[package]]
 name = "timeslice"
 version = "0.2.1"
-source = { git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=7a3e86f423fc6dd720ea20da04346ad667afc50a#7a3e86f423fc6dd720ea20da04346ad667afc50a" }
+source = { git = "https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git?subdirectory=pkg%2Fclient%2Fpython&rev=v0.1.0#7a3e86f423fc6dd720ea20da04346ad667afc50a" }
 dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
