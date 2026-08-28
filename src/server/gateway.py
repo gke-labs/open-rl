@@ -694,6 +694,28 @@ async def create_sampling_session(req: dict):
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
 
+@app.get("/api/v1/samplers/{sampler_id:path}")
+async def get_sampler(sampler_id: str):
+  """SamplingClient.get_tokenizer() and .get_base_model().
+
+  The sampler id is whatever create_sampling_session handed back, so it is
+  either a base model name or a `tinker://<model_id>/sampler_weights/...` path;
+  `:path` on the route is what lets the slash in either form through. Both
+  resolve to the base model, which is all the client wants -- it loads the
+  tokenizer from the Hub itself.
+  """
+  base_model_id = base_model_id_from_sampling_ref(sampler_id)
+  model_meta = await store.get_model_metadata(base_model_id) if base_model_id else None
+  base_model = (model_meta or {}).get("base_model") or base_model_id or get_default_model_name()
+  if not base_model:
+    return JSONResponse(status_code=404, content={"error": f"Unknown sampler {sampler_id}"})
+  return {
+    "sampler_id": sampler_id,
+    "base_model": base_model,
+    "model_path": sampler_id if sampler_id.startswith("tinker://") else None,
+  }
+
+
 @app.post("/api/v1/asample")
 async def asample(req: dict):
   """SamplingClient.sample_async()"""
