@@ -6,8 +6,10 @@ import json
 import logging
 import math
 import os
+import threading
 import time
 from datetime import datetime
+from functools import wraps
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,24 @@ class FFTConfig(BaseModel):
   seed: int | None = None
   cpu_offload: bool = True
   weight_sync_strategy: str | None = None
+
+
+def with_offload_lock(fn):
+  """Serialize offload/reload with save paths.
+
+  In llmd-app mode the Snapshot Agent pushes sleep()/wake_up() over the
+  app_channel stream on a background thread, and (because the orchestrator
+  defers the snapshot until another job takes the lock) such a push can land
+  while the request loop is running a save operation after release. The RLock
+  keeps the pinned-CPU shadow state and tensor.data pointers consistent.
+  """
+
+  @wraps(fn)
+  def wrapper(self, *args, **kwargs):
+    with self._offload_lock:
+      return fn(self, *args, **kwargs)
+
+  return wrapper
 
 
 def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Parameter]:
@@ -47,6 +67,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.cpu_offload: bool = True
     self.weight_sync_cfg: WeightSyncConfig = WeightSyncConfig.from_env()
     self._is_offloaded: bool = False
+    # True when an external coordinator (llm-d Snapshot Agent app_channel)
+    # drives sleep()/wake_up(); saves may then legally run while resident
+    # because the orchestrator defers the snapshot on the zero-overhead path.
+    self.external_offload_manager: bool = False
+    self._offload_lock = threading.RLock()
     self._latest_delta_tensors: dict[str, torch.Tensor] = {}
     self._latest_total_changed: int = 0
     self._latest_total_elements: int = 0
@@ -137,9 +162,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
         if tensor in self._param_shadow:
           tensor.data = torch.empty(0, dtype=tensor.dtype, device=self._param_shadow[tensor][0])
 
+  @with_offload_lock
   def save_model(self, alias: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
-    if self.cpu_offload and not self._is_offloaded:
+    if self.cpu_offload and not self._is_offloaded and not self.external_offload_manager:
       raise RuntimeError(
         "Cannot save model while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
         "GPU time-slicer lock is not held during save operations."
@@ -171,9 +197,10 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Saved full fine-tuning model to {save_path}")
     return {"path": save_path}
 
+  @with_offload_lock
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
-    if self.cpu_offload and not self._is_offloaded:
+    if self.cpu_offload and not self._is_offloaded and not self.external_offload_manager:
       raise RuntimeError(
         "Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
         "GPU time-slicer lock is not held during save operations."
@@ -208,6 +235,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Saved full fine-tuning state to {state_path}")
     return {"path": state_path}
 
+  @with_offload_lock
   def save_state_delta(
     self,
     model_id: str,
@@ -215,7 +243,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     kind: str = "sampler",
   ) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
-    if self.cpu_offload and not self._is_offloaded:
+    if self.cpu_offload and not self._is_offloaded and not self.external_offload_manager:
       raise RuntimeError(
         "Cannot save state delta while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
         "GPU time-slicer lock is not held during save operations."
@@ -523,6 +551,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
   ) -> dict[str, Any]:
     return super().generate(self.model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
 
+  @with_offload_lock
   def sleep(self) -> None:
     """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""
     if not self.cpu_offload or self.model is None or self._is_offloaded or not torch.cuda.is_available():
@@ -593,6 +622,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._is_offloaded = True
     print(f"[FFT Worker] Offloaded weights & states to pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms.")
 
+  @with_offload_lock
   def wake_up(self) -> None:
     """Reload pinned CPU shadow tensors back to CUDA VRAM without destroying host shadow buffers."""
     if not self.cpu_offload or self.model is None or not self._is_offloaded or not torch.cuda.is_available():

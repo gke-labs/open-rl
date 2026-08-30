@@ -116,6 +116,13 @@ def workload_from_env(pid: int | None = None, job_id: str | None = None, group: 
 
 
 def time_slicer_client_from_env() -> TimeSlicerClient:
+  from .llmd_app import is_llmd_app_mode
+
+  if is_llmd_app_mode():
+    from .llmd_app import OrchestratorTimeSlicerClient
+
+    return OrchestratorTimeSlicerClient()
+
   host = os.getenv("OPEN_RL_ACCEL_TIMESLICER_HOST")
   if host:
     port = int(os.getenv("OPEN_RL_ACCEL_TIMESLICER_PORT", str(DEFAULT_TCP_PORT)))
