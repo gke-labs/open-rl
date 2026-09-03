@@ -75,12 +75,17 @@ class RunConfig:
     "fft-textsql-rl",
     "fft-textsql-rl-x2",
     "lora-fft-gsm8k-rl-x4",
+    "gsm8k-rl-rank-sweep",
+    "gsm8k-rl-rank-sweep-mega",
   ]
   sampling_backend: str = "vllm"
   trainer_gpu: str = "0"
   sampler_gpu: str = "1"
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
+  # Second model for gsm8k-rl-rank-sweep-mega: base_model supplies the small
+  # runs, this the large ones, so both size tiers run in one invocation.
+  mega_large_model: str = "Qwen/Qwen3-8B"
   jitter_sec: int = 180
   steps: int | None = None
   group_size: int = 8
@@ -699,6 +704,178 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
     cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
 
 
+def run_gsm8k_rl_rank_sweep_mega(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Both model sizes, both LoRA ranks, and replicate runs, all training at once.
+
+  Extends gsm8k-rl-rank-sweep (docs/designs/012) with the thing that experiment
+  could not answer: how much two *identical* configurations differ. Every run is
+  run twice under a different data-shuffling seed, so the spread between
+  replicates measures the noise floor directly. The decision rule needs no
+  statistics -- if the gap between the two full fine-tuning replicates is as
+  large as the gap between full fine-tuning and rank 1, then rank is not what
+  separates them.
+
+  Twelve jobs on eight GPUs. Per model, the two LoRA ranks and their replicates
+  multiplex as four adapters on one trainer and one sampler, while the four full
+  fine-tuning jobs pack two-per-claim onto a trainer and a sampler claim. The
+  0.6B runs size to the 24gb tier and the 8B runs to 80gb, so the two halves run
+  on separate hardware and do not contend.
+  """
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, model_name: str, mode: str, rank: int | None, seed: int) -> None:
+    try:
+      log_path = str(open_rl_tmp_dir(config) / f"gsm8k_rl_mega_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(model_name)
+      args = [
+        "env=gsm8k",
+        f"model_name={model_name}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 40}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        f"group_size={config.group_size}",
+        f"groups_per_batch={config.groups_per_batch}",
+        f"max_tokens={config.max_tokens}",
+        f"learning_rate={'1e-4' if mode == 'lora' else '1e-5'}",
+        "temperature=1.0",
+        # Replicates differ only here. Same seed would shuffle the data
+        # identically and make the pair correlated, understating the floor.
+        f"seed={seed}",
+        "eval_every=0",
+        "save_every=0",
+      ]
+      if rank is not None:
+        args.append(f"lora_rank={rank}")
+      args.extend(clean_cli_extra(config.extra))
+
+      env = examples_env(config).copy()
+      if mode == "lora":
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
+        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
+      else:
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
+        env["OPEN_RL_IN_PLACE_DELTA"] = "1"
+        env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
+
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=env,
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  models = {"small": config.base_model, "large": config.mega_large_model}
+  runs = []
+  for size, model_name in models.items():
+    for mode, rank in (("lora", 1), ("lora", 32), ("fft", None)):
+      for replicate, seed in enumerate((0, 1)):
+        tag = f"r{rank}" if rank is not None else "fft"
+        runs.append((f"{size}-{tag}-{chr(97 + replicate)}", model_name, mode, rank, seed))
+
+  print(f"[training-e2e] mega sweep: {len(runs)} runs -> {', '.join(r[0] for r in runs)}")
+  threads = [threading.Thread(target=train, args=run) for run in runs]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"gsm8k-rl-rank-sweep-mega {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+
+def run_gsm8k_rl_rank_sweep(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
+  """Concurrent FullFT vs LoRA rank-32 vs LoRA rank-1 on GSM8K RL.
+
+  Reproduces the RL claim from "LoRA Without Regret"
+  (https://thinkingmachines.ai/blog/lora/): LoRA matches full fine-tuning even
+  at rank 1, because a policy gradient carries O(1) bits per episode against
+  O(tokens) for supervised learning. See docs/designs/012.
+
+  The runs execute concurrently on purpose. They then share cluster state, dataset
+  and time-slicer contention, which controls the comparison more tightly than
+  sequential runs whose conditions drift -- and the two LoRA runs land on one
+  shared worker as separate adapters, which is the multi-tenant path this
+  project exists to exercise.
+
+  Learning rates stay asymmetric at the paper's ~10x ratio (1e-4 LoRA against
+  1e-5 FullFT). Equalizing them would compare each run at a different distance
+  from its own optimum, which is the more misleading experiment.
+  """
+  results: dict[str, str | BaseException] = {}
+
+  def train(job: str, mode: str, rank: int | None) -> None:
+    try:
+      log_path = str(open_rl_tmp_dir(config) / f"gsm8k_rl_rank_sweep_{job}")
+      if os.path.exists(log_path):
+        shutil.rmtree(log_path)
+      module_name, renderer_name = _math_rl_train_module_and_renderer(config.base_model)
+      args = [
+        "env=gsm8k",
+        f"model_name={config.base_model}",
+        f"renderer_name={renderer_name}",
+        f"max_steps={config.steps if config.steps is not None else 10}",
+        f"base_url={base_url}",
+        f"log_path={log_path}",
+        f"group_size={config.group_size}",
+        f"groups_per_batch={config.groups_per_batch}",
+        f"max_tokens={config.max_tokens}",
+        f"learning_rate={'1e-4' if mode == 'lora' else '1e-5'}",
+        "temperature=1.0",
+        "eval_every=0",
+        "save_every=0",
+      ]
+      # Rank is per-adapter: the LoRA trainer builds a separate PEFT config per
+      # model_id, so runs at different ranks coexist on one shared worker.
+      if rank is not None:
+        args.append(f"lora_rank={rank}")
+      args.extend(clean_cli_extra(config.extra))
+
+      env = examples_env(config).copy()
+      if mode == "lora":
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
+        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
+      else:
+        env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
+        env["OPEN_RL_IN_PLACE_DELTA"] = "1"
+        env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = "patch_in_place"
+
+      results[job] = run_command(
+        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        env=env,
+        watch=watch,
+        prefix=f"[{job}] ",
+      )
+    except BaseException as exc:
+      results[job] = exc
+
+  runs = [
+    ("fullft", "fft", None),
+    ("lora-r32", "lora", 32),
+    ("lora-r1", "lora", 1),
+  ]
+  threads = [threading.Thread(target=train, args=run) for run in runs]
+  for thread in threads:
+    thread.start()
+  for thread in threads:
+    thread.join()
+
+  try:
+    for job, result in sorted(results.items()):
+      if isinstance(result, BaseException):
+        raise RuntimeError(f"gsm8k-rl-rank-sweep {job} failed") from result
+  finally:
+    cleanup_remote_models(base_url, [r for r in results.values() if isinstance(r, str)])
+
+
 def run_gsm8k_rl_x2_compare(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   """Run two concurrent FFT RL jobs on GSM8K: Job A (Full Sync) vs Job B (Delta Sync)."""
   results: dict[str, str | BaseException] = {}
@@ -1101,6 +1278,10 @@ def main() -> None:
       run_gsm8k_rl(config, base_url, processes)
     elif config.scenario in {"fft-gsm8k-rl-x2", "lora-gsm8k-rl-x2"}:
       run_gsm8k_rl_x2(config, base_url, processes)
+    elif config.scenario == "gsm8k-rl-rank-sweep-mega":
+      run_gsm8k_rl_rank_sweep_mega(config, base_url, processes)
+    elif config.scenario == "gsm8k-rl-rank-sweep":
+      run_gsm8k_rl_rank_sweep(config, base_url, processes)
     elif config.scenario == "lora-fft-gsm8k-rl-x4":
       run_gsm8k_rl_x4_mixed(config, base_url, processes)
     elif config.scenario == "fft-gsm8k-rl-x2-compare":
