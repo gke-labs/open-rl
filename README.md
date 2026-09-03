@@ -134,13 +134,9 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
 
 ## Roadmap
 
-- [x] Blog posts — [Introducing OpenRL](https://opensource.googleblog.com/2026/06/introducing-openrl-a-self-hosted-post-training-api-for-fine-tuning-llms.html)
-- [x] Autoresearch integration — [recipes](examples/autoresearch/README.md)
-- [ ] Full parameter finetuning — 🚧 in progress on the [`fft`](https://github.com/gke-labs/open-rl/tree/fft) branch
-- [ ] Delta weight sync — 🚧 in progress on the [`fft`](https://github.com/gke-labs/open-rl/tree/fft) branch
-- [ ] Demo videos
-- [ ] Multi model support (multitenancy across different base model types)
-- [ ] Model checkpoints API
+The FY 2026 roadmap lives in [ROADMAP.md](ROADMAP.md). It covers reliability and production
+readiness, multi-GPU support, TPUs, more models, observability, recipes, and community. To
+propose a change, open an issue with the `roadmap` label.
 
 ## Acknowledgements
 
