@@ -253,7 +253,7 @@ deploy-fft-timeslice:
 	kubectl apply -k k8s/deploy/distributed-fft-timeslice/
 
 rollout:
-	kubectl rollout restart deployment redis-store open-rl-gateway open-rl-trainer-worker vllm-worker
+	kubectl rollout restart deployment redis-store open-rl-gateway open-rl-trainer-worker vllm-worker -n openrl-system
 
 # One-off vLLM eval of a checkpoint on the shared PVC:
 cluster-eval:

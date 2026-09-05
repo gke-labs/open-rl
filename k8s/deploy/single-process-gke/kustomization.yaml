@@ -1,7 +1,10 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+namespace: openrl-system
+
 resources:
+  - 00-namespace.yaml
   - 01-pvc.yaml
   - 02-serviceaccount.yaml
   - 03-service.yaml
