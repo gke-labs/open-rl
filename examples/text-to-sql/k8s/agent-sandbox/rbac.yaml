@@ -1,0 +1,25 @@
+# The training client claims sandboxes from the warm pool and reads the bound
+# Sandbox to find its pod IP. Bound to the shared open-rl-sa the client Job runs as.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: text-to-sql-sandbox-claimer
+rules:
+  - apiGroups: ["extensions.agents.x-k8s.io"]
+    resources: ["sandboxclaims"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+  - apiGroups: ["agents.x-k8s.io"]
+    resources: ["sandboxes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: text-to-sql-sandbox-claimer
+subjects:
+  - kind: ServiceAccount
+    name: open-rl-sa
+roleRef:
+  kind: Role
+  name: text-to-sql-sandbox-claimer
+  apiGroup: rbac.authorization.k8s.io

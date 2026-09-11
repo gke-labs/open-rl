@@ -1,0 +1,15 @@
+# Sandboxed reward execution for the Text-to-SQL recipe (design 013).
+# Requires agent-sandbox v1.0.1 with extensions and a node pool with GKE Sandbox:
+#   kubectl apply --server-side -f https://github.com/kubernetes-sigs/agent-sandbox/releases/download/v1.0.1/sandbox-with-extensions.yaml
+# Then:  kubectl apply -k examples/text-to-sql/k8s/agent-sandbox
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openrl-system
+resources:
+  - sandbox-template.yaml
+  - warm-pool.yaml
+  - rbac.yaml
+images:
+  - name: SQL_EXECUTOR_IMAGE
+    newName: ghcr.io/gke-labs/open-rl/sql-executor
+    newTag: latest

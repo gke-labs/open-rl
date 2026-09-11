@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import time
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -249,6 +249,15 @@ def partial_execution_score(predicted_rows: list[tuple[Any, ...]] | None, target
   return score
 
 
+Executor = Callable[[str, str], Awaitable[tuple[list[tuple[Any, ...]] | None, str | None]]]
+"""``await executor(context, query)`` -> ``(rows, None)`` or ``(None, error)``, like ``run_sql``."""
+
+
+async def local_executor(context: str, query: str) -> tuple[list[tuple[Any, ...]] | None, str | None]:
+  """In-process sqlite3, the default. Only for trusted callers or laptop runs."""
+  return run_sql(context, query)
+
+
 def score_prediction(
   *,
   predicted_sql: str,
@@ -257,8 +266,70 @@ def score_prediction(
   target_rows: list[tuple[Any, ...]] | None = None,
   question: str = "",
 ) -> dict[str, Any]:
-  """Score generated SQL against explicit target SQL and schema context."""
+  """Score generated SQL against explicit target SQL and schema context, executing locally."""
   predicted_sql = clean_sql_for_execution(predicted_sql)
+  predicted_rows, predicted_error = run_sql(context, predicted_sql)
+  return score_from_execution(
+    predicted_sql=predicted_sql,
+    target_sql=target_sql,
+    context=context,
+    target_rows=target_rows,
+    question=question,
+    predicted_rows=predicted_rows,
+    predicted_error=predicted_error,
+  )
+
+
+async def score_prediction_with(
+  executor: Executor,
+  *,
+  predicted_sql: str,
+  target_sql: str,
+  context: str,
+  target_rows: list[tuple[Any, ...]] | None = None,
+  question: str = "",
+) -> dict[str, Any]:
+  """Like ``score_prediction`` but runs the *model's* query through ``executor``.
+
+  The trust boundary is the prediction: it is untrusted model output and goes
+  wherever the executor sends it (a sandbox). The target query is dataset
+  content and is still executed locally when its rows were not precomputed.
+  """
+  predicted_sql = clean_sql_for_execution(predicted_sql)
+  predicted_rows, predicted_error = await executor(context, predicted_sql)
+  return score_from_execution(
+    predicted_sql=predicted_sql,
+    target_sql=target_sql,
+    context=context,
+    target_rows=target_rows,
+    question=question,
+    predicted_rows=predicted_rows,
+    predicted_error=predicted_error,
+  )
+
+
+async def score_eval_prediction_with(executor: Executor, predicted_sql: str, example: dict[str, Any]) -> dict[str, Any]:
+  return await score_prediction_with(
+    executor,
+    predicted_sql=predicted_sql,
+    target_sql=example["target"],
+    context=example["context"],
+    target_rows=example.get("target_rows"),
+    question=example["question"],
+  )
+
+
+def score_from_execution(
+  *,
+  predicted_sql: str,
+  target_sql: str,
+  context: str,
+  target_rows: list[tuple[Any, ...]] | None,
+  question: str,
+  predicted_rows: list[tuple[Any, ...]] | None,
+  predicted_error: str | None,
+) -> dict[str, Any]:
+  """Pure scoring given the prediction's execution result. ``predicted_sql`` must already be cleaned."""
   target_sql = clean_sql_for_execution(target_sql)
   normalized_predicted_sql = normalize_sql(predicted_sql)
   normalized_target_sql = normalize_sql(target_sql)
@@ -268,7 +339,6 @@ def score_prediction(
     if target_error is not None:
       target_rows = None
 
-  predicted_rows, predicted_error = run_sql(context, predicted_sql)
   execution_error = None
   if predicted_error is not None:
     execution_error = f"predicted query error: {predicted_error}"

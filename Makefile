@@ -1,5 +1,5 @@
 .PHONY: server vllm test lint fmt help render release-bundle push-vm pull-vm cluster-eval \
-	cloud-build-gateway cloud-build-server cloud-build-client \
+	cloud-build-gateway cloud-build-server cloud-build-client cloud-build-sql-executor \
 	cloud-deploy-gateway cloud-deploy-server \
 	cloud-rollout-gateway cloud-rollout-server cloud-rollout \
 	kind-host-setup kind-create kind-gateway kind-deploy \
@@ -111,8 +111,10 @@ test:
 	  uv run --extra "$(TRAINING_TEST_EXTRA)" python scripts/run_training_e2e.py "$$@" $(TRAINING_TEST_ARGS); \
 	elif [ "$$mode" = "piglatin" ]; then \
 	  PYTHONPATH="$(PIGLATIN_TEST_PYTHONPATH)" uv --project examples run python -m unittest tests.test_piglatin_qwen tests.test_piglatin_gemma; \
+	elif [ "$$mode" = "examples" ]; then \
+	  PYTHONPATH="examples:examples/text-to-sql" uv --project examples run python -m unittest tests.test_agent_sandbox; \
 	else \
-	  echo "Unknown test mode '$$mode'. Expected unit, e2e, or piglatin."; \
+	  echo "Unknown test mode '$$mode'. Expected unit, e2e, piglatin, or examples."; \
 	  exit 2; \
 	fi
 
@@ -183,6 +185,10 @@ cloud-build-server: require-gcp-project
 
 cloud-build-client: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-client,_DOCKERFILE=src/server/Dockerfile.client,_TAG=$(CLOUD_IMAGE_TAG) .
+
+# Sandbox runtime for Text-to-SQL reward execution (examples/text-to-sql/sandbox).
+cloud-build-sql-executor: require-gcp-project
+	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-sql-executor,_DOCKERFILE=examples/text-to-sql/sandbox/Dockerfile,_TAG=$(CLOUD_IMAGE_TAG) .
 
 # Point the running workloads at the freshly built tag. Split from the build
 # steps so a tag built earlier can be re-deployed with

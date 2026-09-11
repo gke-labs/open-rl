@@ -138,6 +138,25 @@ Here are the actual plots from known-good runs for each mode. Expand the section
 ![Text-to-SQL curves SFT and RL](./results/texttosql-curves-sft-and-rl.png)
 </details>
 
+## Sandboxed reward execution
+
+By default the recipe executes model-written SQL in-process with `sqlite3`.
+With `reward.executor=agent_sandbox` every rollout and eval query runs instead
+in a gVisor sandbox leased from a Kubernetes `SandboxWarmPool`, and each step
+logs `sandbox_exec_p50_ms`, `sandbox_exec_p95_ms`, `sandbox_wait_p95_ms` and
+`sandbox_errors`. Dataset filtering and the target queries stay local: the
+trust boundary is the model's output.
+
+```bash
+# in-cluster (pod IPs must be reachable); see docs/sandboxed-rewards.md for the one-time setup
+kubectl -n openrl-system apply -f k8s/job-recipe-sandboxed.yaml
+```
+
+The cookbook variant, `cookbook/train.py`, runs the same task through
+tinker-cookbook's `rl_train` with one sandbox per prompt group
+(`k8s/job-cookbook-rl.yaml`). Details, measurements and the trust model are in
+[docs/sandboxed-rewards.md](../../docs/sandboxed-rewards.md).
+
 ## Advanced: Customizing the Run
 
 If you want to experiment further, you can override default configurations by appending them to the command line:

@@ -1,0 +1,10 @@
+# Pre-warmed executors. Phase A leases from a fixed pool of this size; Phase B
+# claims one per prompt group, so bump replicas to groups_per_batch there.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: text-to-sql-executor
+spec:
+  replicas: 4
+  sandboxTemplateRef:
+    name: text-to-sql-executor

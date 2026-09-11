@@ -1,0 +1,45 @@
+# Phase A of design 013: the Gemma SFT+GRPO recipe with reward.executor=agent_sandbox,
+# run in-cluster from the client image so sandbox pod IPs are reachable.
+#
+#   kubectl -n openrl-system delete job textsql-recipe-sandboxed --ignore-not-found
+#   kubectl -n openrl-system apply -f examples/text-to-sql/k8s/job-recipe-sandboxed.yaml
+#   kubectl -n openrl-system logs -f job/textsql-recipe-sandboxed
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: textsql-recipe-sandboxed
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: open-rl-sa
+      containers:
+        - name: recipe
+          image: ghcr.io/gke-labs/open-rl/client:latest
+          imagePullPolicy: Always
+          workingDir: /app
+          command: ["uv", "--project", "examples", "run", "python", "examples/text-to-sql/texttosql_sft_grpo.py"]
+          args:
+            - gemma4_e2b_rl_recipe
+            - phase=rl_only
+            - base_url=http://open-rl-gateway-service:8000
+            - log_dir=/mnt/shared/open-rl/runs/textsql-recipe-sandboxed
+            - reward.executor=agent_sandbox
+            - reward.pool_size=4
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: HF_HOME
+              value: /mnt/shared/open-rl/huggingface
+          resources:
+            requests: {cpu: "2", memory: 8Gi}
+            limits: {memory: 16Gi}
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /mnt/shared
+      volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: open-rl-shared-pvc
