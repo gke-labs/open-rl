@@ -56,6 +56,11 @@ type Node struct {
 	// HostMemoryBytes is the node's allocatable memory, which bounds how many
 	// workers can be parked here at once.
 	HostMemoryBytes int64
+	// HostReservedBytes is the memory requested by pods on the node that this
+	// scheduler did not place (exporters, agents, system pods). kube-scheduler
+	// counts them against the same allocatable pool, so a fit that ignores
+	// them books a seat the pod can never take.
+	HostReservedBytes int64
 	// Roles is the set of worker roles the operator allowed on this pool.
 	Roles   map[string]bool
 	Product string
@@ -158,7 +163,7 @@ func NewFleet() *Fleet {
 // node's claims will request from it. Summed across claims, because the
 // node's allocatable memory is one pool however many claims sit on it.
 func (f *Fleet) NodeHostBytes(node *Node) int64 {
-	var total int64
+	total := node.HostReservedBytes
 	for _, claim := range f.Claims {
 		if claim.Node != node.Name {
 			continue
@@ -265,6 +270,9 @@ func SelectClaim(req Request, fleet *Fleet) *Claim {
 	// rescan every claim for every claim, and SelectClaim runs on every
 	// reconcile of an unplaced worker under BinPack.
 	hostByNode := map[string]int64{}
+	for name, node := range fleet.Nodes {
+		hostByNode[name] = node.HostReservedBytes
+	}
 	for _, claim := range fleet.Claims {
 		if claim.Node == "" {
 			continue

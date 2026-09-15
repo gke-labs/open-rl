@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,133 @@ func TestSharingRechecksTheLedgerAfterSelection(t *testing.T) {
 	}
 	if got := len(getLedger(t, r, ledger.Name).Spec.Seats); got != 1 {
 		t.Fatalf("refused join changed occupancy to %d seats", got)
+	}
+}
+
+type conflictOnceClient struct {
+	client.Client
+	onConflict func()
+	fired      bool
+}
+
+func (c *conflictOnceClient) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if _, ok := obj.(*openrlv1alpha1.ClaimLedger); ok && !c.fired {
+		c.fired = true
+		c.onConflict()
+		return apierrors.NewConflict(openrlv1alpha1.GroupVersion.WithResource("claimledgers").GroupResource(), obj.GetName(), fmt.Errorf("concurrent seat booking"))
+	}
+	return c.Client.Update(ctx, obj, opts...)
+}
+
+// Two workers reconciled close together can both see the node as fitting in
+// their snapshots. When the second books against the updated ledger, post-booking
+// fleet verification sees the node is over capacity and releases the seat back.
+func TestSharingRechecksHostMemoryAfterSelection(t *testing.T) {
+	resident := hungryWorker("resident", "model-a", "200Gi")
+	first := hungryWorker("w-b", "model-b", "100Gi")
+	second := hungryWorker("w-c", "model-c", "100Gi")
+	r := newReconciler(t, append(enabledNode(), resident, first, second)...)
+	settle(t, r, resident.Name)
+	claim := claimOf(t, r, resident.Name)
+	allocateClaim(t, r, claim)
+
+	// Both workers read the fleet before either books: 200Gi + 100Gi = 300Gi
+	// fits the 340Gi node in both snapshots.
+	fleetB, err := r.readFleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleetC, err := r.readFleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate a true CAS conflict: w-c reads the ledger before w-b commits,
+	// w-b commits first causing w-c's Update to conflict, w-c retries and writes
+	// its seat, and joinExistingClaim's post-booking readFleet sees 400Gi > 340Gi
+	// and releases w-c's seat back.
+	baseClient := r.Client
+	r.Client = &conflictOnceClient{
+		Client: baseClient,
+		onConflict: func() {
+			rB := *r
+			rB.Client = baseClient
+			joinedB, _, err := rB.joinExistingClaim(context.Background(), first, requestFrom(first), fleetB, "")
+			if err != nil || joinedB == nil {
+				t.Fatalf("concurrent first join failed: joined=%v, err=%v", joinedB, err)
+			}
+		},
+	}
+
+	joinedC, _, err := r.joinExistingClaim(context.Background(), second, requestFrom(second), fleetC, "")
+	if err != nil || joinedC != nil {
+		t.Fatalf("second join after CAS conflict should be refused on host memory: joined=%v, err=%v", joinedC, err)
+	}
+	if got := len(getLedger(t, r, ledgerNameFor(claim)).Spec.Seats); got != 2 {
+		t.Fatalf("ledger holds %d seats, want 2 (resident + w-b)", got)
+	}
+}
+
+// Two workers racing onto two different claims on the same node never touch
+// the same ledger, so neither CAS conflicts. Re-reading the fleet after booking
+// catches the cross-claim node overcommit and releases the seat back.
+func TestSharingCrossClaimRaceReleasesOvercommittedSeat(t *testing.T) {
+	// testNode has 2 GPUs and 340Gi allocatable memory.
+	wA := hungryWorker("w-a", "model-a", "100Gi")
+	wB := hungryWorker("w-b", "model-b", "100Gi")
+	wZero := trainerWorker("w-zero", "model-z") // 0Gi host request
+	wC := hungryWorker("w-c", "model-c", "100Gi")
+	wD := hungryWorker("w-d", "model-d", "100Gi")
+	r := newReconciler(t, append(enabledNode(), wA, wB, wZero, wC, wD)...)
+
+	settle(t, r, wA.Name)
+	claimA := claimOf(t, r, wA.Name)
+	allocateClaim(t, r, claimA)
+
+	settle(t, r, wB.Name)
+	claimB := claimOf(t, r, wB.Name)
+	allocateClaim(t, r, claimB)
+
+	firstClaim, secondClaim := claimA, claimB
+	if claimB < claimA {
+		firstClaim, secondClaim = claimB, claimA
+	}
+
+	// fleetC sees 1 worker on each claim (200Gi total); SelectClaim picks firstClaim.
+	fleetC, err := r.readFleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Seat a 0Gi worker on firstClaim so fleetD sees 2 workers on firstClaim
+	// and 1 worker on secondClaim while node host memory is still 200Gi / 340Gi.
+	// SelectClaim on fleetD therefore picks secondClaim.
+	if _, _, err := r.ensureSeat(context.Background(), firstClaim, newSeat(wZero, requestFrom(wZero)), false); err != nil {
+		t.Fatal(err)
+	}
+	fleetD, err := r.readFleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// w-c joins firstClaim (brings node to 300Gi / 340Gi).
+	joinedC, _, err := r.joinExistingClaim(context.Background(), wC, requestFrom(wC), fleetC, "")
+	if err != nil || joinedC == nil || joinedC.Name != firstClaim {
+		t.Fatalf("w-c join onto firstClaim failed: joined=%v, err=%v", joinedC, err)
+	}
+
+	// w-d races onto secondClaim using pre-booking snapshot fleetD.
+	// Because secondClaim is a different ledger, its Update succeeds without a
+	// CAS conflict, but joinExistingClaim's post-booking readFleet sees
+	// 400Gi > 340Gi across both claims on the node and releases w-d's seat.
+	joinedD, _, err := r.joinExistingClaim(context.Background(), wD, requestFrom(wD), fleetD, "")
+	if err != nil || joinedD != nil {
+		t.Fatalf("w-d cross-claim join should be refused and rolled back: joined=%v, err=%v", joinedD, err)
+	}
+
+	// Verify w-d's seat was released from secondClaim's ledger, leaving only its founder.
+	if got := len(getLedger(t, r, ledgerNameFor(secondClaim)).Spec.Seats); got != 1 {
+		t.Fatalf("secondClaim ledger holds %d seats after rollback, want 1", got)
 	}
 }
 

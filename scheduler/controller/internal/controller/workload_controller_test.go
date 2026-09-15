@@ -799,6 +799,153 @@ func TestReconcileDoesNotShareBeyondHostMemory(t *testing.T) {
 	}
 }
 
+// Pods this controller did not place still draw on the node's allocatable
+// memory. A shared seat that ignores them is one kube-scheduler refuses, so
+// the fit reserves their requests up front.
+func TestReconcileReservesForeignPodMemoryBeforeSharing(t *testing.T) {
+	// 100Gi each on a 340Gi node would share, until a 200Gi system pod is
+	// there first.
+	foreign := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "dcgm-exporter", Namespace: "kube-system"},
+		Spec: corev1.PodSpec{
+			NodeName: testNode,
+			Containers: []corev1.Container{{
+				Name:      "exporter",
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("200Gi")}},
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r := newReconciler(t, append(enabledNode(), foreign,
+		hungryWorker("w-a", "model-a", "100Gi"), hungryWorker("w-b", "model-b", "100Gi"))...)
+
+	settle(t, r, "w-a")
+	allocateClaim(t, r, claimOf(t, r, "w-a"))
+	settle(t, r, "w-b")
+	dedicated := claimOf(t, r, "w-b")
+
+	fallBackToSharing(t, r, "w-b")
+	if got := claimOf(t, r, "w-b"); got != dedicated {
+		t.Errorf("w-b moved to %q, but 200Gi of foreign pods leave no room beside w-a's 100Gi on a 340Gi node", got)
+	}
+}
+
+// The controller's own pods are already on the ledger as seats. Counting
+// them again as foreign would halve every node.
+func TestReconcileDoesNotCountItsOwnPodsTwice(t *testing.T) {
+	// 100Gi foreign + w-a 100Gi + w-b 100Gi = 300Gi fits 340Gi; double
+	// counting w-a's pod would make it 400Gi.
+	foreign := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "timeslicer", Namespace: "kube-system"},
+		Spec: corev1.PodSpec{
+			NodeName: testNode,
+			Containers: []corev1.Container{{
+				Name:      "agent",
+				Resources: corev1.ResourceRequirements{Requests: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("100Gi")}},
+			}},
+		},
+		Status: corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r := newReconciler(t, append(enabledNode(), foreign,
+		hungryWorker("w-a", "model-a", "100Gi"), hungryWorker("w-b", "model-b", "100Gi"))...)
+
+	settle(t, r, "w-a")
+	allocateClaim(t, r, claimOf(t, r, "w-a"))
+	pod := getPod(t, r, "orw-w-a")
+	pod.Spec.NodeName = testNode
+	if err := r.Update(context.Background(), pod); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, r, "w-b")
+	dedicated := claimOf(t, r, "w-b")
+
+	fallBackToSharing(t, r, "w-b")
+	if got := claimOf(t, r, "w-b"); got == dedicated {
+		t.Errorf("w-b stayed on %q; 300Gi of requests fit a 340Gi node once the managed pod is not counted twice", got)
+	}
+}
+
+type laggingCacheClient struct {
+	client.Client
+	stale client.Reader
+}
+
+func (l *laggingCacheClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	switch list.(type) {
+	case *openrlv1alpha1.ClaimLedgerList, *resourcev1.ResourceClaimList:
+		return l.stale.List(ctx, list, opts...)
+	default:
+		return l.Client.List(ctx, list, opts...)
+	}
+}
+
+// A seat booked one reconcile ago may not be in the informer cache yet when
+// the next reconcile reads the fleet. Listing claims and ledgers through the
+// consistent reader ensures the next reconcile sees the newly booked seat and
+// does not overcommit the node across claims.
+func TestReconcileReadsClaimsAndLedgersPastStaleCache(t *testing.T) {
+	// testNode has 2 GPUs and 340Gi allocatable. Place w-a (100Gi) on GPU 0
+	// and w-b (100Gi) on GPU 1.
+	r := newReconciler(t, append(enabledNode(),
+		hungryWorker("w-a", "model-a", "100Gi"),
+		hungryWorker("w-b", "model-b", "100Gi"),
+		hungryWorker("w-c", "model-c", "100Gi"),
+		hungryWorker("w-d", "model-d", "100Gi"))...)
+
+	settle(t, r, "w-a")
+	claimA := claimOf(t, r, "w-a")
+	allocateClaim(t, r, claimA)
+	settle(t, r, "w-b")
+	claimB := claimOf(t, r, "w-b")
+	allocateClaim(t, r, claimB)
+	settle(t, r, "w-c")
+	settle(t, r, "w-d")
+	dedicatedD := claimOf(t, r, "w-d")
+
+	// Snapshot claims and ledgers into a lagging cache before w-c books its seat.
+	var cachedClaims resourcev1.ResourceClaimList
+	if err := r.List(context.Background(), &cachedClaims); err != nil {
+		t.Fatal(err)
+	}
+	var cachedLedgers openrlv1alpha1.ClaimLedgerList
+	if err := r.List(context.Background(), &cachedLedgers); err != nil {
+		t.Fatal(err)
+	}
+	var staleObjs []client.Object
+	for i := range cachedClaims.Items {
+		staleObjs = append(staleObjs, cachedClaims.Items[i].DeepCopy())
+	}
+	for i := range cachedLedgers.Items {
+		staleObjs = append(staleObjs, cachedLedgers.Items[i].DeepCopy())
+	}
+	staleReader := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(staleObjs...).Build()
+
+	// Book w-c (100Gi) onto the second claim in live storage so the node is
+	// at 300Gi / 340Gi, while the lagging cache still reports 200Gi / 340Gi
+	// and the first claim's own ledger remains untouched at 100Gi.
+	targetClaim := claimB
+	if claimA > claimB {
+		targetClaim = claimA
+	}
+	wc := getWorker(t, r, "w-c")
+	if _, _, err := r.ensureSeat(context.Background(), targetClaim, newSeat(wc, requestFrom(wc)), false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wire r.reader to the live store and r.Client to the lagging cache.
+	liveClient := r.Client
+	r.reader = liveClient
+	r.Client = &laggingCacheClient{Client: liveClient, stale: staleReader}
+
+	// w-d (100Gi) reconciles immediately. Because readFleet lists claims and
+	// ledgers through fleetReader, it sees w-c's 100Gi seat on targetClaim and
+	// refuses to place w-d on the other claim on the same 340Gi node.
+	fallBackToSharing(t, r, "w-d")
+	if got := claimOf(t, r, "w-d"); got != dedicatedD {
+		t.Errorf("w-d moved to %q, overcommitting the 340Gi node to 400Gi across claims because of stale cache", got)
+	}
+}
+
 // Deleting a worker frees its memory booking only when its pod is verifiably
 // gone: the finalizer holds the CR -- and with it the seat's host request --
 // through the pod's termination grace, so the node's host-memory ceiling

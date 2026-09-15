@@ -46,8 +46,7 @@ func newSeat(worker *openrlv1alpha1.Workload, request placement.Request) openrlv
 // ensureSeat books the seat on the claim's ClaimLedger via one CAS loop. A seat
 // held by the same incarnation is adopted and a predecessor's is replaced.
 // There is no seat ceiling: host memory is the limit on parked workers,
-// checked advisorily at selection and enforced for real by kube-scheduler
-// against the pods' memory requests.
+// checked at selection and verified against a fresh fleet read after booking.
 //
 // createMissing is true only for a worker's own claim: the founder books its
 // ClaimLedger before the claim exists, and a re-book heals the ledger under a

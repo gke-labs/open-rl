@@ -21,6 +21,12 @@ rules:
 - apiGroups: [""]
   resources: ["nodes"]
   verbs: ["get", "list", "watch"]
+# Pods on every node count against its allocatable memory, whichever
+# namespace they live in. Reading them is what keeps the host-memory fit
+# in step with kube-scheduler's.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
 # ResourceSlices are cluster-scoped and are how the scheduler learns what
 # accelerators each node actually has.
 - apiGroups: ["resource.k8s.io"]

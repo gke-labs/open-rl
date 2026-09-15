@@ -96,6 +96,9 @@ func main() {
 			DefaultNamespaces: map[string]cache.Config{namespace: {}},
 			ByObject: map[client.Object]cache.ByObject{
 				&corev1.Node{}: {Label: labels.SelectorFromSet(labels.Set{controller.NodeLabelEnabled: "true"})},
+				// Pods from every namespace: the host-memory fit reserves what
+				// system pods and exporters already request on each node.
+				&corev1.Pod{}: {Namespaces: map[string]cache.Config{cache.AllNamespaces: {}}},
 			},
 		},
 	})

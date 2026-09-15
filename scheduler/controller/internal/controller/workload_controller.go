@@ -57,9 +57,9 @@ type WorkloadReconciler struct {
 	// MaxConcurrentReconciles is how many workers place at once.
 	MaxConcurrentReconciles int
 
-	// reader bypasses the informer cache for read-modify-write paths only:
-	// the seat CAS and claim adoption. Nil (in tests) falls back to the
-	// regular client.
+	// reader bypasses the informer cache for fleet claims/ledgers and
+	// read-modify-write paths (seat CAS and claim adoption). Nil (in tests)
+	// falls back to the regular client.
 	reader client.Reader
 }
 
@@ -516,9 +516,14 @@ func (r *WorkloadReconciler) teardown(ctx context.Context, worker *openrlv1alpha
 	return ctrl.Result{}, r.Update(ctx, worker)
 }
 
-// joinExistingClaim books a seat on the claim SelectClaim proposes and keeps
-// the fleet snapshot's ledger current. A nil claim means no join this pass:
-// no eligible ledger beyond current, or the booking lost every CAS retry.
+// joinExistingClaim books a seat on the claim SelectClaim proposes, re-reads
+// the fleet to verify concurrent bookings did not overcommit the node, and
+// keeps the caller's fleet snapshot current.
+//
+// Because both racers write their seat before either re-reads, at least the
+// second reader sees the union across all claims on the node and yields.
+// Simultaneous racers may both observe the overcommit and both release their
+// seats; that double yield is benign and intentional.
 func (r *WorkloadReconciler) joinExistingClaim(ctx context.Context, worker *openrlv1alpha1.Workload, request placement.Request, fleet *placement.Fleet, current string) (*placement.Claim, *openrlv1alpha1.Seat, error) {
 	target := placement.SelectClaim(request, fleet)
 	if target == nil || target.Name == current {
@@ -531,8 +536,23 @@ func (r *WorkloadReconciler) joinExistingClaim(ctx context.Context, worker *open
 	if err != nil {
 		return nil, nil, err
 	}
-	target.Book(request.WorkerID, request.OwnerKey(), request.HostRequestBytes, request.Shareable)
-	return target, seat, nil
+	fresh, err := r.readFleet(ctx)
+	if err != nil {
+		return nil, nil, errors.Join(err, r.releaseSeatAndReclaim(ctx, target.Name, worker.Name))
+	}
+	joined := fresh.Claims[target.Name]
+	var node *placement.Node
+	if joined != nil {
+		node = fresh.Nodes[joined.Node]
+	}
+	if joined == nil || (node != nil && node.HostMemoryBytes > 0 && fresh.NodeHostBytes(node) > node.HostMemoryBytes) {
+		if err := r.releaseSeatAndReclaim(ctx, target.Name, worker.Name); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
+	*fleet = *fresh
+	return joined, seat, nil
 }
 
 // assign orders joining and claim creation according to the configured strategy.
