@@ -86,7 +86,8 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   if os.getenv("VLLM_GPU_MEMORY_UTILIZATION"):
     values["VLLM_GPU_MEMORY_UTILIZATION"] = os.environ["VLLM_GPU_MEMORY_UTILIZATION"]
   env: list[dict[str, Any]] = [{"name": name, "value": value} for name, value in values.items()]
-  env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
+  for name, path in (("OPEN_RL_ACCEL_TIMESLICER_HOST", "status.hostIP"), ("POD_UID", "metadata.uid"), ("NODE_NAME", "spec.nodeName")):
+    env.append({"name": name, "valueFrom": {"fieldRef": {"fieldPath": path}}})
   return env
 
 

@@ -1,0 +1,1631 @@
+{
+ "cluster": {
+  "available": true,
+  "devices": {
+   "available": true,
+   "claims": {
+    "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5": [
+     "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+    ],
+    "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0": [
+     "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+    ]
+   },
+   "error": null,
+   "nodes": {
+    "gke-open-rl-fft-test-h100-dra-072eced6-9pcm": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-9pcm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-504f3a16-736a-db96-e71b-6abe5d6c5d79"
+     }
+    ],
+    "gke-open-rl-fft-test-h100-dra-072eced6-vcxu": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-7c827e80-b792-ed7a-e99d-e62d6b0a78fd"
+     }
+    ],
+    "gke-open-rl-fft-test-h100-dra-31d1f1b5-jjvm": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-jjvm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-67baeb2b-01aa-3ec4-a0fa-d7ef168b7c8f"
+     }
+    ],
+    "gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-21307451-bf2b-6656-6bd2-cbe0683a1f4e"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-2174fa19-598d-a45b-5d6e-3e1182a99eb8"
+     },
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0/gpu-1",
+      "name": "gpu-1",
+      "uuid": "GPU-8c1e88fb-1b73-b132-a6e6-a59a6e30de18"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-dra-7aa2a161-flro": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-flro/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-b19c1974-34b5-6381-2200-65b3fe85db63"
+     },
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-flro/gpu-1",
+      "name": "gpu-1",
+      "uuid": "GPU-e94a2ca9-67a8-353c-9f07-0e9d8aff823b"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-af368707-dg3s": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-dg3s/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-7d395f73-ef06-8c28-3463-8f21cd32c037"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-af368707-edip": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-edip/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-fca38b18-7652-cb7d-b4cf-a05e8c0bcb32"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-c5905f3a-8ba3-26c3-a5a7-0dcfc8248700"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-3ad881cc-ac45-a995-1e32-a96c9befe29d"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-a5bce783-d41e-6547-e044-39045f9f94d8"
+     }
+    ],
+    "gke-open-rl-fft-test-l4-single-dra-f2cef390-p0em": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-p0em/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-b119ed38-03d3-df29-768c-733118e153c7"
+     }
+    ]
+   }
+  },
+  "error": null,
+  "events_error": null,
+  "namespace": "openrl-system",
+  "nodes": [
+   {
+    "accelerator": null,
+    "devices": [],
+    "gpu_capacity": 0,
+    "name": "gke-open-rl-fft-test-default-pool-ae2dd1c2-i222",
+    "ready": true
+   },
+   {
+    "accelerator": null,
+    "devices": [],
+    "gpu_capacity": 0,
+    "name": "gke-open-rl-fft-test-default-pool-ae2dd1c2-qigq",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-h100-80gb",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-9pcm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-504f3a16-736a-db96-e71b-6abe5d6c5d79"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-h100-dra-072eced6-9pcm",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-h100-80gb",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-7c827e80-b792-ed7a-e99d-e62d6b0a78fd"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-h100-80gb",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-jjvm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-67baeb2b-01aa-3ec4-a0fa-d7ef168b7c8f"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-h100-dra-31d1f1b5-jjvm",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-h100-80gb",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-21307451-bf2b-6656-6bd2-cbe0683a1f4e"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-2174fa19-598d-a45b-5d6e-3e1182a99eb8"
+     },
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0/gpu-1",
+      "name": "gpu-1",
+      "uuid": "GPU-8c1e88fb-1b73-b132-a6e6-a59a6e30de18"
+     }
+    ],
+    "gpu_capacity": 2,
+    "name": "gke-open-rl-fft-test-l4-dra-7aa2a161-1ow0",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-flro/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-b19c1974-34b5-6381-2200-65b3fe85db63"
+     },
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-dra-7aa2a161-flro/gpu-1",
+      "name": "gpu-1",
+      "uuid": "GPU-e94a2ca9-67a8-353c-9f07-0e9d8aff823b"
+     }
+    ],
+    "gpu_capacity": 2,
+    "name": "gke-open-rl-fft-test-l4-dra-7aa2a161-flro",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-dg3s/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-7d395f73-ef06-8c28-3463-8f21cd32c037"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-af368707-dg3s",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-edip/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-fca38b18-7652-cb7d-b4cf-a05e8c0bcb32"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-af368707-edip",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-c5905f3a-8ba3-26c3-a5a7-0dcfc8248700"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-3ad881cc-ac45-a995-1e32-a96c9befe29d"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-a5bce783-d41e-6547-e044-39045f9f94d8"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [
+     {
+      "id": "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-p0em/gpu-0",
+      "name": "gpu-0",
+      "uuid": "GPU-b119ed38-03d3-df29-768c-733118e153c7"
+     }
+    ],
+    "gpu_capacity": 1,
+    "name": "gke-open-rl-fft-test-l4-single-dra-f2cef390-p0em",
+    "ready": true
+   },
+   {
+    "accelerator": "nvidia-l4",
+    "devices": [],
+    "gpu_capacity": 2,
+    "name": "gke-open-rl-fft-test-open-rl-l4-39264cf1-ac3j",
+    "ready": true
+   }
+  ],
+  "nodes_error": null,
+  "pods": [
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "frontend",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-10T22:23:23+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-10T22:23:03+00:00",
+    "events": [],
+    "name": "gmp-frontend-78d557f787-62c7g",
+    "node": "gke-open-rl-fft-test-default-pool-ae2dd1c2-i222",
+    "owner_uids": [
+     "566cbf5d-b596-4169-b195-76bc04c0d4b6"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "4306b80f-a618-46b9-b1ba-cf15b1051b0e",
+    "worker": null
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "e2e-client",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-11T04:19:11+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-11T04:19:07+00:00",
+    "events": [],
+    "name": "lwr-mega-client-g6q88",
+    "node": "gke-open-rl-fft-test-l4-single-dra-af368707-dg3s",
+    "owner_uids": [
+     "8914511d-7d96-4c69-892f-c2cedee726b8"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "27200440-9f76-4693-b996-848662484855",
+    "worker": null
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "gateway",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-11T08:05:09+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-11T08:05:01+00:00",
+    "events": [
+     {
+      "count": 1,
+      "first_seen_at": "2026-09-11T08:05:01+00:00",
+      "last_seen_at": "2026-09-11T08:05:01.674588+00:00",
+      "message": "Successfully assigned openrl-system/open-rl-gateway-cb5576b65-mxhgp to gke-open-rl-fft-test-default-pool-ae2dd1c2-qigq",
+      "reason": "Scheduled",
+      "type": "Normal"
+     },
+     {
+      "count": 1,
+      "first_seen_at": "2026-09-11T08:05:05+00:00",
+      "last_seen_at": "2026-09-11T08:05:05+00:00",
+      "message": "Pulling image \"us-central1-docker.pkg.dev/open-rl-2-sandbox-102433/open-rl/open-rl-gateway:cd-70c302b\"",
+      "reason": "Pulling",
+      "type": "Normal"
+     },
+     {
+      "count": 1,
+      "first_seen_at": "2026-09-11T08:05:09+00:00",
+      "last_seen_at": "2026-09-11T08:05:09+00:00",
+      "message": "Successfully pulled image \"us-central1-docker.pkg.dev/open-rl-2-sandbox-102433/open-rl/open-rl-gateway:cd-70c302b\" in 3.893s (3.893s including waiting). Image size: 142869110 bytes.",
+      "reason": "Pulled",
+      "type": "Normal"
+     },
+     {
+      "count": 1,
+      "first_seen_at": "2026-09-11T08:05:09+00:00",
+      "last_seen_at": "2026-09-11T08:05:09+00:00",
+      "message": "Container created",
+      "reason": "Created",
+      "type": "Normal"
+     },
+     {
+      "count": 1,
+      "first_seen_at": "2026-09-11T08:05:09+00:00",
+      "last_seen_at": "2026-09-11T08:05:09+00:00",
+      "message": "Container started",
+      "reason": "Started",
+      "type": "Normal"
+     }
+    ],
+    "name": "open-rl-gateway-cb5576b65-mxhgp",
+    "node": "gke-open-rl-fft-test-default-pool-ae2dd1c2-qigq",
+    "owner_uids": [
+     "9cfca62c-458b-4356-850e-3cf4dd442ec9"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "f3696faa-ff3a-421c-acf9-2d6b57b0cf27",
+    "worker": null
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "manager",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-10T22:23:24+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-10T22:23:03+00:00",
+    "events": [],
+    "name": "open-rl-scheduler-64d6b8bf4b-tzq7x",
+    "node": "gke-open-rl-fft-test-default-pool-ae2dd1c2-i222",
+    "owner_uids": [
+     "9c1bb949-f1fe-4c69-9d38-24bd6bc78a3b"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "f3a33f41-2e80-4f35-b718-25abdfa77bf9",
+    "worker": null
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "worker",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-11T04:30:25+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-11T04:30:18+00:00",
+    "events": [],
+    "name": "orw-lora-qwen-qwen3-8b-0-sampler",
+    "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "owner_uids": [
+     "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "9c5d999a-5b0a-4c96-bb18-5ed9b2858e15",
+    "worker": "lora-qwen-qwen3-8b-0-sampler"
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "worker",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-11T04:19:36+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-11T04:19:32+00:00",
+    "events": [],
+    "name": "orw-lora-qwen-qwen3-8b-0-trainer",
+    "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+    "owner_uids": [
+     "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "782b8061-87e9-4a8d-8933-652c5a630802",
+    "worker": "lora-qwen-qwen3-8b-0-trainer"
+   },
+   {
+    "containers": [
+     {
+      "exit_code": null,
+      "finished_at": null,
+      "last_termination": null,
+      "name": "redis",
+      "reason": null,
+      "restart_count": 0,
+      "started_at": "2026-09-10T22:23:25+00:00",
+      "state": "running"
+     }
+    ],
+    "created_at": "2026-09-10T22:23:03+00:00",
+    "events": [],
+    "name": "redis-store-86779df594-s7h8d",
+    "node": "gke-open-rl-fft-test-default-pool-ae2dd1c2-i222",
+    "owner_uids": [
+     "c0c8d4e3-2200-47c1-a042-9acd1b364ab2"
+    ],
+    "phase": "Running",
+    "problem": null,
+    "restarts": 0,
+    "uid": "5bd0b161-8070-40e1-bfd1-9189f0c78135",
+    "worker": null
+   }
+  ],
+  "scheduler": {
+   "available": true,
+   "error": null,
+   "installed": true,
+   "ledgers": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "name": "ledger-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "seats": [
+      {
+       "exclusive": true,
+       "owner": "qwen-qwen3-8b",
+       "workload": "lora-qwen-qwen3-8b-0-sampler",
+       "workload_uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+      }
+     ]
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "name": "ledger-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "seats": [
+      {
+       "exclusive": true,
+       "owner": "qwen-qwen3-8b",
+       "workload": "lora-qwen-qwen3-8b-0-trainer",
+       "workload_uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+      }
+     ]
+    }
+   ],
+   "workloads": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "created_at": "2026-09-11T04:30:18Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-sampler",
+     "node_name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "reason": null,
+     "requested_memory": "29Gi",
+     "role": "sampler",
+     "training_kind": "lora",
+     "uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "created_at": "2026-09-11T04:19:32Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-trainer",
+     "node_name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "reason": null,
+     "requested_memory": "20Gi",
+     "role": "trainer",
+     "training_kind": "lora",
+     "uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    }
+   ]
+  }
+ },
+ "history": [
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+   ],
+   "first_seen": 1789101024.9414587,
+   "id": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364",
+   "label": "Qwen/Qwen3-8B",
+   "last_seen": 1789117200.6808138,
+   "name": "lora-qwen-qwen3-8b-0-sampler",
+   "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+   "owner_id": "qwen-qwen3-8b",
+   "pod": "orw-lora-qwen-qwen3-8b-0-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e"
+   ],
+   "runtime_id": "Qwen/Qwen3-8B"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-9pcm/gpu-0"
+   ],
+   "first_seen": 1789101024.9414587,
+   "id": "497045b1-8c3b-48ae-9804-930f36e02bf5",
+   "label": "Qwen3-8B \u00b7 be7bbf22",
+   "last_seen": 1789101500.2936954,
+   "name": "fft-be7bbf22-f193-4c07-bd39-7abf294c3af1-sampler",
+   "node": "gke-open-rl-fft-test-h100-dra-072eced6-9pcm",
+   "owner_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1",
+   "pod": "orw-fft-be7bbf22-f193-4c07-bd39-7abf294c3af1-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "be7bbf22-f193-4c07-bd39-7abf294c3af1"
+   ],
+   "runtime_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm/gpu-0"
+   ],
+   "first_seen": 1789101004.9035916,
+   "id": "4bea3a73-fc51-4b93-b54e-3a1bf065f734",
+   "label": "Qwen3-8B \u00b7 291d40ee",
+   "last_seen": 1789101562.5053358,
+   "name": "fft-291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d-sampler",
+   "node": "gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm",
+   "owner_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d",
+   "pod": "orw-fft-291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d"
+   ],
+   "runtime_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-9pcm/gpu-0"
+   ],
+   "first_seen": 1789100530.1275342,
+   "id": "3755dccc-170f-4ae8-a03f-0066bb75bb48",
+   "label": "Qwen3-0.6B \u00b7 278945b2",
+   "last_seen": 1789102912.9511418,
+   "name": "fft-278945b2-ded0-486e-aa6e-8a3005d65103-sampler",
+   "node": "gke-open-rl-fft-test-h100-dra-072eced6-9pcm",
+   "owner_id": "278945b2-ded0-486e-aa6e-8a3005d65103",
+   "pod": "orw-fft-278945b2-ded0-486e-aa6e-8a3005d65103-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "278945b2-ded0-486e-aa6e-8a3005d65103"
+   ],
+   "runtime_id": "278945b2-ded0-486e-aa6e-8a3005d65103"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-edip/gpu-0"
+   ],
+   "first_seen": 1789100407.1794875,
+   "id": "5a40f7ef-d622-407f-bc6d-7a4f48f507a2",
+   "label": "Qwen3-0.6B \u00b7 900df13e",
+   "last_seen": 1789102470.5150402,
+   "name": "fft-900df13e-1553-4df7-b815-f5529826ff56-sampler",
+   "node": "gke-open-rl-fft-test-l4-single-dra-af368707-edip",
+   "owner_id": "900df13e-1553-4df7-b815-f5529826ff56",
+   "pod": "orw-fft-900df13e-1553-4df7-b815-f5529826ff56-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "900df13e-1553-4df7-b815-f5529826ff56"
+   ],
+   "runtime_id": "900df13e-1553-4df7-b815-f5529826ff56"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-dg3s/gpu-0"
+   ],
+   "first_seen": 1789100407.1794875,
+   "id": "78ddc5d9-0e4d-419c-a485-e93fe9a54a42",
+   "label": "Qwen/Qwen3-0.6B",
+   "last_seen": 1789105889.1034117,
+   "name": "lora-qwen-qwen3-0-6b-0-sampler",
+   "node": "gke-open-rl-fft-test-l4-single-dra-af368707-dg3s",
+   "owner_id": "qwen-qwen3-0-6b",
+   "pod": "orw-lora-qwen-qwen3-0-6b-0-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4",
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6"
+   ],
+   "runtime_id": "Qwen/Qwen3-0.6B"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy/gpu-0"
+   ],
+   "first_seen": 1789100386.4984114,
+   "id": "ae9f047d-e4de-4197-8b74-ddedafcf24b5",
+   "label": "Qwen/Qwen3-0.6B",
+   "last_seen": 1789105889.1034117,
+   "name": "lora-qwen-qwen3-0-6b-0-trainer",
+   "node": "gke-open-rl-fft-test-l4-single-dra-f2cef390-lwsy",
+   "owner_id": "qwen-qwen3-0-6b",
+   "pod": "orw-lora-qwen-qwen3-0-6b-0-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4",
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6"
+   ],
+   "runtime_id": "Qwen/Qwen3-0.6B"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-9pcm/gpu-0"
+   ],
+   "first_seen": 1789100386.4984114,
+   "id": "69ccbe3f-53c8-4019-bd7c-4006522656b3",
+   "label": "Qwen3-8B \u00b7 291d40ee",
+   "last_seen": 1789101572.7882032,
+   "name": "fft-291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d-trainer",
+   "node": "gke-open-rl-fft-test-h100-dra-072eced6-9pcm",
+   "owner_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d",
+   "pod": "orw-fft-291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d"
+   ],
+   "runtime_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm/gpu-0"
+   ],
+   "first_seen": 1789100386.4984114,
+   "id": "0e9fde45-1143-45c6-9e4d-25cfed8fd75b",
+   "label": "Qwen3-8B \u00b7 be7bbf22",
+   "last_seen": 1789101510.6703053,
+   "name": "fft-be7bbf22-f193-4c07-bd39-7abf294c3af1-trainer",
+   "node": "gke-open-rl-fft-test-h100-dra-31d1f1b5-q6jm",
+   "owner_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1",
+   "pod": "orw-fft-be7bbf22-f193-4c07-bd39-7abf294c3af1-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "be7bbf22-f193-4c07-bd39-7abf294c3af1"
+   ],
+   "runtime_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-edip/gpu-0"
+   ],
+   "first_seen": 1789100376.2865796,
+   "id": "53e6ee02-5af7-47fa-bbc6-125a404a2771",
+   "label": "Qwen3-0.6B \u00b7 278945b2",
+   "last_seen": 1789102912.9511418,
+   "name": "fft-278945b2-ded0-486e-aa6e-8a3005d65103-trainer",
+   "node": "gke-open-rl-fft-test-l4-single-dra-af368707-edip",
+   "owner_id": "278945b2-ded0-486e-aa6e-8a3005d65103",
+   "pod": "orw-fft-278945b2-ded0-486e-aa6e-8a3005d65103-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "278945b2-ded0-486e-aa6e-8a3005d65103"
+   ],
+   "runtime_id": "278945b2-ded0-486e-aa6e-8a3005d65103"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+   ],
+   "first_seen": 1789100376.2865796,
+   "id": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae",
+   "label": "Qwen/Qwen3-8B",
+   "last_seen": 1789117200.6808138,
+   "name": "lora-qwen-qwen3-8b-0-trainer",
+   "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+   "owner_id": "qwen-qwen3-8b",
+   "pod": "orw-lora-qwen-qwen3-8b-0-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e"
+   ],
+   "runtime_id": "Qwen/Qwen3-8B"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l/gpu-0"
+   ],
+   "first_seen": 1789100376.2865796,
+   "id": "ba2d49db-8075-4a3a-8f0c-3f6933b9d45e",
+   "label": "Qwen3-0.6B \u00b7 900df13e",
+   "last_seen": 1789102470.5150402,
+   "name": "fft-900df13e-1553-4df7-b815-f5529826ff56-trainer",
+   "node": "gke-open-rl-fft-test-l4-single-dra-f2cef390-lp5l",
+   "owner_id": "900df13e-1553-4df7-b815-f5529826ff56",
+   "pod": "orw-fft-900df13e-1553-4df7-b815-f5529826ff56-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "900df13e-1553-4df7-b815-f5529826ff56"
+   ],
+   "runtime_id": "900df13e-1553-4df7-b815-f5529826ff56"
+  }
+ ],
+ "observed_at": "2026-09-11T09:00:10.927633+00:00",
+ "placements": [
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+   ],
+   "id": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364",
+   "label": "Qwen/Qwen3-8B",
+   "name": "lora-qwen-qwen3-8b-0-sampler",
+   "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+   "owner_id": "qwen-qwen3-8b",
+   "phase": "Running",
+   "pod": "orw-lora-qwen-qwen3-8b-0-sampler",
+   "role": "sampler",
+   "run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e"
+   ],
+   "runtime_id": "Qwen/Qwen3-8B"
+  },
+  {
+   "device_count": 1,
+   "devices": [
+    "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+   ],
+   "id": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae",
+   "label": "Qwen/Qwen3-8B",
+   "name": "lora-qwen-qwen3-8b-0-trainer",
+   "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+   "owner_id": "qwen-qwen3-8b",
+   "phase": "Running",
+   "pod": "orw-lora-qwen-qwen3-8b-0-trainer",
+   "role": "trainer",
+   "run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e"
+   ],
+   "runtime_id": "Qwen/Qwen3-8B"
+  }
+ ],
+ "runs": [
+  {
+   "completed_at": 1789105891.70638,
+   "created_at": 1789100387.7322035,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 b6dd1068",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+   "runtime_id": "Qwen/Qwen3-0.6B",
+   "runtime_run_ids": [
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6",
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4"
+   ],
+   "shared_runtime": true,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789105891.7176754,
+   "workloads": []
+  },
+  {
+   "completed_at": 1789105891.70638,
+   "created_at": 1789100386.7123952,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 0e47610a",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4",
+   "runtime_id": "Qwen/Qwen3-0.6B",
+   "runtime_run_ids": [
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6",
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4"
+   ],
+   "shared_runtime": true,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789105891.7200193,
+   "workloads": []
+  },
+  {
+   "completed_at": 1789101568.3097472,
+   "created_at": 1789100385.2824376,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "full",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 291d40ee",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d",
+   "runtime_id": "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d",
+   "runtime_run_ids": [
+    "291d40ee-f5a5-4cba-8858-7d8dcc3fbe6d"
+   ],
+   "shared_runtime": false,
+   "status": "ended",
+   "steps": 1,
+   "updated_at": 1789101568.3218756,
+   "workloads": []
+  },
+  {
+   "completed_at": null,
+   "created_at": 1789100384.3039834,
+   "display_name": null,
+   "display_status": "Running",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 1390ffaa",
+   "nodes": [
+    "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv"
+   ],
+   "pods": [
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:30:25+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:30:18+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_uids": [
+      "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "sampler",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "9c5d999a-5b0a-4c96-bb18-5ed9b2858e15",
+     "worker": "lora-qwen-qwen3-8b-0-sampler"
+    },
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:19:36+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:19:32+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_uids": [
+      "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "trainer",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "782b8061-87e9-4a8d-8933-652c5a630802",
+     "worker": "lora-qwen-qwen3-8b-0-trainer"
+    }
+   ],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+   "runtime_id": "Qwen/Qwen3-8B",
+   "runtime_run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58"
+   ],
+   "shared_runtime": true,
+   "status": "active",
+   "steps": 37,
+   "updated_at": 1789117141.949968,
+   "workloads": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "created_at": "2026-09-11T04:30:18Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-sampler",
+     "node_name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "reason": null,
+     "requested_memory": "29Gi",
+     "role": "sampler",
+     "training_kind": "lora",
+     "uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "created_at": "2026-09-11T04:19:32Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-trainer",
+     "node_name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "reason": null,
+     "requested_memory": "20Gi",
+     "role": "trainer",
+     "training_kind": "lora",
+     "uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    }
+   ]
+  },
+  {
+   "completed_at": 1789105891.70638,
+   "created_at": 1789100382.8408003,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 f94ca657",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+   "runtime_id": "Qwen/Qwen3-0.6B",
+   "runtime_run_ids": [
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6",
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4"
+   ],
+   "shared_runtime": true,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789105891.7150712,
+   "workloads": []
+  },
+  {
+   "completed_at": 1789101508.1627562,
+   "created_at": 1789100381.5417552,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "full",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 be7bbf22",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1",
+   "runtime_id": "be7bbf22-f193-4c07-bd39-7abf294c3af1",
+   "runtime_run_ids": [
+    "be7bbf22-f193-4c07-bd39-7abf294c3af1"
+   ],
+   "shared_runtime": false,
+   "status": "ended",
+   "steps": 1,
+   "updated_at": 1789101508.1792448,
+   "workloads": []
+  },
+  {
+   "completed_at": 1789105861.5852554,
+   "created_at": 1789100379.2664306,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 ff0a953c",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "ff0a953c-a01c-460e-b431-a125093335c6",
+   "runtime_id": "Qwen/Qwen3-0.6B",
+   "runtime_run_ids": [
+    "f94ca657-e688-4ff4-8d4e-6236cd724aa8",
+    "ff0a953c-a01c-460e-b431-a125093335c6",
+    "b6dd1068-8a65-4a15-83e2-aba0e99433fd",
+    "0e47610a-aedf-4aba-ba6b-f3bf5a10b5d4"
+   ],
+   "shared_runtime": true,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789105861.5929549,
+   "workloads": []
+  },
+  {
+   "completed_at": null,
+   "created_at": 1789100377.1699333,
+   "display_name": null,
+   "display_status": "Running",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 f332cde2",
+   "nodes": [
+    "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv"
+   ],
+   "pods": [
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:30:25+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:30:18+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_uids": [
+      "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "sampler",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "9c5d999a-5b0a-4c96-bb18-5ed9b2858e15",
+     "worker": "lora-qwen-qwen3-8b-0-sampler"
+    },
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:19:36+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:19:32+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_uids": [
+      "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "trainer",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "782b8061-87e9-4a8d-8933-652c5a630802",
+     "worker": "lora-qwen-qwen3-8b-0-trainer"
+    }
+   ],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+   "runtime_id": "Qwen/Qwen3-8B",
+   "runtime_run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58"
+   ],
+   "shared_runtime": true,
+   "status": "active",
+   "steps": 37,
+   "updated_at": 1789117065.1803768,
+   "workloads": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "created_at": "2026-09-11T04:30:18Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-sampler",
+     "node_name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "reason": null,
+     "requested_memory": "29Gi",
+     "role": "sampler",
+     "training_kind": "lora",
+     "uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "created_at": "2026-09-11T04:19:32Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-trainer",
+     "node_name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "reason": null,
+     "requested_memory": "20Gi",
+     "role": "trainer",
+     "training_kind": "lora",
+     "uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    }
+   ]
+  },
+  {
+   "completed_at": null,
+   "created_at": 1789100375.0467541,
+   "display_name": null,
+   "display_status": "Running",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 e69978f3",
+   "nodes": [
+    "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv"
+   ],
+   "pods": [
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:30:25+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:30:18+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_uids": [
+      "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "sampler",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "9c5d999a-5b0a-4c96-bb18-5ed9b2858e15",
+     "worker": "lora-qwen-qwen3-8b-0-sampler"
+    },
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:19:36+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:19:32+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_uids": [
+      "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "trainer",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "782b8061-87e9-4a8d-8933-652c5a630802",
+     "worker": "lora-qwen-qwen3-8b-0-trainer"
+    }
+   ],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "e69978f3-1cbb-4d4b-b59a-0398b0245f58",
+   "runtime_id": "Qwen/Qwen3-8B",
+   "runtime_run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58"
+   ],
+   "shared_runtime": true,
+   "status": "active",
+   "steps": 37,
+   "updated_at": 1789116980.9407299,
+   "workloads": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "created_at": "2026-09-11T04:30:18Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-sampler",
+     "node_name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "reason": null,
+     "requested_memory": "29Gi",
+     "role": "sampler",
+     "training_kind": "lora",
+     "uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "created_at": "2026-09-11T04:19:32Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-trainer",
+     "node_name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "reason": null,
+     "requested_memory": "20Gi",
+     "role": "trainer",
+     "training_kind": "lora",
+     "uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    }
+   ]
+  },
+  {
+   "completed_at": 1789102919.612025,
+   "created_at": 1789100373.764213,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "full",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 278945b2",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "278945b2-ded0-486e-aa6e-8a3005d65103",
+   "runtime_id": "278945b2-ded0-486e-aa6e-8a3005d65103",
+   "runtime_run_ids": [
+    "278945b2-ded0-486e-aa6e-8a3005d65103"
+   ],
+   "shared_runtime": false,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789102919.6197617,
+   "workloads": []
+  },
+  {
+   "completed_at": null,
+   "created_at": 1789100372.1968124,
+   "display_name": null,
+   "display_status": "Running",
+   "fine_tuning_type": "lora",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-8B",
+   "name": "Qwen3-8B \u00b7 20a5445d",
+   "nodes": [
+    "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+    "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv"
+   ],
+   "pods": [
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:30:25+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:30:18+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-h100-dra-072eced6-vcxu/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "node": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_uids": [
+      "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "sampler",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "9c5d999a-5b0a-4c96-bb18-5ed9b2858e15",
+     "worker": "lora-qwen-qwen3-8b-0-sampler"
+    },
+    {
+     "containers": [
+      {
+       "exit_code": null,
+       "finished_at": null,
+       "last_termination": null,
+       "name": "worker",
+       "reason": null,
+       "restart_count": 0,
+       "started_at": "2026-09-11T04:19:36+00:00",
+       "state": "running"
+      }
+     ],
+     "created_at": "2026-09-11T04:19:32+00:00",
+     "devices": [
+      "gpu.nvidia.com/gke-open-rl-fft-test-l4-single-dra-af368707-ozuv/gpu-0"
+     ],
+     "events": [],
+     "name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "node": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_uids": [
+      "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+     ],
+     "phase": "Running",
+     "problem": null,
+     "restarts": 0,
+     "role": "trainer",
+     "runtime_id": "Qwen/Qwen3-8B",
+     "shared_runtime": true,
+     "uid": "782b8061-87e9-4a8d-8933-652c5a630802",
+     "worker": "lora-qwen-qwen3-8b-0-trainer"
+    }
+   ],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "20a5445d-5b8c-4caf-acd5-ba6c8faf924e",
+   "runtime_id": "Qwen/Qwen3-8B",
+   "runtime_run_ids": [
+    "1390ffaa-2cbb-499d-bfe6-8e94bed23a9d",
+    "f332cde2-3266-4aa2-9ed3-3739530b3f03",
+    "20a5445d-5b8c-4caf-acd5-ba6c8faf924e",
+    "e69978f3-1cbb-4d4b-b59a-0398b0245f58"
+   ],
+   "shared_runtime": true,
+   "status": "active",
+   "steps": 37,
+   "updated_at": 1789116877.852489,
+   "workloads": [
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "created_at": "2026-09-11T04:30:18Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-sampler",
+     "node_name": "gke-open-rl-fft-test-h100-dra-072eced6-vcxu",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-sampler-eb3cf9f5",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-sampler",
+     "reason": null,
+     "requested_memory": "29Gi",
+     "role": "sampler",
+     "training_kind": "lora",
+     "uid": "eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364"
+    },
+    {
+     "claim_name": "claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "created_at": "2026-09-11T04:19:32Z",
+     "device_count": 1,
+     "exclusive": true,
+     "model_id": "Qwen/Qwen3-8B",
+     "name": "lora-qwen-qwen3-8b-0-trainer",
+     "node_name": "gke-open-rl-fft-test-l4-single-dra-af368707-ozuv",
+     "owner_id": "qwen-qwen3-8b",
+     "phase": "Running",
+     "placed_message": "worker is running on claim-lora-qwen-qwen3-8b-0-trainer-9bb3fdd0",
+     "placed_reason": "Placed",
+     "pod_name": "orw-lora-qwen-qwen3-8b-0-trainer",
+     "reason": null,
+     "requested_memory": "20Gi",
+     "role": "trainer",
+     "training_kind": "lora",
+     "uid": "9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae"
+    }
+   ]
+  },
+  {
+   "completed_at": 1789102469.1852608,
+   "created_at": 1789100371.2189128,
+   "display_name": null,
+   "display_status": "Ended",
+   "fine_tuning_type": "full",
+   "max_steps": null,
+   "model": "Qwen/Qwen3-0.6B",
+   "name": "Qwen3-0.6B \u00b7 900df13e",
+   "nodes": [],
+   "pods": [],
+   "recipe_name": "recipe_math_rl",
+   "run_id": "900df13e-1553-4df7-b815-f5529826ff56",
+   "runtime_id": "900df13e-1553-4df7-b815-f5529826ff56",
+   "runtime_run_ids": [
+    "900df13e-1553-4df7-b815-f5529826ff56"
+   ],
+   "shared_runtime": false,
+   "status": "ended",
+   "steps": 40,
+   "updated_at": 1789102469.1929128,
+   "workloads": []
+  }
+ ],
+ "schema_version": 2,
+ "store_error": null,
+ "telemetry_sources": {
+  "gke": {
+   "cluster": "open-rl-fft-test",
+   "configured": true,
+   "enabled": true,
+   "location": "us-central1",
+   "mode": "auto",
+   "project": "open-rl-2-sandbox-102433"
+  }
+ }
+}

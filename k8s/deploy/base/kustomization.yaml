@@ -7,6 +7,7 @@ namespace: openrl-system
 resources:
   - ../../../scheduler/deploy/base
   - rbac.yaml
+  - ../dashboard
   - redis.yaml
   - gateway.yaml
 

@@ -84,6 +84,8 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
   env = {
     "BASE_MODEL": base_model,
     "OPEN_RL_BASE_MODEL": base_model,
+    "OPEN_RL_RUNTIME_ID": runtime,
+    "OPEN_RL_PROCESS_ROLE": role,
     "OPEN_RL_ENABLE_FFT": "false" if is_lora else "true",
     "OPEN_RL_FINE_TUNING_TYPE": "lora" if is_lora else "full",
     # The device budget this worker was sized for; a sampler derives its

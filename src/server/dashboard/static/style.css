@@ -1,0 +1,1469 @@
+:root {
+  color-scheme: light dark;
+}
+body {
+  margin: 0;
+  background: light-dark(#ffffff, #131519);
+}
+#orl-design-lab {
+  --ink: light-dark(#202328, #e6e8ed);
+  --dim: light-dark(#626874, #a0a6b1);
+  --ground: light-dark(#ffffff, #131519);
+  --paper: light-dark(#f7f8fa, #191c21);
+  --line: light-dark(#e3e6eb, #2a2e35);
+  --hover: light-dark(#eff1f4, #20242b);
+  --selected: light-dark(#e8ebf0, #282d35);
+  --control-border: light-dark(#c9ced7, #424954);
+  --accent: light-dark(#416bc3, #83a9ff);
+  --hue-0: var(--accent);
+  --hue-1: light-dark(#357e70, #76b3a2);
+  --hue-2: light-dark(#7a60bb, #ad98dc);
+  --hue-3: light-dark(#a87434, #c3a072);
+  --hue-4: light-dark(#a8496b, #cd8ca5);
+  --hue-5: light-dark(#2f8a9a, #7cb3bd);
+  --hue-6: light-dark(#858533, #b5b579);
+  --hue-7: light-dark(#6b6f7a, #a4a9b5);
+  --status-success: light-dark(#27725c, #83baa5);
+  --status-warning: light-dark(#895e1e, #ccb079);
+  --status-error: light-dark(#ab4249, #da949a);
+  --status-complete: light-dark(#496a97, #9bb0ce);
+  --radius: 5px;
+  --gutter: 22px;
+  --node-label-width: 200px;
+  --gpu-index-width: 38px;
+  --gpu-index-gap: 6px;
+  --sans: Inter, ui-sans-serif, system-ui, sans-serif;
+  --mono: "SFMono-Regular", Consolas, monospace;
+  color: var(--ink);
+  background: var(--ground);
+  width: 100%;
+  min-height: 100dvh;
+  font: 13px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+#orl-design-lab * {
+  box-sizing: border-box;
+}
+#orl-design-lab :is(h1, h2, p, figure) {
+  margin: 0;
+}
+#orl-design-lab a {
+  color: inherit;
+  text-decoration: none;
+}
+#orl-design-lab a:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#orl-design-lab button {
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+#orl-design-lab :where(input, select, .chip, .time-shift) {
+  min-height: 32px;
+  max-width: 100%;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background-color: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  line-height: 20px;
+  box-shadow: none;
+}
+#orl-design-lab select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23878d98' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+#orl-design-lab input::placeholder {
+  color: var(--dim);
+  opacity: 1;
+}
+#orl-design-lab :is(input, select):hover,
+#orl-design-lab .chip:hover:not(:disabled) {
+  border-color: var(--control-border);
+}
+#orl-design-lab .chip:hover:not(:disabled) {
+  background-color: var(--hover);
+}
+#orl-design-lab .chip[aria-pressed="true"] {
+  background: var(--selected);
+  border-color: var(--control-border);
+}
+#orl-design-lab button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+#orl-design-lab :is(a, button, input, select):focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+#orl-design-lab :is(input, select):focus {
+  border-color: var(--control-border);
+  box-shadow: none;
+}
+#orl-design-lab :is(input, select):focus:not(:focus-visible) {
+  outline: none;
+}
+#orl-design-lab .appbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 28px;
+  padding: 14px var(--gutter);
+  border-bottom: 1px solid var(--line);
+}
+#orl-design-lab nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+#orl-design-lab nav a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  color: var(--dim);
+}
+#orl-design-lab nav a:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+#orl-design-lab nav [aria-current="page"] {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}
+#orl-design-lab .brand {
+  font-size: 16px;
+  font-weight: 500;
+}
+#orl-design-lab #connection {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .pad {
+  padding: 22px var(--gutter);
+}
+#orl-design-lab .heading {
+  margin-bottom: 16px;
+  font-size: 22px;
+  font-weight: 500;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .mono {
+  font-family: var(--mono);
+}
+#orl-design-lab .muted {
+  color: var(--dim);
+}
+#orl-design-lab .micro {
+  font-size: 11px;
+}
+#orl-design-lab .empty-state {
+  padding: 16px 0;
+  color: var(--dim);
+}
+
+/* Jobs, processes and health share the same table rhythm. */
+#orl-design-lab .overview-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  margin-bottom: 16px;
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .overview-summary strong {
+  margin-right: 5px;
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 500;
+}
+#orl-design-lab :is(.job-list-head, .job-list-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px 100px 112px 100px;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+}
+#orl-design-lab .job-list-head {
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .job-list-row {
+  border-top: 1px solid var(--line);
+}
+#orl-design-lab .job-list-row > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .job-list-row:hover {
+  text-decoration: none;
+}
+#orl-design-lab .job-list-row:hover .job-identity > span:first-child {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#orl-design-lab .job-identity {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .job-identity .micro {
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orl-design-lab :is(.job-list-head, .job-list-row) > :nth-child(n + 4) {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+#orl-design-lab .state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+#orl-design-lab :is(.state-dot, .health-dot) {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+#orl-design-lab .state-running {
+  color: var(--status-success);
+}
+#orl-design-lab .state-pending {
+  color: var(--status-warning);
+}
+#orl-design-lab .state-failed {
+  color: var(--status-error);
+}
+#orl-design-lab .state-completed {
+  color: var(--status-complete);
+}
+#orl-design-lab :is(.run-table, .scheduler-table) {
+  width: 100%;
+  border-collapse: collapse;
+}
+#orl-design-lab :is(.run-table, .scheduler-table) :is(th, td) {
+  padding: 12px 12px 12px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab :is(.run-table, .scheduler-table) :is(th, td):last-child {
+  padding-right: 0;
+}
+#orl-design-lab :is(.run-table, .scheduler-table) th {
+  color: var(--dim);
+  font-weight: 500;
+}
+#orl-design-lab .run-table {
+  table-layout: fixed;
+  min-width: 720px;
+}
+#orl-design-lab .run-table th:first-child {
+  width: 38%;
+}
+#orl-design-lab .run-table :is(th, td):last-child {
+  text-align: right;
+}
+#orl-design-lab .health-status {
+  --health-tone: var(--status-warning);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  color: var(--health-tone);
+  background: color-mix(in srgb, var(--health-tone) 9%, var(--ground));
+}
+#orl-design-lab .health-error {
+  --health-tone: var(--status-error);
+}
+#orl-design-lab .health-success {
+  --health-tone: var(--status-success);
+}
+#orl-design-lab .health-message {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin: 12px 0;
+  overflow-wrap: anywhere;
+}
+
+/* Nodes: the header, GPU lanes and duty values use one column grid. */
+#orl-design-lab .nodes-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  margin-bottom: 18px;
+}
+#orl-design-lab :is(.nodes-heading, .run-heading) .heading {
+  margin: 0;
+}
+#orl-design-lab .time-control {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 32px 80px;
+  width: 424px;
+  max-width: 100%;
+  align-items: center;
+  gap: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .time-picker {
+  min-width: 0;
+  color: var(--ink);
+}
+#orl-design-lab .time-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  height: 32px;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--paper);
+  list-style: none;
+  cursor: pointer;
+  line-height: 20px;
+  white-space: nowrap;
+}
+#orl-design-lab .time-summary::-webkit-details-marker {
+  display: none;
+}
+#orl-design-lab .time-summary > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#orl-design-lab .time-chevron {
+  display: block;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: var(--dim);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#orl-design-lab .time-summary:hover,
+#orl-design-lab .time-picker[open] .time-summary {
+  border-color: var(--control-border);
+}
+#orl-design-lab .time-summary:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+}
+#orl-design-lab .time-shift {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  line-height: 20px;
+}
+#orl-design-lab .time-popover {
+  position: absolute;
+  z-index: 5;
+  top: 38px;
+  left: 0;
+  right: 88px;
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--ground);
+}
+#orl-design-lab .time-popover label {
+  display: grid;
+  align-items: center;
+  grid-template-columns: 70px minmax(0, 1fr);
+  gap: 8px;
+}
+#orl-design-lab .time-popover :is(input, select) {
+  width: 100%;
+  height: 32px;
+}
+#orl-design-lab .time-control > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+#orl-design-lab .time-control input {
+  min-width: 0;
+}
+#orl-design-lab :is(.node-lane, .node-time-header) {
+  display: grid;
+  grid-template-columns: var(--node-label-width) minmax(0, 1fr) 48px;
+  align-items: start;
+  gap: 12px;
+}
+#orl-design-lab .node-lane {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+#orl-design-lab .node-time-header {
+  padding-bottom: 8px;
+  color: var(--dim);
+  font-size: 11px;
+}
+#orl-design-lab .node-axis {
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  margin-left: calc(var(--gpu-index-width) + var(--gpu-index-gap));
+  font-variant-numeric: tabular-nums;
+}
+#orl-design-lab .node-axis span:nth-child(2) {
+  position: absolute;
+  left: 33.333333%;
+}
+#orl-design-lab .node-axis span:nth-child(3) {
+  position: absolute;
+  left: 66.666667%;
+}
+#orl-design-lab .node-axis span:not(:first-child):not(:last-child) {
+  transform: translateX(-50%);
+}
+#orl-design-lab .node-duty {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  line-height: 26px;
+}
+#orl-design-lab .node-time-header .node-duty {
+  line-height: inherit;
+}
+#orl-design-lab .node-lane-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 26px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  white-space: nowrap;
+}
+#orl-design-lab .node-lane-label:hover .node-accelerator {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#orl-design-lab .node-accelerator {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#orl-design-lab .unavailable-selection {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  color: var(--status-warning);
+}
+#orl-design-lab .claim-label {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--dim);
+  font-size: 11px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+#orl-design-lab .gpu-capacity {
+  display: grid;
+  grid-template-columns: var(--gpu-index-width) minmax(0, 1fr);
+  gap: var(--gpu-index-gap);
+  min-width: 0;
+}
+#orl-design-lab .gpu-lane-ids {
+  display: grid;
+  align-items: center;
+  color: var(--dim);
+  font: 11px var(--mono);
+}
+#orl-design-lab .gpu-lane-ids span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orl-design-lab .capacity-track {
+  position: relative;
+  min-width: 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    transparent 0 calc(var(--gpu-lane-height) - 1px),
+    color-mix(in srgb, var(--line) 70%, transparent)
+      calc(var(--gpu-lane-height) - 1px) var(--gpu-lane-height)
+  );
+}
+#orl-design-lab :is(.capacity-track, .node-axis, .activity-track, .activity-axis, .allocation-expansion .chart-plot svg, .allocation-expansion .chart-empty) {
+  touch-action: pan-y;
+  cursor: grab;
+}
+#orl-design-lab.node-navigating :is(.capacity-track, .node-axis, .activity-track, .activity-axis, .allocation-expansion .chart-plot svg, .allocation-expansion .chart-empty) {
+  cursor: grabbing;
+  user-select: none;
+}
+#orl-design-lab .capacity-track::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to right,
+    transparent 0 calc(33.333333% - 1px),
+    color-mix(in srgb, var(--line) 45%, transparent) calc(33.333333% - 1px)
+      33.333333%
+  );
+}
+#orl-design-lab .hue-0 {
+  --allocation-color: var(--hue-0);
+}
+#orl-design-lab .hue-1 {
+  --allocation-color: var(--hue-1);
+}
+#orl-design-lab .hue-2 {
+  --allocation-color: var(--hue-2);
+}
+#orl-design-lab .hue-3 {
+  --allocation-color: var(--hue-3);
+}
+#orl-design-lab .hue-4 {
+  --allocation-color: var(--hue-4);
+}
+#orl-design-lab .hue-5 {
+  --allocation-color: var(--hue-5);
+}
+#orl-design-lab .hue-6 {
+  --allocation-color: var(--hue-6);
+}
+#orl-design-lab .hue-7 {
+  --allocation-color: var(--hue-7);
+}
+#orl-design-lab .capacity-allocation {
+  container: allocation / inline-size;
+  position: absolute;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: color-mix(
+    in srgb,
+    var(--allocation-color, var(--accent)) 19%,
+    var(--ground)
+  );
+  text-align: left;
+}
+#orl-design-lab .capacity-allocation:hover {
+  background: color-mix(
+    in srgb,
+    var(--allocation-color, var(--accent)) 27%,
+    var(--ground)
+  );
+}
+#orl-design-lab .capacity-allocation.selected:not(.shared) {
+  z-index: 1;
+  background: color-mix(
+    in srgb,
+    var(--allocation-color, var(--accent)) 27%,
+    var(--ground)
+  );
+  outline: 1px solid
+    color-mix(in srgb, var(--allocation-color, var(--accent)) 70%, var(--line));
+}
+#orl-design-lab .capacity-allocation.ended {
+  --allocation-color: var(--dim);
+  color: var(--dim);
+}
+#orl-design-lab .capacity-allocation.shared {
+  overflow: hidden;
+  background: color-mix(in srgb, var(--line) 45%, var(--ground));
+}
+#orl-design-lab :is(.allocation-name, .allocation-count) {
+  position: relative;
+  z-index: 1;
+}
+#orl-design-lab .capacity-allocation.unknown-mapping {
+  position: relative;
+  width: 100%;
+  height: 26px;
+  margin-block: 3px;
+}
+#orl-design-lab .allocation-name {
+  margin-left: 7px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orl-design-lab .allocation-count {
+  margin-right: 7px;
+  flex: none;
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+@container allocation (max-width: 160px) {
+  #orl-design-lab :is(.allocation-name, .allocation-count) {
+    display: none;
+  }
+}
+#orl-design-lab .hold {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--allocation-color) 35%, var(--ground));
+  pointer-events: auto;
+}
+#orl-design-lab .hold:is(:hover, .selected) {
+  background: color-mix(in srgb, var(--allocation-color) 65%, var(--ground));
+}
+#orl-design-lab .allocation-unobserved {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: repeating-linear-gradient(
+    135deg,
+    transparent 0 4px,
+    var(--line) 4px 6px
+  );
+  pointer-events: none;
+}
+#orl-design-lab .allocation-expansion {
+  --activity-label-width: 240px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  margin: 0 calc(-1 * var(--gutter));
+  padding: 16px var(--gutter);
+  border-bottom: 1px solid var(--line);
+}
+#orl-design-lab .allocation-expansion > div {
+  min-width: 0;
+}
+#orl-design-lab .node-gpu-detail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+#orl-design-lab .allocation-detail-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#orl-design-lab .allocation-detail-head h2 {
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .detail-close {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  color: var(--dim);
+  background: transparent;
+  font-size: 22px;
+  line-height: 1;
+}
+#orl-design-lab .detail-close:hover {
+  border-color: var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+#orl-design-lab .allocation-device-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+#orl-design-lab .allocation-device-picker .chip {
+  border-color: transparent;
+  background: transparent;
+  color: var(--dim);
+}
+#orl-design-lab .allocation-device-picker .chip[aria-pressed="true"],
+#orl-design-lab .allocation-device-picker .chip:hover {
+  border-color: var(--line);
+  background: var(--paper);
+  color: var(--ink);
+}
+#orl-design-lab .allocation-memory {
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .allocation-memory strong {
+  margin-left: 8px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 500;
+}
+#orl-design-lab .allocation-detail-footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--dim);
+  font-size: 11px;
+}
+#orl-design-lab .allocation-detail-footer a {
+  color: var(--ink);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab :is(.activity-header, .activity-row) {
+  display: grid;
+  grid-template-columns: var(--activity-label-width) minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+}
+#orl-design-lab .activity-header {
+  padding-block: 4px 10px;
+}
+#orl-design-lab .activity-header h3 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
+}
+#orl-design-lab .activity-axis {
+  display: flex;
+  justify-content: space-between;
+  color: var(--dim);
+  font: 11px var(--mono);
+}
+#orl-design-lab .activity-row {
+  min-height: 46px;
+  border-top: 1px solid var(--line);
+}
+#orl-design-lab .activity-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  text-align: left;
+  font-size: 12px;
+}
+#orl-design-lab a.activity-label:hover {
+  background: var(--hover);
+}
+#orl-design-lab .activity-row[data-selected="true"] .activity-label {
+  border-color: var(--line);
+  background: var(--paper);
+}
+#orl-design-lab .activity-swatch {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--allocation-color) 65%, var(--ground));
+}
+#orl-design-lab .activity-label-text {
+  min-width: 0;
+}
+#orl-design-lab .activity-name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orl-design-lab .activity-meta {
+  display: block;
+  margin-top: 2px;
+  color: var(--dim);
+  font-size: 11px;
+}
+#orl-design-lab .activity-track {
+  position: relative;
+  min-width: 0;
+  height: 46px;
+  display: flex;
+  align-items: center;
+  background: repeating-linear-gradient(to right, var(--line) 0 1px, transparent 1px 25%);
+  box-shadow: inset -1px 0 var(--line);
+}
+#orl-design-lab .activity-track svg {
+  display: block;
+  width: 100%;
+  height: 24px;
+}
+#orl-design-lab .activity-block {
+  fill: color-mix(in srgb, var(--allocation-color) 35%, var(--ground));
+  cursor: default;
+}
+#orl-design-lab .activity-block[data-placement] {
+  cursor: pointer;
+}
+#orl-design-lab .activity-block[data-selected="true"],
+#orl-design-lab .activity-block:hover {
+  fill: color-mix(in srgb, var(--allocation-color) 65%, var(--ground));
+}
+#orl-design-lab .activity-block[data-selected="true"] {
+  stroke: var(--allocation-color);
+  stroke-width: 1px;
+}
+#orl-design-lab .cross-node-activity {
+  --activity-label-width: 240px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+#orl-design-lab .cross-node-activity .allocation-detail-head {
+  margin-bottom: 8px;
+}
+#orl-design-lab .cross-node-activity .activity-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#orl-design-lab .cross-node-activity[data-inspecting] .activity-track::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset-block: 0;
+  left: var(--activity-cursor);
+  border-left: 1px dashed var(--dim);
+}
+#orl-design-lab .activity-tooltip {
+  position: fixed;
+  z-index: 10;
+  pointer-events: none;
+  max-width: min(360px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  padding: 9px 12px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font-size: 12px;
+}
+#orl-design-lab .activity-tooltip-label {
+  display: block;
+  margin-bottom: 4px;
+}
+#orl-design-lab :is(.activity-tooltip-time, .activity-tooltip-detail) {
+  color: var(--dim);
+}
+#orl-design-lab .activity-status {
+  position: absolute;
+  left: 8px;
+  max-width: calc(100% - 16px);
+  padding: 2px 4px;
+  color: var(--dim);
+  background: var(--ground);
+  font-size: 11px;
+}
+#orl-design-lab .activity-status.unavailable {
+  color: var(--status-warning);
+}
+
+/* Chart layout stays separate from the SVG gridlines. */
+#orl-design-lab div.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 24px 20px;
+  margin-top: 16px;
+}
+#orl-design-lab .chart {
+  --metric-stroke: var(--dim);
+  --plot-height: 160px;
+  min-width: 0;
+}
+#orl-design-lab .chart[data-tone="accent"] {
+  --metric-stroke: color-mix(in srgb, var(--accent) 75%, var(--dim));
+}
+#orl-design-lab .allocation-expansion .chart {
+  --plot-height: 100px;
+  min-height: calc(var(--plot-height) + 82px);
+}
+#orl-design-lab .allocation-expansion .chart-plot {
+  grid-template-columns: var(--activity-label-width) minmax(0, 1fr);
+  column-gap: 12px;
+}
+#orl-design-lab .allocation-expansion .chart-empty {
+  margin-left: calc(var(--activity-label-width) + 12px);
+}
+#orl-design-lab .allocation-expansion .chart-line {
+  stroke-width: 1.5;
+}
+#orl-design-lab .chart-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 5px 16px;
+  margin-bottom: 12px;
+}
+#orl-design-lab .chart-head h2 {
+  font-size: 13px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .chart-latest {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+#orl-design-lab .chart-latest strong {
+  color: var(--ink);
+  font: 500 15px var(--mono);
+}
+#orl-design-lab .chart-plot {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-rows: var(--plot-height) auto;
+  column-gap: 8px;
+  min-width: 0;
+}
+#orl-design-lab .chart-y {
+  margin-block: -6px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  text-align: right;
+  color: var(--dim);
+  font: 11px var(--mono);
+}
+#orl-design-lab .chart-plot:focus-visible {
+  outline: 1px solid var(--control-border);
+  outline-offset: 4px;
+}
+#orl-design-lab .chart-plot svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  border-bottom: 1px solid var(--line);
+}
+#orl-design-lab .chart-x {
+  grid-column: 2;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  padding-top: 8px;
+  color: var(--dim);
+  font: 11px var(--mono);
+}
+#orl-design-lab svg .chart-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+#orl-design-lab .chart-line {
+  fill: none;
+  stroke: var(--metric-stroke);
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+#orl-design-lab .chart-area {
+  fill: var(--metric-stroke);
+  fill-opacity: 0.07;
+}
+#orl-design-lab .chart-dot {
+  stroke: var(--metric-stroke);
+  stroke-width: 5;
+  stroke-linecap: round;
+}
+#orl-design-lab .chart-hover {
+  width: 0;
+  position: absolute;
+  top: 0;
+  height: var(--plot-height);
+  pointer-events: none;
+  z-index: 2;
+}
+#orl-design-lab .chart-hover[hidden] {
+  display: none;
+}
+#orl-design-lab .chart-cursor {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-left: 1px dashed var(--control-border);
+}
+#orl-design-lab .chart-tip {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius);
+  background: var(--paper);
+  color: var(--ink);
+  font: 11px/1.5 var(--mono);
+  white-space: nowrap;
+}
+#orl-design-lab .chart-point {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--metric-stroke);
+  transform: translate(-50%, -50%);
+}
+#orl-design-lab .chart-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 18px;
+  margin-top: 10px;
+  color: var(--dim);
+  font-size: 11px;
+}
+#orl-design-lab .chart-summary strong {
+  margin-left: 4px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 400;
+}
+#orl-design-lab .chart-zone {
+  margin-left: auto;
+}
+#orl-design-lab .chart-empty {
+  min-height: var(--plot-height);
+  display: flex;
+  align-items: center;
+  color: var(--dim);
+}
+
+/* Run details and logs. */
+#orl-design-lab .overview-back {
+  margin-bottom: 16px;
+  color: var(--dim);
+}
+#orl-design-lab .run-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+#orl-design-lab .run-description {
+  margin-top: 4px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .run-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin: 16px 0;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+#orl-design-lab .run-time-controls,
+#orl-design-lab .run-time-controls label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#orl-design-lab .run-time-controls label {
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .run-incidents {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+#orl-design-lab .run-incident {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+#orl-design-lab .incident-time {
+  color: var(--dim);
+  font-family: var(--mono);
+}
+#orl-design-lab .incident-error .incident-label {
+  color: var(--status-error);
+}
+#orl-design-lab .incident-warning .incident-label {
+  color: var(--status-warning);
+}
+#orl-design-lab .incident-context {
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .run-incident a {
+  color: var(--dim);
+  white-space: nowrap;
+}
+#orl-design-lab .run-metric-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+}
+#orl-design-lab .run-activity {
+  border-top: 0;
+  padding-top: 0;
+}
+#orl-design-lab .activity-source {
+  margin-top: 12px;
+  color: var(--dim);
+  font-size: 11px;
+}
+#orl-design-lab .run-metrics {
+  margin-top: 20px;
+  border-top: 1px solid var(--line);
+}
+#orl-design-lab .run-metrics > summary {
+  padding: 14px 0;
+  cursor: pointer;
+  font-size: 13px;
+}
+#orl-design-lab .log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+#orl-design-lab #run-panel > p + .log-toolbar {
+  margin-top: 8px;
+}
+#orl-design-lab .log-toolbar input {
+  flex: 1;
+  min-width: 100px;
+}
+#orl-design-lab .log-toolbar select {
+  max-width: min(100%, 340px);
+}
+#orl-design-lab #log-status {
+  display: grid;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab #log-status:not(:empty) {
+  margin-bottom: 12px;
+}
+#orl-design-lab .source-error {
+  margin: 8px 0;
+  color: var(--status-warning);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .snapshot-error:not([hidden]) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 16px var(--gutter) 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--status-warning) 35%, var(--line));
+  border-radius: var(--radius);
+  color: var(--status-warning);
+  background: var(--paper);
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .snapshot-error button {
+  flex: none;
+}
+#orl-design-lab #log-more:not(:empty) {
+  margin-top: 12px;
+}
+#orl-design-lab pre,
+#orl-design-lab .workspace-logrow {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 12px/1.65 var(--mono);
+}
+#orl-design-lab #log-lines {
+  max-height: 65dvh;
+  overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+#orl-design-lab .workspace-logrow {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr);
+  gap: 12px;
+  padding: 6px 0;
+}
+#orl-design-lab .log-time {
+  color: var(--dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+#orl-design-lab .log-message {
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+#orl-design-lab .log-error {
+  color: var(--status-error);
+}
+#orl-design-lab .log-time-scope {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 12px;
+  color: var(--dim);
+  font-size: 12px;
+}
+#orl-design-lab .log-time-scope a {
+  color: var(--ink);
+}
+#orl-design-lab .run-json-link {
+  margin-top: 20px;
+  color: var(--dim);
+  font-size: 12px;
+}
+
+/* Scheduler and recipe experiments retain their compact data-first layout. */
+#orl-design-lab .scheduler-title {
+  margin: 24px 0 12px;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+#orl-design-lab :is(.scheduler-table-wrap, .table-scroll) {
+  overflow-x: auto;
+}
+#orl-design-lab .scheduler-table {
+  min-width: 650px;
+}
+#orl-design-lab .scheduler-reservation {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  gap: 16px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .scheduler-seat-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+#orl-design-lab .scheduler-seat {
+  display: grid;
+  gap: 4px;
+  flex: 1 1 240px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--paper);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+#orl-design-lab .experiment-sweep {
+  margin: 22px 0 30px;
+}
+#orl-design-lab .experiment-sweep h2 {
+  margin-bottom: 10px;
+  font-size: 15px;
+  font-weight: 500;
+}
+#orl-design-lab .experiment-sweep .chart-grid {
+  margin-bottom: 16px;
+}
+#orl-design-lab :is(.experiment-head, .experiment-row) {
+  grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 1fr) 90px repeat(
+      4,
+      80px
+    );
+}
+
+@media (max-width: 760px) {
+  #orl-design-lab .job-list-head {
+    display: none;
+  }
+  #orl-design-lab .job-list-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 12px;
+  }
+  #orl-design-lab .job-list-row > :nth-child(2) {
+    justify-self: end;
+  }
+  #orl-design-lab .job-list-row > :nth-child(3) {
+    grid-column: 1;
+    color: var(--dim);
+  }
+  #orl-design-lab .job-list-row:not(.experiment-row) > :nth-child(4)::after {
+    content: " steps";
+    color: var(--dim);
+  }
+  #orl-design-lab .job-list-row:not(.experiment-row) > :last-child {
+    grid-column: 1 / -1;
+    text-align: left;
+    color: var(--dim);
+    font-size: 12px;
+  }
+  #orl-design-lab .job-list-row:not(.experiment-row) > :last-child::before {
+    content: "Elapsed ";
+  }
+  #orl-design-lab .experiment-row > :nth-child(5)::before {
+    content: "Reward ";
+  }
+  #orl-design-lab .experiment-row > :nth-child(6)::before {
+    content: "Correct ";
+  }
+  #orl-design-lab .experiment-row > :nth-child(7)::before {
+    content: "Format ";
+  }
+  #orl-design-lab .experiment-row > :nth-child(n + 5) {
+    text-align: left;
+    color: var(--dim);
+  }
+}
+@media (max-width: 580px) {
+  #orl-design-lab .time-control {
+    width: 100%;
+  }
+  #orl-design-lab {
+    --gutter: 14px;
+    --gpu-index-width: 24px;
+    --gpu-index-gap: 4px;
+  }
+  #orl-design-lab .appbar {
+    padding-block: 12px;
+    gap: 8px 16px;
+  }
+  #orl-design-lab .appbar > nav {
+    order: 3;
+    width: 100%;
+    flex-wrap: nowrap;
+    gap: 16px;
+    overflow-x: auto;
+    white-space: nowrap;
+    font-size: 12px;
+  }
+  #orl-design-lab .pad {
+    padding-block: 16px;
+  }
+  #orl-design-lab .heading {
+    font-size: 20px;
+  }
+  #orl-design-lab :is(.node-lane, .node-time-header) {
+    grid-template-columns: minmax(0, 1fr) 36px;
+    gap: 6px 8px;
+  }
+  #orl-design-lab .node-time-header > span:first-child {
+    display: none;
+  }
+  #orl-design-lab .node-lane-label {
+    grid-column: 1 / -1;
+    min-height: 20px;
+    gap: 6px;
+    font-size: 12px;
+  }
+  #orl-design-lab .time-control {
+    grid-template-columns: 32px minmax(0, 1fr) 32px;
+  }
+  #orl-design-lab .time-control > [data-copy-view] {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+  #orl-design-lab .time-popover {
+    right: 0;
+  }
+  #orl-design-lab .claim-label {
+    padding-inline: 3px;
+    font-size: 10px;
+  }
+  #orl-design-lab .node-axis span:not(:first-child):not(:last-child),
+  #orl-design-lab .chart-x span:not(:first-child):not(:last-child) {
+    display: none;
+  }
+  #orl-design-lab .capacity-track::before {
+    background: none;
+    border-right: 1px solid var(--line);
+  }
+  #orl-design-lab :is(.allocation-expansion, .cross-node-activity) {
+    --activity-label-width: 40px;
+  }
+  #orl-design-lab :is(.activity-header, .activity-row) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  #orl-design-lab .activity-header h3 {
+    display: none;
+  }
+  #orl-design-lab .activity-label {
+    margin-top: 4px;
+  }
+  #orl-design-lab .activity-track {
+    height: 34px;
+  }
+  #orl-design-lab .activity-axis span:not(:first-child):not(:last-child) {
+    display: none;
+  }
+  #orl-design-lab .chart-tip {
+    max-width: 230px;
+    white-space: normal;
+    width: max-content;
+  }
+  #orl-design-lab .run-toolbar {
+    align-items: flex-start;
+  }
+  #orl-design-lab .run-time-controls {
+    width: 100%;
+    justify-content: space-between;
+  }
+  #orl-design-lab .log-toolbar > :is(input, select) {
+    flex: 1 1 100%;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
+  #orl-design-lab .workspace-logrow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2px;
+    padding-block: 8px;
+  }
+  #orl-design-lab .scheduler-reservation {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+}

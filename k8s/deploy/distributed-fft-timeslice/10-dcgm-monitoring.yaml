@@ -58,6 +58,27 @@ spec:
             - matchExpressions:
               - key: cloud.google.com/gke-accelerator
                 operator: Exists
+      # On a freshly created GPU node the exporter is scheduled before the
+      # driver installer has finished. Started then, it logs "NVML doesn't
+      # exist", never retries, and serves an empty /metrics for the life of
+      # the pod. Wait for the driver library before starting it.
+      initContainers:
+      - name: wait-for-driver
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - until [ -e /usr/local/nvidia/lib64/libnvidia-ml.so.1 ]; do echo "waiting for the NVIDIA driver"; sleep 5; done
+        volumeMounts:
+        - name: nvidia-install-dir-host
+          mountPath: /usr/local/nvidia
+          readOnly: true
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            memory: 32Mi
       containers:
       - name: dcgm-exporter
         image: us-central1-artifactregistry.gcr.io/gke-release/gke-release/nvidia/gke-dcgm-exporter:4.4.1-4.6.0-gke.11@sha256:5c96863584d86494f1f677fcb15d567befa27b0f71b4a92606f8934fb583858e

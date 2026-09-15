@@ -18,7 +18,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_session_lifecycle tests.test_gateway_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_delta_weight_transfer_engine tests.test_diffing_backends
+UNIT_TESTS ?= tests.test_session_lifecycle tests.test_gpu_turns tests.test_run_settlement tests.test_dashboard_experiments tests.test_dashboard_gke_logs tests.test_dashboard_history tests.test_dashboard_snapshot tests.test_gateway_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_delta_weight_transfer_engine tests.test_diffing_backends
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
@@ -355,3 +355,19 @@ push-vm:
 # Pull changes from the remote VM back to the local workspace
 pull-vm:
 	rsync -avz --exclude '.git' --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' --exclude '.DS_Store' --exclude 'scratch' $(REMOTE_HOST):~/open-rl/ ./
+
+# ---------------------------------------------------------------------------
+# Dashboard development
+# ---------------------------------------------------------------------------
+# A port-forward to the gateway that restarts itself when kubectl wedges.
+FORWARD_PORT ?= 18000
+.PHONY: forward dashboard-capture dashboard-fixture
+forward:
+	dev/gateway-forward.sh openrl-system $(FORWARD_PORT)
+
+# Record the live dashboard API into dev/fixtures/dashboard (real data), and
+# serve the UI over that recording without a cluster.
+dashboard-capture:
+	python3 dev/capture_dashboard_fixture.py --base http://127.0.0.1:$(FORWARD_PORT) --out dev/fixtures/dashboard
+dashboard-fixture:
+	python3 dev/dashboard_fixture.py --port 9017

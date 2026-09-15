@@ -31,6 +31,11 @@ class StoreStub:
   def get_value_sync(self, key: str) -> str | None:
     return self.kv_store.get(key)
 
+  async def update_job_metadata(self, model_id: str, updates: dict) -> None:
+    key = f"open_rl:model_meta:{model_id}"
+    data = json.loads(self.kv_store[key]) if key in self.kv_store else {}
+    self.kv_store[key] = json.dumps({**data, **updates})
+
   async def get_model_metadata(self, model_id: str) -> dict | None:
     val = self.kv_store.get(f"open_rl:model_meta:{model_id}")
     if val:
