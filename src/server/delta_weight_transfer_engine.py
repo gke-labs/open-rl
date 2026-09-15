@@ -15,6 +15,8 @@ from typing import Any
 import torch
 from safetensors.torch import load_file
 
+from training.device import resolve_device
+
 try:
   from vllm.logger import init_logger
 
@@ -69,6 +71,11 @@ class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
   base_model_path: str = ""
 
 
+# Distinguishes "no device given" from an explicit device=None (which means
+# "derive the device from the params at apply time").
+_UNSET_DEVICE = object()
+
+
 @dataclass
 class SparseWeightPatch:
   """A sparse in-place patch for one existing parameter."""
@@ -99,14 +106,13 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       "model_config",
       getattr(self, "model_config", getattr(self.vllm_config, "model_config", None)),
     )
-    self.device: torch.device | None = kwargs.get(
-      "device",
-      getattr(
-        self,
-        "device",
-        torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu"),
-      ),
-    )
+    device = kwargs.get("device", getattr(self, "device", _UNSET_DEVICE))
+    if device is _UNSET_DEVICE:
+      # Resolved only when neither vLLM nor a subclass supplied one. Never
+      # imports torch_tpu: this engine runs in the sampler process, which
+      # reaches the TPU through JAX (TORCH_DEVICE_BACKEND_AUTOLOAD=0).
+      device = resolve_device(import_torch_tpu=False)
+    self.device: torch.device | None = device
     self.current_weights_path: str | None = None
     self._cpu_snapshot: dict[str, torch.Tensor] = {}
     self._base_model: str = ""
@@ -186,14 +192,18 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     model = model or self.model
     logger.info(f"[DeltaSnapshotEngine] Initializing CPU weights snapshot for sparse delta patching (base model: '{base_model}')...")
 
+    # pin_memory() is CUDA-allocator machinery for PCIe DMA into VRAM; on a
+    # TPU-device engine the snapshot stays pageable (pinning crashes there).
+    pin = torch.cuda.is_available() and (self.device is None or self.device.type != "tpu")
+
     if model is not None:
       start_t = time.perf_counter()
       for name, param in model.named_parameters():
         real_t = self._get_real_tensor(model, name, param)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if pin else real_t.data.cpu().clone()
       for name, buf in model.named_buffers():
         real_t = self._get_real_tensor(model, name, buf)
-        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if torch.cuda.is_available() else real_t.data.cpu().clone()
+        self._cpu_snapshot[name] = real_t.data.cpu().pin_memory() if pin else real_t.data.cpu().clone()
       elapsed = (time.perf_counter() - start_t) * 1000.0
       logger.info(
         f"[DeltaSnapshotEngine] CPU weights snapshot initialized with {len(self._cpu_snapshot)} vLLM tensors from model in {elapsed:.2f} ms."
@@ -228,7 +238,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       hf_weights_files = sorted([os.path.join(hf_folder, f) for f in os.listdir(hf_folder) if f.endswith(".safetensors") and "delta" not in f])
       for name, tensor in safetensors_weights_iterator(hf_weights_files, use_tqdm_on_load=False):
         if not name.endswith(".indices") and "delta" not in name:
-          self._cpu_snapshot[name] = tensor.pin_memory() if torch.cuda.is_available() else tensor.clone()
+          self._cpu_snapshot[name] = tensor.pin_memory() if pin else tensor.clone()
       if self._cpu_snapshot:
         elapsed = (time.perf_counter() - start_t) * 1000.0
         logger.info(

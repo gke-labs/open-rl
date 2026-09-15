@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from training import losses
+from training.device import resolve_device
 
 
 class TensorData(BaseModel):
@@ -21,15 +22,16 @@ class Datum(BaseModel):
 
 
 class BaseTrainerWorker:
+  # Smallest padded sequence length when shape bucketing is on. Compile cost on
+  # XLA is near-flat in sequence length, so generous rungs are cheap.
+  MIN_LENGTH_BUCKET = 64
+
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
 
-    if torch.cuda.is_available():
-      self.device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-      self.device = torch.device("mps")
-    else:
-      self.device = torch.device("cpu")
+    # TPU requires an explicit OPEN_RL_DEVICE=tpu (Dockerfile.tpu sets it);
+    # a torch_tpu venv can still run a cpu trainer, e.g. next to a TPU sampler.
+    self.device = resolve_device()
 
   def forward_backward(self, model: PreTrainedModel, data: list[Datum], loss_fn: str, loss_config: dict | None = None) -> dict[str, Any]:
     """Run a forward/backward pass on model and return Tinker-shaped loss outputs."""
@@ -42,16 +44,23 @@ class BaseTrainerWorker:
       batch_indices = [idx for idx, _ in batch]
       batch_data = [datum for _, datum in batch]
 
+      if self.shape_bucketing_enabled():
+        bucketed_rows = self.bucket_size(len(batch_data))
+        batch_data.extend(self.make_padding_datum(batch_data[0]) for _ in range(bucketed_rows - len(batch_data)))
+
       input_ids, attention_mask, input_lengths = self.pad_model_inputs(batch_data)
       target_token_ids, weights, lengths = self.pad_targets_and_weights(batch_data, input_lengths)
+      padded_target_len = weights.shape[1]
       target_logprobs = self.compute_target_logprobs(model, input_ids, attention_mask, target_token_ids)
 
       match loss_fn:
         case "cross_entropy":
           elementwise_loss = losses.cross_entropy_loss(target_logprobs, weights)
         case "importance_sampling":
-          old_logprobs = self.pad_sequences([datum.loss_fn_inputs["logprobs"].data for datum in batch_data], lengths, torch.float32)
-          advantages = self.pad_sequences([datum.loss_fn_inputs["advantages"].data for datum in batch_data], lengths, torch.float32)
+          old_logprob_data = [datum.loss_fn_inputs["logprobs"].data for datum in batch_data]
+          advantage_data = [datum.loss_fn_inputs["advantages"].data for datum in batch_data]
+          old_logprobs = self.pad_sequences(old_logprob_data, lengths, torch.float32, width=padded_target_len)
+          advantages = self.pad_sequences(advantage_data, lengths, torch.float32, width=padded_target_len)
           elementwise_loss = losses.importance_sampling_loss(
             target_logprobs,
             weights,
@@ -59,8 +68,10 @@ class BaseTrainerWorker:
             advantages,
           )
         case "ppo":
-          old_logprobs = self.pad_sequences([datum.loss_fn_inputs["logprobs"].data for datum in batch_data], lengths, torch.float32)
-          advantages = self.pad_sequences([datum.loss_fn_inputs["advantages"].data for datum in batch_data], lengths, torch.float32)
+          old_logprob_data = [datum.loss_fn_inputs["logprobs"].data for datum in batch_data]
+          advantage_data = [datum.loss_fn_inputs["advantages"].data for datum in batch_data]
+          old_logprobs = self.pad_sequences(old_logprob_data, lengths, torch.float32, width=padded_target_len)
+          advantages = self.pad_sequences(advantage_data, lengths, torch.float32, width=padded_target_len)
           elementwise_loss = losses.ppo_loss(
             target_logprobs,
             weights,
@@ -111,10 +122,16 @@ class BaseTrainerWorker:
     batch: list[tuple[int, Datum]] = []
     batch_max_len = 0
 
+    bucketing = self.shape_bucketing_enabled()
+
     for item in ordered_data:
       length = len(item[1].model_input)
       next_max_len = max(batch_max_len, length)
       next_size = len(batch) + 1
+      if bucketing:
+        # Cost the padded shape the batch will actually run at.
+        next_max_len = self.bucket_size(next_max_len, self.MIN_LENGTH_BUCKET)
+        next_size = self.bucket_size(next_size)
       over_token_budget = next_max_len * next_size > token_budget
 
       if batch and over_token_budget:
@@ -130,15 +147,33 @@ class BaseTrainerWorker:
 
     return batches
 
+  def shape_bucketing_enabled(self) -> bool:
+    """When set, every batch is padded to a power-of-two (batch, length) pair so XLA backends see a bounded set of shapes."""
+    return os.getenv("OPEN_RL_TRAIN_SHAPE_BUCKETS", "").lower() in ("1", "true", "yes")
+
+  def bucket_size(self, value: int, minimum: int = 1) -> int:
+    """Round value up to the next power-of-two rung, starting at minimum."""
+    bucket = minimum
+    while bucket < value:
+      bucket *= 2
+    return bucket
+
+  def make_padding_datum(self, template: Datum) -> Datum:
+    """Return a zero-weight dummy datum used to pad a batch up to its bucketed row count."""
+    loss_fn_inputs = {key: TensorData(data=[0]) for key in template.loss_fn_inputs}
+    loss_fn_inputs["weights"] = TensorData(data=[0.0])
+    return Datum(loss_fn_inputs=loss_fn_inputs, model_input=[0])
+
   def pad_sequences(
     self,
     sequences: list[list[int] | list[float]],
     lengths: list[int],
     dtype: torch.dtype,
     pad_value: int | float = 0,
+    width: int | None = None,
   ) -> torch.Tensor:
-    """Return padded values with shape [batch, max(lengths)]."""
-    padded = torch.full((len(sequences), max(lengths)), pad_value, dtype=dtype, device=self.device)
+    """Return padded values with shape [batch, width or max(lengths)]."""
+    padded = torch.full((len(sequences), width or max(lengths)), pad_value, dtype=dtype, device=self.device)
     for row, sequence in enumerate(sequences):
       length = lengths[row]
       padded[row, :length] = padded.new_tensor(sequence[:length])
@@ -153,8 +188,10 @@ class BaseTrainerWorker:
     batch_size = len(data)
     input_lengths = [len(datum.model_input) for datum in data]
     max_input_len = max(input_lengths)
+    if self.shape_bucketing_enabled():
+      max_input_len = self.bucket_size(max_input_len, self.MIN_LENGTH_BUCKET)
 
-    input_ids = self.pad_sequences([datum.model_input for datum in data], input_lengths, torch.long, pad_token_id)
+    input_ids = self.pad_sequences([datum.model_input for datum in data], input_lengths, torch.long, pad_token_id, width=max_input_len)
     attention_mask = input_ids.new_zeros((batch_size, max_input_len))
     for row, input_len in enumerate(input_lengths):
       attention_mask[row, :input_len] = 1
@@ -170,11 +207,14 @@ class BaseTrainerWorker:
     batch_size = len(data)
     target_lengths = [len(datum.loss_fn_inputs["target_tokens"].data) for datum in data]
     lengths = [min(input_lengths[row], target_lengths[row]) for row in range(batch_size)]
-    target_token_ids = self.pad_sequences([datum.loss_fn_inputs["target_tokens"].data for datum in data], lengths, torch.long)
+    max_target_len = max(lengths)
+    if self.shape_bucketing_enabled():
+      max_target_len = self.bucket_size(max_target_len, self.MIN_LENGTH_BUCKET)
+    target_token_ids = self.pad_sequences([datum.loss_fn_inputs["target_tokens"].data for datum in data], lengths, torch.long, width=max_target_len)
     weight_sequences = [
       datum.loss_fn_inputs["weights"].data if "weights" in datum.loss_fn_inputs else [1.0] * target_lengths[row] for row, datum in enumerate(data)
     ]
-    weights = self.pad_sequences(weight_sequences, lengths, torch.float32)
+    weights = self.pad_sequences(weight_sequences, lengths, torch.float32, width=max_target_len)
 
     return target_token_ids, weights, lengths
 
