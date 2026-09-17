@@ -23,6 +23,8 @@ from server.model_metadata import TrainingModelMetadata, extract_weight_sync_con
 from server.session_registry import SessionRegistry
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_worker_manager, owner_of
+from training import commands
+from training.commands import Command
 
 store = get_store()
 worker_manager: WorkerManager | None = None
@@ -226,27 +228,15 @@ async def _extract_and_persist_model_metadata(
   )
   await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(meta_obj.to_dict()))
 
-  return model_id
+  return model_id, meta_obj
 
 
-def make_training_request(
-  op: str,
-  model_id: str | None,
-  payload: dict,
-  request_id: str | None = None,
-) -> dict:
-  request = {
-    "request_id": request_id or str(uuid.uuid4()),
-    "op": op,
-    "payload": payload,
-  }
-  if model_id is not None:
-    request["model_id"] = model_id
-  return request
+def new_request_id() -> str:
+  return str(uuid.uuid4())
 
 
 async def _resolve_active_set_id(model_id: str | None) -> str | None:
-  if not model_id or not hasattr(store, "get_model_metadata"):
+  if not model_id:
     return None
   meta = await store.get_model_metadata(model_id)
   if meta and meta.get("fine_tuning_type") == "lora" and meta.get("base_model"):
@@ -254,22 +244,21 @@ async def _resolve_active_set_id(model_id: str | None) -> str | None:
   return None
 
 
-async def enqueue(request: dict) -> str:
-  """Create a pending future, inject trace context, push to store. Returns req_id."""
-  request_id = request["request_id"]
-  carrier: dict = {}
+async def enqueue(command: Command) -> str:
+  """Create a pending future, inject trace context, push the command to the store. Returns its request_id."""
+  carrier: dict[str, str] = {}
   propagate.inject(carrier)
-  await store.set_future(request_id, {"status": "pending"})
+  await store.set_future(command.request_id, {"status": "pending"})
 
-  active_set_id = await _resolve_active_set_id(request.get("model_id"))
-  await store.put_request({**request, "trace_context": carrier}, active_set_id=active_set_id)
+  active_set_id = await _resolve_active_set_id(command.model_id)
+  await store.put_request(commands.wire(command.model_copy(update={"trace_context": carrier})), active_set_id=active_set_id)
   # One line per training request so a request that never reaches a worker can
   # be traced end to end (the workers log the same id when they pop it).
-  print(f"[GATEWAY] enqueued op={request.get('op')} request_id={request_id} model_id={request.get('model_id')} active_set={active_set_id}")
-  return request_id
+  print(f"[GATEWAY] enqueued op={command.op} request_id={command.request_id} model_id={command.model_id} active_set={active_set_id}")
+  return command.request_id
 
 
-async def launch_worker_and_enqueue(request: dict) -> str:
+async def launch_worker_and_enqueue(command: Command) -> str:
   """Ensure the model's dedicated trainer worker exists, then enqueue onto its queue.
 
   The launcher is idempotent per model_id, and Kubernetes (or the local process
@@ -278,15 +267,15 @@ async def launch_worker_and_enqueue(request: dict) -> str:
   a request that can never be served.
   """
   assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
-  request_id = request["request_id"]
+  request_id = command.request_id
   await store.set_future(request_id, {"status": "pending"})
   try:
-    await asyncio.to_thread(worker_manager.ensure, request["model_id"], "trainer")
+    await asyncio.to_thread(worker_manager.ensure, command.model_id, "trainer")
   except Exception as exc:
     traceback.print_exc()
     await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
     return request_id
-  return await enqueue(request)
+  return await enqueue(command)
 
 
 async def ensure_sampler_launched(model_id: str) -> None:
@@ -461,16 +450,18 @@ async def create_model(
 ) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
   try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="lora")
+    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="lora")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
   await bind_session(req.get("session_id"), model_id)
-  command = make_training_request(
-    "create_model",
-    model_id,
-    {},
+  command = commands.CreateModel(
     request_id=model_id,
+    model_id=model_id,
+    base_model=meta.base_model,
+    fine_tuning_type=meta.fine_tuning_type,
+    lora_config=meta.lora_config or {},
+    full_config=meta.full_config or {},
   )
   req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
@@ -491,7 +482,7 @@ async def delete_model(req: dict):
   is_lora = meta_dict and meta_dict.get("fine_tuning_type") == "lora"
   if is_fft_enabled() and not is_lora:
     print(f"[GATEWAY] Requesting shutdown of workers for model {model_id}...")
-    await store.put_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id, "op": "shutdown_workers"})
+    await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)))
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
     if worker_manager is not None:
       await asyncio.to_thread(worker_manager.release, model_id)
@@ -514,19 +505,17 @@ async def create_model_from_state(
   if resolved_path is None:
     resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
   try:
-    model_id = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="restored")
+    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="restored")
   except ValueError as exc:
     return JSONResponse(status_code=400, content={"error": str(exc)})
 
   await bind_session(req.get("session_id"), model_id)
-  command = make_training_request(
-    "create_model_from_state",
-    model_id,
-    {
-      "state_path": resolved_path,
-      "restore_optimizer": bool(req.get("restore_optimizer", False)),
-    },
+  command = commands.CreateModelFromState(
     request_id=model_id,
+    model_id=model_id,
+    state_path=resolved_path,
+    restore_optimizer=bool(req.get("restore_optimizer", False)),
+    fine_tuning_type="full" if meta.fine_tuning_type == "full" else "lora",
   )
   req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
@@ -582,14 +571,12 @@ async def forward(req: dict):
   """TrainingClient.forward_async()"""
   fwd_input = req.get("forward_input") or req.get("forward_backward_input") or {}
   req_id = await enqueue(
-    make_training_request(
-      "forward_backward",
-      req.get("model_id"),
-      {
-        "data": fwd_input.get("data", []),
-        "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
-        "loss_config": fwd_input.get("loss_fn_config", {}),
-      },
+    commands.ForwardBackward(
+      request_id=new_request_id(),
+      model_id=req["model_id"],
+      data=fwd_input.get("data", []),
+      loss_fn=fwd_input.get("loss_fn", "cross_entropy"),
+      loss_config=fwd_input.get("loss_fn_config") or {},
     )
   )
   return {"request_id": req_id}
@@ -600,14 +587,12 @@ async def forward_backward(req: dict):
   """TrainingClient.forward_backward_async()"""
   fwd_input = req.get("forward_backward_input", {})
   req_id = await enqueue(
-    make_training_request(
-      "forward_backward",
-      req.get("model_id"),
-      {
-        "data": fwd_input.get("data", []),
-        "loss_fn": fwd_input.get("loss_fn", "cross_entropy"),
-        "loss_config": fwd_input.get("loss_fn_config", {}),
-      },
+    commands.ForwardBackward(
+      request_id=new_request_id(),
+      model_id=req["model_id"],
+      data=fwd_input.get("data", []),
+      loss_fn=fwd_input.get("loss_fn", "cross_entropy"),
+      loss_config=fwd_input.get("loss_fn_config") or {},
     )
   )
   return {"request_id": req_id}
@@ -616,13 +601,7 @@ async def forward_backward(req: dict):
 @app.post("/api/v1/optim_step")
 async def optim_step(req: dict):
   """TrainingClient.optim_step_async()"""
-  req_id = await enqueue(
-    make_training_request(
-      "optim_step",
-      req.get("model_id"),
-      {"adam_params": req.get("adam_params", {})},
-    )
-  )
+  req_id = await enqueue(commands.OptimStep(request_id=new_request_id(), model_id=req["model_id"], adam_params=req.get("adam_params") or {}))
   return {"request_id": req_id}
 
 
@@ -648,14 +627,12 @@ async def save_weights_for_sampler(req: dict):
 
   session_id = sampler_session_id(model_id, seq_id)
   req_id = await enqueue(
-    make_training_request(
-      "save_weights_for_sampler",
-      model_id,
-      {
-        "alias": alias,
-        "path": sampler_weights_path(model_id, alias) if alias else None,
-        "sampling_session_id": session_id,
-      },
+    commands.SaveWeightsForSampler(
+      request_id=new_request_id(),
+      model_id=model_id,
+      alias=alias,
+      path=sampler_weights_path(model_id, alias) if alias else None,
+      sampling_session_id=session_id,
     )
   )
   return {"request_id": req_id}
@@ -681,20 +658,10 @@ async def save_weights(req: dict):
   alias = req.get("path") or f"{model_id}-samp-{seq_id}"
   state_path = checkpoint_state_path(model_id, alias)
 
-  req_id = str(uuid.uuid4())
-  await enqueue(
-    make_training_request(
-      "save_state",
-      model_id,
-      {
-        "state_path": state_path,
-        # save_state is the whole training state in tinker's API. The client
-        # chooses on load whether the optimizer comes back.
-        "include_optimizer": True,
-        "kind": "weights",
-      },
-      request_id=req_id,
-    )
+  # save_state is the whole training state in tinker's API. The client
+  # chooses on load whether the optimizer comes back.
+  req_id = await enqueue(
+    commands.SaveState(request_id=new_request_id(), model_id=model_id, state_path=state_path, include_optimizer=True, kind="weights")
   )
   return {"request_id": req_id}
 
@@ -713,13 +680,11 @@ async def load_weights(req: dict):
 
   resolved_path = checkpoint_state_path(model_id, state_path)
   req_id = await enqueue(
-    make_training_request(
-      "load_weights",
-      model_id,
-      {
-        "state_path": resolved_path,
-        "restore_optimizer": bool(req.get("optimizer", False)),
-      },
+    commands.LoadWeights(
+      request_id=new_request_id(),
+      model_id=model_id,
+      state_path=resolved_path,
+      restore_optimizer=bool(req.get("optimizer", False)),
     )
   )
   return {"request_id": req_id}
@@ -837,16 +802,14 @@ async def asample(req: dict):
 
   if get_sampler_backend() == "torch":
     req_id = await enqueue(
-      make_training_request(
-        "sample",
-        lookup_id,
-        {
-          "prompt_tokens": prompt,
-          "max_tokens": max_tokens,
-          "temperature": temperature,
-          "num_samples": num_samples,
-          "prompt_logprobs": bool(include_prompt_logprobs),
-        },
+      commands.Sample(
+        request_id=new_request_id(),
+        model_id=lookup_id,
+        prompt_tokens=prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        num_samples=num_samples,
+        prompt_logprobs=bool(include_prompt_logprobs),
       )
     )
     return {"request_id": req_id}

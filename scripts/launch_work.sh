@@ -160,6 +160,38 @@ if [ "$TRAIN_GPUS" -gt 1 ]; then
   echo "[work] TRAIN_GPUS=$TRAIN_GPUS -> torchrun trainer on GPUs $TRAIN_DEV, sampler DP$SAMPLER_DP on $SAMPLER_DEV"
 fi
 
+# TRAINER_BACKEND=automodel: the NeMo Automodel trainer
+# (src/training/automodel_worker.py) with tensor and context parallelism from
+# AUTOMODEL_TP and AUTOMODEL_CP. It runs out of its own interpreter:
+# nemo-automodel pins transformers and pulls in packages that must not enter
+# the project venv. Build it with scripts/setup_automodel_env.sh.
+TRAINER_BACKEND=${TRAINER_BACKEND:-fsdp}
+BACKEND_ENV=""
+TRAINER_RUNNER="uv run --extra gpu --extra fastpath torchrun"
+if [ "$TRAINER_BACKEND" = "automodel" ]; then
+  if [ "$TRAIN_GPUS" -le 1 ]; then
+    echo "ERROR: TRAINER_BACKEND=automodel runs under torchrun; set TRAIN_GPUS>1." >&2
+    exit 1
+  fi
+  AUTOMODEL_PYTHON=${AUTOMODEL_PYTHON:-$HOME/automodel/.venv/bin/python}
+  if [ ! -x "$AUTOMODEL_PYTHON" ]; then
+    echo "ERROR: no automodel interpreter at $AUTOMODEL_PYTHON." >&2
+    echo "  Build it with ./scripts/setup_automodel_env.sh, or set AUTOMODEL_PYTHON." >&2
+    exit 1
+  fi
+  AUTOMODEL_TP=${AUTOMODEL_TP:-1}
+  AUTOMODEL_CP=${AUTOMODEL_CP:-1}
+  if [ $((TRAIN_GPUS % (AUTOMODEL_TP * AUTOMODEL_CP))) -ne 0 ]; then
+    echo "ERROR: TRAIN_GPUS=$TRAIN_GPUS is not divisible by AUTOMODEL_TP=$AUTOMODEL_TP * AUTOMODEL_CP=$AUTOMODEL_CP." >&2
+    exit 1
+  fi
+  BACKEND_ENV="OPEN_RL_TRAINER_BACKEND=automodel OPEN_RL_AUTOMODEL_TP=$AUTOMODEL_TP OPEN_RL_AUTOMODEL_CP=$AUTOMODEL_CP OPEN_RL_TIME_SLICING=off"
+  # Single-vNIC boxes: the A3 profile pins the gIB plugin and NCCL aborts on
+  # the first collective instead of falling back to sockets.
+  TRAINER_RUNNER="PYTHONPATH=$REPO/src env -u NCCL_ENV_PLUGIN -u NCCL_CONF_FILE NCCL_NET=Socket $AUTOMODEL_PYTHON -m torch.distributed.run"
+  echo "[work] TRAINER_BACKEND=automodel -> TP=$AUTOMODEL_TP CP=$AUTOMODEL_CP DP=$((TRAIN_GPUS / (AUTOMODEL_TP * AUTOMODEL_CP)))"
+fi
+
 # AFFINITY=1: one vllm serve per sampler GPU with prefix-hash routing.
 AFFINITY=${AFFINITY:-0}
 if [ "$AFFINITY" = "1" ]; then
@@ -224,11 +256,11 @@ tmux send-keys -t "$SESSION:gateway" "$GATEWAY_CMD" C-m
 
 if [ "$TRAIN_GPUS" -gt 1 ]; then
   TRAINER_CMD="CUDA_VISIBLE_DEVICES=$TRAIN_DEV FLA_TILELANG=$FLA_TILELANG REDIS_URL=redis://127.0.0.1:6379 \
-OPEN_RL_FSDP_WORLD_SIZE=$TRAIN_GPUS OPEN_RL_WORKER_PROBE_PORT=8090 \
+OPEN_RL_FSDP_WORLD_SIZE=$TRAIN_GPUS OPEN_RL_WORKER_PROBE_PORT=8090 $BACKEND_ENV \
 BASE_MODEL=$MODEL_NAME PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 OPEN_RL_TRAIN_TOKEN_BUDGET=$CONTEXT OPEN_RL_ACTIVATION_CPU_OFFLOAD=1 \
 OPEN_RL_LOG_CUDA_MEMORY=1 \
-uv run --extra gpu --extra fastpath torchrun --standalone --nproc-per-node=$TRAIN_GPUS -m server.training_requests_processor |& tee -a $LOGS/trainer.log"
+$TRAINER_RUNNER --standalone --nproc-per-node=$TRAIN_GPUS -m server.training_requests_processor |& tee -a $LOGS/trainer.log"
   tmux new-window -t "$SESSION" -n trainer -c "$REPO"
   tmux send-keys -t "$SESSION:trainer" "$TRAINER_CMD" C-m
 fi

@@ -1,12 +1,10 @@
-import asyncio
-import importlib
 import json
 import os
 import sys
 import tempfile
 import types
 import unittest
-from contextlib import asynccontextmanager
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import torch
@@ -35,34 +33,7 @@ def _load_trainer_modules():
   return trainer_worker, lora_trainer_worker, fft_trainer_worker, losses
 
 
-def _load_training_requests_processor_module():
-  stubs = {
-    "peft": types.SimpleNamespace(
-      LoraConfig=object,
-      PeftModelForCausalLM=object,
-      get_peft_model=lambda *_args, **_kwargs: None,
-    ),
-    "transformers": types.SimpleNamespace(
-      AutoModelForCausalLM=object,
-      AutoTokenizer=object,
-      PreTrainedModel=object,
-      PreTrainedTokenizerBase=object,
-    ),
-  }
-  env = {
-    "OPEN_RL_ENABLE_FFT": "true",
-    "REDIS_URL": "redis://localhost:6379",
-  }
-  with patch.dict(sys.modules, stubs), patch.dict(os.environ, env):
-    for module_name in list(sys.modules):
-      if module_name == "server.training_requests_processor":
-        del sys.modules[module_name]
-    training_requests_processor = importlib.import_module("server.training_requests_processor")
-  return training_requests_processor
-
-
 trainer_worker_module, lora_trainer_worker_module, fft_trainer_worker_module, losses_module = _load_trainer_modules()
-training_requests_processor_module = _load_training_requests_processor_module()
 BaseTrainerWorker = trainer_worker_module.BaseTrainerWorker
 FFTTrainingWorker = fft_trainer_worker_module.FFTTrainingWorker
 LoraTrainingWorker = lora_trainer_worker_module.LoraTrainingWorker
@@ -119,99 +90,6 @@ class _FullModelStub:
 
   def parameters(self):
     yield from self.params
-
-
-class _RecordingFullWorker(training_requests_processor_module.FFTTrainingWorker):
-  def __init__(self):
-    super().__init__()
-    self.base_model_name = None
-    self.loaded_base_models = []
-    self.created_models = []
-    self.saved_states = []
-
-  def load_base_model(self, base_model_name):
-    self.base_model_name = base_model_name
-    self.loaded_base_models.append(base_model_name)
-
-  def create_model(self, base_model_name, model_id, config):
-    self.created_models.append((base_model_name, model_id, config))
-
-  def forward_backward(self, data, loss_fn, loss_config=None, model_id=None):
-    return {"model_id": model_id, "loss_fn": loss_fn, "loss_config": loss_config, "data": data}
-
-  def save_state(self, model_id, state_path, include_optimizer=False, kind="state"):
-    self.saved_states.append((model_id, state_path, include_optimizer, kind))
-    return {"path": state_path}
-
-
-class _RecordingLoraWorker(training_requests_processor_module.LoraTrainingWorker):
-  def __init__(self):
-    super().__init__()
-    self.loaded_base_models = []
-    self.created_models = []
-
-  def load_base_model(self, base_model_name):
-    self.loaded_base_models.append(base_model_name)
-
-  def create_model(self, base_model_name, model_id, config):
-    self.created_models.append((base_model_name, model_id, config))
-
-
-class _FutureStoreStub:
-  def __init__(self, events=None):
-    self.results = {}
-    self.events = events
-
-  async def set_future(self, req_id, result):
-    if self.events is not None:
-      self.events.append(("set_future", req_id))
-    self.results[req_id] = result
-
-
-class _TrainingRequestsStoreStub(_FutureStoreStub):
-  def __init__(self, batches, events=None):
-    super().__init__(events=events)
-    self.batches = list(batches)
-    self.queried_model_ids = []
-
-  async def get_requests_for_model(self, model_id):
-    self.queried_model_ids.append(model_id)
-    if self.batches:
-      return self.batches.pop(0)
-    raise asyncio.CancelledError()
-
-  async def get_value(self, key: str) -> str | None:
-    return None
-
-  async def record_accel_usage_event(self, claim_id: str, event_data: dict) -> None:
-    pass
-
-  def get_value_sync(self, key: str) -> str | None:
-    return None
-
-
-class _TimeSlicerStub:
-  def __init__(self, events=None):
-    self.events = events if events is not None else []
-
-  async def register(self, workload):
-    self.events.append(("register", workload))
-    return {"ok": True}
-
-  @asynccontextmanager
-  async def acquire(self, workload):
-    self.events.append(("acquire", workload))
-    try:
-      yield
-    finally:
-      self.events.append(("release", workload))
-
-  async def unregister(self, workload):
-    self.events.append(("unregister", workload))
-    return {"ok": True}
-
-  async def close(self):
-    self.events.append(("close",))
 
 
 def _datum(model_input, target_tokens, *, weights=None, logprobs=None, advantages=None):
@@ -292,7 +170,7 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
 
     with tempfile.TemporaryDirectory() as tmp_dir:
       state_dir = os.path.join(tmp_dir, "step-5")
-      worker.save_state("job-a", state_dir, include_optimizer=True)
+      worker.trainer("job-a").save_state(state_dir, include_optimizer=True)
       self.assertTrue(os.path.exists(os.path.join(state_dir, "optimizer.pt")))
       with open(os.path.join(state_dir, "metadata.json")) as f:
         self.assertTrue(json.load(f)["has_optimizer"])
@@ -303,7 +181,7 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     worker.cpu_offload = False
     worker.weight_sync_cfg.strategy = "delta"
     with patch.object(worker, "save_state_delta", return_value={"path": "delta"}) as delta:
-      self.assertEqual(worker.save_state("job-a", "/tmp/x", include_optimizer=True), {"path": "delta"})
+      self.assertEqual(worker.save_state("/tmp/x", include_optimizer=True), {"path": "delta"})
     delta.assert_called_once()
 
   def test_fft_save_state_skips_the_optimizer_until_fft_resume_exists(self) -> None:
@@ -317,7 +195,8 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     worker.weight_sync_cfg.strategy = "full"
     with tempfile.TemporaryDirectory() as tmp_dir:
       state_dir = os.path.join(tmp_dir, "step-5")
-      worker.save_state("job-a", state_dir, include_optimizer=True)
+      worker.model_id = "job-a"
+      worker.save_state(state_dir, include_optimizer=True)
       self.assertFalse(os.path.exists(os.path.join(state_dir, "optimizer.pt")))
       with open(os.path.join(state_dir, "metadata.json")) as f:
         self.assertFalse(json.load(f)["has_optimizer"])
@@ -352,15 +231,14 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     }
     worker.save_adapter = lambda *_args, **_kwargs: None
 
-    result = worker.optim_step(
+    result = worker.trainer("adapter-a").optim_step(
       {
         "learning_rate": 0.1,
         "beta1": 0.0,
         "beta2": 0.0,
         "eps": 1e-8,
         "weight_decay": 0.0,
-      },
-      "adapter-a",
+      }
     )
 
     self.assertEqual(worker.peft_model.active_adapter, "adapter-a")
@@ -397,213 +275,6 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     if trainable_param.grad is not None:
       self.assertTrue(torch.allclose(trainable_param.grad, torch.zeros_like(trainable_param.grad)))
     self.assertIsNotNone(frozen_param.grad)
-
-
-class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
-  async def test_importing_training_requests_processor_does_not_create_worker(self) -> None:
-    self.assertFalse(hasattr(training_requests_processor_module, "worker"))
-
-  async def test_lora_processor_create_model_uses_worker_create_model(self) -> None:
-    worker = _RecordingLoraWorker()
-    store = _FutureStoreStub()
-    processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, worker)
-
-    await processor.process_request(
-      {
-        "request_id": "req-a",
-        "model_id": "adapter-a",
-        "op": "create_model",
-        "payload": {
-          "base_model": "base-model",
-          "lora_config": {"seed": 123, "rank": 2},
-        },
-      },
-      "adapter-a",
-    )
-
-    self.assertEqual(worker.loaded_base_models, [])
-    base_model, model_id, config = worker.created_models[0]
-    self.assertEqual(base_model, "base-model")
-    self.assertEqual(model_id, "adapter-a")
-    self.assertEqual(config.seed, 123)
-    self.assertEqual(config.rank, 2)
-    result = store.results["req-a"]
-    self.assertEqual(result["model_id"], "adapter-a")
-    self.assertEqual(result["rank"], 2)
-    self.assertEqual(result["fine_tuning_type"], "lora")
-    self.assertEqual(result["type"], "model_created")
-
-  def test_parse_datum_flattens_chunked_model_input(self) -> None:
-    datum = training_requests_processor_module.parse_datum(
-      {
-        "model_input": {"chunks": [{"tokens": [1, 2]}, {"tokens": [3]}]},
-        "loss_fn_inputs": {
-          "target_tokens": [2, 3, 4],
-          "weights": {"data": [1.0, 0.5, 0.25]},
-        },
-      }
-    )
-
-    self.assertEqual(datum.model_input, [1, 2, 3])
-    self.assertEqual(datum.loss_fn_inputs["target_tokens"].data, [2, 3, 4])
-    self.assertEqual(datum.loss_fn_inputs["weights"].data, [1.0, 0.5, 0.25])
-
-  async def test_full_processor_create_model_uses_model_worker(self) -> None:
-    worker = _RecordingFullWorker()
-    store = _FutureStoreStub()
-    time_slicer = _TimeSlicerStub()
-
-    with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
-      await processor.process_request(
-        {
-          "request_id": "req-a",
-          "model_id": "model-a",
-          "op": "create_model",
-          "payload": {
-            "base_model": "base-model",
-            "full_config": {"seed": 123, "rank": 8},
-          },
-        },
-        "model-a",
-      )
-
-    self.assertEqual(worker.loaded_base_models, [])
-    base_model, model_id, config = worker.created_models[0]
-    self.assertEqual(base_model, "base-model")
-    self.assertEqual(model_id, "model-a")
-    self.assertEqual(config.seed, 123)
-    result = store.results["req-a"]
-    self.assertEqual(result["model_id"], "model-a")
-    self.assertEqual(result["base_model"], "base-model")
-    self.assertEqual(result["fine_tuning_type"], "full")
-    self.assertEqual(result["type"], "model_created")
-
-  async def test_full_processor_saves_sampler_checkpoint_as_full_state(self) -> None:
-    worker = _RecordingFullWorker()
-    store = _FutureStoreStub()
-    time_slicer = _TimeSlicerStub()
-
-    with patch.dict(os.environ, {"OPEN_RL_TMP_DIR": "/tmp/open-rl-test", "REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
-      await processor.process_request(
-        {
-          "request_id": "req-a",
-          "model_id": "model-a",
-          "op": "save_weights_for_sampler",
-          "payload": {
-            "path": "tinker://model-a/sampler_weights/final",
-            "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
-          },
-        },
-        "model-a",
-      )
-
-    self.assertEqual(
-      worker.saved_states,
-      [("model-a", "/tmp/open-rl-test/sampler_full/model-a/sampler_weights/final", False, "sampler")],
-    )
-    self.assertEqual(
-      store.results["req-a"],
-      {
-        "path": "tinker://model-a/sampler_weights/final",
-        "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
-        "type": "sampler_weights_saved",
-      },
-    )
-
-  async def test_full_processor_requires_redis(self) -> None:
-    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}, clear=True), self.assertRaisesRegex(RuntimeError, "REDIS_URL"):
-      await training_requests_processor_module.run_training_requests_processor(_RecordingFullWorker(), "model-a")
-
-  async def test_full_processor_uses_default_time_slicer_client(self) -> None:
-    store = _TrainingRequestsStoreStub([])
-    time_slicer = _TimeSlicerStub()
-
-    with (
-      patch.dict(
-        os.environ,
-        {
-          "OPEN_RL_ENABLE_FFT": "true",
-          "REDIS_URL": "redis://localhost:6379",
-        },
-        clear=True,
-      ),
-      patch.object(training_requests_processor_module, "get_store", return_value=store),
-      patch.object(training_requests_processor_module, "time_slicer_client_from_env", return_value=time_slicer) as time_slicer_client_from_env,
-    ):
-      await training_requests_processor_module.run_training_requests_processor(_RecordingFullWorker(), "model-a")
-
-    time_slicer_client_from_env.assert_called_once_with()
-    self.assertEqual([event[0] for event in time_slicer.events], ["register", "unregister", "close"])
-
-  async def test_full_processor_uses_injected_time_slicer(self) -> None:
-    worker = _RecordingFullWorker()
-    store = _TrainingRequestsStoreStub(
-      [
-        [
-          {
-            "request_id": "req-a",
-            "model_id": "model-a",
-            "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
-          }
-        ]
-      ]
-    )
-    time_slicer = _TimeSlicerStub()
-
-    with (
-      patch.dict(
-        os.environ,
-        {
-          "OPEN_RL_ENABLE_FFT": "true",
-          "REDIS_URL": "redis://localhost:6379",
-        },
-      ),
-      patch.object(training_requests_processor_module, "get_store", return_value=store),
-    ):
-      await training_requests_processor_module.run_training_requests_processor(worker, "model-a", time_slicer=time_slicer)
-
-    self.assertEqual(store.queried_model_ids, ["model-a", "model-a"])
-    self.assertEqual([event[0] for event in time_slicer.events], ["register", "acquire", "release", "unregister", "close"])
-    for event in time_slicer.events:
-      if len(event) >= 2 and event[0] != "close":
-        self.assertEqual(event[1].name, "trainer-model-a")
-        self.assertEqual(event[1].claim, "trainers")
-    self.assertEqual(worker.created_models[0][0], "base-model")
-    self.assertEqual(store.results["req-a"]["model_id"], "model-a")
-
-  async def test_full_processor_publishes_result_after_release(self) -> None:
-    events = []
-    worker = _RecordingFullWorker()
-    store = _TrainingRequestsStoreStub(
-      [
-        [
-          {
-            "request_id": "req-a",
-            "model_id": "model-a",
-            "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
-          }
-        ]
-      ],
-      events=events,
-    )
-    time_slicer = _TimeSlicerStub(events=events)
-
-    with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
-      await processor.run_once()
-
-    self.assertEqual([event[0] for event in events], ["acquire", "release", "set_future"])
-    self.assertEqual(store.results["req-a"]["type"], "model_created")
 
 
 class TestTrainerPaddedBatchingMath(unittest.TestCase):
@@ -746,6 +417,153 @@ class TestTrainerPaddedBatchingMath(unittest.TestCase):
 
     self.assertEqual(len(result["loss_fn_outputs"]), len(data))
     self.assertGreater(len(worker.model.calls), 0)
+
+
+class TestZeroAdvantageBackward(unittest.TestCase):
+  """A policy-gradient batch without effective advantages carries no gradient
+  and skips its backward; a KL penalty brings the gradient back."""
+
+  def _worker(self) -> BaseTrainerWorker:
+    worker = BaseTrainerWorker()
+    worker.device = torch.device("cpu")
+    worker.tokenizer = _TokenizerStub()
+    return worker
+
+  def test_zero_effective_advantages_skip_policy_backward(self) -> None:
+    for loss_fn in ("importance_sampling", "ppo"):
+      with self.subTest(loss_fn=loss_fn):
+        worker = self._worker()
+        parameter = torch.nn.Parameter(torch.tensor(0.25))
+        model = _FullModelStub([parameter])
+        data = [_datum([3, 4], [1, 2], weights=[1.0, 0.0], logprobs=[-0.1, -0.2], advantages=[0.0, 2.0])]
+
+        with patch.object(
+          worker,
+          "compute_target_logprobs",
+          side_effect=lambda _model, _inputs, _mask, targets, parameter=parameter: parameter.expand_as(targets),
+        ):
+          result = worker.forward_backward(model, data, loss_fn)
+
+        self.assertIsNone(parameter.grad)
+        self.assertEqual(result["metrics"], {"loss:mean": 0.0, "loss:sum": 0.0})
+        self.assertEqual(result["loss_fn_outputs"][0]["logprobs"]["shape"], [2])
+
+  def test_ppo_kl_penalty_keeps_backward_for_zero_advantages(self) -> None:
+    worker = self._worker()
+    parameter = torch.nn.Parameter(torch.tensor(0.25))
+    model = _FullModelStub([parameter])
+    data = [_datum([3], [1], weights=[1.0], logprobs=[-0.1], advantages=[0.0])]
+
+    with patch.object(
+      worker,
+      "compute_target_logprobs",
+      side_effect=lambda _model, _inputs, _mask, targets: parameter.expand_as(targets),
+    ):
+      worker.forward_backward(model, data, "ppo", {"kl_coeff": 0.1})
+
+    self.assertIsNotNone(parameter.grad)
+    self.assertNotEqual(parameter.grad.item(), 0.0)
+
+
+class TestDataParallelForwardBackward(unittest.TestCase):
+  """Datum sharding must reproduce single-process gradients under FSDP's per-backward averaging."""
+
+  PLACEHOLDER = {"logprobs": {"data": [], "dtype": "float32", "shape": [0]}}
+
+  def _data(self):
+    return [
+      _datum([3, 4, 5], [1, 2, 3], weights=[1.0, 0.5, 0.25]),
+      _datum([7, 8], [2, 3], weights=[2.0, 0.75]),
+      _datum([9], [4], weights=[1.5]),
+    ]
+
+  def _run_forward_backward(self, data, *, loss_fn="cross_entropy", rank=None, world=2, captured=None):
+    """Run one rank of a fake two-rank group, or a single process when rank is None."""
+    worker = BaseTrainerWorker()
+    worker.device = torch.device("cpu")
+    worker.tokenizer = _TokenizerStub()
+    parameter = torch.nn.Parameter(torch.tensor(0.25))
+    model = _FullModelStub([parameter])
+    captured = {} if captured is None else captured
+
+    def gather(part, _group):
+      captured["part"] = part
+      return [part, {idx: self.PLACEHOLDER for idx in range(len(data)) if idx not in part}]
+
+    def reduce_sum(value, _group):
+      captured["total"] = value
+      return value
+
+    fakes = {
+      "group_rank": lambda _group: rank,
+      "group_size": lambda _group: world,
+      "all_reduce_max": lambda _passes, _group: 2,
+      "all_reduce_sum": reduce_sum,
+      "all_gather_object": gather,
+    }
+    with ExitStack() as stack:
+      if rank is not None:
+        stack.enter_context(patch.object(worker, "data_parallel_group", return_value=object()))
+        stack.enter_context(patch.object(worker, "data_parallel_loss_scale", return_value=float(world)))
+        for name, fake in fakes.items():
+          stack.enter_context(patch.object(trainer_worker_module, name, fake))
+      compute_calls = stack.enter_context(
+        patch.object(
+          worker,
+          "compute_target_logprobs",
+          side_effect=lambda _model, _inputs, _mask, targets, parameter=parameter: parameter.expand_as(targets),
+        )
+      )
+      result = worker.forward_backward(model, data, loss_fn)
+    return result, parameter, compute_calls
+
+  def test_sharded_gradients_average_to_single_process_gradient(self) -> None:
+    data = self._data()
+    reference, reference_param, _calls = self._run_forward_backward(data)
+
+    rank_grads, rank_totals, rank_parts = [], [], {}
+    for rank in (0, 1):
+      captured = {}
+      _result, parameter, _calls = self._run_forward_backward(data, rank=rank, captured=captured)
+      rank_grads.append(parameter.grad)
+      rank_totals.append(captured["total"])
+      rank_parts.update(captured["part"])
+
+    # FSDP averages each backward across ranks; the group-size loss scaling
+    # must make that average equal the single-process gradient sum.
+    torch.testing.assert_close((rank_grads[0] + rank_grads[1]) / 2, reference_param.grad)
+    self.assertAlmostEqual(sum(rank_totals), reference["metrics"]["loss:sum"], places=5)
+    self.assertEqual(sorted(rank_parts), list(range(len(data))))
+
+  def test_short_rank_pads_with_zero_scaled_filler_passes(self) -> None:
+    data = self._data()
+    result, parameter, compute_calls = self._run_forward_backward(data, rank=1)
+
+    # Rank 1 owns one datum but must run two passes; the filler pass leaves
+    # gradients and reported loss untouched.
+    self.assertEqual(compute_calls.call_count, 2)
+    weights_rank1 = 2.0 + 0.75
+    torch.testing.assert_close(parameter.grad, torch.tensor(2 * -weights_rank1))
+    self.assertAlmostEqual(result["metrics"]["loss:sum"], 0.25 * -weights_rank1, places=5)
+    self.assertEqual(result["loss_fn_outputs"][1]["logprobs"]["shape"], [2])
+
+  def test_distributed_ranks_never_skip_zero_advantage_backward(self) -> None:
+    data = [_datum([3, 4], [1, 2], weights=[1.0, 0.0], logprobs=[-0.1, -0.2], advantages=[0.0, 2.0])]
+    result, parameter, _calls = self._run_forward_backward(data, loss_fn="importance_sampling", rank=0)
+
+    # Single-process mode skips this backward entirely; a distributed rank
+    # must still run it so the group's collective counts stay aligned.
+    self.assertIsNotNone(parameter.grad)
+    torch.testing.assert_close(parameter.grad, torch.tensor(0.0))
+    self.assertEqual(result["metrics"]["loss:sum"], 0.0)
+
+  def test_empty_batch_on_a_distributed_rank_returns_nothing(self) -> None:
+    result, parameter, compute_calls = self._run_forward_backward([], rank=0)
+
+    self.assertEqual(result["loss_fn_outputs"], [])
+    self.assertEqual(result["metrics"]["loss:sum"], 0.0)
+    self.assertIsNone(parameter.grad)
+    self.assertEqual(compute_calls.call_count, 0)
 
 
 if __name__ == "__main__":

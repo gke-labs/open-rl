@@ -118,7 +118,26 @@ def workload_from_env(pid: int | None = None, name: str | None = None, claim: st
   return WorkloadRef(str(pid), claim)
 
 
+class NoOpTimeSlicer:
+  """A client for a process that owns its GPUs outright and needs no lease."""
+
+  async def register(self, workload: WorkloadRef) -> dict[str, Any]:
+    return {"ok": True}
+
+  async def unregister(self, workload: WorkloadRef) -> dict[str, Any]:
+    return {"ok": True}
+
+  @asynccontextmanager
+  async def acquire(self, workload: WorkloadRef) -> AsyncIterator[None]:
+    yield
+
+  async def close(self) -> None:
+    return None
+
+
 def time_slicer_client_from_env() -> TimeSlicerClient:
+  if os.getenv("OPEN_RL_TIME_SLICING", "on").lower() == "off":
+    return NoOpTimeSlicer()
   host = os.getenv("OPEN_RL_ACCEL_TIMESLICER_HOST")
   if host:
     port = int(os.getenv("OPEN_RL_ACCEL_TIMESLICER_PORT", str(DEFAULT_TCP_PORT)))

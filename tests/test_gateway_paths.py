@@ -51,7 +51,8 @@ class GetInfoTest(unittest.TestCase):
     model_id = created["request_id"]
     queued = asyncio.run(gateway.store.get_requests())
     self.assertEqual(queued[0]["model_id"], model_id)
-    self.assertEqual(queued[0]["payload"], {})
+    self.assertEqual(queued[0]["op"], "create_model")
+    self.assertEqual(queued[0]["base_model"], "my-model")
     meta = json.loads(gateway.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta["base_model"], "my-model")
 
@@ -67,8 +68,8 @@ class SaveSeqIdZeroTest(unittest.TestCase):
     asyncio.run(gateway.save_weights_for_sampler({"model_id": "job-a", "sampling_session_seq_id": 0}))
     asyncio.run(gateway.save_weights({"model_id": "job-a", "seq_id": 0}))
     queued = asyncio.run(gateway.store.get_requests())
-    self.assertEqual(queued[0]["payload"]["sampling_session_id"], "tinker://job-a/sampler_weights/sampler-0")
-    self.assertTrue(queued[1]["payload"]["state_path"].endswith("job-a-samp-0"))
+    self.assertEqual(queued[0]["sampling_session_id"], "tinker://job-a/sampler_weights/sampler-0")
+    self.assertTrue(queued[1]["state_path"].endswith("job-a-samp-0"))
 
 
 class GatewayPathTest(unittest.TestCase):
@@ -104,8 +105,8 @@ class GatewayPathTest(unittest.TestCase):
       asyncio.run(gateway.save_weights({"model_id": "job-a", "path": "step-5"}))
       queued = asyncio.run(gateway.store.get_requests())
       self.assertEqual(queued[0]["op"], "save_state")
-      self.assertTrue(queued[0]["payload"]["include_optimizer"])
-      saved = gateway.translate_future_result({"type": "state_saved", "path": queued[0]["payload"]["state_path"]})
+      self.assertTrue(queued[0]["include_optimizer"])
+      saved = gateway.translate_future_result({"type": "state_saved", "path": queued[0]["state_path"]})
     self.assertEqual(saved, {"type": "save_weights", "path": "tinker://job-a/weights/step-5"})
 
   def test_weights_info_reads_the_checkpoint_on_disk(self) -> None:

@@ -1,7 +1,6 @@
-# LoRA trainer worker lifecycle and adapter management.
+# LoRA trainer: one shared base model hosting many adapters.
 
 import json
-import math
 import os
 import time
 import traceback
@@ -11,22 +10,13 @@ from typing import Any
 import torch
 from peft import LoraConfig as PeftLoraConfig
 from peft import PeftModelForCausalLM, get_peft_model
-from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
-from training.trainer_worker import BaseTrainerWorker, Datum
+from training.commands import CreateModel, CreateModelFromState, SaveWeightsForSampler
+from training.trainer_worker import BaseTrainerWorker, Datum, tmp_dir
+from training.types import LoraConfig, SamplerWeights
 
-ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") == "1"
-
-
-class LoraConfig(BaseModel):
-  rank: int = 16
-  seed: int | None = None
-  lora_alpha: int = 16
-  lora_dropout: float = 0.05
-  train_attn: bool = True
-  train_mlp: bool = True
-  train_unembed: bool = False
+__all__ = ["LoraAdapter", "LoraConfig", "LoraTrainingWorker", "active_adapter_parameters"]
 
 
 def active_adapter_parameters(model: PeftModelForCausalLM, adapter_id: str) -> list[torch.nn.Parameter]:
@@ -37,14 +27,108 @@ def active_adapter_parameters(model: PeftModelForCausalLM, adapter_id: str) -> l
   return params
 
 
+class LoraAdapter:
+  """The Trainer for one adapter on a LoraTrainingWorker.
+
+  Every call activates the adapter on the shared PEFT model first, so several
+  adapters can be trained from one process without the request loop knowing.
+  """
+
+  def __init__(self, host: "LoraTrainingWorker", adapter_id: str):
+    self.host = host
+    self.adapter_id = adapter_id
+
+  @property
+  def model_id(self) -> str:
+    return self.adapter_id
+
+  def activate(self) -> PeftModelForCausalLM:
+    assert self.host.peft_model is not None, "Model must be loaded first."
+    self.host.peft_model.set_adapter(self.adapter_id)
+    return self.host.peft_model
+
+  def forward_backward(self, data: list[Datum], loss_fn: str, loss_config: dict | None = None) -> dict[str, Any]:
+    return BaseTrainerWorker.forward_backward(self.host, self.activate(), data, loss_fn, loss_config)
+
+  def optim_step(self, adam_params: dict[str, Any]) -> dict[str, Any]:
+    self.activate()
+    state = self.host.adapter_state(self.adapter_id)
+    params = state["trainable_params"]
+    if state.get("optimizer") is None:
+      state["optimizer"] = self.host.build_optimizer(params, adam_params, label=f"'{self.adapter_id}'")
+    total_norm, *_ = self.host.step_optimizer(state["optimizer"], params, adam_params)
+    self.host.save_adapter(self.adapter_id)
+    return {"metrics": {"grad_norm:mean": self.host.sanitize_float(total_norm), **self.host.ratio_metrics()}}
+
+  def save_state(self, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
+    """Save adapter weights (and optionally optimizer state) to a specific path."""
+    peft_model = self.activate()
+    os.makedirs(state_path, exist_ok=True)
+    peft_model.save_pretrained(state_path, selected_adapters=[self.adapter_id])
+
+    optimizer = self.host.adapter_state(self.adapter_id).get("optimizer")
+    has_optimizer = include_optimizer and optimizer is not None
+    if has_optimizer:
+      torch.save(optimizer.state_dict(), os.path.join(state_path, "optimizer.pt"))
+
+    with open(os.path.join(state_path, "metadata.json"), "w") as f:
+      json.dump(self.host.checkpoint_metadata(self.adapter_id, kind=kind, has_optimizer=has_optimizer), f)
+    print(f"Saved state for '{self.adapter_id}' to {state_path}")
+    return {"path": state_path}
+
+  def load_from_state(self, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
+    return self.host.load_adapter_state(self.adapter_id, state_path, restore_optimizer)
+
+  def publish_sampler_weights(self, command: SaveWeightsForSampler) -> SamplerWeights:
+    return self.host.save_adapter(self.adapter_id, command.alias)
+
+  def save_weights(self, alias: str | None = None) -> dict[str, Any]:
+    return {"path": self.host.save_adapter(self.adapter_id, alias).path}
+
+  def generate(
+    self,
+    prompt_tokens: list[int],
+    max_tokens: int,
+    num_samples: int = 1,
+    temperature: float = 0.0,
+    include_prompt_logprobs: bool = False,
+  ) -> dict[str, Any]:
+    return BaseTrainerWorker.generate(self.host, self.activate(), prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+
+
 class LoraTrainingWorker(BaseTrainerWorker):
+  """Hosts N LoRA adapters on one base model. create() and trainer() hand out
+  LoraAdapter trainers; the host itself keeps the base model, the PEFT
+  wrapper and the per-adapter optimizer state."""
+
   def __init__(self):
     super().__init__()
     self.base_model: PreTrainedModel | None = None
     self.peft_model: PeftModelForCausalLM | None = None
-    self.base_model_name: str | None = None
     self.adapter_states: dict[str, dict[str, Any]] = {}
     self.lora_target_modules: dict[tuple[bool, bool, bool], list[str]] = {}
+
+  # -- worker API -----------------------------------------------------------
+
+  def create(self, command: CreateModel) -> LoraAdapter:
+    self.create_model(command.base_model, command.model_id, command.lora_config)
+    return LoraAdapter(self, command.model_id)
+
+  def restore(self, command: CreateModelFromState) -> LoraAdapter:
+    self.load_adapter_state(command.model_id, command.state_path, command.restore_optimizer)
+    return LoraAdapter(self, command.model_id)
+
+  def trainer(self, model_id: str) -> LoraAdapter:
+    self.adapter_state(model_id)
+    return LoraAdapter(self, model_id)
+
+  def adapter_state(self, adapter_id: str) -> dict[str, Any]:
+    try:
+      return self.adapter_states[adapter_id]
+    except KeyError:
+      raise ValueError(f"Adapter '{adapter_id}' is not loaded on this worker") from None
+
+  # -- base model and adapters ----------------------------------------------
 
   def load_base_model(self, base_model_name: str) -> None:
     """Eagerly load the massive base model tensors into VRAM."""
@@ -108,14 +192,11 @@ class LoraTrainingWorker(BaseTrainerWorker):
     """Create a new LoRA adapter on top of the loaded base model."""
     assert self.base_model is not None, "Base model is not loaded. Call load_base_model first."
 
-    if adapter_id in self.adapter_states:
-      del self.adapter_states[adapter_id]
-
+    self.adapter_states.pop(adapter_id, None)
     if not any([config.train_attn, config.train_mlp, config.train_unembed]):
       raise ValueError("At least one LoRA training target must be enabled.")
 
     print(f"Creating LoRA adapter '{adapter_id}'...")
-
     peft_config = PeftLoraConfig(
       task_type="CAUSAL_LM",
       r=config.rank,
@@ -133,90 +214,55 @@ class LoraTrainingWorker(BaseTrainerWorker):
     else:
       self.peft_model.add_adapter(adapter_id, peft_config)
 
-    self.peft_model.set_adapter(adapter_id)
-    self.adapter_states[adapter_id] = {"trainable_params": active_adapter_parameters(self.peft_model, adapter_id), "optimizer": None}
-
-    if ENABLE_GRADIENT_CHECKPOINTING:
-      try:
-        self.peft_model.gradient_checkpointing_enable()
-        self.peft_model.enable_input_require_grads()
-        print("Gradient checkpointing and input require grads enabled on PEFT model.")
-      except Exception as e:
-        print(f"Failed to enable gradient checkpointing: {e}")
-
-    self.peft_model.train()
+    self.register_adapter(adapter_id)
     print(f"LoRA adapter '{adapter_id}' created and set to active.")
-
     self.save_adapter(adapter_id)
+
+  def register_adapter(self, adapter_id: str) -> dict[str, Any]:
+    assert self.peft_model is not None
+    self.peft_model.set_adapter(adapter_id)
+    state: dict[str, Any] = {"trainable_params": active_adapter_parameters(self.peft_model, adapter_id), "optimizer": None}
+    self.adapter_states[adapter_id] = state
+    self.enable_gradient_checkpointing(self.peft_model)
+    self.peft_model.train()
+    return state
 
   def create_model(self, base_model_name: str, model_id: str, config: LoraConfig) -> None:
     """Load the shared base model if needed, then create a trainable LoRA adapter."""
     self.load_base_model(base_model_name)
     self.create_adapter(model_id, config)
 
-  def save_adapter(self, adapter_id: str, alias: str | None = None) -> None:
-    """Save adapter weights to disk for reliability and sharing."""
+  def save_adapter(self, adapter_id: str, alias: str | None = None) -> SamplerWeights:
+    """Write the adapter where the LoRA sampler workers load it: peft/<id>/<id>/."""
+    adapter_root = os.path.join(tmp_dir(), "peft", adapter_id)
+    adapter_dir = os.path.join(adapter_root, adapter_id)
     if self.peft_model is None:
       print(f"[LoRA] Cannot save adapter '{adapter_id}': no active PEFT model initialized.")
-      return
+      return SamplerWeights(kind="adapter", path=adapter_dir)
     try:
-      tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-      save_path = os.path.join(tmp_dir, "peft", adapter_id)
-      os.makedirs(save_path, exist_ok=True)
-
-      # Save the adapter weights
+      os.makedirs(adapter_root, exist_ok=True)
       self.peft_model.set_adapter(adapter_id)
-      self.peft_model.save_pretrained(save_path, selected_adapters=[adapter_id])
+      self.peft_model.save_pretrained(adapter_root, selected_adapters=[adapter_id])
 
-      # Save minimal metadata
-      metadata = {"model_id": adapter_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
-      if alias is not None:
-        metadata["alias"] = alias
-      with open(os.path.join(save_path, "metadata.json"), "w") as f:
+      metadata = {
+        "model_id": adapter_id,
+        "created_at": datetime.now().isoformat(),
+        "timestamp": time.time(),
+        **({"alias": alias} if alias is not None else {}),
+      }
+      with open(os.path.join(adapter_root, "metadata.json"), "w") as f:
         json.dump(metadata, f)
-
-      print(f"Auto-saved adapter '{adapter_id}' to {save_path}")
+      print(f"Auto-saved adapter '{adapter_id}' to {adapter_root}")
     except Exception as e:
       print(f"[ERROR] Failed to auto-save weights for {adapter_id}: {e}")
       traceback.print_exc()
+    return SamplerWeights(kind="adapter", path=adapter_dir)
 
-  def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
-    """Save adapter weights (and optionally optimizer state) to a specific path."""
-    assert self.peft_model is not None, "Model must be loaded first."
-
-    self.peft_model.set_adapter(model_id)
-    os.makedirs(state_path, exist_ok=True)
-    self.peft_model.save_pretrained(state_path, selected_adapters=[model_id])
-
-    adapter_state = self.adapter_states.get(model_id)
-    optimizer = adapter_state.get("optimizer") if adapter_state is not None else None
-    if include_optimizer and optimizer is not None:
-      torch.save(optimizer.state_dict(), os.path.join(state_path, "optimizer.pt"))
-
-    metadata = {
-      "base_model": self.base_model_name,
-      "created_at": datetime.now().isoformat(),
-      "kind": kind,
-      "has_optimizer": include_optimizer and optimizer is not None,
-      "model_id": model_id,
-      "timestamp": time.time(),
-    }
-    with open(os.path.join(state_path, "metadata.json"), "w") as f:
-      json.dump(metadata, f)
-
-    print(f"Saved state for '{model_id}' to {state_path}")
-    return {"path": state_path}
-
-  def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
-    """Create an adapter from a saved state directory.
-
-    Expects the directory to contain a metadata.json describing base_model
-    and (optionally) an adapter subdirectory with the saved LoRA weights.
-    """
+  def load_adapter_state(self, adapter_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
+    """Create (or replace) an adapter from a saved state directory."""
     metadata_path = os.path.join(state_path, "metadata.json")
     if not os.path.exists(metadata_path):
       raise FileNotFoundError(f"No metadata.json found at {state_path}")
-
     with open(metadata_path) as f:
       metadata = json.load(f)
 
@@ -225,119 +271,27 @@ class LoraTrainingWorker(BaseTrainerWorker):
       raise ValueError(f"metadata.json at {state_path} missing base_model")
 
     src_adapter_id = metadata.get("model_id")
-    adapter_dir = state_path
-    if src_adapter_id and os.path.exists(os.path.join(state_path, src_adapter_id)):
-      adapter_dir = os.path.join(state_path, src_adapter_id)
+    adapter_dir = (
+      os.path.join(state_path, src_adapter_id) if src_adapter_id and os.path.exists(os.path.join(state_path, src_adapter_id)) else state_path
+    )
 
     self.load_base_model(base_model)
     assert self.base_model is not None
-
     if self.peft_model is None:
-      self.peft_model = PeftModelForCausalLM.from_pretrained(self.base_model, adapter_dir, adapter_name=model_id, is_trainable=True)
+      self.peft_model = PeftModelForCausalLM.from_pretrained(self.base_model, adapter_dir, adapter_name=adapter_id, is_trainable=True)
     else:
-      if model_id in self.peft_model.peft_config:
-        self.peft_model.delete_adapter(model_id)
-        if model_id in self.adapter_states:
-          del self.adapter_states[model_id]
-      self.peft_model.load_adapter(adapter_dir, adapter_name=model_id, is_trainable=True)
+      if adapter_id in self.peft_model.peft_config:
+        self.peft_model.delete_adapter(adapter_id)
+        self.adapter_states.pop(adapter_id, None)
+      self.peft_model.load_adapter(adapter_dir, adapter_name=adapter_id, is_trainable=True)
 
-    self.peft_model.set_adapter(model_id)
-    params = active_adapter_parameters(self.peft_model, model_id)
-    adapter_state = {"trainable_params": params, "optimizer": None}
-    self.adapter_states[model_id] = adapter_state
+    state = self.register_adapter(adapter_id)
+    optimizer_path = os.path.join(state_path, "optimizer.pt")
+    if restore_optimizer and metadata.get("has_optimizer") and os.path.exists(optimizer_path):
+      optimizer = torch.optim.AdamW(state["trainable_params"], lr=1e-4)
+      optimizer.load_state_dict(torch.load(optimizer_path, map_location=self.device))
+      state["optimizer"] = optimizer
+      print(f"Restored optimizer state for '{adapter_id}' from {optimizer_path}")
 
-    if ENABLE_GRADIENT_CHECKPOINTING:
-      try:
-        self.peft_model.gradient_checkpointing_enable()
-        self.peft_model.enable_input_require_grads()
-        print("Gradient checkpointing and input require grads enabled on PEFT model.")
-      except Exception as e:
-        print(f"Failed to enable gradient checkpointing: {e}")
-
-    self.peft_model.train()
-
-    if restore_optimizer and metadata.get("has_optimizer"):
-      optimizer_path = os.path.join(state_path, "optimizer.pt")
-      if os.path.exists(optimizer_path):
-        lr = 1e-4
-        optimizer = torch.optim.AdamW(params, lr=lr)
-        optimizer.load_state_dict(torch.load(optimizer_path, map_location=self.device))
-        adapter_state["optimizer"] = optimizer
-        print(f"Restored optimizer state for '{model_id}' from {optimizer_path}")
-
-    print(f"Loaded state for '{model_id}' from {state_path}")
-    return {"model_id": model_id, "is_lora": True, "base_model": base_model}
-
-  def forward_backward(self, data: list[Datum], loss_fn: str, loss_config: dict | None = None, model_id: str | None = None) -> dict[str, Any]:
-    assert self.peft_model is not None, "Model must be loaded first."
-    if model_id:
-      self.peft_model.set_adapter(model_id)
-    return super().forward_backward(self.peft_model, data, loss_fn, loss_config)
-
-  def optim_step(self, adam_params: dict[str, Any], model_id: str) -> dict[str, Any]:
-    """Apply accumulated gradients and update model weights."""
-    assert self.peft_model is not None, "Model must be loaded first."
-    if not model_id:
-      raise ValueError("model_id is required for optim_step")
-
-    self.peft_model.set_adapter(model_id)
-    try:
-      adapter_state = self.adapter_states[model_id]
-    except KeyError as e:
-      raise ValueError(f"Adapter '{model_id}' has no cached trainable parameters") from e
-    params = adapter_state["trainable_params"]
-
-    if adapter_state.get("optimizer") is None:
-      lr = adam_params.get("learning_rate", 1e-4)
-      beta1 = adam_params.get("beta1", 0.9)
-      beta2 = adam_params.get("beta2", 0.95)
-      eps = adam_params.get("eps", 1e-12)
-      weight_decay = adam_params.get("weight_decay", 0.0)
-
-      print(f"Initializing AdamW optimizer for '{model_id}' with lr={lr}")
-      adapter_state["optimizer"] = torch.optim.AdamW(
-        params,
-        lr=lr,
-        betas=(beta1, beta2),
-        eps=eps,
-        weight_decay=weight_decay,
-      )
-
-    optimizer = adapter_state["optimizer"]
-    learning_rate = adam_params.get("learning_rate")
-    if learning_rate is not None:
-      for param_group in optimizer.param_groups:
-        param_group["lr"] = learning_rate
-
-    max_grad_norm = adam_params.get("grad_clip_norm") or math.inf
-    if max_grad_norm <= 0.0:
-      max_grad_norm = math.inf
-
-    total_norm = torch.nn.utils.clip_grad_norm_(
-      params,
-      max_grad_norm,
-    )
-
-    optimizer.step()
-    optimizer.zero_grad()
-
-    self.save_adapter(model_id)
-
-    return {
-      "metrics": {
-        "grad_norm:mean": self.sanitize_float(total_norm.item()),
-      },
-    }
-
-  def generate(
-    self,
-    prompt_tokens: list[int],
-    max_tokens: int,
-    num_samples: int = 1,
-    temperature: float = 0.0,
-    model_id: str | None = None,
-    include_prompt_logprobs: bool = False,
-  ) -> dict[str, Any]:
-    if model_id:
-      self.peft_model.set_adapter(model_id)
-    return super().generate(self.peft_model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+    print(f"Loaded state for '{adapter_id}' from {state_path}")
+    return {"model_id": adapter_id, "is_lora": True, "base_model": base_model}
