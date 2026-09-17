@@ -10,6 +10,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.lora.request import LoRARequest
 from vllm.sampling_params import RequestOutputKind, SamplingParams
 
+from server.observability import observe_operation
 from server.store import get_store
 from server.vllm_options import gpu_memory_utilization, split_stop, text_only_engine_kwargs
 
@@ -43,7 +44,7 @@ def resolve_lora_path(lora_id: str, lora_path: str | None) -> str:
   return lora_path or peft_dir
 
 
-async def process_sampling_request(req: dict[str, Any], store: Any) -> None:
+async def _sample_request(req: dict[str, Any]) -> dict:
   request_id = req["request_id"]
 
   prompt_token_ids = req.get("prompt_token_ids") or req.get("prompt_tokens") or []
@@ -57,77 +58,82 @@ async def process_sampling_request(req: dict[str, Any], store: Any) -> None:
   lora_path = req.get("lora_path") or req.get("weights_path")
   include_prompt_logprobs = bool(req.get("include_prompt_logprobs", False))
 
+  if engine is None:
+    await asyncio.sleep(0.1)
+    dummy = {"sequences": [{"tokens": [0] * max_tokens, "logprobs": [-0.1] * max_tokens, "stop_reason": "length"}]}
+    dummy["type"] = "sample"
+    return dummy
+
+  prompt_logprobs_val = 1 if include_prompt_logprobs else None
+  stop_strings, stop_token_ids = split_stop(stop)
+  sampling_params = SamplingParams(
+    n=num_samples,
+    temperature=temperature,
+    max_tokens=max_tokens,
+    stop=stop_strings,
+    stop_token_ids=stop_token_ids,
+    top_p=top_p,
+    top_k=top_k,
+    logprobs=1,
+    prompt_logprobs=prompt_logprobs_val,
+    output_kind=RequestOutputKind.FINAL_ONLY,
+  )
+
+  lora_request = None
+  if lora_id:
+    actual_path = resolve_lora_path(lora_id, lora_path)
+    if os.path.exists(os.path.join(actual_path, "adapter_config.json")):
+      lora_int_id = int(hashlib.md5(lora_id.encode("utf-8")).hexdigest(), 16) % (2**31 - 1) + 1
+      lora_request = LoRARequest(lora_id, lora_int_id, actual_path)
+      print(f"[LoRA Sampler] Attached LoRARequest '{lora_id}' -> {actual_path}")
+
+  results_generator = engine.generate(
+    prompt={"prompt_token_ids": prompt_token_ids},
+    sampling_params=sampling_params,
+    request_id=request_id,
+    lora_request=lora_request,
+  )
+
+  sequences = []
+  async for request_output in results_generator:
+    for output in request_output.outputs:
+      seq_dict = {
+        "tokens": list(output.token_ids),
+        "stop_reason": output.finish_reason or "length",
+      }
+      if output.logprobs:
+        token_logprobs = []
+        for idx, logprob_dict in zip(output.token_ids, output.logprobs):
+          if logprob_dict and idx in logprob_dict:
+            token_logprobs.append(float(logprob_dict[idx].logprob))
+          elif logprob_dict:
+            first_lp = next(iter(logprob_dict.values()))
+            token_logprobs.append(float(first_lp.logprob))
+          else:
+            token_logprobs.append(-0.1)
+        seq_dict["logprobs"] = token_logprobs
+      sequences.append(seq_dict)
+
+  out_data = {"sequences": sequences}
+  if include_prompt_logprobs and request_output.prompt_logprobs:
+    prompt_lps = []
+    for lp_dict in request_output.prompt_logprobs:
+      if lp_dict:
+        first_lp = next(iter(lp_dict.values()))
+        prompt_lps.append(float(first_lp.logprob))
+      else:
+        prompt_lps.append(0.0)
+    out_data["prompt_logprobs"] = prompt_lps
+
+  out_data["type"] = "sample"
+  return out_data
+
+
+async def process_sampling_request(req: dict[str, Any], store: Any) -> None:
+  request_id = req["request_id"]
   try:
-    if engine is None:
-      await asyncio.sleep(0.1)
-      dummy = {"sequences": [{"tokens": [0] * max_tokens, "logprobs": [-0.1] * max_tokens, "stop_reason": "length"}]}
-      dummy["type"] = "sample"
-      await store.set_future(request_id, dummy)
-      return
-
-    prompt_logprobs_val = 1 if include_prompt_logprobs else None
-    stop_strings, stop_token_ids = split_stop(stop)
-    sampling_params = SamplingParams(
-      n=num_samples,
-      temperature=temperature,
-      max_tokens=max_tokens,
-      stop=stop_strings,
-      stop_token_ids=stop_token_ids,
-      top_p=top_p,
-      top_k=top_k,
-      logprobs=1,
-      prompt_logprobs=prompt_logprobs_val,
-      output_kind=RequestOutputKind.FINAL_ONLY,
-    )
-
-    lora_request = None
-    if lora_id:
-      actual_path = resolve_lora_path(lora_id, lora_path)
-      if os.path.exists(os.path.join(actual_path, "adapter_config.json")):
-        lora_int_id = int(hashlib.md5(lora_id.encode("utf-8")).hexdigest(), 16) % (2**31 - 1) + 1
-        lora_request = LoRARequest(lora_id, lora_int_id, actual_path)
-        print(f"[LoRA Sampler] Attached LoRARequest '{lora_id}' -> {actual_path}")
-
-    results_generator = engine.generate(
-      prompt={"prompt_token_ids": prompt_token_ids},
-      sampling_params=sampling_params,
-      request_id=request_id,
-      lora_request=lora_request,
-    )
-
-    sequences = []
-    async for request_output in results_generator:
-      for output in request_output.outputs:
-        seq_dict = {
-          "tokens": list(output.token_ids),
-          "stop_reason": output.finish_reason or "length",
-        }
-        if output.logprobs:
-          token_logprobs = []
-          for idx, logprob_dict in zip(output.token_ids, output.logprobs):
-            if logprob_dict and idx in logprob_dict:
-              token_logprobs.append(float(logprob_dict[idx].logprob))
-            elif logprob_dict:
-              first_lp = next(iter(logprob_dict.values()))
-              token_logprobs.append(float(first_lp.logprob))
-            else:
-              token_logprobs.append(-0.1)
-          seq_dict["logprobs"] = token_logprobs
-        sequences.append(seq_dict)
-
-    out_data = {"sequences": sequences}
-    if include_prompt_logprobs and request_output.prompt_logprobs:
-      prompt_lps = []
-      for lp_dict in request_output.prompt_logprobs:
-        if lp_dict:
-          first_lp = next(iter(lp_dict.values()))
-          prompt_lps.append(float(first_lp.logprob))
-        else:
-          prompt_lps.append(0.0)
-      out_data["prompt_logprobs"] = prompt_lps
-
-    out_data["type"] = "sample"
-    await store.set_future(request_id, out_data)
+    result = await observe_operation(store, req, "sampler", req.get("model_id"), lambda: _sample_request(req))
+    await store.set_future(request_id, result)
   except Exception as exc:
     print(f"[LoRA Sampler] Error processing request {request_id}: {exc}")
     traceback.print_exc()

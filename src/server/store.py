@@ -68,6 +68,16 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
+  async def append_sample(self, key: str, sample: dict[str, Any], limit: int = 120) -> None:
+    """Atomically append a sample and retain the most recent limit entries."""
+    pass
+
+  @abstractmethod
+  async def read_samples(self, key: str) -> list[dict[str, Any]]:
+    """Read retained samples in append order."""
+    pass
+
+  @abstractmethod
   def get_value_sync(self, key: str) -> str | None:
     """Synchronously fetch a string value by key."""
     pass
@@ -113,6 +123,7 @@ class InMemoryStore(RequestStore):
     self.expiries: dict[str, float] = {}
     self.sets: dict[str, set[str]] = {}
     self.sampling_queues: dict[str, asyncio.Queue] = {}
+    self.sample_store: dict[str, list[str]] = {}
 
   async def list_jobs_metadata(self) -> list[dict[str, Any]]:
     jobs = []
@@ -254,6 +265,16 @@ class InMemoryStore(RequestStore):
   async def get_value(self, key: str) -> str | None:
     return self.get_value_sync(key)
 
+  async def append_sample(self, key: str, sample: dict[str, Any], limit: int = 120) -> None:
+    if limit < 1:
+      raise ValueError("Sample limit must be positive")
+    samples = self.sample_store.setdefault(key, [])
+    samples.append(json.dumps(sample, allow_nan=False))
+    del samples[:-limit]
+
+  async def read_samples(self, key: str) -> list[dict[str, Any]]:
+    return [json.loads(sample) for sample in self.sample_store.get(key, [])]
+
   def get_value_sync(self, key: str) -> str | None:
     if key in self.expiries and time.monotonic() >= self.expiries[key]:
       self.kv_store.pop(key, None)
@@ -265,6 +286,7 @@ class InMemoryStore(RequestStore):
       self.kv_store.pop(k, None)
       self.expiries.pop(k, None)
       self.sets.pop(k, None)
+      self.sample_store.pop(k, None)
 
   async def add_to_set(self, key: str, member: str) -> None:
     self.sets.setdefault(key, set()).add(member)
@@ -449,6 +471,17 @@ class RedisStore(RequestStore):
 
   async def get_value(self, key: str) -> str | None:
     return await self.redis.get(key)
+
+  async def append_sample(self, key: str, sample: dict[str, Any], limit: int = 120) -> None:
+    if limit < 1:
+      raise ValueError("Sample limit must be positive")
+    async with self.redis.pipeline(transaction=True) as pipeline:
+      pipeline.rpush(key, json.dumps(sample, allow_nan=False))
+      pipeline.ltrim(key, -limit, -1)
+      await pipeline.execute()
+
+  async def read_samples(self, key: str) -> list[dict[str, Any]]:
+    return [json.loads(sample) for sample in await self.redis.lrange(key, 0, -1)]
 
   def get_value_sync(self, key: str) -> str | None:
     try:

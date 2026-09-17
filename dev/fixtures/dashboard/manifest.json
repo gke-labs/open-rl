@@ -1,0 +1,20 @@
+{
+ "base": "http://127.0.0.1:18000",
+ "captured_at": "2026-09-11T09:00:10.927633+00:00",
+ "files": {
+  "/api/v1/dashboard": "index.json",
+  "/api/v1/dashboard/allocations/9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae/metrics": "allocations--9bb3fdd0-c6bf-496f-99fc-dee6f41b25ae--metrics.json",
+  "/api/v1/dashboard/allocations/eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364/metrics": "allocations--eb3cf9f5-2906-4eaf-ae7a-8a0cc3521364--metrics.json",
+  "/api/v1/dashboard/experiments": "experiments.json",
+  "/api/v1/dashboard/runs/1390ffaa-2cbb-499d-bfe6-8e94bed23a9d": "runs--1390ffaa-2cbb-499d-bfe6-8e94bed23a9d.json",
+  "/api/v1/dashboard/runs/1390ffaa-2cbb-499d-bfe6-8e94bed23a9d/logs": "runs--1390ffaa-2cbb-499d-bfe6-8e94bed23a9d--logs.json",
+  "/api/v1/dashboard/runs/1390ffaa-2cbb-499d-bfe6-8e94bed23a9d/metrics": "runs--1390ffaa-2cbb-499d-bfe6-8e94bed23a9d--metrics.json",
+  "/api/v1/dashboard/runs/e69978f3-1cbb-4d4b-b59a-0398b0245f58": "runs--e69978f3-1cbb-4d4b-b59a-0398b0245f58.json",
+  "/api/v1/dashboard/runs/e69978f3-1cbb-4d4b-b59a-0398b0245f58/logs": "runs--e69978f3-1cbb-4d4b-b59a-0398b0245f58--logs.json",
+  "/api/v1/dashboard/runs/e69978f3-1cbb-4d4b-b59a-0398b0245f58/metrics": "runs--e69978f3-1cbb-4d4b-b59a-0398b0245f58--metrics.json",
+  "/api/v1/dashboard/runs/f332cde2-3266-4aa2-9ed3-3739530b3f03": "runs--f332cde2-3266-4aa2-9ed3-3739530b3f03.json",
+  "/api/v1/dashboard/runs/f332cde2-3266-4aa2-9ed3-3739530b3f03/logs": "runs--f332cde2-3266-4aa2-9ed3-3739530b3f03--logs.json",
+  "/api/v1/dashboard/runs/f332cde2-3266-4aa2-9ed3-3739530b3f03/metrics": "runs--f332cde2-3266-4aa2-9ed3-3739530b3f03--metrics.json",
+  "/api/v1/dashboard/snapshot": "snapshot.json"
+ }
+}

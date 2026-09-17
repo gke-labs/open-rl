@@ -19,7 +19,10 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
-from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
+from server.dashboard import history as placement_history
+from server.dashboard.router import router as dashboard_router
+from server.dashboard.snapshot import snapshot as dashboard_snapshot
+from server.model_metadata import TrainingModelMetadata, display_metadata, extract_weight_sync_config
 from server.session_registry import SessionRegistry
 from server.store import get_store
 from server.worker_manager import WorkerManager, create_worker_manager, owner_of
@@ -36,10 +39,39 @@ owner_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 async def bind_session(session_id: str | None, model_id: str) -> None:
-  if worker_manager is not None and session_id:
+  if not session_id:
+    return
+  await remember_session(store, model_id, session_id)
+  if worker_manager is not None:
     owner = await asyncio.to_thread(owner_of, model_id)
     async with owner_locks[owner]:
       await session_registry.attach(session_id, owner)
+
+
+async def remember_session(job_store, model_id: str, session_id: str) -> None:
+  """A run belongs to the first session that touched it; that session's death ends the run."""
+  raw = await job_store.get_value(f"open_rl:model_meta:{model_id}")
+  if raw and not json.loads(raw).get("session_id"):
+    await job_store.update_job_metadata(model_id, {"session_id": session_id})
+
+
+TERMINAL_STATUSES = {"completed", "failed", "ended"}
+
+
+async def settle_runs(job_store, registry) -> list[str]:
+  """Mark runs whose owning session stopped heartbeating. The gateway cannot
+  tell a clean exit from a crash, so the status is "ended", not completed."""
+  settled = []
+  now = time.time()
+  for row in await job_store.list_jobs_metadata():
+    session_id = row.get("session_id")
+    if not session_id or str(row.get("status", "")).lower() in TERMINAL_STATUSES:
+      continue
+    if await registry.live(session_id):
+      continue
+    await job_store.update_job_metadata(row["model_id"], {"status": "ended", "completed_at": now, "updated_at": now})
+    settled.append(row["model_id"])
+  return settled
 
 
 async def reap_owner(owner: str) -> None:
@@ -224,7 +256,15 @@ async def _extract_and_persist_model_metadata(
     full_config=full_config,
     lora_config=lora_config,
   )
-  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(meta_obj.to_dict()))
+  metadata = meta_obj.to_dict()
+  session_meta = {}
+  if isinstance(req.get("session_id"), str):
+    raw_session = await store.get_value(f"open_rl:session_meta:{req['session_id']}")
+    if raw_session:
+      session_meta = display_metadata(json.loads(raw_session))
+  labels = {**session_meta, **display_metadata(req.get("user_metadata")), **display_metadata(req)}
+  metadata.update(labels)
+  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(metadata))
 
   return model_id
 
@@ -261,11 +301,26 @@ async def enqueue(request: dict) -> str:
   propagate.inject(carrier)
   await store.set_future(request_id, {"status": "pending"})
 
-  active_set_id = await _resolve_active_set_id(request.get("model_id"))
-  await store.put_request({**request, "trace_context": carrier}, active_set_id=active_set_id)
+  model_id = request.get("model_id")
+  meta = await store.get_model_metadata(model_id) if model_id else None
+  shared = meta and meta.get("fine_tuning_type") == "lora" and meta.get("base_model")
+  runtime_id = meta["base_model"] if shared else model_id
+  active_set_id = await _resolve_active_set_id(model_id)
+  # The worker records each operation against the logical run and the runtime
+  # it served, with the enqueue time for queue delay.
+  await store.put_request(
+    {
+      **request,
+      "trace_context": carrier,
+      "logical_run_id": request.get("adapter_id") or model_id,
+      "runtime_id": runtime_id,
+      "enqueued_at": time.time(),
+    },
+    active_set_id=active_set_id,
+  )
   # One line per training request so a request that never reaches a worker can
   # be traced end to end (the workers log the same id when they pop it).
-  print(f"[GATEWAY] enqueued op={request.get('op')} request_id={request_id} model_id={request.get('model_id')} active_set={active_set_id}")
+  print(f"[GATEWAY] enqueued op={request.get('op')} request_id={request_id} model_id={model_id} active_set={active_set_id}")
   return request_id
 
 
@@ -368,10 +423,14 @@ async def reap_dead_sessions():
         await reap_owner(owner)
       except Exception:
         traceback.print_exc()
+    try:
+      await settle_runs(store, session_registry)
+    except Exception:
+      traceback.print_exc()
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(served_app: FastAPI):
   global worker_manager
   task = None
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
@@ -394,11 +453,14 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(worker.load_base_model, base_model)
       task = asyncio.create_task(training_requests_processor.run_training_requests_processor(worker))
   reap_task = asyncio.create_task(reap_dead_sessions()) if worker_manager is not None else None
+  log_task = asyncio.create_task(placement_history.recorder(store, lambda: dashboard_snapshot.placements(store)))
   try:
     yield
   finally:
     if reap_task is not None:
       reap_task.cancel()
+    log_task.cancel()
+    await asyncio.gather(log_task, return_exceptions=True)
     if task is not None:
       task.cancel()
     if worker_manager is not None:
@@ -407,6 +469,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
+app.include_router(dashboard_router)
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 
@@ -437,9 +500,12 @@ async def client_config(_: dict):
 
 
 @app.post("/api/v1/create_session")
-async def create_session(_: dict):
+async def create_session(req: dict):
   session_id = f"sess-{uuid.uuid4().hex[:12]}"
   await session_registry.heartbeat(session_id)
+  labels = display_metadata(req.get("user_metadata"))
+  if labels:
+    await store.set_value(f"open_rl:session_meta:{session_id}", json.dumps(labels))
   return {"session_id": session_id, "type": "create_session"}
 
 
@@ -887,6 +953,9 @@ async def asample(req: dict):
     "weights_path": weights_path,
     "include_prompt_logprobs": include_prompt_logprobs,
     "model_id": queue_id,
+    "logical_run_id": lookup_id,
+    "runtime_id": queue_id,
+    "enqueued_at": time.time(),
     "trace_context": carrier,
   }
 

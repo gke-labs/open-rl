@@ -1,0 +1,32 @@
+{
+ "capabilities": {
+  "filesystem": false,
+  "pod_exec": false,
+  "read_only": true,
+  "secrets": false
+ },
+ "limits": {
+  "operation_samples_per_run": 2000,
+  "placement_history_days": 7
+ },
+ "links": {
+  "experiments": "/api/v1/dashboard/experiments",
+  "gpu_metrics": "/api/v1/dashboard/allocations/{placement_id}/metrics",
+  "openapi": "/openapi.json",
+  "pod_logs": "/api/v1/dashboard/pods/{pod}/logs",
+  "run": "/api/v1/dashboard/runs/{run_id}",
+  "run_logs": "/api/v1/dashboard/runs/{run_id}/logs",
+  "run_metrics": "/api/v1/dashboard/runs/{run_id}/metrics",
+  "snapshot": "/api/v1/dashboard/snapshot"
+ },
+ "schema_version": 2,
+ "scope": {
+  "identity": "shared_operator",
+  "namespace": "openrl-system"
+ },
+ "workflow": [
+  "Read snapshot for run IDs, pods, placements and their history, and source errors.",
+  "Read the run to resolve shared-runtime membership before attributing logs or GPU activity.",
+  "Read logs and metrics with explicit since/until timestamps; keep filters fixed when following next_cursor."
+ ]
+}

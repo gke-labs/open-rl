@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>OpenRL · Cluster</title>
+    <link rel="stylesheet" href="/dashboard/assets/style.css" />
+    <script type="module" src="/dashboard/assets/app.js"></script>
+  </head>
+  <body>
+    <div id="orl-design-lab">
+      <div class="product">
+        <header class="appbar">
+          <a href="#overview" class="brand">OpenRL</a>
+          <nav aria-label="Main">
+            <a href="#overview">Overview</a><a href="#nodes">Nodes</a
+            ><a href="#scheduler">Scheduler</a><a href="#experiments">Experiments</a><a href="#health">Health</a>
+          </nav>
+          <span id="connection" role="status">Connecting…</span>
+        </header>
+        <div id="snapshot-error" class="snapshot-error" role="status" hidden><span></span><button type="button" class="chip" data-retry-snapshot>Retry</button></div>
+        <main id="content" class="pad">Loading cluster…</main>
+      </div>
+    </div>
+  </body>
+</html>

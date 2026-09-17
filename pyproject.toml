@@ -19,6 +19,7 @@ dependencies = [
     "redis>=5.0.0",
     "uvicorn",
     "httpx",
+    "google-auth[requests]>=2",
     "tqdm>=4.50",
 ]
 

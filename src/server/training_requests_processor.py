@@ -11,11 +11,11 @@ from typing import Any, Protocol
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from opentelemetry import context as otel_context
-from opentelemetry import propagate, trace
+from opentelemetry import trace
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
+from server.observability import gpu_turn, observe_operation
 from server.store import RequestStore, get_store
 from training.fft_trainer_worker import FFTConfig, FFTTrainingWorker
 from training.lora_trainer_worker import LoraConfig, LoraTrainingWorker
@@ -58,27 +58,24 @@ class TrainingRequestsProcessor(Protocol):
 
   async def handle_request(self, raw_request: dict[str, Any], model_id: str | None = None) -> tuple[str | None, dict[str, Any]]:
     request_id = raw_request.get("request_id")
-    token = None
-
     try:
       op = raw_request["op"]
       request_id = raw_request["request_id"]
       resolved_model_id = model_id or raw_request.get("model_id") or "default"
 
-      carrier = raw_request.get("trace_context")
-      ctx = propagate.extract(carrier) if carrier else None
-      token = otel_context.attach(ctx) if ctx else None
-
-      result = await self.dispatch_operation(op, raw_request.get("payload", {}), resolved_model_id)
+      result = await observe_operation(
+        self.store,
+        raw_request,
+        "trainer",
+        raw_request.get("model_id") or resolved_model_id,
+        lambda: self.dispatch_operation(op, raw_request.get("payload", {}), resolved_model_id),
+      )
       return request_id, result
     except Exception as exc:
       traceback.print_exc()
       if request_id is None:
         raise
       return request_id, {"type": "RequestFailedResponse", "error_message": str(exc)}
-    finally:
-      if token:
-        otel_context.detach(token)
 
   async def dispatch_operation(self, op: str, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
     match op:
@@ -377,7 +374,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
         save_reqs = [r for r in training_reqs if r.get("op") in save_ops]
 
         if gpu_reqs:
-          async with self.time_slicer.acquire(self.workload):
+          async with gpu_turn(self.time_slicer, self.workload, self.store, "trainer", self.model_id):
             if hasattr(self.worker, "wake_up"):
               await asyncio.to_thread(self.worker.wake_up)
             try:
@@ -388,7 +385,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
                 await asyncio.to_thread(self.worker.sleep)
 
         if hasattr(self.worker, "cpu_offload") and not self.worker.cpu_offload and save_reqs:
-          async with self.time_slicer.acquire(self.workload):
+          async with gpu_turn(self.time_slicer, self.workload, self.store, "trainer", self.model_id):
             for request in save_reqs:
               results.append(await self.handle_request(request, self.model_id))
         else:

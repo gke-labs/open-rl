@@ -3,6 +3,15 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 
+def display_metadata(value: Any) -> dict[str, str]:
+  """Keep bounded, explicitly supplied run/recipe labels from SDK metadata."""
+  if not isinstance(value, dict):
+    return {}
+  return {
+    key: value[key].strip()[:1024] for key in ("name", "run_name", "recipe_name", "git_rev") if isinstance(value.get(key), str) and value[key].strip()
+  }
+
+
 @dataclass
 class WeightSyncConfig:
   strategy: str = "delta"
@@ -78,6 +87,7 @@ class TrainingModelMetadata:
   total_steps_completed: int = 0
   max_steps: int | None = None
   tenant_id: str = "default"
+  session_id: str | None = None
 
   @classmethod
   def from_dict(cls, data: dict[str, Any]) -> "TrainingModelMetadata":
@@ -111,6 +121,7 @@ class TrainingModelMetadata:
       completed_at=data.get("completed_at"),
       total_steps_completed=data.get("total_steps_completed", 0),
       max_steps=data.get("max_steps"),
+      session_id=data.get("session_id"),
       tenant_id=data.get("tenant_id", "default"),
     )
 
