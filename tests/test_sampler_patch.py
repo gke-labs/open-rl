@@ -1,123 +1,200 @@
-import json
+"""Weight-version ordering, failure handling, and resource cleanup for the vLLM sampler."""
+
+import asyncio
 import os
-import shutil
-import sys
 import tempfile
 import unittest
-from unittest.mock import MagicMock
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
-# Add src to path so we can import server.vllm_sampler and training.fft_trainer_worker
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
-
-import torch
-
-# Mock vllm modules before importing the sampler patch
-sys.modules["vllm"] = MagicMock()
-sys.modules["vllm.v1"] = MagicMock()
-sys.modules["vllm.v1.worker"] = MagicMock()
-gpu_worker_mock = MagicMock()
-sys.modules["vllm.v1.worker.gpu_worker"] = gpu_worker_mock
+from accel_timeslicer.workload import WorkloadRef
+from server.vllm_sampler import Sampler
 
 
-class MockWorkerBase:
-  def __init__(self, vllm_config=None, local_rank=0, rank=0, distributed_init_method="", is_driver_worker=False):
-    self.model_config = MagicMock()
-    self.model_config.model = "mock-base-model-path"
-    self.load_config = MagicMock()
-    self.model_runner = MagicMock()
+def make_engine(on_generate=None):
+  engine = AsyncMock()
+  engine.shutdown = Mock()
+
+  def generate(prompt, sampling_params, request_id, lora_request):
+    async def stream():
+      if on_generate is not None:
+        await on_generate(request_id)
+      yield SimpleNamespace(outputs=[SimpleNamespace(token_ids=[4], logprobs=None, finish_reason="length")], prompt_logprobs=None)
+
+    return stream()
+
+  engine.generate = Mock(side_effect=generate)
+  return engine
 
 
-# Inject MockWorker into the mocked module
-class MockWorker(MockWorkerBase):
-  def reload_weights(self, *args, **kwargs):
-    pass
+class SamplerBatchTest(unittest.IsolatedAsyncioTestCase):
+  async def asyncSetUp(self):
+    self.store = AsyncMock()
+    self.engine = make_engine()
+    self.sampler = Sampler("test", self.store, lambda: self.engine)
+    self.sampler.engine = self.engine
+
+  def results(self):
+    return {call.args[0]: call.args[1] for call in self.store.set_future.call_args_list}
+
+  async def test_groups_drain_before_switching_weights(self):
+    active = set()
+    seen = []
+
+    async def update(update_request):
+      self.assertFalse(active)
+      seen.append(("update", update_request.update_info["target_weights_path"]))
+
+    async def generate(request_id):
+      active.add(request_id)
+      await asyncio.sleep(0)
+      seen.append(("generate", request_id))
+      active.remove(request_id)
+
+    self.engine.update_weights.side_effect = update
+    self.engine.generate.side_effect = make_engine(generate).generate
+    requests = [{"request_id": path + str(i), "weights_path": path} for i, path in enumerate(["a", "a", "b", "a"])]
+    await self.sampler.process_batch(requests)
+    self.assertEqual(
+      seen, [("update", "a"), ("generate", "a0"), ("generate", "a1"), ("update", "b"), ("generate", "b2"), ("update", "a"), ("generate", "a3")]
+    )
+    self.assertEqual(self.sampler.weights_path, "a")
+
+  async def test_unchanged_weights_skip_update(self):
+    for request_id in ("1", "2"):
+      await self.sampler.process_batch([{"request_id": request_id, "weights_path": "a"}])
+    self.engine.update_weights.assert_awaited_once()
+    self.engine.pause_generation.assert_awaited_once_with(mode="wait", clear_cache=True)
+    self.engine.finish_weight_update.assert_awaited_once_with(weight_version="a")
+    self.engine.resume_generation.assert_awaited_once()
+    self.engine.sleep.assert_not_called()
+    self.engine.wake_up.assert_not_called()
+
+  async def test_failed_update_poisons_sampler_without_committing(self):
+    self.engine.update_weights.side_effect = RuntimeError("invalid patch")
+    await self.sampler.process_batch([{"request_id": "bad", "weights_path": "a"}])
+    self.assertIn("invalid patch", self.results()["bad"]["error_message"])
+    self.engine.generate.assert_not_called()
+    self.engine.finish_weight_update.assert_not_called()
+    self.engine.resume_generation.assert_not_called()
+    self.assertIsNone(self.sampler.weights_path)
+    await self.sampler.process_batch([{"request_id": "no-path"}])
+    self.assertIn("restart", self.results()["no-path"]["error_message"])
+
+  async def test_generation_failure_is_reported_without_poisoning_weights(self):
+    self.engine.generate.side_effect = RuntimeError("generation error")
+    await self.sampler.process_batch([{"request_id": "1", "weights_path": "a"}])
+    self.assertIn("generation error", self.results()["1"]["error_message"])
+    self.engine.generate.side_effect = make_engine().generate
+    await self.sampler.process_batch([{"request_id": "2", "weights_path": "a"}])
+    self.assertEqual(self.results()["2"]["type"], "sample")
+
+  async def test_generation_preserves_tokens_logprobs_and_stop_options(self):
+    async def outputs():
+      yield SimpleNamespace(
+        outputs=[SimpleNamespace(token_ids=[4], logprobs=[{4: SimpleNamespace(logprob=-0.25)}], finish_reason="length")],
+        prompt_logprobs=[None, {2: SimpleNamespace(logprob=-0.5)}],
+      )
+
+    self.engine.generate = Mock(return_value=outputs())
+    result = await self.sampler.generate(
+      {"request_id": "req", "prompt_token_ids": [1, 2], "stop": [7], "max_tokens": 1, "include_prompt_logprobs": True}
+    )
+    self.assertEqual(result["sequences"], [{"tokens": [4], "logprobs": [-0.25], "stop_reason": "length"}])
+    self.assertEqual(result["prompt_logprobs"], [None, -0.5])
+    params = self.engine.generate.call_args.kwargs["sampling_params"]
+    self.assertEqual(params.stop_token_ids, [7])
+    self.assertEqual(params.max_tokens, 1)
+    self.assertEqual(params.prompt_logprobs, 1)
+    self.assertIsNone(self.engine.generate.call_args.kwargs["lora_request"])
+
+  async def test_lora_request_attached_only_when_adapter_exists(self):
+    with tempfile.TemporaryDirectory() as adapter:
+      await self.sampler.process_batch([{"request_id": "1", "lora_id": "job-a", "lora_path": adapter}])
+      self.assertIsNone(self.engine.generate.call_args.kwargs["lora_request"])
+      open(os.path.join(adapter, "adapter_config.json"), "w").close()
+      await self.sampler.process_batch([{"request_id": "2", "lora_id": "job-a", "lora_path": adapter}])
+      lora_request = self.engine.generate.call_args.kwargs["lora_request"]
+      self.assertEqual((lora_request.lora_name, lora_request.lora_path), ("job-a", adapter))
+    self.engine.update_weights.assert_not_called()
 
 
-gpu_worker_mock.Worker = MockWorker
+class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
+  async def asyncSetUp(self):
+    self.events = []
+    self.store = AsyncMock()
+    self.engine = make_engine()
+    self.slicer = AsyncMock()
+    self.slicer.acquire = Mock(side_effect=self.slot)
+    self.workload = WorkloadRef("sampler-test")
+    self.factory = Mock(side_effect=self.create_engine)
+    self.sampler = Sampler("test", self.store, self.factory, time_slicer=self.slicer, workload=self.workload)
 
-# Mock model loader
-model_loader_mock = MagicMock()
-sys.modules["vllm.model_executor.model_loader"] = model_loader_mock
+  @asynccontextmanager
+  async def slot(self, workload):
+    self.events.append("acquire")
+    try:
+      yield
+    finally:
+      self.events.append("release")
 
-# Now import the patching function
-from server.vllm_sampler import patch_vllm_worker_for_delta_sync
+  def create_engine(self):
+    self.events.append("create")
+    return self.engine
 
+  async def test_initialization_and_batches_own_slots_and_cleanup_once(self):
+    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1"}, {"request_id": "SHUTDOWN_SENTINEL"}]
+    await self.sampler.run()
+    await self.sampler.close()
+    self.assertEqual(self.events, ["acquire", "create", "release", "acquire", "release"])
+    self.assertEqual(self.engine.sleep.await_count, 2)
+    self.engine.wake_up.assert_awaited_once()
+    self.engine.shutdown.assert_called_once()
+    self.slicer.unregister.assert_awaited_once_with(self.workload)
+    self.slicer.close.assert_awaited_once()
+    self.assertEqual(self.store.set_future.call_args.args[0], "1")
 
-class SamplerPatchTest(unittest.TestCase):
-  def setUp(self):
-    self.test_dir = tempfile.mkdtemp()
-    # Reset mock worker state
-    if hasattr(MockWorker, "_openrl_delta_patched"):
-      delattr(MockWorker, "_openrl_delta_patched")
+  async def test_registration_failure_never_constructs_engine(self):
+    self.slicer.register.side_effect = RuntimeError("registration failed")
+    with self.assertRaisesRegex(RuntimeError, "registration failed"):
+      await self.sampler.run()
+    self.factory.assert_not_called()
+    self.slicer.unregister.assert_not_called()
+    self.slicer.close.assert_awaited_once()
 
-  def tearDown(self):
-    shutil.rmtree(self.test_dir, ignore_errors=True)
+  async def test_initialization_failure_unregisters_without_unlocked_retry(self):
+    self.factory.side_effect = RuntimeError("engine failed")
+    with self.assertRaisesRegex(RuntimeError, "engine failed"):
+      await self.sampler.run()
+    self.factory.assert_called_once()
+    self.slicer.unregister.assert_awaited_once()
+    self.slicer.close.assert_awaited_once()
 
-  def test_custom_reload_weights_correct_setup(self):
-    # Let's write the clean version here:
-    # Reset Worker class to original mock state
-    class CleanMockWorker(MockWorkerBase):
-      def reload_weights(self, *args, **kwargs):
-        self.original_reload_called = True
-        self.original_reload_args = args
-        self.original_reload_kwargs = kwargs
+  async def test_cancellation_shuts_down_engine_and_unregisters(self):
+    entered = asyncio.Event()
 
-    gpu_worker_mock.Worker = CleanMockWorker
+    async def get_batch(model_id):
+      entered.set()
+      await asyncio.Event().wait()
 
-    patch_vllm_worker_for_delta_sync()
+    self.store.get_sampling_requests_for_model.side_effect = get_batch
+    task = asyncio.create_task(self.sampler.run())
+    await entered.wait()
+    task.cancel()
+    with self.assertRaises(asyncio.CancelledError):
+      await task
+    self.engine.shutdown.assert_called_once()
+    self.slicer.unregister.assert_awaited_once()
+    self.slicer.close.assert_awaited_once()
 
-    worker = CleanMockWorker()
-
-    # Mock base model iterator loading:
-    base_weight = torch.zeros(10, 10, dtype=torch.bfloat16)
-    mock_base_weights = [("fc.weight", base_weight.clone())]
-
-    mock_loader_instance = MagicMock()
-    mock_loader_instance.get_all_weights.return_value = mock_base_weights
-    model_loader_mock.get_model_loader.return_value = mock_loader_instance
-
-    mock_model = MagicMock()
-    worker.model_runner.get_model.return_value = mock_model
-
-    # Save a mock delta
-    delta_tensors = {
-      "fc.weight.indices": torch.tensor([2], dtype=torch.int32),  # flat index 2 = row 0, col 2
-      "fc.weight.values": torch.tensor([42.0], dtype=torch.bfloat16),
-    }
-    weights_path = os.path.join(self.test_dir, "step_1")
-    os.makedirs(weights_path, exist_ok=True)
-    import safetensors.torch
-
-    safetensors.torch.save_file(delta_tensors, os.path.join(weights_path, "delta.safetensors"))
-    with open(os.path.join(weights_path, "metadata.json"), "w") as f:
-      json.dump({"format": "sparse_delta", "changed_elements": 1}, f)
-
-    # Trigger reload
-    worker.reload_weights(weights_path=weights_path)
-
-    # Verify:
-    # 1. CPU snapshot initialized and updated
-    self.assertTrue(hasattr(worker, "_bf16_snapshot"))
-    self.assertIn("fc.weight", worker._bf16_snapshot)
-
-    # Value at index 2 should be updated to 42.0
-    self.assertEqual(float(worker._bf16_snapshot["fc.weight"].view(-1)[2]), 42.0)
-    # Value at index 0 should remain 0.0
-    self.assertEqual(float(worker._bf16_snapshot["fc.weight"].view(-1)[0]), 0.0)
-
-    # 2. original_reload was called with the snapshot iterator
-    self.assertTrue(getattr(worker, "original_reload_called", False))
-
-    # Check that weights_iterator kwargs contains the snapshot items
-    kwargs = worker.original_reload_kwargs
-    self.assertIn("weights_iterator", kwargs)
-    self.assertTrue(kwargs.get("is_checkpoint_format"))
-
-    iterator = list(kwargs["weights_iterator"])
-    self.assertEqual(len(iterator), 1)
-    self.assertEqual(iterator[0][0], "fc.weight")
-    # Verify the iterator yielded the updated snapshot tensor
-    self.assertEqual(float(iterator[0][1].view(-1)[2]), 42.0)
+  async def test_unshared_sampler_does_not_sleep_or_wake_engine(self):
+    sampler = Sampler("test", self.store, lambda: self.engine)
+    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1"}, {"request_id": "SHUTDOWN_SENTINEL"}]
+    await sampler.run()
+    self.engine.wake_up.assert_not_called()
+    self.engine.sleep.assert_not_called()
+    self.engine.shutdown.assert_called_once()
 
 
 if __name__ == "__main__":

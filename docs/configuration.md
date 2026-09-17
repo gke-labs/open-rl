@@ -87,7 +87,6 @@ backend by default for physical checkpoint/restore.
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `MOCK_VLLM` | `0` | `1` starts the vLLM worker without a real vLLM engine, useful for local API debugging. |
 | `VLLM_ARCHITECTURE_OVERRIDE` | unset | Optional architecture override passed to the in-repo vLLM worker. Gemma 4 examples use `Gemma4ForCausalLM`. |
 | `VLLM_ENABLE_MULTIMODAL` | `0` | By default the samplers pass `limit_mm_per_prompt={"image": 0, "video": 0}`. Text checkpoints published as `*ForConditionalGeneration` otherwise make vLLM reserve a multi-GiB encoder cache during startup that no OpenRL code path can use, which can OOM engine init. Set to `1` to restore stock vLLM behaviour. |
 

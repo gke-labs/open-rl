@@ -95,10 +95,8 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
   return env
 
 
-def worker_module(role: str, is_lora: bool) -> str:
-  if role == "trainer":
-    return "server.training_requests_processor"
-  return "server.lora_sampler" if is_lora else "server.vllm_sampler"
+def worker_module(role: str) -> str:
+  return "server.training_requests_processor" if role == "trainer" else "server.vllm_sampler"
 
 
 def worker_args(runtime: str, role: str, is_lora: bool) -> list[str]:
@@ -156,7 +154,7 @@ class LocalWorkerManager:
       if gpus:
         env["CUDA_VISIBLE_DEVICES"] = gpus
       extras = ["gpu"] if role == "trainer" else ["gpu", "vllm"]
-      command = python_command(extras, worker_module(role, is_lora), worker_args(runtime, role, is_lora))
+      command = python_command(extras, worker_module(role), worker_args(runtime, role, is_lora))
       log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
       log_dir.mkdir(parents=True, exist_ok=True)
       with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:

@@ -100,7 +100,7 @@ def pod_template(worker: Worker) -> dict[str, Any]:
         {
           "name": "worker",
           "image": os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"),
-          "command": ["uv", "run", "python", "-u", "-m", worker_module(worker.role, worker.is_lora)],
+          "command": ["uv", "run", "python", "-u", "-m", worker_module(worker.role)],
           "args": worker_args(worker.runtime, worker.role, worker.is_lora),
           "env": pod_env(worker),
           "resources": worker.footprint.resources,
