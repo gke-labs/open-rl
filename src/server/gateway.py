@@ -186,12 +186,45 @@ def is_sampler_weights_ref(model_id: str | None) -> bool:
   return len(parts) >= 3 and parts[1] == "sampler_weights"
 
 
+def _payload_metadata(req: dict[str, Any]) -> dict[str, Any]:
+  """Return the request-payload metadata object used for FFT / training config.
+
+  Clients send this as `metadata` (preferred) or `user_metadata`. Non-dict
+  values are ignored.
+  """
+  for key in ("metadata", "user_metadata"):
+    value = req.get(key)
+    if isinstance(value, dict):
+      return value
+  return {}
+
+
+def _fine_tuning_type_from_payload(req: dict[str, Any]) -> str | None:
+  """Read fine-tuning type from the request payload, not HTTP headers.
+
+  Accepted locations, first match wins:
+  - metadata.fine_tuning_type / metadata.OPEN_RL_FINE_TUNING_TYPE
+  - user_metadata.fine_tuning_type / user_metadata.OPEN_RL_FINE_TUNING_TYPE
+  - top-level fine_tuning_type
+  """
+  meta = _payload_metadata(req)
+  raw = meta.get("fine_tuning_type") or meta.get("OPEN_RL_FINE_TUNING_TYPE") or req.get("fine_tuning_type")
+  if raw is None:
+    return None
+  value = str(raw).strip().lower()
+  if value == "full":
+    return "full"
+  if value == "lora":
+    return "lora"
+  return None
+
+
 async def _extract_and_persist_model_metadata(
   req: dict[str, Any],
   request: Request | None = None,
   default_fine_tuning_type: str = "lora",
 ) -> str:
-  """Extract and normalize model configuration from headers and payload, persisting TrainingModelMetadata exactly once."""
+  """Extract and normalize model configuration from payload metadata (and headers as fallback), persisting TrainingModelMetadata exactly once."""
   base_model = req.get("base_model")
   if not base_model and default_fine_tuning_type != "restored":
     raise ValueError("base_model is required in request payload")
@@ -203,7 +236,11 @@ async def _extract_and_persist_model_metadata(
   weight_sync_cfg = extract_weight_sync_config(headers)
 
   fine_tuning_type = default_fine_tuning_type
-  if request and hasattr(request, "headers") and "x-open-rl-fine-tuning-type" in request.headers:
+  payload_ft = _fine_tuning_type_from_payload(req)
+  if payload_ft is not None:
+    fine_tuning_type = payload_ft
+  elif request and hasattr(request, "headers") and "x-open-rl-fine-tuning-type" in request.headers:
+    # Deprecated: header override. Prefer payload metadata (issue #200).
     h_val = (request.headers.get("x-open-rl-fine-tuning-type") or "").lower()
     if h_val == "full":
       fine_tuning_type = "full"
