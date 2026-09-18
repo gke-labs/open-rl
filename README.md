@@ -131,6 +131,7 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
 - **Technical Documentation**:
   - [Architecture](docs/architecture.md)
   - [Tinker Client Compatibility](docs/tinker-client-compatibility.md)
+  - [Sandboxed Reward Execution](docs/sandboxed-rewards.md)
 - **Deployment**:
   - [Kubernetes Deployment Guide (GKE)](docs/setup/gke-setup.md)
 

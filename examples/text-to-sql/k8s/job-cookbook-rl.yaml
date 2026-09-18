@@ -1,0 +1,45 @@
+# Phase B of design 013: tinker-cookbook rl_train on Text-to-SQL (Qwen3-1.7B),
+# one sandbox claimed per prompt group. Watch the claims come and go with
+#   kubectl -n openrl-system get sandboxclaims -w
+#
+#   kubectl -n openrl-system delete job textsql-cookbook-rl --ignore-not-found
+#   kubectl -n openrl-system apply -f examples/text-to-sql/k8s/job-cookbook-rl.yaml
+#   kubectl -n openrl-system logs -f job/textsql-cookbook-rl
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: textsql-cookbook-rl
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      serviceAccountName: open-rl-sa
+      containers:
+        - name: recipe
+          image: ghcr.io/gke-labs/open-rl/client:latest
+          imagePullPolicy: Always
+          workingDir: /app
+          command: ["uv", "--project", "examples", "run", "python", "examples/text-to-sql/cookbook/train.py"]
+          args:
+            - model_name=Qwen/Qwen3-1.7B
+            - base_url=http://open-rl-gateway-service:8000
+            - log_path=/mnt/shared/open-rl/runs/textsql-cookbook-rl
+            - sandbox=agent_sandbox
+            - max_steps=40
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: HF_HOME
+              value: /mnt/shared/open-rl/huggingface
+          resources:
+            requests: {cpu: "2", memory: 8Gi}
+            limits: {memory: 16Gi}
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /mnt/shared
+      volumes:
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: open-rl-shared-pvc

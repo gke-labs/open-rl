@@ -27,6 +27,11 @@ dependencies = [
     "ipykernel",
 ]
 
+[project.optional-dependencies]
+# Kubernetes sandbox backend for reward execution (examples/common/agent_sandbox.py).
+# Optional so laptop runs without a cluster do not pull the kubernetes clients.
+sandbox = ["k8s-agent-sandbox[async]>=1.0.1"]
+
 [project.scripts]
 harvey-train = "harvey_labs.train:main"
 harvey-eval = "harvey_labs.eval_checkpoint:main"

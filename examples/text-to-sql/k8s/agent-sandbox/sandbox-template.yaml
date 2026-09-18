@@ -1,0 +1,70 @@
+# gVisor sandbox that executes one model-written SQLite query per call.
+# Claimed from the warm pool below by examples/common/agent_sandbox.py.
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: text-to-sql-executor
+spec:
+  # Headless Service per sandbox: the SDK falls back to
+  # <sandbox>.<namespace>.svc.cluster.local when the pod IP is not yet in status.
+  service: true
+  # Claims may not inject environment variables; every sandbox is identical.
+  envVarsInjectionPolicy: Disallowed
+  networkPolicy:
+    # Only the training client, which runs in this namespace, may reach :8888.
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: openrl-system
+        ports:
+          - protocol: TCP
+            port: 8888
+    # No egress rules at all: the sandbox cannot open a connection anywhere.
+    egress: []
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: text-to-sql-executor
+        app.kubernetes.io/part-of: text-to-sql
+    spec:
+      # GKE Sandbox: the RuntimeClass carries the gvisor nodeSelector and toleration.
+      runtimeClassName: gvisor
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: executor
+          image: SQL_EXECUTOR_IMAGE
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+              name: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              memory: 512Mi
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8888
+            periodSeconds: 2
+          volumeMounts:
+            - name: work
+              mountPath: /app/work
+      volumes:
+        - name: work
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

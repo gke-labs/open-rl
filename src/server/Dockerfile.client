@@ -28,7 +28,7 @@ ENV UV_LINK_MODE=copy \
 # Sync CPU-only dependencies for root (with cluster extra for kubernetes launcher) and examples
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra cluster && \
-    uv --project examples sync --frozen --no-install-project
+    uv --project examples sync --frozen --no-install-project --extra sandbox
 
 # Copy source code
 COPY . .
