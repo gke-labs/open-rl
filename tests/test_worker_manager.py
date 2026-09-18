@@ -271,6 +271,41 @@ class GatewayMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(meta_dict["fine_tuning_type"], "lora")
     self.assertEqual(meta_dict["weight_sync_config"]["strategy"], "delta")
 
+  async def test_extract_and_persist_metadata_from_payload_metadata(self) -> None:
+    import json
+
+    model_id = await gateway._extract_and_persist_model_metadata(
+      {
+        "base_model": "Qwen/Qwen2.5-0.5B",
+        "metadata": {"fine_tuning_type": "lora", "OPEN_RL_FINE_TUNING_TYPE": "lora"},
+      },
+      default_fine_tuning_type="full",
+    )
+
+    meta_val = self.store.kv_store.get(f"open_rl:model_meta:{model_id}")
+    self.assertIsNotNone(meta_val)
+    meta_dict = json.loads(meta_val)
+    self.assertEqual(meta_dict["fine_tuning_type"], "lora")
+
+  async def test_payload_metadata_overrides_deprecated_header(self) -> None:
+    import json
+
+    from fastapi import Request
+
+    request = Request(
+      {
+        "type": "http",
+        "headers": [(b"x-open-rl-fine-tuning-type", b"full")],
+      }
+    )
+    model_id = await gateway._extract_and_persist_model_metadata(
+      {"base_model": "Qwen/Qwen2.5-0.5B", "metadata": {"fine_tuning_type": "lora"}},
+      request,
+      default_fine_tuning_type="full",
+    )
+    meta_dict = json.loads(self.store.kv_store.get(f"open_rl:model_meta:{model_id}"))
+    self.assertEqual(meta_dict["fine_tuning_type"], "lora")
+
 
 class GatewayFutureTranslationTest(unittest.TestCase):
   def test_create_model_result_translates_to_tinker_shape(self) -> None:
