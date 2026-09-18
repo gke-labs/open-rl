@@ -48,12 +48,28 @@ gpu = [
     "torchvision; sys_platform == 'linux'",
     "transformers>=5.5.4",
 ]
+# TPU training via torch_tpu. torch_tpu itself is not on PyPI and must be
+# installed separately (build a wheel from the torch_tpu repo, or use a
+# prebuilt one); it pairs with torch 2.11.0.
+tpu = [
+    "datasets",
+    "numpy",
+    "peft",
+    "torch==2.11.0; sys_platform == 'linux'",
+    "transformers>=5.5.4",
+]
 vllm = [
     "torch; sys_platform == 'linux'",
     "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
     "vllm==0.25.1; sys_platform == 'linux'",
+]
+# TPU sampling via tpu-inference. vllm-tpu bundles vllm and tpu_inference at
+# matched versions; its vllm differs from the CUDA extra's pin, hence the
+# conflict declarations below.
+tpu-sampler = [
+    "vllm-tpu>=0.29.0; sys_platform == 'linux'",
 ]
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
@@ -88,6 +104,34 @@ conflicts = [
         { extra = "cpu" },
         { extra = "vllm" },
     ],
+    [
+        { extra = "tpu" },
+        { extra = "cpu" },
+    ],
+    [
+        { extra = "tpu" },
+        { extra = "gpu" },
+    ],
+    [
+        { extra = "tpu" },
+        { extra = "vllm" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "cpu" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "gpu" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "vllm" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "tpu" },
+    ],
 ]
 
 [[tool.uv.index]]
@@ -114,6 +158,8 @@ explicit = true
 # Pick the torch build from the user-facing cpu/gpu extras; vllm always uses CUDA torch.
 torch = [
     { index = "torch-cpu", extra = "cpu" },
+    # TPU uses the plain CPU torch build; torch_tpu provides the backend.
+    { index = "torch-cpu", extra = "tpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]

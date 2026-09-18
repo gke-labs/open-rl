@@ -319,7 +319,7 @@ def start_backend(config: RunConfig, processes: list[ManagedProcess]) -> str:
   launch(
     processes,
     "backend",
-    uv_run(config.uv_extra) + ["python", "-m", "uvicorn", "server.gateway:app", "--host", config.host, "--port", str(port)],
+    ["/home/hodamo_google_com/.venv/bin/python", "-m", "uvicorn", "server.gateway:app", "--host", config.host, "--port", str(port)],
     env,
     log_dir / "backend.log",
     lambda: http_ok(f"{base_url}/api/v1/healthz"),
@@ -430,7 +430,7 @@ def run_example(
   if overrides is None:
     overrides = parse_overrides(config.extra)
   args = [f"{key}={value}" for key, value in {**defaults, **overrides}.items()]
-  return run_command(["uv", "--project", "examples", "run", "python", *script, *args], env=examples_env(config), watch=watch, prefix=prefix)
+  return run_command(["/home/hodamo_google_com/.venv/bin/python", *script, *args], env=examples_env(config), watch=watch, prefix=prefix)
 
 
 def run_tiny(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
@@ -502,7 +502,7 @@ def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
   for p in paths:
     path_args.extend(["--path", p])
   run_command(
-    ["uv", "--project", "examples", "run", "python", "examples/sft/gsm8k/vllm_eval.py"]
+    ["/home/hodamo_google_com/.venv/bin/python", "examples/sft/gsm8k/vllm_eval.py"]
     + path_args
     + [
       "--base-url",
@@ -585,7 +585,8 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
 
 def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
   if "gemma" in base_model.lower():
-    return "recipes.math_rl.train_gemma", "gemma4"
+    renderer = "gemma2" if "gemma-2" in base_model.lower() else "gemma4"
+    return "recipes.math_rl.train_gemma", renderer
   if "Qwen3" in base_model and "Instruct" not in base_model:
     return "recipes.math_rl.train_cli", "qwen3"
   if "Instruct" in base_model or "Qwen2.5" in base_model:
@@ -619,7 +620,7 @@ def run_gsm8k_rl(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
   out = None
   try:
     out = run_command(
-      ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+      ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
       env=examples_env(config),
       watch=watch,
     )
@@ -658,7 +659,7 @@ def run_gsm8k_rl_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess
         *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
         env=examples_env(config),
         watch=watch,
         prefix=f"[{job}] ",
@@ -720,7 +721,7 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
         _set_fft_delta_apply(env)
 
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
         env=env,
         watch=watch,
         prefix=f"[{job}] ",
@@ -843,7 +844,7 @@ def run_gsm8k_rl_x3(config: RunConfig, base_url: str, watch: list[ManagedProcess
         *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
         env=examples_env(config),
         watch=watch,
         prefix=f"[{job}] ",
@@ -902,7 +903,7 @@ def run_gsm8k_rl_hetero(config: RunConfig, base_url: str, watch: list[ManagedPro
         *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
         env=examples_env(config),
         watch=watch,
         prefix=f"[{job}] ",
@@ -961,7 +962,7 @@ def run_gsm8k_rl_x3_hetero_8b_0_6b(config: RunConfig, base_url: str, watch: list
         *clean_cli_extra(config.extra),
       ]
       results[job] = run_command(
-        ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],
+        ["/home/hodamo_google_com/.venv/bin/python", "-m", module_name, *args],
         env=examples_env(config),
         watch=watch,
         prefix=f"[{job}] ",

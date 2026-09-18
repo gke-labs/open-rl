@@ -1,0 +1,63 @@
+# TPU trainer image. Mirrors src/server/Dockerfile but with no CUDA: plain
+# Ubuntu base, the `tpu` extra instead of `gpu`+`vllm` (they conflict in uv),
+# and no cuda-checkpoint or vLLM patching.
+#
+# torch_tpu is not on PyPI; pass a wheel from the build context:
+#
+#   DOCKER_BUILDKIT=1 docker build -f src/server/Dockerfile.tpu \
+#     --build-arg TORCH_TPU_WHEEL=wheels/torch_tpu-<version>.whl .
+FROM ubuntu:22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    UV_FROZEN=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates \
+    git \
+    build-essential \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/uv
+ENV PATH="/uv/bin:$PATH"
+
+# Install Python 3.12 via uv
+RUN uv python install 3.12
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml .
+COPY uv.lock .
+
+# Same uv settings as the server image; see src/server/Dockerfile for the
+# rationale behind each.
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_SYNC=1
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --extra tpu --extra cluster
+
+# torch_tpu registers the "tpu" PrivateUse1 backend on import. Installed after
+# the sync because it is not in uv.lock; its torch==2.11.0 requirement matches
+# the pin in the tpu extra.
+ARG TORCH_TPU_WHEEL
+COPY ${TORCH_TPU_WHEEL} /tmp/torch_tpu/
+RUN uv pip install /tmp/torch_tpu/*.whl && rm -rf /tmp/torch_tpu
+
+# Copy source code
+COPY . .
+
+ENV PYTHONPATH="/app/src:/app:$PYTHONPATH" \
+    # Trainer workers pick the torch device from this (see
+    # training/trainer_worker.py); torch alone cannot detect a TPU.
+    OPEN_RL_DEVICE=tpu
+
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "server.gateway:app", "--host", "0.0.0.0", "--port", "8000"]

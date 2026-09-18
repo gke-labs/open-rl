@@ -781,12 +781,16 @@ async def create_sampling_session(req: dict):
     if hasattr(s, "redis"):
       print(f"[GATEWAY] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
       start_time = time.monotonic()
+      # TPU engines precompile a shape ladder at startup (~4 min measured on
+      # v6e even at max_model_len=1024), so the TPU default is far looser.
+      default_timeout = "900" if os.getenv("OPEN_RL_SAMPLER_DEVICE", "").lower() == "tpu" else "300"
+      ready_timeout = float(os.getenv("OPEN_RL_SAMPLER_READY_TIMEOUT_S", default_timeout))
       while True:
         is_ready = await s.redis.get(f"open_rl:sampler_ready:{ready_check_id}")
         if is_ready == "1" or is_ready == b"1":
           print(f"[GATEWAY] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
           break
-        if time.monotonic() - start_time > 300:
+        if time.monotonic() - start_time > ready_timeout:
           raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
         await asyncio.sleep(1)
 
