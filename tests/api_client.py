@@ -5,9 +5,21 @@ exercises what the tinker client sees rather than a handler called as a function
 The lifespan is not run.
 """
 
+from contextlib import contextmanager
+from unittest.mock import patch
+
 import httpx
 
 from server import api_server
+from server.api_runtime import ApiRuntime
+from server.store import InMemoryStore
+
+
+@contextmanager
+def runtime_context(store=None, worker_manager=None):
+  runtime = ApiRuntime(store if store is not None else InMemoryStore(), worker_manager, api_server.TMP_DIR)
+  with patch.object(api_server.app.state, "runtime", runtime, create=True):
+    yield runtime
 
 
 def asgi_client() -> httpx.AsyncClient:

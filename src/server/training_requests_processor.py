@@ -18,9 +18,10 @@ from opentelemetry import propagate, trace
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
 from server.store import RequestStore, get_store
+from training.commands import parse_command
 from training.fft_trainer_worker import FFTConfig, FFTTrainingWorker
 from training.lora_trainer_worker import LoraConfig, LoraTrainingWorker
-from training.trainer_worker import Datum
+from training.types import Datum
 
 tracer = trace.get_tracer(__name__)
 
@@ -30,18 +31,6 @@ TrainingWorker = FFTTrainingWorker | LoraTrainingWorker
 
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
-
-
-def parse_datum(raw: dict[str, Any]) -> Datum:
-  """Convert Tinker wire-format datum with chunks to the flat Datum type."""
-  tokens: list[int] = []
-  for chunk in raw.get("model_input", {}).get("chunks", []):
-    tokens.extend(chunk.get("tokens", []))
-
-  loss_fn_inputs = {
-    key: value if isinstance(value, dict) and "data" in value else {"data": value} for key, value in raw.get("loss_fn_inputs", {}).items()
-  }
-  return Datum(model_input=tokens, loss_fn_inputs=loss_fn_inputs)
 
 
 def describe_requests(batch: list[dict[str, Any]]) -> str:
@@ -62,15 +51,16 @@ class TrainingRequestsProcessor(Protocol):
     token = None
 
     try:
-      op = raw_request["op"]
-      request_id = raw_request["request_id"]
-      resolved_model_id = model_id or raw_request.get("model_id") or "default"
+      command = parse_command(raw_request)
+      request_id = command.request_id
+      resolved_model_id = model_id or command.model_id or "default"
 
-      carrier = raw_request.get("trace_context")
-      ctx = propagate.extract(carrier) if carrier else None
+      ctx = propagate.extract(command.trace_context) if command.trace_context else None
       token = otel_context.attach(ctx) if ctx else None
 
-      result = await self.dispatch_operation(op, raw_request.get("payload", {}), resolved_model_id)
+      # The handlers read the command's fields as the payload they always took.
+      payload = command.model_dump(mode="json", exclude={"op", "request_id", "model_id", "trace_context"})
+      result = await self.dispatch_operation(command.op, payload, resolved_model_id)
       return request_id, result
     except Exception as exc:
       traceback.print_exc()
@@ -144,7 +134,7 @@ async def _fetch_model_meta(
         base_model = meta.get("base_model") or payload.get("base_model") or ""
         full_config = meta.get("full_config") or payload.get("full_config") or {}
         lora_config = meta.get("lora_config") or payload.get("lora_config") or {}
-        fine_tuning_type = meta.get("fine_tuning_type") or ("lora" if "lora_config" in meta or "lora_config" in payload else default_kind)
+        fine_tuning_type = meta.get("fine_tuning_type") or payload.get("fine_tuning_type") or ("lora" if "lora_config" in meta else default_kind)
         return base_model, full_config, lora_config, fine_tuning_type
     except Exception:
       pass
@@ -152,7 +142,7 @@ async def _fetch_model_meta(
     payload.get("base_model", ""),
     payload.get("full_config") or {},
     payload.get("lora_config") or {},
-    "lora" if "lora_config" in payload or default_kind == "lora" else "full",
+    payload.get("fine_tuning_type") or ("lora" if default_kind == "lora" else "full"),
   )
 
 
@@ -227,7 +217,7 @@ class LoraTrainingRequestsProcessor(TrainingRequestsProcessor):
     }
 
   async def forward_backward(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    typed_data = [parse_datum(item) for item in payload.get("data", [])]
+    typed_data = [Datum.model_validate(item) for item in payload.get("data", [])]
     result = await asyncio.to_thread(
       self.worker.forward_backward,
       typed_data,
@@ -472,7 +462,7 @@ class FFTTrainingRequestsProcessor(TrainingRequestsProcessor):
     }
 
   async def forward_backward(self, payload: dict[str, Any], model_id: str) -> dict[str, Any]:
-    typed_data = [parse_datum(item) for item in payload.get("data", [])]
+    typed_data = [Datum.model_validate(item) for item in payload.get("data", [])]
     result = await asyncio.to_thread(
       self.worker.forward_backward,
       typed_data,

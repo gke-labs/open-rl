@@ -1,13 +1,11 @@
 import asyncio
 import os
 import unittest
-from collections import defaultdict
 from unittest.mock import patch
 
 from server import api_server
-from server.session_registry import SessionRegistry
 from server.store import InMemoryStore
-from tests.api_client import asgi_client, post_json
+from tests.api_client import asgi_client, post_json, runtime_context
 
 
 class RuntimeManager:
@@ -27,14 +25,11 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
   def setUp(self):
     self.store = InMemoryStore()
     self.manager = RuntimeManager()
-    self.registry = SessionRegistry(self.store)
-    self.enterContext(patch.object(api_server, "store", self.store))
+    self.runtime = self.enterContext(runtime_context(self.store, self.manager))
+    self.registry = self.runtime.sessions
     self.enterContext(patch.object(api_server, "get_store", return_value=self.store))
     self.enterContext(patch("server.store.get_store", return_value=self.store))
-    self.enterContext(patch.object(api_server, "session_registry", self.registry))
-    self.enterContext(patch.object(api_server, "worker_manager", self.manager))
     self.enterContext(patch.dict(os.environ, {"SAMPLING_BACKEND": "vllm", "OPEN_RL_ENABLE_FFT": "true"}))
-    self.enterContext(patch.object(api_server, "owner_locks", defaultdict(asyncio.Lock)))
 
   async def asyncSetUp(self):
     self.client = await self.enterAsyncContext(asgi_client())
@@ -48,7 +43,7 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
 
   async def reap(self):
     for owner in await self.registry.owners():
-      await api_server.reap_owner(owner)
+      await self.runtime.reap_owner(owner)
 
   async def test_shared_lora_owner_outlives_the_session_that_created_it(self):
     training = (await self.post("create_session", {}))["session_id"]
@@ -91,9 +86,9 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
       return {"test-base"}
 
     self.manager.release_owner = release_owner
-    reap = asyncio.create_task(api_server.reap_owner("test-base"))
+    reap = asyncio.create_task(self.runtime.reap_owner("test-base"))
     await slow.wait()  # the reaper has decided and is mid-delete
-    await api_server.bind_session("b", "test-base")
+    await self.runtime.bind_session("b", "test-base")
     await reap
     self.assertEqual(self.manager.released, ["test-base"])
     self.assertTrue(await self.registry.in_use("test-base"))

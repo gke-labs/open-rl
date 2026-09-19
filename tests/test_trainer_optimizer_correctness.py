@@ -225,13 +225,13 @@ class _TimeSlicerStub:
 
 
 def _datum(model_input, target_tokens, *, weights=None, logprobs=None, advantages=None):
-  loss_fn_inputs = {"target_tokens": trainer_worker_module.TensorData(data=target_tokens)}
+  loss_fn_inputs = {"target_tokens": {"data": target_tokens}}
   if weights is not None:
-    loss_fn_inputs["weights"] = trainer_worker_module.TensorData(data=weights)
+    loss_fn_inputs["weights"] = {"data": weights}
   if logprobs is not None:
-    loss_fn_inputs["logprobs"] = trainer_worker_module.TensorData(data=logprobs)
+    loss_fn_inputs["logprobs"] = {"data": logprobs}
   if advantages is not None:
-    loss_fn_inputs["advantages"] = trainer_worker_module.TensorData(data=advantages)
+    loss_fn_inputs["advantages"] = {"data": advantages}
   return trainer_worker_module.Datum(model_input=model_input, loss_fn_inputs=loss_fn_inputs)
 
 
@@ -423,10 +423,8 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
         "request_id": "req-a",
         "model_id": "adapter-a",
         "op": "create_model",
-        "payload": {
-          "base_model": "base-model",
-          "lora_config": {"seed": 123, "rank": 2},
-        },
+        "base_model": "base-model",
+        "lora_config": {"seed": 123, "rank": 2},
       },
       "adapter-a",
     )
@@ -443,21 +441,6 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(result["fine_tuning_type"], "lora")
     self.assertEqual(result["type"], "model_created")
 
-  def test_parse_datum_flattens_chunked_model_input(self) -> None:
-    datum = training_requests_processor_module.parse_datum(
-      {
-        "model_input": {"chunks": [{"tokens": [1, 2]}, {"tokens": [3]}]},
-        "loss_fn_inputs": {
-          "target_tokens": [2, 3, 4],
-          "weights": {"data": [1.0, 0.5, 0.25]},
-        },
-      }
-    )
-
-    self.assertEqual(datum.model_input, [1, 2, 3])
-    self.assertEqual(datum.loss_fn_inputs["target_tokens"].data, [2, 3, 4])
-    self.assertEqual(datum.loss_fn_inputs["weights"].data, [1.0, 0.5, 0.25])
-
   async def test_full_processor_create_model_uses_model_worker(self) -> None:
     worker = _RecordingFullWorker()
     store = _FutureStoreStub()
@@ -470,10 +453,9 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
           "request_id": "req-a",
           "model_id": "model-a",
           "op": "create_model",
-          "payload": {
-            "base_model": "base-model",
-            "full_config": {"seed": 123, "rank": 8},
-          },
+          "fine_tuning_type": "full",
+          "base_model": "base-model",
+          "full_config": {"seed": 123, "rank": 8},
         },
         "model-a",
       )
@@ -501,10 +483,8 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
           "request_id": "req-a",
           "model_id": "model-a",
           "op": "save_weights_for_sampler",
-          "payload": {
-            "path": "tinker://model-a/sampler_weights/final",
-            "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
-          },
+          "path": "tinker://model-a/sampler_weights/final",
+          "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
         },
         "model-a",
       )
@@ -556,10 +536,9 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "request_id": "req-a",
             "model_id": "model-a",
             "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
+            "fine_tuning_type": "full",
+            "base_model": "base-model",
+            "full_config": {"seed": 123},
           }
         ]
       ]
@@ -597,10 +576,9 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "request_id": "req-a",
             "model_id": "model-a",
             "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
+            "fine_tuning_type": "full",
+            "base_model": "base-model",
+            "full_config": {"seed": 123},
           }
         ]
       ],

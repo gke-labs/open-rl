@@ -8,7 +8,7 @@ from server import api_server
 from server.estimator import footprint
 from server.scheduler_worker_manager import GROUP, PLURAL, VERSION, SchedulerWorkerManager
 from server.store import InMemoryStore
-from tests.api_client import asgi_client, post_json
+from tests.api_client import asgi_client, post_json, runtime_context
 
 
 class ApiError(Exception):
@@ -218,9 +218,8 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     with (
       patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}),
       patch("server.store.get_store", return_value=store),
-      patch.object(api_server, "store", store),
+      runtime_context(store, SchedulerWorkerManager(custom_api=api)),
       patch.object(api_server, "get_store", return_value=store),
-      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api)),
     ):
       async with asgi_client() as client:
         for model_id in ("lora-a", "fft-a", "lora-b"):
