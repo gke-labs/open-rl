@@ -6,8 +6,9 @@ import unittest
 from unittest.mock import patch
 
 from server import training_requests_processor as trp
-from server.store import InMemoryStore
+from server.store import InMemoryStateStore, InMemoryStore
 from tests.test_fft_batch_failure import SlicerStub
+from training.commands import SaveWeightsForSampler
 
 
 class RecordingWorker:
@@ -29,10 +30,14 @@ class SamplerWeightRotationTest(unittest.TestCase):
       patch.object(trp, "SAMPLER_VERSIONS_KEPT", 3),
     ):
       worker = RecordingWorker()
-      proc = trp.FFTTrainingRequestsProcessor(InMemoryStore(), worker, "run-a", SlicerStub())
+      proc = trp.FFTTrainingRequestsProcessor(InMemoryStore(), InMemoryStateStore(), worker, "run-a", SlicerStub())
       versions = os.path.join(tmp, "sampler_full", "run-a", "sampler_weights")
       for step in range(1, 6):
-        asyncio.run(proc.save_weights_for_sampler({"path": f"tinker://run-a/sampler_weights/sampler-{step}"}, "run-a"))
+        asyncio.run(
+          proc.save_weights_for_sampler(
+            SaveWeightsForSampler(request_id=str(step), model_id="run-a", path=f"tinker://run-a/sampler_weights/sampler-{step}"), "run-a"
+          )
+        )
         time.sleep(0.01)
       self.assertEqual(worker.saves, [f"sampler-{s}" for s in range(1, 6)])
       self.assertEqual(sorted(os.listdir(versions)), ["sampler-3", "sampler-4", "sampler-5"])

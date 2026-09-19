@@ -2,7 +2,6 @@
 sampler exists before it enqueues work. Local mode spawns subprocesses; the
 scheduler mode (scheduler_worker_manager.py) creates Workloads."""
 
-import json
 import logging
 import os
 import re
@@ -15,7 +14,8 @@ from typing import Protocol
 
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.estimator import footprint
-from server.model_metadata import TrainingModelMetadata
+from server.model_metadata import TrainingModelMetadata, get_model_metadata_sync
+from server.store import get_state_store
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -27,14 +27,8 @@ logger = logging.getLogger(__name__)
 
 def metadata_for(model_id: str) -> TrainingModelMetadata | None:
   """The metadata create_model stored for this model, or None."""
-  from server.store import get_store
-
-  try:
-    raw = get_store().get_value_sync(f"open_rl:model_meta:{model_id}")
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    return TrainingModelMetadata.from_dict(data) if isinstance(data, dict) else None
-  except Exception:
-    return None
+  data = get_model_metadata_sync(get_state_store(), model_id)
+  return TrainingModelMetadata.from_dict(data) if data is not None else None
 
 
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:

@@ -7,9 +7,11 @@ import tempfile
 import types
 import unittest
 from contextlib import asynccontextmanager
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import torch
+
+from server.store import InMemoryStateStore
 
 
 def _load_trainer_modules():
@@ -188,15 +190,6 @@ class _TrainingRequestsStoreStub(_FutureStoreStub):
       return self.batches.pop(0)
     raise asyncio.CancelledError()
 
-  async def get_value(self, key: str) -> str | None:
-    return None
-
-  async def record_accel_usage_event(self, claim_id: str, event_data: dict) -> None:
-    pass
-
-  def get_value_sync(self, key: str) -> str | None:
-    return None
-
 
 class _TimeSlicerStub:
   faulted = None
@@ -225,13 +218,13 @@ class _TimeSlicerStub:
 
 
 def _datum(model_input, target_tokens, *, weights=None, logprobs=None, advantages=None):
-  loss_fn_inputs = {"target_tokens": trainer_worker_module.TensorData(data=target_tokens)}
+  loss_fn_inputs = {"target_tokens": {"data": target_tokens}}
   if weights is not None:
-    loss_fn_inputs["weights"] = trainer_worker_module.TensorData(data=weights)
+    loss_fn_inputs["weights"] = {"data": weights}
   if logprobs is not None:
-    loss_fn_inputs["logprobs"] = trainer_worker_module.TensorData(data=logprobs)
+    loss_fn_inputs["logprobs"] = {"data": logprobs}
   if advantages is not None:
-    loss_fn_inputs["advantages"] = trainer_worker_module.TensorData(data=advantages)
+    loss_fn_inputs["advantages"] = {"data": advantages}
   return trainer_worker_module.Datum(model_input=model_input, loss_fn_inputs=loss_fn_inputs)
 
 
@@ -416,17 +409,15 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
   async def test_lora_processor_create_model_uses_worker_create_model(self) -> None:
     worker = _RecordingLoraWorker()
     store = _FutureStoreStub()
-    processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, worker)
+    processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, InMemoryStateStore(), worker)
 
     await processor.process_request(
       {
         "request_id": "req-a",
         "model_id": "adapter-a",
         "op": "create_model",
-        "payload": {
-          "base_model": "base-model",
-          "lora_config": {"seed": 123, "rank": 2},
-        },
+        "base_model": "base-model",
+        "lora_config": {"seed": 123, "rank": 2},
       },
       "adapter-a",
     )
@@ -443,37 +434,23 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(result["fine_tuning_type"], "lora")
     self.assertEqual(result["type"], "model_created")
 
-  def test_parse_datum_flattens_chunked_model_input(self) -> None:
-    datum = training_requests_processor_module.parse_datum(
-      {
-        "model_input": {"chunks": [{"tokens": [1, 2]}, {"tokens": [3]}]},
-        "loss_fn_inputs": {
-          "target_tokens": [2, 3, 4],
-          "weights": {"data": [1.0, 0.5, 0.25]},
-        },
-      }
-    )
-
-    self.assertEqual(datum.model_input, [1, 2, 3])
-    self.assertEqual(datum.loss_fn_inputs["target_tokens"].data, [2, 3, 4])
-    self.assertEqual(datum.loss_fn_inputs["weights"].data, [1.0, 0.5, 0.25])
-
   async def test_full_processor_create_model_uses_model_worker(self) -> None:
     worker = _RecordingFullWorker()
     store = _FutureStoreStub()
     time_slicer = _TimeSlicerStub()
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(
+        store, InMemoryStateStore(), worker, "model-a", time_slicer=time_slicer
+      )
       await processor.process_request(
         {
           "request_id": "req-a",
           "model_id": "model-a",
           "op": "create_model",
-          "payload": {
-            "base_model": "base-model",
-            "full_config": {"seed": 123, "rank": 8},
-          },
+          "fine_tuning_type": "full",
+          "base_model": "base-model",
+          "full_config": {"seed": 123, "rank": 8},
         },
         "model-a",
       )
@@ -495,16 +472,16 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     time_slicer = _TimeSlicerStub()
 
     with patch.dict(os.environ, {"OPEN_RL_TMP_DIR": "/tmp/open-rl-test", "REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(
+        store, InMemoryStateStore(), worker, "model-a", time_slicer=time_slicer
+      )
       await processor.process_request(
         {
           "request_id": "req-a",
           "model_id": "model-a",
           "op": "save_weights_for_sampler",
-          "payload": {
-            "path": "tinker://model-a/sampler_weights/final",
-            "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
-          },
+          "path": "tinker://model-a/sampler_weights/final",
+          "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
         },
         "model-a",
       )
@@ -521,6 +498,68 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
         "type": "sampler_weights_saved",
       },
     )
+
+  async def test_create_and_restore_do_not_read_state(self) -> None:
+    for kind in ("lora", "full"):
+      with self.subTest(kind=kind), patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
+        store = _FutureStoreStub()
+        state = InMemoryStateStore()
+        state.get_value = AsyncMock(side_effect=AssertionError("unexpected metadata read"))
+        created = []
+        worker = types.SimpleNamespace(
+          create_model=lambda base, model, config, created=created: created.append((base, config)),
+          load_from_state=lambda *_args: {"base_model": "checkpoint-base", "model_id": "model-a"},
+        )
+        if kind == "lora":
+          processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, state, worker)
+        else:
+          processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, state, worker, "model-a", _TimeSlicerStub())
+        await processor.process_request(
+          {
+            "op": "create_model",
+            "request_id": "create",
+            "model_id": "model-a",
+            "base_model": "command-base",
+            "fine_tuning_type": kind,
+            "lora_config": {"seed": 0},
+            "full_config": {"seed": 0},
+          }
+        )
+        self.assertEqual(store.results["create"]["type"], "model_created")
+        self.assertEqual(created[0][0], "command-base")
+        self.assertEqual(created[0][1].seed, 0)
+        await processor.process_request(
+          {
+            "op": "create_model_from_state",
+            "request_id": "restore",
+            "model_id": "model-a",
+            "state_path": "/checkpoint",
+            "fine_tuning_type": kind,
+          }
+        )
+        self.assertEqual(store.results["restore"]["base_model"], "checkpoint-base")
+        self.assertEqual(store.results["restore"]["fine_tuning_type"], kind)
+        state.get_value.assert_not_called()
+
+  async def test_processors_update_model_steps_in_injected_state(self) -> None:
+    for kind in ("lora", "full"):
+      with self.subTest(kind=kind), patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
+        store = _FutureStoreStub()
+        state = InMemoryStateStore()
+        await state.set_value("open_rl:model_meta:model-a", json.dumps({"base_model": "base-model", "total_steps_completed": 4}))
+        worker = types.SimpleNamespace(optim_step=lambda *_args: {"metrics": {}}, save_adapter=lambda *_args: None)
+        if kind == "lora":
+          processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, state, worker)
+        else:
+          processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, state, worker, "model-a", _TimeSlicerStub())
+
+        await processor.process_request({"request_id": "step", "model_id": "model-a", "op": "optim_step"})
+
+        self.assertEqual(store.results["step"]["type"], "optim_step_completed")
+        metadata = json.loads(await state.get_value("open_rl:model_meta:model-a"))
+        self.assertEqual(metadata["total_steps_completed"], 5)
+        self.assertEqual(metadata["base_model"], "base-model")
+        self.assertGreater(metadata["updated_at"], 0)
 
   async def test_full_processor_requires_redis(self) -> None:
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}, clear=True), self.assertRaisesRegex(RuntimeError, "REDIS_URL"):
@@ -540,6 +579,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
         clear=True,
       ),
       patch.object(training_requests_processor_module, "get_store", return_value=store),
+      patch.object(training_requests_processor_module, "get_state_store", return_value=InMemoryStateStore()),
       patch.object(training_requests_processor_module, "time_slicer_client_from_env", return_value=time_slicer) as time_slicer_client_from_env,
     ):
       await training_requests_processor_module.run_training_requests_processor(_RecordingFullWorker(), "model-a")
@@ -556,27 +596,19 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "request_id": "req-a",
             "model_id": "model-a",
             "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
+            "fine_tuning_type": "full",
+            "base_model": "base-model",
+            "full_config": {"seed": 123},
           }
         ]
       ]
     )
     time_slicer = _TimeSlicerStub()
+    state = InMemoryStateStore()
+    await state.set_value("open_rl:model_meta:model-a", json.dumps({"base_model": "stored-base", "full_config": {"seed": 345}}))
 
-    with (
-      patch.dict(
-        os.environ,
-        {
-          "OPEN_RL_ENABLE_FFT": "true",
-          "REDIS_URL": "redis://localhost:6379",
-        },
-      ),
-      patch.object(training_requests_processor_module, "get_store", return_value=store),
-    ):
-      await training_requests_processor_module.run_training_requests_processor(worker, "model-a", time_slicer=time_slicer)
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true", "REDIS_URL": "redis://localhost:6379"}):
+      await training_requests_processor_module.run_training_requests_processor(worker, "model-a", time_slicer=time_slicer, store=store, state=state)
 
     self.assertEqual(store.queried_model_ids, ["model-a", "model-a"])
     self.assertEqual([event[0] for event in time_slicer.events], ["register", "acquire", "release", "unregister", "close"])
@@ -585,6 +617,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(event[1].name, "trainer-model-a")
         self.assertEqual(event[1].claim, "trainers")
     self.assertEqual(worker.created_models[0][0], "base-model")
+    self.assertEqual(worker.created_models[0][2].seed, 123)
     self.assertEqual(store.results["req-a"]["model_id"], "model-a")
 
   async def test_full_processor_publishes_result_after_release(self) -> None:
@@ -597,10 +630,9 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "request_id": "req-a",
             "model_id": "model-a",
             "op": "create_model",
-            "payload": {
-              "base_model": "base-model",
-              "full_config": {"seed": 123},
-            },
+            "fine_tuning_type": "full",
+            "base_model": "base-model",
+            "full_config": {"seed": 123},
           }
         ]
       ],
@@ -609,7 +641,9 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     time_slicer = _TimeSlicerStub(events=events)
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(
+        store, InMemoryStateStore(), worker, "model-a", time_slicer=time_slicer
+      )
       await processor.run_once()
 
     self.assertEqual([event[0] for event in events], ["acquire", "release", "set_future"])

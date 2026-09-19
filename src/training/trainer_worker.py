@@ -5,19 +5,10 @@ import os
 from typing import Any
 
 import torch
-from pydantic import BaseModel
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from training import losses
-
-
-class TensorData(BaseModel):
-  data: list[int] | list[float]
-
-
-class Datum(BaseModel):
-  loss_fn_inputs: dict[str, TensorData]
-  model_input: list[int]
+from training.types import Datum
 
 
 class BaseTrainerWorker:

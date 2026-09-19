@@ -280,7 +280,7 @@ The API server's `open-rl-sa` service account has a Role allowing Workload CRUD 
 
 ### Structured Model Serialization in Redis
 To ensure reliable metadata persistence across API server restarts and worker spawns, model configuration is serialized in Redis using the `TrainingModelMetadata` dataclass:
-- **Generic KV Store:** The `RequestStore` interface provides generic `set_value`, `get_value`, and `delete_values` operations for storing structured objects alongside tenant request queues.
+- **State Storage:** `StateStore` provides values, expiry, and sets; helpers in `model_metadata.py` serialize and persist model metadata. `RequestStore` handles request queues and results. Both Redis backends share one asynchronous client per process.
 - **Mandatory Architecture Specification:** The `/api/v1/create_model` endpoint strictly requires a valid `base_model` in the request payload, guaranteeing deterministic worker pod configuration.
 
 ### Zero-Fragmentation Application-Level CPU Offloading

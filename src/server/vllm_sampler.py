@@ -11,6 +11,7 @@ from typing import Any
 os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
 
 from server.model_metadata import WeightSyncConfig
+from server.store import RedisStateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, split_stop, text_only_engine_kwargs
 
 try:
@@ -108,8 +109,6 @@ def init_engine():
       engine_kwargs["hf_overrides"] = hf_overrides
 
     engine_kwargs.update(text_only_engine_kwargs())
-
-    from server.model_metadata import WeightSyncConfig
 
     weight_sync_cfg = WeightSyncConfig.from_env()
     if weight_sync_cfg.strategy == "delta":
@@ -296,9 +295,8 @@ async def run_sampling_worker(model_id: str) -> None:
   global engine
   global CURRENT_LOADED_SAMPLER_WEIGHTS
   global IS_ENGINE_SLEEPING
-  from server.store import get_store
-
   store = get_store()
+  state = get_state_store()
   snapshot_registered = False
   workload = None
   if time_slicer is not None:
@@ -393,9 +391,8 @@ async def run_sampling_worker(model_id: str) -> None:
     except NotImplementedError:
       pass
 
-  if hasattr(store, "redis"):
-    await store.redis.set(f"open_rl:sampler_ready:{model_id}", "1")
-    await store.redis.expire(f"open_rl:sampler_ready:{model_id}", 3600)
+  if isinstance(state, RedisStateStore):
+    await state.set_value(f"open_rl:sampler_ready:{model_id}", "1", ttl_seconds=3600)
 
   print(f"[vLLM Worker] Listening for sampling requests on queue for model: {model_id}...")
   try:

@@ -151,8 +151,8 @@ The Worker Manager is the cluster provisioning engine responsible for pod lifecy
 ### C. MultiTenant WorkQueue (`RequestStore`)
 To prevent multi-tenant head-of-line blocking, Open-RL replaces FIFO request processing with round-robin work queues. Each tenant model receives an isolated WorkQueue backed by Redis. Worker processes pop execution tasks asynchronously, posting telemetry and response payloads back into Redis `APIFuture` channels.
 
-### D. Metadata Store (`RequestStore` / Redis Backend)
-In addition to task queuing, Open-RL utilizes a centralized Metadata Store to maintain session definitions, tenant identifiers, active worker-provisioning status, and asynchronous request/response execution payloads. Today, Redis serves a dual architectural role—backing both the `MultiTenant WorkQueue` and the `Metadata Store`. Abstracting the Metadata Store as a distinct architectural component allows future scalability, enabling structured metadata persistence in relational databases (e.g., PostgreSQL) or distributed key-value stores while keeping high-throughput execution queuing in Redis.
+### D. State Storage (`StateStore`)
+`StateStore` provides string values, expiry, and sets for model metadata, session heartbeats, worker ownership, and sampler readiness. Model persistence belongs to `model_metadata.py`, and session ownership belongs to `SessionRegistry`. `RequestStore` handles request queues and results. Their Redis backends share one asynchronous Redis client per process; worker metadata lookup also uses a synchronous client.
 
 ### E. Accelerator Time-Slicer DaemonSet (`open-rl-accel-timeslicer`)
 Running as a `hostNetwork: true` DaemonSet across GPU nodes, the time-slicer serializes CUDA execution within workload groups (`trainers` vs. `samplers`) by coordinating application-level memory offloading with external process snapshotting.

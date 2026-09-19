@@ -13,18 +13,12 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 import torch
-from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
 from training.trainer_worker import BaseTrainerWorker, Datum
+from training.types import FFTConfig
 
 ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") == "1"
-
-
-class FFTConfig(BaseModel):
-  seed: int | None = None
-  cpu_offload: bool = True
-  weight_sync_strategy: str | None = None
 
 
 def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Parameter]:

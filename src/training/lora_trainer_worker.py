@@ -11,22 +11,12 @@ from typing import Any
 import torch
 from peft import LoraConfig as PeftLoraConfig
 from peft import PeftModelForCausalLM, get_peft_model
-from pydantic import BaseModel
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
 from training.trainer_worker import BaseTrainerWorker, Datum
+from training.types import LoraConfig
 
 ENABLE_GRADIENT_CHECKPOINTING = os.getenv("ENABLE_GRADIENT_CHECKPOINTING", "1") == "1"
-
-
-class LoraConfig(BaseModel):
-  rank: int = 16
-  seed: int | None = None
-  lora_alpha: int = 16
-  lora_dropout: float = 0.05
-  train_attn: bool = True
-  train_mlp: bool = True
-  train_unembed: bool = False
 
 
 def active_adapter_parameters(model: PeftModelForCausalLM, adapter_id: str) -> list[torch.nn.Parameter]:

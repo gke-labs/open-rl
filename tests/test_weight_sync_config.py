@@ -4,7 +4,7 @@ from dataclasses import asdict
 from unittest.mock import MagicMock
 
 from server.model_metadata import TrainingModelMetadata, WeightSyncConfig, extract_weight_sync_config
-from server.worker_manager import _fetch_metadata_from_store
+from server.worker_manager import metadata_for
 
 
 class TestWeightSyncConfig(unittest.TestCase):
@@ -78,8 +78,8 @@ class TestWeightSyncConfig(unittest.TestCase):
     mock_store = MagicMock()
     mock_store.get_value_sync.return_value = serialized
 
-    with unittest.mock.patch("server.store.get_store", return_value=mock_store):
-      meta_res = _fetch_metadata_from_store("test-model-123")
+    with unittest.mock.patch("server.worker_manager.get_state_store", return_value=mock_store):
+      meta_res = metadata_for("test-model-123")
       self.assertIsNotNone(meta_res)
       self.assertEqual(meta_res.base_model, "Qwen/Qwen3-8B")
       self.assertIsNotNone(meta_res.weight_sync_config)
