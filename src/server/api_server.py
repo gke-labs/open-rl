@@ -25,18 +25,19 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError, Validation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import proto_codec
-from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config
+from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config, get_model_metadata, persist_model_metadata
 from server.session_registry import SessionRegistry
-from server.store import get_store
+from server.store import RedisStateStore, get_state_store, get_store
 from server.worker_manager import WorkerManager, create_worker_manager, owner_of
 from training import commands
 from training.commands import Command
 from training.types import Datum, FFTConfig, LoraConfig
 
 store = get_store()
+state = get_state_store()
 worker_manager: WorkerManager | None = None
 
-session_registry = SessionRegistry(store)
+session_registry = SessionRegistry(state)
 SESSION_REAP_INTERVAL_SEC = 30
 # Attaching a session to an owner and reaping that owner take turns, so a
 # session cannot attach between the reaper deciding an owner is unused and
@@ -57,7 +58,7 @@ async def reap_owner(owner: str) -> None:
       return
     print(f"[API_SERVER] No live session uses {owner}; tearing its workers down")
     for model in await asyncio.to_thread(worker_manager.release_owner, owner):
-      await store.delete_values(f"open_rl:sampler_ready:{model}")
+      await state.delete_values(f"open_rl:sampler_ready:{model}")
     await session_registry.forget(owner)
 
 
@@ -354,7 +355,7 @@ async def _extract_and_persist_model_metadata(
     full_config=full_config,
     lora_config=lora_config,
   )
-  await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps(meta_obj.to_dict()))
+  await persist_model_metadata(state, model_id, meta_obj)
 
   return model_id, meta_obj
 
@@ -366,22 +367,21 @@ def new_request_id() -> str:
 async def _resolve_active_set_id(model_id: str | None) -> str | None:
   if not model_id:
     return None
-  meta = await store.get_model_metadata(model_id)
-  if meta and meta.get("fine_tuning_type") == "lora" and meta.get("base_model"):
-    return f"{meta['base_model']}-1"
+  meta = await get_model_metadata(state, model_id)
+  if meta and meta.fine_tuning_type == "lora" and meta.base_model:
+    return f"{meta.base_model}-1"
   return None
 
 
 async def open_future(request_id: str) -> dict[str, str]:
-  """Register a pending future and return the trace carrier to send with its request."""
+  """Return the trace carrier to send with a request."""
   carrier: dict[str, str] = {}
   propagate.inject(carrier)
-  await store.set_future(request_id, {"status": "pending"})
   return carrier
 
 
 async def enqueue(command: Command) -> str:
-  """Create a pending future, inject trace context, push the command to the store. Returns its request_id."""
+  """Inject trace context and enqueue the command. Returns its request_id."""
   carrier = await open_future(command.request_id)
 
   active_set_id = await _resolve_active_set_id(command.model_id)
@@ -402,7 +402,6 @@ async def launch_worker_and_enqueue(command: Command) -> str:
   """
   assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
   request_id = command.request_id
-  await store.set_future(request_id, {"status": "pending"})
   try:
     await asyncio.to_thread(worker_manager.ensure, command.model_id, "trainer")
   except Exception as exc:
@@ -639,8 +638,10 @@ async def create_model(req: CreateModelRequest, request: Request) -> dict[str, A
 @app.post("/api/v1/delete_model")
 async def delete_model(req: ModelRequest):
   model_id = req.model_id
-  meta = await store.get_model_metadata(model_id)
-  is_lora = bool(meta and meta.get("fine_tuning_type") == "lora")
+  meta = await get_model_metadata(state, model_id)
+  if meta is None:
+    raise HTTPException(status_code=404, detail=f"Unknown model: {model_id}")
+  is_lora = meta.fine_tuning_type == "lora"
   if is_fft_enabled() and not is_lora:
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)))
@@ -648,7 +649,10 @@ async def delete_model(req: ModelRequest):
     if worker_manager is not None:
       await asyncio.to_thread(worker_manager.release, model_id)
   now = time.time()
-  await store.update_job_metadata(model_id, {"status": "completed", "completed_at": now, "updated_at": now})
+  meta.status = "completed"
+  meta.completed_at = now
+  meta.updated_at = now
+  await persist_model_metadata(state, model_id, meta)
   return {"status": "ok"}
 
 
@@ -658,10 +662,20 @@ async def create_model_from_state(req: CreateModelFromStateRequest, request: Req
   state_path = req.state_path
   # Resolve relative names under TMP_DIR/checkpoints, leave absolute paths alone.
   resolved_path = tinker_checkpoint_dir(state_path)
+  if resolved_path is None and state_path.startswith("tinker://"):
+    raise HTTPException(status_code=400, detail="Invalid checkpoint URI")
   if resolved_path is None:
     resolved_path = state_path if os.path.isabs(state_path) else os.path.join(TMP_DIR, "checkpoints", state_path)
   try:
-    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="restored")
+    checkpoint = await asyncio.to_thread(checkpoint_info, resolved_path)
+    kind = "lora" if checkpoint["is_lora"] else "full"
+    if req.base_model is not None and req.base_model != checkpoint["base_model"]:
+      raise ValueError("base_model does not match the checkpoint")
+    requested_kind = request.headers.get("x-open-rl-fine-tuning-type", "").lower()
+    if requested_kind in {"lora", "full"} and requested_kind != kind:
+      raise ValueError("fine-tuning type does not match the checkpoint")
+    req = req.model_copy(update={"base_model": checkpoint["base_model"]})
+    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type=kind)
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -687,8 +701,8 @@ async def get_info(req: GetInfoRequest):
   Gemma job Qwen's tokenizer and every sample came back as token soup.
   """
   model_id = req.model_id
-  meta = await store.get_model_metadata(base_model_id_from_sampling_ref(model_id) or model_id) if model_id else None
-  model_name = (meta or {}).get("base_model") or get_default_model_name()
+  meta = await get_model_metadata(state, base_model_id_from_sampling_ref(model_id) or model_id) if model_id else None
+  model_name = (meta.base_model if meta is not None else None) or get_default_model_name()
   if not model_name:
     raise HTTPException(status_code=404, detail="No base model is configured")
   # SDK compatibility: the public client currently expects LoRA-shaped training metadata,
@@ -840,19 +854,32 @@ async def weights_info(req: WeightsInfoRequest):
   trained from, so create_training_client_from_state can open a matching
   client and load_state into it. Answered from the checkpoint directory, so
   it survives an API server or Redis restart."""
-  path = req.tinker_path
-  state_dir = tinker_checkpoint_dir(path)
+  return await asyncio.to_thread(checkpoint_info, req.tinker_path)
+
+
+def checkpoint_info(path: str) -> dict[str, Any]:
+  state_dir = tinker_checkpoint_dir(path) or (path if os.path.isabs(path) else None)
   metadata_path = os.path.join(state_dir, "metadata.json") if state_dir else None
   if not metadata_path or not os.path.exists(metadata_path):
     raise HTTPException(status_code=404, detail=f"No checkpoint at {path}")
   with open(metadata_path) as f:
     saved = json.load(f)
-  adapter_config_path = os.path.join(state_dir, saved.get("model_id", ""), "adapter_config.json")
+  if not isinstance(saved, dict) or not isinstance(saved.get("base_model"), str) or not saved["base_model"]:
+    raise ValueError("Checkpoint metadata must specify base_model")
+  saved_model_id = saved.get("model_id", "")
+  if not isinstance(saved_model_id, str):
+    raise ValueError("Checkpoint model_id must be a string")
+  adapter_config_path = os.path.join(state_dir, saved_model_id, "adapter_config.json")
+  if not os.path.exists(adapter_config_path):
+    adapter_config_path = os.path.join(state_dir, "adapter_config.json")
   is_lora = os.path.exists(adapter_config_path)
   rank = None
   if is_lora:
     with open(adapter_config_path) as f:
-      rank = json.load(f).get("r")
+      adapter_config = json.load(f)
+    if not isinstance(adapter_config, dict):
+      raise ValueError("Checkpoint adapter config must be an object")
+    rank = adapter_config.get("r")
   return {"base_model": saved["base_model"], "is_lora": is_lora, "lora_rank": rank, "type": "weights_info"}
 
 
@@ -870,9 +897,9 @@ async def create_sampling_session(req: CreateSamplingSessionRequest):
     sess_id = req.model_id or "samp-session-live-123"
     target_model_id = sess_id
 
-  model_meta = await store.get_model_metadata(target_model_id) if target_model_id else None
-  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
-  ready_check_id = (model_meta.get("base_model") or target_model_id) if (fine_tuning_type == "lora" and model_meta) else target_model_id
+  model_meta = await get_model_metadata(state, target_model_id) if target_model_id else None
+  fine_tuning_type = model_meta.fine_tuning_type if model_meta else "lora"
+  ready_check_id = (model_meta.base_model or target_model_id) if (fine_tuning_type == "lora" and model_meta) else target_model_id
 
   await bind_session(req.session_id, target_model_id)
 
@@ -880,12 +907,11 @@ async def create_sampling_session(req: CreateSamplingSessionRequest):
     # Launch by model ID so the worker manager retains the training kind.
     # LoRA readiness is still reported under the shared base-model runtime.
     await ensure_sampler_launched(target_model_id)
-    s = get_store()
-    if hasattr(s, "redis"):
+    if isinstance(state, RedisStateStore):
       print(f"[API_SERVER] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
       start_time = time.monotonic()
       while True:
-        is_ready = await s.redis.get(f"open_rl:sampler_ready:{ready_check_id}")
+        is_ready = await state.get_value(f"open_rl:sampler_ready:{ready_check_id}")
         if is_ready == "1" or is_ready == b"1":
           print(f"[API_SERVER] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
           break
@@ -907,8 +933,8 @@ async def get_sampler(sampler_id: str):
   tokenizer from the Hub itself.
   """
   base_model_id = base_model_id_from_sampling_ref(sampler_id)
-  model_meta = await store.get_model_metadata(base_model_id) if base_model_id else None
-  base_model = (model_meta or {}).get("base_model") or base_model_id or get_default_model_name()
+  model_meta = await get_model_metadata(state, base_model_id) if base_model_id else None
+  base_model = (model_meta.base_model if model_meta is not None else None) or base_model_id or get_default_model_name()
   if not base_model:
     raise HTTPException(status_code=404, detail=f"Unknown sampler {sampler_id}")
   return {
@@ -956,15 +982,15 @@ async def asample(req: AsampleRequest):
   req_id = str(uuid.uuid4())
   carrier = await open_future(req_id)
 
-  model_meta = await store.get_model_metadata(lookup_id)
-  fine_tuning_type = model_meta.get("fine_tuning_type", "lora") if model_meta else "lora"
+  model_meta = await get_model_metadata(state, lookup_id)
+  fine_tuning_type = model_meta.fine_tuning_type if model_meta else "lora"
 
   if fine_tuning_type == "lora":
     weights_path = None
     lora_id = model_id
     peft_dir = os.path.join(TMP_DIR, "peft", lookup_id, lookup_id)
     lora_path = peft_dir if os.path.exists(peft_dir) else None
-    queue_id = (model_meta.get("base_model") if model_meta else None) or lookup_id
+    queue_id = (model_meta.base_model if model_meta else None) or lookup_id
   else:
     resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
     weights_path = resolved_path

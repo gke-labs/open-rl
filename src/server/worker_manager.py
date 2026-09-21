@@ -2,7 +2,6 @@
 sampler exists before it enqueues work. Local mode spawns subprocesses; the
 scheduler mode (scheduler_worker_manager.py) creates Workloads."""
 
-import json
 import logging
 import os
 import re
@@ -15,7 +14,8 @@ from typing import Protocol
 
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.estimator import footprint
-from server.model_metadata import TrainingModelMetadata
+from server.model_metadata import TrainingModelMetadata, decode_model_metadata
+from server.store import get_state_store
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -27,14 +27,7 @@ logger = logging.getLogger(__name__)
 
 def metadata_for(model_id: str) -> TrainingModelMetadata | None:
   """The metadata create_model stored for this model, or None."""
-  from server.store import get_store
-
-  try:
-    raw = get_store().get_value_sync(f"open_rl:model_meta:{model_id}")
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    return TrainingModelMetadata.from_dict(data) if isinstance(data, dict) else None
-  except Exception:
-    return None
+  return decode_model_metadata(get_state_store().get_value_sync(f"open_rl:model_meta:{model_id}"))
 
 
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
@@ -90,12 +83,11 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
     # vLLM fraction from it against the device it actually gets.
     "OPEN_RL_ACCELERATOR_MEMORY": str(footprint(base_model, meta.fine_tuning_type, role).accelerator_bytes),
   }
-  weight_sync = getattr(meta, "weight_sync_config", None)
-  if weight_sync is not None:
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync.strategy
-    if weight_sync.strategy == "delta":
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync.delta_format
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync.delta_apply_method
+  weight_sync = meta.weight_sync_config
+  env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync.strategy
+  if weight_sync.strategy == "delta":
+    env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync.delta_format
+    env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync.delta_apply_method
   if role == "trainer":
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
   else:

@@ -1,10 +1,9 @@
-import json
 import unittest
 from dataclasses import asdict
 from unittest.mock import MagicMock
 
 from server.model_metadata import TrainingModelMetadata, WeightSyncConfig, extract_weight_sync_config
-from server.worker_manager import _fetch_metadata_from_store
+from server.worker_manager import metadata_for
 
 
 class TestWeightSyncConfig(unittest.TestCase):
@@ -74,12 +73,12 @@ class TestWeightSyncConfig(unittest.TestCase):
       weight_sync_config=asdict(cfg),
     )
 
-    serialized = json.dumps(asdict(meta))
+    serialized = meta.model_dump_json()
     mock_store = MagicMock()
     mock_store.get_value_sync.return_value = serialized
 
-    with unittest.mock.patch("server.store.get_store", return_value=mock_store):
-      meta_res = _fetch_metadata_from_store("test-model-123")
+    with unittest.mock.patch("server.worker_manager.get_state_store", return_value=mock_store):
+      meta_res = metadata_for("test-model-123")
       self.assertIsNotNone(meta_res)
       self.assertEqual(meta_res.base_model, "Qwen/Qwen3-8B")
       self.assertIsNotNone(meta_res.weight_sync_config)
@@ -99,12 +98,6 @@ class TestWeightSyncConfig(unittest.TestCase):
     self.assertEqual(cfg.strategy, "full")
     self.assertEqual(cfg.delta_format, "native")
     self.assertEqual(cfg.delta_apply_method, "full_replace")
-
-    meta = TrainingModelMetadata.from_env(env_vars)
-    self.assertEqual(meta.base_model, "Qwen/Qwen2.5-0.5B")
-    self.assertEqual(meta.weight_sync_config.strategy, "full")
-    self.assertEqual(meta.weight_sync_config.delta_format, "native")
-    self.assertEqual(meta.weight_sync_config.delta_apply_method, "full_replace")
 
 
 if __name__ == "__main__":

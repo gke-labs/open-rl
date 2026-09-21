@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from server import api_server
-from server.store import InMemoryStore
+from server.store import InMemoryStateStore, InMemoryStore
 
 
 class ApiServerTest(unittest.TestCase):
@@ -17,6 +17,7 @@ class ApiServerTest(unittest.TestCase):
 
   def setUp(self) -> None:
     self.enterContext(patch.object(api_server, "store", InMemoryStore()))
+    self.enterContext(patch.object(api_server, "state", InMemoryStateStore()))
     self.client = TestClient(api_server.app)
 
   def post(self, path: str, body: dict, **kwargs):
@@ -40,7 +41,7 @@ class GetInfoTest(ApiServerTest):
 
   def test_get_info_prefers_the_models_own_base_model(self) -> None:
     meta = json.dumps({"base_model": "google/gemma-4-e2b", "fine_tuning_type": "full"})
-    asyncio.run(api_server.store.set_value("open_rl:model_meta:model-g", meta))
+    asyncio.run(api_server.state.set_value("open_rl:model_meta:model-g", meta))
     with patch.dict(os.environ, {"BASE_MODEL": "Qwen/Qwen2.5-0.5B"}, clear=True):
       info = self.post("get_info", {"model_id": "model-g"}).json()
       via_sampler_ref = self.post("get_info", {"model_id": "tinker://model-g/sampler_weights/sampler-1"}).json()
@@ -75,7 +76,7 @@ class GetInfoTest(ApiServerTest):
     queued = self.queued()
     self.assertEqual(queued[0]["model_id"], model_id)
     self.assertEqual(queued[0]["payload"]["base_model"], "my-model")
-    meta = json.loads(api_server.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+    meta = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta["base_model"], "my-model")
 
 
@@ -190,6 +191,7 @@ class ProtobufWireTest(unittest.TestCase):
     patcher = patch.object(api_server, "store", InMemoryStore())
     patcher.start()
     self.addCleanup(patcher.stop)
+    self.enterContext(patch.object(api_server, "state", InMemoryStateStore()))
     self.client = TestClient(api_server.app)
 
   def _queued(self) -> list[dict]:
@@ -319,3 +321,20 @@ class InputBoundaryTest(ApiServerTest):
         queued = self.queued()[0]["payload"]
         self.assertEqual(queued["temperature"], 1.0 if value is None else 0)
         self.assertEqual(queued["max_tokens"], 20 if value is None else 0)
+
+
+class RestoreRoutingTest(ApiServerTest):
+  def test_restore_uses_checkpoint_identity(self):
+    for kind in ("lora", "full"):
+      with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+        with open(os.path.join(directory, "metadata.json"), "w") as f:
+          json.dump({"base_model": "checkpoint-base"}, f)
+        if kind == "lora":
+          with open(os.path.join(directory, "adapter_config.json"), "w") as f:
+            json.dump({"r": 8}, f)
+        response = self.post("create_model_from_state", {"state_path": directory})
+        self.assertEqual(response.status_code, 200)
+        model_id = response.json()["request_id"]
+        metadata = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
+        self.assertEqual((metadata["base_model"], metadata["fine_tuning_type"]), ("checkpoint-base", kind))
+        self.assertEqual(self.queued()[0]["payload"]["fine_tuning_type"], kind)

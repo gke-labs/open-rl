@@ -7,7 +7,7 @@ from unittest.mock import patch
 from server import api_server
 from server.estimator import footprint
 from server.scheduler_worker_manager import GROUP, PLURAL, VERSION, SchedulerWorkerManager
-from server.store import InMemoryStore
+from server.store import InMemoryStateStore, InMemoryStore
 from tests.api_client import asgi_client, post_json
 
 
@@ -61,13 +61,13 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.manager = SchedulerWorkerManager(custom_api=self.api)
 
   def store_with(self, model_id: str, meta: dict) -> InMemoryStore:
-    s = InMemoryStore()
+    s = InMemoryStateStore()
     s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps(meta)
     return s
 
   def test_lora_trainer_and_sampler_share_an_owner(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-lora-1", "trainer")
       self.manager.ensure("job-lora-1", "sampler")
 
@@ -88,7 +88,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_fft_worker_is_its_own_owner(self) -> None:
     s = self.store_with("Model_A.1", {"base_model": "Qwen/Qwen3-8B", "fine_tuning_type": "full"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("Model_A.1", "trainer")
 
     (worker,) = self.api.created
@@ -109,7 +109,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
   def test_mutable_worker_images_use_the_requested_pull_policy(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     with (
-      patch("server.store.get_store", return_value=s),
+      patch("server.worker_manager.get_state_store", return_value=s),
       patch.dict(os.environ, {"OPEN_RL_WORKER_IMAGE": "localhost:5001/open-rl-server:kind-dev", "OPEN_RL_WORKER_IMAGE_PULL_POLICY": "Always"}),
     ):
       self.manager.ensure("job-lora-1", "trainer")
@@ -120,14 +120,14 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_launch_is_idempotent(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-lora-1", "trainer")
       self.manager.ensure("job-lora-1", "trainer")
     self.assertEqual(len(self.api.created), 1)
 
   def test_placement_knowledge_stays_out_of_the_template(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-lora-1", "trainer")
 
     (worker,) = self.api.created
@@ -144,7 +144,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_release_deletes_an_fft_jobs_workloads_and_tolerates_absence(self) -> None:
     s = self.store_with("Model_A.1", {"base_model": "Qwen/Qwen3-8B", "fine_tuning_type": "full"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("Model_A.1", "trainer")
       self.manager.release("Model_A.1")
       self.manager.release("Model_A.1")
@@ -153,7 +153,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_release_leaves_a_shared_lora_runtime_alone(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-lora-1", "trainer")
       self.manager.release("job-lora-1")
 
@@ -162,7 +162,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
   def test_release_owner_deletes_a_shared_lora_pair_and_nothing_else(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     s.kv_store["open_rl:model_meta:other"] = json.dumps({"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("adapter", "trainer")
       self.manager.ensure("adapter", "sampler")
       self.manager.ensure("other", "trainer")
@@ -183,7 +183,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_ensure_waits_for_a_terminating_workload_before_recreating_it(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
-    with patch("server.store.get_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("adapter", "trainer")
       name = self.api.created[0]["metadata"]["name"]
       self.api.deleting.add(name)
@@ -212,13 +212,15 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
   async def test_lora_and_fft_sessions_launch_their_own_sampler_types(self) -> None:
     store = InMemoryStore()
+    state = InMemoryStateStore()
     for model_id, kind in (("lora-a", "lora"), ("lora-b", "lora"), ("fft-a", "full")):
-      await store.set_value(f"open_rl:model_meta:{model_id}", json.dumps({"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": kind}))
+      await state.set_value(f"open_rl:model_meta:{model_id}", json.dumps({"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": kind}))
     api = FakeCustomObjectsApi()
     with (
       patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}),
-      patch("server.store.get_store", return_value=store),
+      patch("server.worker_manager.get_state_store", return_value=state),
       patch.object(api_server, "store", store),
+      patch.object(api_server, "state", state),
       patch.object(api_server, "get_store", return_value=store),
       patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api)),
     ):

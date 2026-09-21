@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 import threading
-import time
 import traceback
 from typing import Any
 
@@ -17,7 +16,8 @@ from opentelemetry import propagate, trace
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
-from server.store import RequestStore, get_store
+from server.model_metadata import get_model_metadata
+from server.store import RequestStore, get_state_store, get_store
 from training import commands
 from training.commands import parse_command
 from training.fft_trainer_worker import FFTTrainingWorker
@@ -270,12 +270,6 @@ class TrainingRequestsProcessor:
       case commands.OptimStep():
         result = await asyncio.to_thread(self.worker.optim_step, command.adam_params, command.model_id)
         result["type"] = "optim_step_completed"
-        try:
-          metadata = await self.store.get_model_metadata(command.model_id)
-          current_step = metadata.get("total_steps_completed", 0) if metadata else 0
-          await self.store.update_job_metadata(command.model_id, {"total_steps_completed": current_step + 1, "updated_at": time.time()})
-        except Exception as exc:
-          print(f"[PROCESSOR] Failed to update step metadata for model {command.model_id}: {exc}")
         return result
       case commands.Sample():
         result = await asyncio.to_thread(
@@ -335,9 +329,9 @@ async def run_training_requests_processor(
 async def main_async(args: argparse.Namespace) -> None:
   fine_tuning_type = os.getenv("OPEN_RL_FINE_TUNING_TYPE") or ("full" if is_fft_enabled() else "lora")
   if args.model_id:
-    metadata = await get_store().get_model_metadata(args.model_id)
+    metadata = await get_model_metadata(get_state_store(), args.model_id)
     if metadata is not None:
-      fine_tuning_type = metadata.get("fine_tuning_type", fine_tuning_type)
+      fine_tuning_type = metadata.fine_tuning_type
 
   is_lora = fine_tuning_type == "lora"
   print(f"-> Fine-Tuning Type: {fine_tuning_type} (Is LoRA: {is_lora})\n")

@@ -1,6 +1,12 @@
+import json
 import os
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from server.store import StateStore
+from training.types import FFTConfig, FineTuningType, LoraConfig
 
 
 @dataclass
@@ -61,76 +67,41 @@ def extract_weight_sync_config(headers: Any = None) -> WeightSyncConfig:
   )
 
 
-from dataclasses import dataclass, field
+class TrainingModelMetadata(BaseModel):
+  # Preserve fields written by other server versions when updating a record.
+  model_config = ConfigDict(extra="allow")
 
-
-@dataclass
-class TrainingModelMetadata:
   base_model: str
-  created_at: float
-  fine_tuning_type: str = "lora"
-  weight_sync_config: WeightSyncConfig = field(default_factory=WeightSyncConfig)
-  full_config: dict[str, Any] | None = None
-  lora_config: dict[str, Any] | None = None
+  created_at: float = 0.0
+  fine_tuning_type: FineTuningType = "lora"
+  weight_sync_config: WeightSyncConfig = Field(default_factory=WeightSyncConfig)
+  full_config: FFTConfig = Field(default_factory=FFTConfig)
+  lora_config: LoraConfig = Field(default_factory=LoraConfig)
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
-  total_steps_completed: int = 0
-  max_steps: int | None = None
-  tenant_id: str = "default"
 
-  @classmethod
-  def from_dict(cls, data: dict[str, Any]) -> "TrainingModelMetadata":
-    raw_cfg = data.get("weight_sync_config")
-    if isinstance(raw_cfg, dict):
-      cfg = WeightSyncConfig(
-        strategy=raw_cfg.get("strategy", "delta"),
-        delta_format=raw_cfg.get("delta_format", "vllm_fused"),
-        delta_apply_method=raw_cfg.get("delta_apply_method", "patch_in_place"),
-      )
-    elif isinstance(raw_cfg, WeightSyncConfig):
-      cfg = raw_cfg
-    else:
-      cfg = WeightSyncConfig()
 
-    ft_type = data.get("fine_tuning_type", "lora")
-    if ft_type == "full":
-      ft_type = "full"
-    else:
-      ft_type = "lora"
+def decode_model_metadata(raw: str | None) -> TrainingModelMetadata | None:
+  if raw is None:
+    return None
+  data = json.loads(raw)
+  if not isinstance(data, dict):
+    raise ValueError("Model metadata must be a JSON object")
+  # Older restores used a placeholder kind and could omit the base model.
+  # Normalize that persisted format here; new creates resolve the checkpoint.
+  if data.get("fine_tuning_type") == "restored":
+    data["fine_tuning_type"] = "lora"
+    data["base_model"] = data.get("base_model") or ""
+  for key in ("full_config", "lora_config", "weight_sync_config"):
+    if data.get(key) is None:
+      data[key] = {}
+  return TrainingModelMetadata.model_validate(data)
 
-    return cls(
-      base_model=str(data.get("base_model") or ""),
-      created_at=data.get("created_at", 0.0),
-      fine_tuning_type=ft_type,
-      weight_sync_config=cfg,
-      full_config=data.get("full_config"),
-      lora_config=data.get("lora_config"),
-      status=data.get("status", "active"),
-      updated_at=data.get("updated_at", data.get("created_at", 0.0)),
-      completed_at=data.get("completed_at"),
-      total_steps_completed=data.get("total_steps_completed", 0),
-      max_steps=data.get("max_steps"),
-      tenant_id=data.get("tenant_id", "default"),
-    )
 
-  @classmethod
-  def from_env(cls, env: Any = None) -> "TrainingModelMetadata":
-    """Reconstruct TrainingModelMetadata dataclass from environment variables inside a worker process."""
-    get_val = (env.get if hasattr(env, "get") else None) or os.getenv
-    ft_type = (get_val("OPEN_RL_FINE_TUNING_TYPE") or "lora").lower()
-    ft_type = "full" if ft_type == "full" else "lora"
-    return cls(
-      base_model=str(get_val("BASE_MODEL") or get_val("OPEN_RL_BASE_MODEL") or ""),
-      created_at=0.0,
-      fine_tuning_type=ft_type,
-      weight_sync_config=WeightSyncConfig.from_env(env),
-      status="active",
-      updated_at=0.0,
-    )
+async def get_model_metadata(state: StateStore, model_id: str) -> TrainingModelMetadata | None:
+  return decode_model_metadata(await state.get_value(f"open_rl:model_meta:{model_id}"))
 
-  def to_dict(self) -> dict[str, Any]:
-    res = asdict(self)
-    if isinstance(self.weight_sync_config, WeightSyncConfig):
-      res["weight_sync_config"] = asdict(self.weight_sync_config)
-    return res
+
+async def persist_model_metadata(state: StateStore, model_id: str, metadata: TrainingModelMetadata) -> None:
+  await state.set_value(f"open_rl:model_meta:{model_id}", metadata.model_dump_json())

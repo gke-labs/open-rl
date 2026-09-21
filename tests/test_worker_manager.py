@@ -71,9 +71,10 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     self.store = StoreStub()
     self.worker_manager = WorkerManagerStub()
     self.enterContext(patch.object(api_server, "store", self.store))
+    self.enterContext(patch.object(api_server, "state", self.store))
     self.enterContext(patch.object(api_server, "worker_manager", self.worker_manager))
     self.enterContext(patch.object(api_server, "session_registry", SessionRegistry(self.store)))
-    self.enterContext(patch("server.store.get_store", return_value=self.store))
+    self.enterContext(patch("server.worker_manager.get_state_store", return_value=self.store))
 
   async def asyncSetUp(self) -> None:
     self.client = await self.enterAsyncContext(asgi_client())
@@ -110,6 +111,7 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(self.store.futures[model_id], {"type": "RequestFailedResponse", "error_message": "boom"})
 
   async def test_create_model_from_state_launches_worker_then_enqueues(self) -> None:
+    self.enterContext(patch.object(api_server, "checkpoint_info", return_value={"base_model": "restored-base", "is_lora": True}))
     import json
 
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
@@ -135,7 +137,7 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     # Assert canonical metadata persistence:
     meta = json.loads(self.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta["base_model"], "restored-base")
-    self.assertEqual(meta["fine_tuning_type"], "restored")
+    self.assertEqual(meta["fine_tuning_type"], "lora")
     self.assertEqual(meta["full_config"]["weight_sync_strategy"], "delta")
 
     # Assert no dual-key writing:
@@ -218,9 +220,9 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
   async def test_launch_fetches_metadata_from_store(self) -> None:
     import json
 
-    from server.store import InMemoryStore
+    from server.store import InMemoryStateStore
 
-    s = InMemoryStore()
+    s = InMemoryStateStore()
     s.kv_store["open_rl:model_meta:Model_A.1"] = json.dumps(
       {
         "base_model": "base-model-a",
@@ -231,7 +233,7 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
 
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm"}, clear=True),
-      patch("server.store.get_store", return_value=s),
+      patch("server.worker_manager.get_state_store", return_value=s),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
       manager = LocalWorkerManager()
@@ -250,6 +252,7 @@ class ApiServerMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
   def setUp(self) -> None:
     self.store = StoreStub()
     self.enterContext(patch.object(api_server, "store", self.store))
+    self.enterContext(patch.object(api_server, "state", self.store))
 
   async def test_extract_and_persist_metadata_from_headers(self) -> None:
     import json
