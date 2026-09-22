@@ -55,9 +55,17 @@ class LoraTrainingWorker(BaseTrainerWorker):
     print(f"Loading base model {base_model_name} to {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    # bf16 wherever it works: natively on TPU, on CUDA when the GPU supports
+    # it. is_bf16_supported() may only be called with CUDA available.
+    use_bf16 = self.device.type == "tpu" or (torch.cuda.is_available() and torch.cuda.is_bf16_supported())
+    dtype = torch.bfloat16 if use_bf16 else torch.float32
 
-    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
+    if self.device.type == "tpu":
+      # accelerate's device_map dispatch does not handle PrivateUse1 devices;
+      # load on CPU and move.
+      self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype).to(self.device)
+    else:
+      self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
 
   def target_lora_modules(self, config: LoraConfig) -> list[str]:

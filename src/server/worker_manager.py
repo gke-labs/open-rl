@@ -167,8 +167,29 @@ class LocalWorkerManager:
       gpus = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES" if role == "trainer" else "SAMPLER_CUDA_VISIBLE_DEVICES")
       if gpus:
         env["CUDA_VISIBLE_DEVICES"] = gpus
+      chips = os.getenv("TRAINER_TPU_VISIBLE_CHIPS" if role == "trainer" else "SAMPLER_TPU_VISIBLE_CHIPS")
+      if chips:
+        env.update(tpu_chip_env(chips))
       extras = ["gpu"] if role == "trainer" else ["gpu", "vllm"]
-      command = python_command(extras, worker_module(role, is_lora), worker_args(runtime, role, is_lora))
+      if role == "sampler" and os.getenv("OPEN_RL_SAMPLER_DEVICE", "").lower() == "tpu":
+        extras = ["tpu-sampler"]
+        # tpu-inference has LoRA only on its torch/torchax model impl; models
+        # with a JAX impl (e.g. Qwen2) would otherwise route around it.
+        env.setdefault("MODEL_IMPL_TYPE", "vllm")
+        # The sampler reaches the TPU through JAX; keep a torch_tpu install
+        # from also claiming chips via torch's backend autoload.
+        env.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
+      if role == "trainer" and os.getenv("OPEN_RL_DEVICE", "").lower() == "tpu":
+        # torch_tpu skips backend registration under TORCH_DEVICE_BACKEND_AUTOLOAD=0
+        # even on an explicit import, so torch.device("tpu") would fail. The gateway
+        # exports 0 to keep its own torch import off the chips; undo it here.
+        env["TORCH_DEVICE_BACKEND_AUTOLOAD"] = "1"
+      python = os.getenv("OPEN_RL_TRAINER_PYTHON" if role == "trainer" else "OPEN_RL_SAMPLER_PYTHON")
+      if python:
+        # An override venv (e.g. vllm-tpu for the sampler) may not have open-rl
+        # installed; put the source tree on its path so worker modules resolve.
+        env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(self.project_dir / "src"), env.get("PYTHONPATH")]))
+      command = python_command(extras, worker_module(role, is_lora), worker_args(runtime, role, is_lora), python=python)
       log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
       log_dir.mkdir(parents=True, exist_ok=True)
       with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:
@@ -203,7 +224,23 @@ class LocalWorkerManager:
       proc.terminate()
 
 
-def python_command(extras: list[str], module: str, args: list[str]) -> list[str]:
+def tpu_chip_env(chips: str) -> dict[str, str]:
+  """libtpu env pinning a worker to specific chips, the TPU analogue of
+  CUDA_VISIBLE_DEVICES. Visibility alone is not enough; libtpu also needs the
+  process bounds. Only single-chip subsets are accepted."""
+  n = len([c for c in chips.split(",") if c])
+  return {
+    "TPU_VISIBLE_CHIPS": chips,
+    "TPU_PROCESS_BOUNDS": "1,1,1",
+    "TPU_CHIPS_PER_PROCESS_BOUNDS": f"{n},1,1",
+  }
+
+
+def python_command(extras: list[str], module: str, args: list[str], python: str | None = None) -> list[str]:
+  if python:
+    # A pre-built interpreter whose dependencies uv's extras cannot express —
+    # e.g. a trainer venv carrying the source-built torch_tpu wheel.
+    return [python, "-u", "-m", module, *args]
   if shutil.which("uv"):
     extra_args = [arg for extra in extras for arg in ("--extra", extra)]
     return ["uv", "run", *extra_args, "python", "-u", "-m", module, *args]

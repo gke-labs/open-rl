@@ -1,0 +1,57 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# distributed-shared on a GKE TPU node pool: one whole ct6e-standard-4t node
+# per worker. GKE's TPU device plugin hands out all of a node's chips to a
+# single container, so trainer and sampler cannot split one node the way the
+# GPU overlay splits its L4s; each worker requests google.com/tpu: 4 and the
+# scheduler places them on separate nodes. No DRA involved.
+resources:
+  - ../distributed-shared
+  - 03-sampler-tpu.yaml
+  - 05-trainer-tpu.yaml
+
+# Images are private builds; set with `kustomize edit set image` or edit here.
+images:
+  - name: ghcr.io/gke-labs/open-rl/api-server
+    newName: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/api-server
+    newTag: latest
+  - name: open-rl-trainer-tpu
+    newName: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/trainer-tpu
+    newTag: latest
+  - name: open-rl-sampler-tpu
+    newName: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/sampler-tpu
+    newTag: latest
+
+configMapGenerator:
+  - name: open-rl-config
+    behavior: merge
+    literals:
+      - BASE_MODEL="Qwen/Qwen2.5-0.5B"
+      - ENABLE_GCP_TRACE="0"
+
+patches:
+  # The GPU workers are replaced by the TPU ones below.
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: vllm-worker
+      $patch: delete
+  - patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: open-rl-trainer-worker
+      $patch: delete
+  # TPU engines precompile a shape ladder at startup; give the first sampling
+  # session longer to see the sampler come up.
+  - target:
+      kind: Deployment
+      name: open-rl-api-server
+    patch: |-
+      - op: add
+        path: /spec/template/spec/containers/0/env/-
+        value:
+          name: OPEN_RL_SAMPLER_READY_TIMEOUT_S
+          value: "900"

@@ -29,6 +29,9 @@ spec:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
+      - key: google.com/tpu
+        operator: Exists
+        effect: NoSchedule
       containers:
       - name: e2e-client
         image: E2E-IMAGE

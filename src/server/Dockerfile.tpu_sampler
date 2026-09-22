@@ -1,0 +1,23 @@
+# TPU sampler image. The official vllm-tpu image already carries vllm,
+# tpu_inference, JAX and libtpu at matched versions; open-rl's pull-mode
+# sampler (server.lora_sampler) only needs redis on top of that, so this
+# layers the source tree over the image instead of re-resolving with uv.
+FROM docker.io/vllm/vllm-tpu:v0.29.0
+
+RUN pip install --no-cache-dir redis
+
+WORKDIR /app
+COPY src /app/src
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app/src:/app" \
+    # tpu-inference has LoRA only on its torch model impl; Qwen would otherwise
+    # take the JAX impl and route around it.
+    MODEL_IMPL_TYPE=vllm \
+    # The sampler reaches the TPU through JAX; keep torch's backend autoload
+    # from claiming chips if a torch_tpu wheel is ever present.
+    TORCH_DEVICE_BACKEND_AUTOLOAD=0
+
+# The base image's entrypoint launches vllm serve; this image runs the sampler.
+ENTRYPOINT []
+CMD ["python3", "-u", "-m", "server.lora_sampler"]
