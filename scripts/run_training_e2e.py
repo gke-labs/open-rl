@@ -482,7 +482,7 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
   return run_example(config, ["examples/sft/gsm8k/gsm8k_sft.py"], defaults, watch=watch, prefix=prefix)
 
 
-def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
+def run_gsm8k_eval(config: RunConfig, base_url: str, model_path: str | list[str]) -> None:
   paths = model_path if isinstance(model_path, list) else [model_path]
   path_args = []
   for p in paths:
@@ -492,7 +492,7 @@ def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
     + path_args
     + [
       "--base-url",
-      config.base_url or "http://127.0.0.1:8000",
+      base_url,
       "--data",
       str(write_gsm8k_eval_data(config)),
       "--gpu-memory-utilization",
@@ -505,7 +505,7 @@ def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
 
 def run_gsm8k(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   output = run_gsm8k_train(config, base_url, watch, "fft_gsm8k")
-  run_gsm8k_eval(config, resolve_eval_model_path(output))
+  run_gsm8k_eval(config, base_url, resolve_eval_model_path(output))
 
 
 def check_snapshot_interleaving(config: RunConfig) -> None:
@@ -566,7 +566,7 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     assert isinstance(result, str)
     eval_paths.append(resolve_eval_model_path(result))
   print(f"[training-e2e] evaluating jobs in single micro-batched invocation: {eval_paths}")
-  run_gsm8k_eval(config, eval_paths)
+  run_gsm8k_eval(config, base_url, eval_paths)
 
 
 def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
