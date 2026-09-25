@@ -295,10 +295,6 @@ class SampleSequenceIdsTest(ApiServerTest):
     self.assertEqual(len(promise["sample_sequence_ids"]), 1)
 
 
-if __name__ == "__main__":
-  unittest.main()
-
-
 class InputBoundaryTest(ApiServerTest):
   def test_invalid_training_datum_is_a_validation_error(self) -> None:
     response = self.post(
@@ -338,3 +334,50 @@ class RestoreRoutingTest(ApiServerTest):
         metadata = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
         self.assertEqual((metadata["base_model"], metadata["fine_tuning_type"]), ("checkpoint-base", kind))
         self.assertEqual(self.queued()[0]["payload"]["fine_tuning_type"], kind)
+
+
+class ParallelismMetadataTest(ApiServerTest):
+  """The client states a worker's GPU shape as user_metadata; the model keeps
+  it, and it wins over the session's, the header's and the server's defaults."""
+
+  def metadata(self, model_id: str) -> dict:
+    return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
+
+  def test_user_metadata_states_the_parallelism_and_is_kept(self) -> None:
+    user_metadata = {"sampler": {"dp": 2}, "wandb_link": "https://wandb/run/1"}
+    model_id = self.post("create_model", {"base_model": "m", "user_metadata": user_metadata}).json()["request_id"]
+    meta = self.metadata(model_id)
+    self.assertEqual(meta["sampler_parallelism"], {"dp": 2, "tp": 1, "cp": 1})
+    self.assertEqual(meta["trainer_parallelism"], {"dp": 1, "tp": 1, "cp": 1})
+    self.assertEqual(meta["user_metadata"], user_metadata)
+
+  def test_a_malformed_parallelism_is_refused(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"sampler": {"gpus": 4}}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("parallelism", response.json()["error"])
+
+  def test_the_header_still_works_for_clients_that_cannot_send_metadata(self) -> None:
+    model_id = self.post("create_model", {"base_model": "m"}, headers={"X-Open-RL-Sampler-Parallelism": "dp=3"}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["sampler_parallelism"]["dp"], 3)
+
+  def test_the_session_supplies_defaults_the_model_may_override(self) -> None:
+    session_id = self.post("create_session", {"user_metadata": {"sampler": {"dp": 2}}}).json()["session_id"]
+    inherited = self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
+    self.assertEqual(self.metadata(inherited)["sampler_parallelism"]["dp"], 2)
+    own = {"sampler": {"dp": 4}}
+    overridden = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": own}).json()["request_id"]
+    self.assertEqual(self.metadata(overridden)["sampler_parallelism"]["dp"], 4)
+
+  def test_a_multi_gpu_trainer_is_refused_for_now(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"trainer": {"tp": 2}}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("trainer parallelism", response.json()["error"])
+
+  def test_sampler_tensor_parallelism_is_refused_for_now(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"sampler": {"tp": 2}}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("dp only", response.json()["error"])
+
+
+if __name__ == "__main__":
+  unittest.main()

@@ -31,13 +31,13 @@ VERSION = "v1alpha1"
 PLURAL = "workloads"
 
 
-def workload_name(role: str, owner: str, is_lora: bool) -> str:
-  # A second compatible LoRA request renders the same name, and the create's
-  # AlreadyExists is the reuse. The instance index stays 0 until adapter
-  # capacity accounting exists.
+def workload_name(role: str, owner: str, is_lora: bool, index: int = 0) -> str:
+  # A second compatible request renders the same name, and the create's
+  # AlreadyExists is the reuse. The index numbers the replicas of a role
+  # (sampler dp); the first keeps the name it always had.
   if is_lora:
-    return f"lora-{owner}-0-{role}"
-  return f"fft-{owner}-{role}"
+    return f"lora-{owner}-{index}-{role}"
+  return f"fft-{owner}-{role}" if index == 0 else f"fft-{owner}-{role}-{index}"
 
 
 @dataclass(frozen=True)
@@ -51,6 +51,8 @@ class Worker:
   exclusive: bool
   meta: Any
   footprint: Footprint
+  # Which replica of its role this is; samplers scale out by count.
+  index: int = 0
 
   @property
   def owner(self) -> str:
@@ -58,15 +60,25 @@ class Worker:
 
   @property
   def name(self) -> str:
-    return workload_name(self.role, self.owner, self.is_lora)
+    return workload_name(self.role, self.owner, self.is_lora, self.index)
 
 
-def describe_worker(model_id: str, role: str) -> Worker:
+def describe_worker(model_id: str, role: str, index: int = 0) -> Worker:
   meta, runtime, is_lora = runtime_of(model_id)
   base_model = base_model_of(meta, runtime)
   # LoRA workers stay resident on the GPU, so they never share one. FFT
   # workers suspend between turns and may.
-  return Worker(role, runtime, base_model, is_lora, is_lora, meta, footprint(base_model, meta.fine_tuning_type, role))
+  return Worker(role, runtime, base_model, is_lora, is_lora, meta, footprint(base_model, meta.fine_tuning_type, role), index)
+
+
+def replicas_of(model_id: str, role: str) -> int:
+  """How many workers of this role the model asked for. A sampler scales out
+  by data parallelism: each replica is its own single-device Workload draining
+  the shared sampling queue, so the scheduler places them independently."""
+  if role != "sampler":
+    return 1
+  meta, _, _ = runtime_of(model_id)
+  return meta.sampler_parallelism.dp
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
@@ -83,8 +95,11 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
     "OPEN_RL_TIME_SLICE_JOB_ID": worker.name,
     "OPEN_RL_ACCEL_TIMESLICER_PORT": os.getenv("OPEN_RL_ACCEL_TIMESLICER_PORT", "9753"),
   }
-  if os.getenv("VLLM_GPU_MEMORY_UTILIZATION"):
-    values["VLLM_GPU_MEMORY_UTILIZATION"] = os.environ["VLLM_GPU_MEMORY_UTILIZATION"]
+  # MAX_JOBS caps FlashInfer's JIT build, which otherwise runs one ~3GB
+  # compiler per core and blows through the pod's host memory limit.
+  for name in ("VLLM_GPU_MEMORY_UTILIZATION", "VLLM_MAX_MODEL_LEN", "OPEN_RL_TRAIN_TOKEN_BUDGET", "MAX_JOBS"):
+    if os.getenv(name):
+      values[name] = os.environ[name]
   env: list[dict[str, Any]] = [{"name": name, "value": value} for name, value in values.items()]
   env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
   return env
@@ -153,7 +168,11 @@ class SchedulerWorkerManager:
     self.custom_api = custom_api
 
   def ensure(self, model_id: str, role: str) -> None:
-    worker = describe_worker(model_id, role)
+    for index in range(replicas_of(model_id, role)):
+      self.ensure_workload(describe_worker(model_id, role, index))
+
+  def ensure_workload(self, worker: Worker) -> None:
+    role = worker.role
     deadline = time.monotonic() + 180
     while True:
       try:
