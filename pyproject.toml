@@ -41,7 +41,7 @@ cpu = [
 ]
 gpu = [
     "datasets",
-    "flash-linear-attention==0.5.1",
+    "flash-linear-attention==0.5.2",
     "numpy",
     "peft",
     "tilelang>=0.1.9; sys_platform == 'linux'",
@@ -54,7 +54,7 @@ vllm = [
     "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
-    "vllm==0.25.1; sys_platform == 'linux'",
+    "vllm==0.29.0; sys_platform == 'linux'",
 ]
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
