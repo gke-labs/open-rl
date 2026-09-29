@@ -28,7 +28,7 @@ def trainable_model_parameters(model: PreTrainedModel) -> list[torch.nn.Paramete
   return params
 
 
-from server.model_metadata import WeightSyncConfig
+from server.model_metadata import SPARSE_DELTA_VERSION, WeightSyncConfig
 
 
 class FFTTrainingWorker(BaseTrainerWorker):
@@ -41,14 +41,14 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.cpu_offload: bool = True
     self.weight_sync_cfg: WeightSyncConfig = WeightSyncConfig.from_env()
     self._is_offloaded: bool = False
-    self._latest_delta_tensors: dict[str, torch.Tensor] = {}
+    self._latest_delta_tensors: dict[str, Any] = {}
     self._latest_total_changed: int = 0
     self._latest_total_elements: int = 0
     self._param_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._grad_shadow: dict[torch.nn.Parameter, tuple[torch.device, torch.Tensor]] = {}
     self._opt_shadow: dict[tuple[torch.nn.Parameter, str], tuple[torch.device, torch.Tensor]] = {}
     self._prev_weights_shadow: dict[str, torch.Tensor] = {}
-    self.model_layer_names: list[str] = []
+    self.model_layer_shapes: dict[str, tuple[int, ...]] = {}
     self.total_model_elements: int = 0
 
   def set_weight_sync_strategy(self, strategy: str) -> None:
@@ -98,7 +98,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     for param in self.model.parameters():
       param.requires_grad_(True)
     self.trainable_params = trainable_model_parameters(self.model)
-    self.model_layer_names = [name for name, p in self.model.named_parameters() if p.requires_grad]
+    self.model_layer_shapes = {name: tuple(p.shape) for name, p in self.model.named_parameters() if p.requires_grad}
     self.total_model_elements = sum(p.numel() for p in self.model.parameters())
     if self.weight_sync_cfg.strategy == "delta":
       for param in self.model.parameters():
@@ -219,46 +219,19 @@ class FFTTrainingWorker(BaseTrainerWorker):
       )
 
     os.makedirs(state_path, exist_ok=True)
-    total_changed = 0
-    total_elements = 0
-    layer_names_list: list[str] = []
-    indices_list: list[torch.Tensor] = []
-    values_list: list[torch.Tensor] = []
-    layer_lengths_list: list[int] = []
-
     t_collect_start = time.perf_counter()
-    if self._latest_delta_tensors and "names" in self._latest_delta_tensors:
-      layer_names_list = self._latest_delta_tensors["names"]
-      indices_list = self._latest_delta_tensors["indices_list"]
-      values_list = self._latest_delta_tensors["values_list"]
-      layer_lengths_list = self._latest_delta_tensors["layer_lengths_list"]
-      total_changed = self._latest_total_changed
-      total_elements = self._latest_total_elements
-    else:
-      layer_names_list = self.model_layer_names
-      layer_lengths_list = [0] * len(layer_names_list)
-      total_changed = 0
-      total_elements = self.total_model_elements
-      indices_list = []
-      values_list = []
-
-    # int64 indices: a flat index into a tensor with more than 2**31 elements
-    # (Gemma 4's per-layer embedding table is 2.35e9) does not fit an int32, and
-    # a wrapped negative index made the sampler's index_copy_ assert mid-run.
-    if indices_list:
-      indices_flat = torch.cat(indices_list).to(torch.int64).contiguous()
-      values_flat = torch.cat(values_list).contiguous()
-    else:
-      fallback_dtype = next(self.model.parameters()).dtype if self.model else torch.float32
-      indices_flat = torch.empty(0, dtype=torch.int64, device="cpu")
-      values_flat = torch.empty(0, dtype=fallback_dtype, device="cpu")
-
-    layer_lengths_tensor = torch.tensor(layer_lengths_list, dtype=torch.int64, device="cpu")
-    packed_delta = {
-      "delta.indices_flat": indices_flat,
-      "delta.values_flat": values_flat,
-      "delta.layer_lengths": layer_lengths_tensor,
-    }
+    layer_names_list = self._latest_delta_tensors.get("names", [])
+    indices_list = self._latest_delta_tensors.get("indices_list", [])
+    values_list = self._latest_delta_tensors.get("values_list", [])
+    layer_shapes = [list(self.model_layer_shapes[name]) for name in layer_names_list]
+    total_changed = sum(indices.numel() for indices in indices_list)
+    total_elements = self.total_model_elements
+    # Separate values tensors preserve each parameter's dtype (e.g. FP32 norms
+    # alongside BF16 projections). Names/indices stay in checkpoint coordinates.
+    packed_delta = {}
+    for i, (indices, values) in enumerate(zip(indices_list, values_list, strict=True)):
+      packed_delta[f"{i}.indices"] = indices.contiguous()
+      packed_delta[f"{i}.values"] = values.contiguous()
 
     t_collect_end = time.perf_counter()
     collect_time = t_collect_end - t_collect_start
@@ -287,6 +260,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
       "format": "sparse_delta",
+      "format_version": SPARSE_DELTA_VERSION,
+      "layer_shapes": layer_shapes,
       "kind": kind,
       "model_id": model_id,
       "changed_elements": total_changed,
@@ -349,64 +324,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
       torch.cuda.empty_cache()
     return res
 
-  def _remap_hf_to_vllm_fused(
-    self,
-    layer_names_list: list[str],
-    indices_list: list[torch.Tensor],
-  ) -> tuple[list[str], list[torch.Tensor]]:
-    """Remaps HF layer names (q_proj, k_proj, v_proj, gate_proj, up_proj) and offsets indices to vLLM fused names."""
-    config = getattr(self.model, "config", None)
-    if config is None:
-      return layer_names_list, indices_list
-    # Multimodal wrappers (e.g. gemma-4 ForConditionalGeneration) nest the LM
-    # dims under text_config.
-    if getattr(config, "hidden_size", None) is None and getattr(config, "text_config", None) is not None:
-      config = config.text_config
-
-    hidden_size = getattr(config, "hidden_size", None)
-    num_heads = getattr(config, "num_attention_heads", None)
-    num_kv_heads = getattr(config, "num_key_value_heads", num_heads)
-    head_dim = getattr(config, "head_dim", None)
-    if head_dim is None and hidden_size is not None and num_heads is not None:
-      head_dim = hidden_size // num_heads
-
-    intermediate_size = getattr(config, "intermediate_size", None)
-
-    q_numel = (num_heads * head_dim * hidden_size) if (hidden_size and num_heads and head_dim) else None
-    k_numel = (num_kv_heads * head_dim * hidden_size) if (hidden_size and num_kv_heads and head_dim) else None
-    gate_numel = (intermediate_size * hidden_size) if (hidden_size and intermediate_size) else None
-    # Bias rows fuse with bias-sized offsets (Qwen2.5 attention has QKV
-    # biases; using weight-sized offsets sent bias indices out of bounds).
-    q_bias_numel = (num_heads * head_dim) if (num_heads and head_dim) else None
-    k_bias_numel = (num_kv_heads * head_dim) if (num_kv_heads and head_dim) else None
-
-    mapped_names: list[str] = []
-    mapped_indices: list[torch.Tensor] = []
-
-    for name, idx in zip(layer_names_list, indices_list):
-      is_bias = name.endswith(".bias")
-      if (".q_proj." in name or ".k_proj." in name or ".v_proj." in name) and q_numel is not None and k_numel is not None:
-        qkv_name = name.replace(".q_proj.", ".qkv_proj.").replace(".k_proj.", ".qkv_proj.").replace(".v_proj.", ".qkv_proj.")
-        qn, kn = (q_bias_numel, k_bias_numel) if is_bias else (q_numel, k_numel)
-        offset = 0 if ".q_proj." in name else (qn if ".k_proj." in name else qn + kn)
-        mapped_names.append(qkv_name)
-        mapped_indices.append(idx + offset)
-        continue
-
-      if (".gate_proj." in name or ".up_proj." in name) and gate_numel is not None:
-        gate_up_name = name.replace(".gate_proj.", ".gate_up_proj.").replace(".up_proj.", ".gate_up_proj.")
-        # (No known FFT target has MLP biases; if one appears, intermediate_size
-        # is the bias-sized gate offset.)
-        offset = 0 if ".gate_proj." in name else (intermediate_size if is_bias else gate_numel)
-        mapped_names.append(gate_up_name)
-        mapped_indices.append(idx + offset)
-        continue
-
-      mapped_names.append(name)
-      mapped_indices.append(idx)
-
-    return mapped_names, mapped_indices
-
   def optim_step(self, adam_params: dict[str, Any], model_id: str | None = None) -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     if torch.cuda.is_available():
@@ -463,7 +380,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
       layer_names_list: list[str] = []
       indices_list: list[torch.Tensor] = []
       values_list: list[torch.Tensor] = []
-      layer_lengths_list: list[int] = []
 
       for name, param in self.model.named_parameters():
         if not param.requires_grad:
@@ -480,24 +396,20 @@ class FFTTrainingWorker(BaseTrainerWorker):
         diff_mask = param.data.view(-1).ne(prev_gpu.view(-1))
         indices = diff_mask.nonzero(as_tuple=True)[0]
         if indices.numel() > 0:
-          idx_cpu = indices.to(torch.int64).contiguous().cpu()
+          index_dtype = torch.int32 if param.numel() <= 2**31 else torch.int64
+          idx_cpu = indices.to(index_dtype).contiguous().cpu()
           val_cpu = param.data.view(-1)[diff_mask].contiguous().cpu()
           layer_names_list.append(name)
           indices_list.append(idx_cpu)
           values_list.append(val_cpu)
-          layer_lengths_list.append(int(idx_cpu.numel()))
           self._latest_total_changed += int(idx_cpu.numel())
           self._update_prev_cpu_weight(name, param, idx_cpu, val_cpu)
         del prev_gpu, diff_mask, indices
-
-      if self.weight_sync_cfg.delta_format == "vllm_fused":
-        layer_names_list, indices_list = self._remap_hf_to_vllm_fused(layer_names_list, indices_list)
 
       self._latest_delta_tensors = {
         "names": layer_names_list,
         "indices_list": indices_list,
         "values_list": values_list,
-        "layer_lengths_list": layer_lengths_list,
       }
 
       t_delta_end = time.perf_counter()

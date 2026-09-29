@@ -333,19 +333,6 @@ def clean_cli_extra(extra: str) -> list[str]:
   return [token for token in shlex.split(extra) if not (token.startswith("weight_sync_strategy=") or token.startswith("jitter_sec="))]
 
 
-def _set_fft_delta_apply(env: dict[str, str]) -> None:
-  """FFT scenarios default to in-place delta patching, but an apply method
-  already in the environment (run_cluster_e2e.py's
-  --weight-sync-delta-apply-method) wins. OPEN_RL_IN_PLACE_DELTA forces the
-  in-place path in the sampler regardless of the method, so it is only set
-  when in-place is what was asked for."""
-  method = env.setdefault("OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", "patch_in_place")
-  if method == "patch_in_place":
-    env["OPEN_RL_IN_PLACE_DELTA"] = "1"
-  else:
-    env.pop("OPEN_RL_IN_PLACE_DELTA", None)
-
-
 def examples_env(config: RunConfig) -> dict[str, str]:
   env = os.environ.copy()
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
@@ -358,7 +345,6 @@ def examples_env(config: RunConfig) -> dict[str, str]:
     env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
   if config.scenario.startswith("fft") or "fft" in config.scenario:
     env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-    _set_fft_delta_apply(env)
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env
@@ -714,10 +700,8 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
       env = examples_env(config).copy()
       if mode == "lora":
         env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
-        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
       else:
         env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-        _set_fft_delta_apply(env)
 
       results[job] = run_command(
         ["uv", "--project", "examples", "run", "python", "-m", module_name, *args],

@@ -102,14 +102,12 @@ RUN set -eu; \
         done; \
     done
 
-# Copy patch script specifically
-COPY src/server/scripts/patch_vllm_lora_dedup.py /app/src/server/scripts/patch_vllm_lora_dedup.py
-
-# Apply vLLM patches (Gemma 4 LoRA dedup)
-RUN uv run python /app/src/server/scripts/patch_vllm_lora_dedup.py
-
 # Copy source code
 COPY . .
+
+# Install the project, including the vLLM general plugin entry point used by
+# spawned workers to discover the checkpoint weight-transfer backend.
+RUN uv sync --frozen --extra gpu --extra vllm --extra cluster
 
 ENV PATH="/usr/local/cuda/bin:$PATH" \
     CUDA_HOME="/usr/local/cuda" \

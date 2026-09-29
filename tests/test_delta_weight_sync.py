@@ -48,6 +48,8 @@ class DeltaWeightSyncTest(unittest.TestCase):
     with open(metadata_path) as f:
       meta = json.load(f)
     self.assertEqual(meta["format"], "sparse_delta")
+    self.assertEqual(meta["format_version"], 2)
+    self.assertEqual(meta["layer_shapes"], [[10, 10]])
     self.assertEqual(meta["changed_elements"], 2)
     self.assertEqual(meta["total_elements"], 100)
     self.assertEqual(meta["density_pct"], 2.0)
@@ -58,16 +60,15 @@ class DeltaWeightSyncTest(unittest.TestCase):
 
     sparse_delta = safetensors.torch.load_file(delta_file)
 
-    self.assertIn("delta.indices_flat", sparse_delta)
-    self.assertIn("delta.values_flat", sparse_delta)
-    self.assertEqual(sparse_delta["delta.indices_flat"].numel(), 2)
-    # int64: Gemma 4's per-layer embedding table exceeds 2**31 elements.
-    self.assertEqual(sparse_delta["delta.indices_flat"].dtype, torch.int64)
+    self.assertIn("0.indices", sparse_delta)
+    self.assertIn("0.values", sparse_delta)
+    self.assertEqual(sparse_delta["0.indices"].numel(), 2)
+    self.assertEqual(sparse_delta["0.indices"].dtype, torch.int32)
 
     # 3. Verify Lossless Selective Overwrite reproduces exact target W1
     simulated_sampler_weight = orig_w0.clone()
-    indices = sparse_delta["delta.indices_flat"]
-    values = sparse_delta["delta.values_flat"]
+    indices = sparse_delta["0.indices"]
+    values = sparse_delta["0.values"]
     simulated_sampler_weight.view(-1)[indices.to(torch.int64)] = values
 
     self.assertTrue(
@@ -106,8 +107,9 @@ class DeltaWeightSyncTest(unittest.TestCase):
       "names": ["fc.weight"],
       "indices_list": [torch.tensor([1 * 10 + 1], dtype=torch.int32)],
       "values_list": [torch.tensor([77.7], dtype=torch.float32)],
-      "layer_lengths_list": [1],
     }
+    worker.model_layer_shapes = {"fc.weight": (10, 10)}
+    worker.total_model_elements = 100
     worker._latest_total_changed = 1
     worker._latest_total_elements = 100
 
@@ -124,9 +126,9 @@ class DeltaWeightSyncTest(unittest.TestCase):
     import safetensors.torch
 
     sparse_delta = safetensors.torch.load_file(delta_file)
-    self.assertIn("delta.indices_flat", sparse_delta)
-    self.assertEqual(sparse_delta["delta.indices_flat"].numel(), 1)
-    self.assertAlmostEqual(sparse_delta["delta.values_flat"][0].item(), 77.7, places=4)
+    self.assertIn("0.indices", sparse_delta)
+    self.assertEqual(sparse_delta["0.indices"].numel(), 1)
+    self.assertAlmostEqual(sparse_delta["0.values"][0].item(), 77.7, places=4)
 
 
 if __name__ == "__main__":

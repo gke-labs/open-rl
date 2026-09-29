@@ -10,12 +10,12 @@ from typing import Any
 
 os.environ["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
 
-from server.model_metadata import WeightSyncConfig
 from server.store import RedisStateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, split_stop, text_only_engine_kwargs
 
 try:
   from vllm import SamplingParams
+  from vllm.distributed.weight_transfer.base import WeightTransferUpdateRequest
   from vllm.engine.arg_utils import AsyncEngineArgs
   from vllm.engine.async_llm_engine import AsyncLLMEngine
   from vllm.lora.request import LoRARequest
@@ -24,16 +24,12 @@ try:
   VLLM_AVAILABLE = True
 except ImportError:
   SamplingParams = None
+  WeightTransferUpdateRequest = None
   AsyncEngineArgs = None
   AsyncLLMEngine = None
   LoRARequest = None
   RequestOutputKind = None
   VLLM_AVAILABLE = False
-
-try:
-  import server.delta_weight_transfer_engine  # noqa: F401
-except ImportError:
-  pass
 
 from opentelemetry import propagate, trace
 from opentelemetry.sdk.trace import TracerProvider
@@ -110,14 +106,11 @@ def init_engine():
 
     engine_kwargs.update(text_only_engine_kwargs())
 
-    weight_sync_cfg = WeightSyncConfig.from_env()
-    if weight_sync_cfg.strategy == "delta":
-      try:
-        from vllm.config.weight_transfer import WeightTransferConfig
+    if is_fft_enabled():
+      from vllm.config.weight_transfer import WeightTransferConfig
 
-        engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
-      except (ImportError, ValueError):
-        pass
+      # The delta_snapshot plugin loads both sparse deltas and full checkpoints.
+      engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
 
     engine_args = AsyncEngineArgs(**engine_kwargs)
     engine = AsyncLLMEngine.from_engine_args(engine_args)
@@ -230,29 +223,16 @@ async def process_sampling_request(req: dict, store: Any) -> None:
           if weights_path != CURRENT_LOADED_SAMPLER_WEIGHTS:
             print(f"[vLLM Worker] Weight change detected. Current: {CURRENT_LOADED_SAMPLER_WEIGHTS}, Target: {weights_path}")
             if engine is not None:
-              print("[vLLM Worker] Triggering sleep level 1 (CPU offload weights)...")
-              await engine.sleep(level=1)
-              print("[vLLM Worker] Waking up weights...")
-              await engine.wake_up(tags=["weights"])
-              if WeightSyncConfig.from_env().strategy == "delta":
-
-                def _trigger_wt(worker, path=weights_path):
-                  worker.start_weight_update()
-                  try:
-                    worker.update_weights({"target_weights_path": path})
-                  finally:
-                    worker.finish_weight_update()
-
-                res = await engine.collective_rpc(_trigger_wt)
-                print(f"[vLLM Worker] collective_rpc weight transfer result: {res}")
-                print(f"[vLLM Worker] Incremental delta weights from {weights_path} synchronized via native WeightTransferEngine.")
-              else:
-                res = await engine.collective_rpc("reload_weights", kwargs={"weights_path": weights_path})
-                print(f"[vLLM Worker] collective_rpc weight transfer result: {res}")
-                print(f"[vLLM Worker] Full weights reloaded from {weights_path} in-place.")
-              print("[vLLM Worker] Waking up KV cache...")
-              await engine.wake_up(tags=["kv_cache"])
-              IS_ENGINE_SLEEPING = False
+              # pause_generation(mode="wait") drains in-flight requests first, so
+              # weights never change under a running generation. No finally/resume
+              # on failure: partially updated weights must not be served.
+              await engine.pause_generation(mode="wait", clear_cache=True)
+              await engine.start_weight_update()
+              await engine.update_weights(WeightTransferUpdateRequest(update_info={"target_weights_path": weights_path}))
+              await engine.finish_weight_update(weight_version=weights_path)
+              await engine.reset_encoder_cache()
+              await engine.resume_generation()
+              print(f"[vLLM Worker] Weights from {weights_path} loaded through the delta_snapshot plugin.")
             CURRENT_LOADED_SAMPLER_WEIGHTS = weights_path
             print("[vLLM Worker] Weights reload completed successfully!")
 
