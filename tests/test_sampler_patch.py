@@ -9,12 +9,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from accel_timeslicer.workload import WorkloadRef
-from server.vllm_sampler import Sampler, process_batch, serve, serve_time_sliced
+from server.vllm_sampler import SHUTDOWN_SENTINEL, Sampler, process_batch, serve, serve_time_sliced
 
 
 def make_engine(on_generate=None):
   engine = AsyncMock()
   engine.shutdown = Mock()
+  engine.errored = False
 
   def generate(prompt, sampling_params, request_id, lora_request):
     async def stream():
@@ -125,12 +126,15 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
     self.store = AsyncMock()
     self.engine = make_engine()
     self.slicer = AsyncMock()
+    self.slicer.faulted = None
     self.slicer.acquire = Mock(side_effect=self.slot)
     self.workload = WorkloadRef("sampler-test")
     self.factory = Mock(side_effect=self.create_engine)
     self.patches = [
       patch("server.vllm_sampler.time_slicer_client_from_env", return_value=self.slicer),
       patch("server.vllm_sampler.workload_from_env", return_value=self.workload),
+      patch("server.vllm_sampler.get_state_store", return_value=self.store),
+      patch("server.vllm_sampler.ENGINE_POLL_SECONDS", 0.01),
     ]
     for p in self.patches:
       p.start()
@@ -202,6 +206,50 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
     self.engine.wake_up.assert_not_called()
     self.engine.sleep.assert_not_called()
     self.engine.shutdown.assert_called_once()
+
+  def results(self):
+    return {call.args[0]: call.args[1] for call in self.store.set_future.call_args_list}
+
+  async def test_dead_engine_fails_hanging_requests_and_exits(self):
+    async def hang(request_id):
+      self.engine.errored = True
+      await asyncio.Event().wait()
+
+    self.engine.generate.side_effect = make_engine(hang).generate
+    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1"}]
+    with self.assertRaisesRegex(RuntimeError, "engine is dead"):
+      await serve_time_sliced("test", self.store, self.factory)
+    self.assertIn("engine died", self.results()["1"]["error_message"])
+    self.engine.shutdown.assert_called_once()
+    self.slicer.unregister.assert_awaited_once()
+
+  async def test_faulted_release_exits_without_unregistering(self):
+    @asynccontextmanager
+    async def faulting_slot(workload):
+      yield
+      if self.slicer.acquire.call_count == 2:
+        self.slicer.faulted = "park failed"
+
+    self.slicer.acquire.side_effect = faulting_slot
+    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1"}]
+    with self.assertRaisesRegex(RuntimeError, "park failed"):
+      await serve_time_sliced("test", self.store, self.factory)
+    self.assertEqual(self.results()["1"]["type"], "sample")
+    self.engine.shutdown.assert_called_once()
+    self.slicer.unregister.assert_not_called()
+    self.slicer.close.assert_awaited_once()
+
+  async def test_loop_errors_fail_unserved_requests_and_retry(self):
+    self.store.get_sampling_requests_for_model.side_effect = [
+      RuntimeError("redis down"),
+      [{"request_id": "1"}],
+      [{"request_id": "2"}, {"request_id": SHUTDOWN_SENTINEL}],
+    ]
+    self.engine.wake_up.side_effect = [RuntimeError("wake failed"), None]
+    await serve_time_sliced("test", self.store, self.factory)
+    self.assertIn("wake failed", self.results()["1"]["error_message"])
+    self.assertEqual(self.results()["2"]["type"], "sample")
+    self.slicer.unregister.assert_awaited_once()
 
 
 if __name__ == "__main__":

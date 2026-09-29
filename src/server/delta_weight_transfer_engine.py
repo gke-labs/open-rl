@@ -1,4 +1,4 @@
-"""vLLM 0.29 weight-transfer plugin: apply sparse patches or a full checkpoint from disk while generation is paused."""
+"""vLLM weight-transfer plugin: apply sparse patches or a full checkpoint from disk while generation is paused."""
 
 import json
 import logging
@@ -101,6 +101,9 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       # The reader verified sorted, unique indices on CPU; skip re-sorting on GPU.
       load_checkpoint_weight_patches(self.model, patches, validate_unique_indices=False)
       logger.info("Applied %d checkpoint-coordinate sparse patches from %s", len(patches), path)
+      # Free the patch and NaN staging tensors so the trainer gets them back while the engine sleeps.
+      del patches
+      torch.cuda.empty_cache()
     else:
       files = sorted(str(file) for file in path.glob("*.safetensors")) if path.is_dir() else [str(path)]
       if not files or any(not file.endswith(".safetensors") or Path(file).name == "delta.safetensors" for file in files):

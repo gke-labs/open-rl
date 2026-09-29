@@ -32,6 +32,7 @@ tracer = trace.get_tracer("vllm.inference.worker")
 SHUTDOWN_SENTINEL = "SHUTDOWN_SENTINEL"
 TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
 READY_TTL_SECONDS = 3600
+ENGINE_POLL_SECONDS = 5
 
 
 def failed_response(message: str) -> dict[str, Any]:
@@ -234,7 +235,33 @@ async def process_batch(sampler: Sampler, store: RequestStore, requests: list[di
       for request in batch:
         await store.set_future(request["request_id"], failed_response(f"vLLM weight update failed: {exc}"))
       continue
-    await asyncio.gather(*(process_request(sampler, store, req) for req in batch))
+    await serve_group(sampler, store, batch)
+
+
+async def serve_group(sampler: Sampler, store: RequestStore, batch: list[dict[str, Any]]) -> None:
+  """A dead EngineCore leaves generate() hanging, so the wait polls for it and fails what is left."""
+  tasks = {asyncio.create_task(process_request(sampler, store, req)): req for req in batch}
+  pending = set(tasks)
+  while pending:
+    _, pending = await asyncio.wait(pending, timeout=ENGINE_POLL_SECONDS)
+    if pending and sampler.engine.errored:
+      for task in pending:
+        task.cancel()
+      await fail_requests(store, [tasks[task] for task in pending], "vLLM engine died during the batch")
+      break
+  if sampler.engine.errored:
+    raise RuntimeError("vLLM engine is dead")
+  for task in tasks:
+    task.result()
+
+
+async def fail_requests(store: RequestStore, requests: list[dict[str, Any]], error: Any) -> None:
+  """Best effort, so clients see the failure instead of waiting forever."""
+  for request in requests:
+    try:
+      await store.set_future(request["request_id"], failed_response(f"vLLM Worker Error: {error}"))
+    except Exception as exc:
+      print(f"[vLLM Worker] Could not fail request {request['request_id']}: {exc}")
 
 
 async def process_request(sampler: Sampler, store: RequestStore, request: dict[str, Any]) -> None:
@@ -259,7 +286,11 @@ async def serve(
   time_slicer: TimeSlicerClient | None = None,
   workload: WorkloadRef | None = None,
 ) -> None:
-  """Build the engine, then serve the model's queue until the shutdown sentinel arrives."""
+  """Build the engine, then serve the model's queue until the shutdown sentinel arrives.
+
+  Queue and store errors are retried. A dead engine or a process the time slicer
+  could not park raises, so the worker exits and is restarted.
+  """
   async with holding_gpu(time_slicer, workload):
     sampler = Sampler(make_engine())
     if time_slicer is not None:
@@ -269,20 +300,33 @@ async def serve(
     try:
       ready_at = float("-inf")
       while True:
-        if time.monotonic() - ready_at > 60:
-          await mark_ready(state, model_id)
-          ready_at = time.monotonic()
-        batch = await store.get_sampling_requests_for_model(model_id)
-        if not batch:
-          await asyncio.sleep(0.05)
-          continue
-        shutdown = any(req.get("request_id") == SHUTDOWN_SENTINEL for req in batch)
-        requests = [req for req in batch if req.get("request_id") != SHUTDOWN_SENTINEL]
-        if requests:
-          async with holding_gpu(time_slicer, workload, sampler):
-            await process_batch(sampler, store, requests)
-        if shutdown:
-          return
+        if time_slicer is not None and time_slicer.faulted:
+          raise RuntimeError(f"Time slicer could not park this process: {time_slicer.faulted}")
+        requests = []
+        started = False
+        try:
+          if time.monotonic() - ready_at > 60:
+            await mark_ready(state, model_id)
+            ready_at = time.monotonic()
+          batch = await store.get_sampling_requests_for_model(model_id)
+          if not batch:
+            await asyncio.sleep(0.05)
+            continue
+          shutdown = any(req.get("request_id") == SHUTDOWN_SENTINEL for req in batch)
+          requests = [req for req in batch if req.get("request_id") != SHUTDOWN_SENTINEL]
+          if requests:
+            async with holding_gpu(time_slicer, workload, sampler):
+              started = True
+              await process_batch(sampler, store, requests)
+          if shutdown:
+            return
+        except Exception as exc:
+          if sampler.engine.errored:
+            raise
+          print(f"[vLLM Worker] Sampling loop error, retrying: {exc}")
+          if not started:
+            await fail_requests(store, requests, exc)
+          await asyncio.sleep(1)
     finally:
       await state.delete_values(f"open_rl:sampler_ready:{model_id}")
   finally:
@@ -298,7 +342,9 @@ async def serve_time_sliced(model_id: str, store: RequestStore, make_engine: Cal
     try:
       await serve(model_id, store, make_engine, time_slicer, workload)
     finally:
-      await time_slicer.unregister(workload)
+      # A faulted process still holds the GPU; the grant moves on once it exits.
+      if not time_slicer.faulted:
+        await time_slicer.unregister(workload)
   finally:
     await time_slicer.close()
 
