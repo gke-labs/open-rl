@@ -94,10 +94,12 @@ kubectl apply -k examples/autoresearch/recipes/math_rl
 kubectl apply --server-side -k examples/autoresearch/recipes/math_rl/gke
 ```
 
-Each overlay starts one Sandbox that runs one Gemini CLI researcher. If that
-process exits nonzero or the pod crashes, the run stops; Kubernetes does not
-retry it. The intended recovery is to inspect the UI/logs and start a new run
-explicitly.
+Each overlay starts one Sandbox that runs one Gemini CLI researcher, with the
+UI as a second container in the same pod. If the researcher exits nonzero or
+the pod crashes, the run stops; Kubernetes does not retry it. The UI keeps
+serving after the researcher exits, until the Sandbox is deleted or its 6-hour
+deadline passes. The intended recovery is to inspect the UI/logs and start a
+new run explicitly.
 
 Open the UI:
 
