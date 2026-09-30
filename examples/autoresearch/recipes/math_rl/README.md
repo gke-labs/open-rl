@@ -72,11 +72,12 @@ UI:
 
 ```bash
 kubectl apply -k examples/autoresearch/recipes/math_rl
-kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
-The add-on deploys into `openrl-system`, next to the OpenRL stack, because the
-researchers use its `open-rl-sa` service account and `open-rl-shared-pvc` volume.
+The add-on deploys into the current namespace, not `openrl-system`: researchers
+are clients of the API server. They keep their logs on their own
+`open-rl-autoresearch-shared` volume.
 
 For a single-command demo, use the convenience overlay that composes the normal
 OpenRL backend with the autoresearch add-on:
@@ -85,19 +86,20 @@ OpenRL backend with the autoresearch add-on:
 kubectl apply --server-side -k examples/autoresearch/recipes/math_rl/gke
 kubectl -n openrl-system wait --for=condition=available deployment/open-rl-scheduler --timeout=5m
 kubectl -n openrl-system wait --for=condition=available deployment/open-rl-api-server --timeout=5m
-kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
-The GKE cluster needs DRA GPU nodes, set up as in the GKE setup guide. The
+The OpenRL stack goes into `openrl-system` and the add-on into the current
+namespace. The GKE cluster needs DRA GPU nodes, set up as in the GKE setup guide. The
 researcher pods wait on `READY_URLS`, so attempts do not start until the API
 server is healthy. Trainer and sampler workers are not running at that point:
 the scheduler starts them when the first attempt creates a training client,
 so that attempt also waits for the model to load.
 
-The researcher pods use the in-cluster API server URL:
+The researcher pods reach the API server by its cross-namespace service name:
 
 ```text
-TINKER_BASE_URL=http://open-rl-api-server-service:8000
+TINKER_BASE_URL=http://open-rl-api-server-service.openrl-system:8000
 ```
 
 ## Overlay Settings
@@ -108,8 +110,8 @@ The math-RL overlay sets:
 - `LOG_ROOT=/mnt/shared/open-rl/autoresearch/math_rl`
 - `ATTEMPT_TIMEOUT_MINUTES=5`
 - `AGENT_TIMEOUT_MINUTES=10`
-- `READY_URLS=http://open-rl-api-server-service:8000/api/v1/healthz`
-- `TINKER_BASE_URL=http://open-rl-api-server-service:8000`
+- `READY_URLS=http://open-rl-api-server-service.openrl-system:8000/api/v1/healthz`
+- `TINKER_BASE_URL=http://open-rl-api-server-service.openrl-system:8000`
 - `BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct` in the composed GKE stack
 
 The recipe `program.md` tells each researcher sandbox to tune `config.toml`, run

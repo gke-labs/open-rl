@@ -1,10 +1,8 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# One-shot Math-RL stack: the OpenRL LoRA stack plus the math_rl autoresearch
-# add-on, in one namespace so the researchers share its service account and PVC.
-namespace: openrl-system
-
+# One-shot Math-RL stack: the OpenRL LoRA stack in openrl-system, plus the
+# math_rl autoresearch add-on in the current namespace.
 resources:
 - ../../../../../k8s/deploy/lora
 - autoresearch
@@ -14,6 +12,7 @@ generatorOptions:
 
 configMapGenerator:
 - name: open-rl-config
+  namespace: openrl-system
   behavior: merge
   literals:
   - BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct

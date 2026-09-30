@@ -87,7 +87,7 @@ Choose one recipe overlay:
 kubectl apply -k examples/autoresearch/recipes/text_sql
 
 # Math-RL add-on. First deploy OpenRL with docs/setup/gke-setup.md,
-# or reuse an existing backend at http://open-rl-api-server-service:8000.
+# or reuse an existing backend at http://open-rl-api-server-service.openrl-system:8000.
 kubectl apply -k examples/autoresearch/recipes/math_rl
 
 # Convenience one-shot Math-RL stack: OpenRL backend + autoresearch add-on.
@@ -102,7 +102,7 @@ explicitly.
 Open the UI:
 
 ```bash
-kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
 ```text
@@ -111,7 +111,10 @@ http://localhost:8080/experiments.html
 
 Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
 GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
-the UI on top of that shared backend, in its `openrl-system` namespace.
+the UI on top of that shared backend. They deploy into the current namespace,
+not the backend's `openrl-system`, keep their logs on their own
+`open-rl-autoresearch-shared` volume, and reach the API server at
+`open-rl-api-server-service.openrl-system:8000`.
 
 Researcher pods wait for comma-separated `READY_URLS` before the agent starts, so
 early pod startup does not race the API server. The Math-RL overlays wait on the

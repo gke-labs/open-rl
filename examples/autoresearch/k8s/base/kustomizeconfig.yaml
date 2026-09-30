@@ -3,3 +3,7 @@ nameReference:
   fieldSpecs:
   - kind: Sandbox
     path: spec/podTemplate/spec/containers/envFrom/configMapRef/name
+- kind: PersistentVolumeClaim
+  fieldSpecs:
+  - kind: Sandbox
+    path: spec/podTemplate/spec/volumes/persistentVolumeClaim/claimName

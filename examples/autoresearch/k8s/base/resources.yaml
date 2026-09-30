@@ -1,3 +1,16 @@
+# Researcher logs, written by the Sandbox and read by the UI. RWX because the
+# two pods can land on different nodes; Filestore's smallest volume is 1Ti.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autoresearch-shared
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: standard-rwx
+  resources:
+    requests:
+      storage: 1Ti
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -28,7 +41,6 @@ spec:
         app.kubernetes.io/name: autoresearch
         app.kubernetes.io/component: ui
     spec:
-      serviceAccountName: open-rl-sa
       containers:
       - name: ui
         image: ghcr.io/gke-labs/open-rl/autoresearch:latest
@@ -64,7 +76,7 @@ spec:
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
-          claimName: open-rl-shared-pvc
+          claimName: autoresearch-shared
 ---
 apiVersion: v1
 kind: Service
@@ -93,7 +105,6 @@ metadata:
 spec:
   podTemplate:
     spec:
-      serviceAccountName: open-rl-sa
       restartPolicy: Never
       activeDeadlineSeconds: 21600
       containers:
@@ -129,4 +140,4 @@ spec:
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
-          claimName: open-rl-shared-pvc
+          claimName: autoresearch-shared
