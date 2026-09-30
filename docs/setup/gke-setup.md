@@ -91,7 +91,10 @@ Connect `kubectl`:
 gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 ```
 
-Install the NVIDIA GPU driver, then the NVIDIA DRA driver (needs Helm v3), which publishes the GPUs as ResourceSlices for the scheduler to place against:
+Install two drivers:
+
+- **The NVIDIA GPU driver**, the kernel driver and CUDA libraries on the node. GKE normally installs it, but the pool above turns that off (`gpu-driver-version=disabled`) as the GKE DRA setup requires, so install it with Google's installer DaemonSet. The `latest` installer also provides the CUDA checkpoint support the FFT bundle needs.
+- **The NVIDIA DRA driver**, a Kubernetes add-on (Helm v3). It replaces the GKE device plugin, which exposes GPUs as an `nvidia.com/gpu` count. Instead, it publishes each GPU as a `ResourceSlice` with its model and memory, and allocates GPUs to `ResourceClaim`s of DeviceClass `gpu.nvidia.com`. The OpenRL scheduler places every worker by creating such a claim, so without this driver no worker is ever placed.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded-latest.yaml
@@ -102,7 +105,7 @@ helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
   --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
 ```
 
-Check that both GPUs are published:
+Check that the GPU node has a `ResourceSlice` from driver `gpu.nvidia.com` listing both GPUs:
 
 ```bash
 kubectl get resourceslices
@@ -110,20 +113,22 @@ kubectl get resourceslices
 
 ## 3. Deploy OpenRL
 
-Apply **one** release bundle. Each release publishes two:
+Apply **only one** of the following release bundles. Both install the same API server, scheduler, Redis, and shared PVC into `openrl-system`. Server-side apply is required because the Workload CRD exceeds the client-side apply annotation limit.
 
-| Bundle | Workers |
-| --- | --- |
-| `openrl-lora.yaml` | LoRA |
-| `openrl-fft.yaml` | LoRA and full fine-tuning (FFT), plus the accelerator time-slicer and llm-d snapshot agent |
+*   **Option A: LoRA.** Trainer and sampler workers each get a GPU of their own.
+    ```bash
+    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+    ```
 
-```bash
-kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
-```
+*   **Option B: LoRA and full fine-tuning (FFT).** Adds FFT workers, which can share a GPU with other FFT workers, and two DaemonSets that coordinate that sharing on each GPU node: the accelerator time-slicer and the llm-d snapshot agent.
+    ```bash
+    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml
+    ```
+    The DaemonSets run privileged, with host PID and host network, and schedule onto nodes labeled `nvidia.com/gpu.present=true` (set on the pool above). The snapshot agent checkpoints CUDA processes and needs NVIDIA driver r570 or newer, which the `latest` driver installer above provides. FFT workers never share a GPU with a LoRA worker. See [GKE FFT Time-Slice Setup](gke-fft-timeslice.md) for how the sharing works.
 
-Replace `latest/download` with `download/<tag>` to pin a specific version. Server-side apply is required because the Workload CRD exceeds the client-side apply annotation limit. See [OpenRL on an existing DRA cluster](lora-dra.md) for what each bundle installs, and for using storage other than Filestore.
+Replace `latest/download` with `download/<tag>` to pin a specific version. See [OpenRL on an existing DRA cluster](lora-dra.md) for what each bundle installs, and for using storage other than Filestore.
 
-To track unreleased code on `main` instead, render the overlay from a checkout:
+To track unreleased code on `main` instead, render the overlay from a checkout, `k8s/deploy/lora` or `k8s/deploy/fft`:
 
 ```bash
 make render OVERLAY=k8s/deploy/lora VERSION=latest | kubectl apply --server-side -f -
@@ -141,6 +146,13 @@ Wait for the deployments to become ready:
 kubectl -n openrl-system rollout status deploy/redis-store
 kubectl -n openrl-system rollout status deploy/open-rl-scheduler
 kubectl -n openrl-system rollout status deploy/open-rl-api-server
+```
+
+With Option B, also wait for the DaemonSets:
+
+```bash
+kubectl -n openrl-system rollout status daemonset/open-rl-accel-timeslicer
+kubectl -n openrl-system rollout status daemonset/snapshot-agent
 ```
 
 Useful logs:
