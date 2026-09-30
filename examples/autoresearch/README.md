@@ -91,7 +91,7 @@ kubectl apply -k examples/autoresearch/recipes/text_sql
 kubectl apply -k examples/autoresearch/recipes/math_rl
 
 # Convenience one-shot Math-RL stack: OpenRL backend + autoresearch add-on.
-kubectl apply -k examples/autoresearch/recipes/math_rl/gke
+kubectl apply --server-side -k examples/autoresearch/recipes/math_rl/gke
 ```
 
 Each overlay starts one Sandbox that runs one Gemini CLI researcher. If that
@@ -102,7 +102,7 @@ explicitly.
 Open the UI:
 
 ```bash
-kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
 ```text
@@ -111,11 +111,11 @@ http://localhost:8080/experiments.html
 
 Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
 GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
-the UI on top of that shared backend.
+the UI on top of that shared backend, in its `openrl-system` namespace.
 
 Researcher pods wait for comma-separated `READY_URLS` before the agent starts, so
-early pod startup does not race vLLM, the trainer worker, or the API server. The
-convenience Math-RL stack sets those URLs for vLLM, trainer, and API server health.
+early pod startup does not race the API server. The Math-RL overlays wait on the
+API server's health endpoint; its trainer and sampler workers start on demand.
 
 ## Shared Pieces
 

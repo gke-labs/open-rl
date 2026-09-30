@@ -1,127 +1,24 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# The LoRA stack with Gemma 4 E2B as the API server's default model. The
+# scheduler starts the trainer and sampler workers when the recipe creates its
+# training client, each on a GPU of its own.
+namespace: openrl-system
+
 resources:
-  - ../../k8s/deploy/distributed-shared
+  - ../../k8s/deploy/lora
 
 labels:
   - pairs:
       app.kubernetes.io/part-of: text-to-sql
     includeTemplates: true
 
+generatorOptions:
+  disableNameSuffixHash: true
+
 configMapGenerator:
   - name: open-rl-config
     behavior: merge
     literals:
-      - BASE_MODEL="google/gemma-4-e2b"
-      - VLLM_ARCHITECTURE_OVERRIDE="Gemma4ForCausalLM"
-      - VLLM_GPU_MEMORY_UTILIZATION="0.9"
-      - ENABLE_GCP_TRACE="0"
-
-patches:
-  - target:
-      kind: PersistentVolumeClaim
-      name: open-rl-shared-pvc
-    patch: |-
-      apiVersion: v1
-      kind: PersistentVolumeClaim
-      metadata:
-        name: open-rl-shared-pvc
-      spec:
-        storageClassName: standard-rwx
-        resources:
-          requests:
-            storage: 100Gi
-  - target:
-      kind: Deployment
-      name: open-rl-api-server
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: open-rl-api-server
-      spec:
-        template:
-          spec:
-            containers:
-              - name: api-server
-                env:
-                  - name: PYTHONPATH
-                    value: "/app/src"
-                  - name: REDIS_URL
-                    value: "redis://redis-service:6379"
-                  - name: VLLM_URL
-                    value: "http://vllm-service:8001"
-  - target:
-      kind: Deployment
-      name: vllm-worker
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: vllm-worker
-      spec:
-        replicas: 1
-        template:
-          spec:
-            nodeSelector:
-              cloud.google.com/gke-nodepool: open-rl-l4
-            containers:
-              - name: vllm
-                resources:
-                  limits:
-                    nvidia.com/gpu: "1"
-                    memory: "24Gi"
-                  requests:
-                    nvidia.com/gpu: "1"
-                    memory: "24Gi"
-                    cpu: "2"
-                env:
-                  - name: HF_TOKEN
-                    valueFrom:
-                      secretKeyRef:
-                        name: hf-token
-                        key: token
-                        optional: true
-            tolerations:
-              - key: "nvidia.com/gpu"
-                operator: "Equal"
-                value: "present"
-                effect: "NoSchedule"
-  - target:
-      kind: Deployment
-      name: open-rl-trainer-worker
-    patch: |-
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        name: open-rl-trainer-worker
-      spec:
-        template:
-          spec:
-            nodeSelector:
-              cloud.google.com/gke-nodepool: open-rl-l4
-            containers:
-              - name: trainer-worker
-                resources:
-                  limits:
-                    nvidia.com/gpu: "1"
-                    memory: "24Gi"
-                  requests:
-                    nvidia.com/gpu: "1"
-                    memory: "24Gi"
-                    cpu: "2"
-                env:
-                  - name: PYTHONPATH
-                    value: "/app/src"
-                  - name: HF_TOKEN
-                    valueFrom:
-                      secretKeyRef:
-                        name: hf-token
-                        key: token
-                        optional: true
-            tolerations:
-              - key: "nvidia.com/gpu"
-                operator: "Equal"
-                value: "present"
-                effect: "NoSchedule"
+      - BASE_MODEL=google/gemma-4-e2b

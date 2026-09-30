@@ -311,7 +311,7 @@ RELEASE_IMAGES ?= server api-server client scheduler
 DIST_DIR       ?= dist
 
 # Print any overlay with the open-rl images pinned to VERSION:
-#   make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
+#   make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply --server-side -f -
 # Works on a temp copy of the repo: `kustomize edit` rewrites the kustomization
 # in place, and overlays reach into k8s/deploy/ by relative path.
 render:

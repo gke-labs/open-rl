@@ -1,3 +1,7 @@
+# Researchers use the OpenRL stack's service account and shared PVC, which
+# live in openrl-system.
+namespace: openrl-system
+
 resources:
 - resources.yaml
 

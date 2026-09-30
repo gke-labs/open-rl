@@ -72,22 +72,27 @@ UI:
 
 ```bash
 kubectl apply -k examples/autoresearch/recipes/math_rl
-kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
+
+The add-on deploys into `openrl-system`, next to the OpenRL stack, because the
+researchers use its `open-rl-sa` service account and `open-rl-shared-pvc` volume.
 
 For a single-command demo, use the convenience overlay that composes the normal
 OpenRL backend with the autoresearch add-on:
 
 ```bash
-kubectl apply -k examples/autoresearch/recipes/math_rl/gke
-kubectl wait --for=condition=available deployment/vllm-worker --timeout=20m
-kubectl wait --for=condition=available deployment/open-rl-api-server --timeout=5m
-kubectl wait --for=condition=available deployment/open-rl-trainer-worker --timeout=20m
-kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
+kubectl apply --server-side -k examples/autoresearch/recipes/math_rl/gke
+kubectl -n openrl-system wait --for=condition=available deployment/open-rl-scheduler --timeout=5m
+kubectl -n openrl-system wait --for=condition=available deployment/open-rl-api-server --timeout=5m
+kubectl -n openrl-system port-forward svc/open-rl-autoresearch-ui 8080:8080
 ```
 
-The researcher pods also wait on `READY_URLS`, so attempts do not start until
-vLLM, the trainer worker, and the API server health endpoints are reachable.
+The GKE cluster needs DRA GPU nodes, set up as in the GKE setup guide. The
+researcher pods wait on `READY_URLS`, so attempts do not start until the API
+server is healthy. Trainer and sampler workers are not running at that point:
+the scheduler starts them when the first attempt creates a training client,
+so that attempt also waits for the model to load.
 
 The researcher pods use the in-cluster API server URL:
 
