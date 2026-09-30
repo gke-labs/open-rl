@@ -24,11 +24,9 @@ Assets, attached to the GitHub Release:
 
 | Asset | Rendered from |
 | --- | --- |
-| `openrl-distributed-shared.yaml` | `k8s/deploy/distributed-shared` |
-| `openrl-distributed-lustre.yaml` | `k8s/deploy/distributed-lustre` |
 | `openrl-lora.yaml` | `k8s/deploy/lora` |
 | `openrl-fft.yaml` | `k8s/deploy/fft` |
-| `checksums.sha256` | the four YAML files above |
+| `checksums.sha256` | the two YAML files above |
 
 Every bundle has its images pinned to the release tag.
 
@@ -66,8 +64,8 @@ Every bundle has its images pinned to the release tag.
 4. **Verify on a clean cluster.**
 
    ```bash
-   kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/download/v0.0.2/openrl-distributed-shared.yaml
-   kubectl get pods -o jsonpath='{..image}'
+   kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/download/v0.0.2/openrl-lora.yaml
+   kubectl -n openrl-system get pods -o jsonpath='{..image}'
    ```
 
    Server-side apply is required: the Workload CRD is larger than the 256 KiB

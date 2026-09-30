@@ -56,7 +56,7 @@ help:
 	@echo "make test piglatin                      # pig-latin example end-to-end tests"
 	@echo "make cluster-eval EVAL_MODEL_PATH=/mnt/shared/open-rl/checkpoints/...  # one-off vLLM eval job on the cluster"
 	@echo "make lint | fmt"
-	@echo "make render OVERLAY=k8s/deploy/distributed-shared VERSION=v0.0.1  # pinned manifests to stdout"
+	@echo "make render OVERLAY=k8s/deploy/lora VERSION=v0.0.1  # pinned manifests to stdout"
 	@echo "make release-bundle VERSION=v0.0.1     # release assets into $(DIST_DIR)/"
 
 # ---------------------------------------------------------------------------
@@ -249,9 +249,6 @@ kind-prune:
 kind-delete:
 	kind delete cluster --name open-rl-dra
 
-deploy:
-	kubectl apply -k k8s/deploy/distributed-lustre/
-
 # FFT DRA variant: the API server launches one worker pod per FFT model, all pinned
 # to one physical GPU allocation via a shared DRA ResourceClaim.
 # See docs/setup/gke-fft-timeslice.md.
@@ -259,7 +256,7 @@ deploy-fft-timeslice:
 	kubectl apply --server-side -k k8s/deploy/distributed-fft-timeslice/
 
 rollout:
-	kubectl rollout restart deployment redis-store open-rl-api-server open-rl-trainer-worker vllm-worker
+	kubectl -n openrl-system rollout restart deployment redis-store open-rl-api-server
 
 # One-off vLLM eval of a checkpoint on the shared PVC:
 cluster-eval:
@@ -335,8 +332,6 @@ render:
 release-bundle:
 	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.0.1"; exit 2; }
 	@rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
-	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-shared VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-shared.yaml
-	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-lustre VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-lustre.yaml
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/lora VERSION=$(VERSION) > $(DIST_DIR)/openrl-lora.yaml
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/fft VERSION=$(VERSION) > $(DIST_DIR)/openrl-fft.yaml
 	@cd $(DIST_DIR) && { command -v sha256sum >/dev/null && sha256sum *.yaml || shasum -a 256 *.yaml; } > checksums.sha256
