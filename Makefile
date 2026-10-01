@@ -251,7 +251,7 @@ kind-delete:
 
 # FFT DRA variant: the API server launches one worker pod per FFT model, all pinned
 # to one physical GPU allocation via a shared DRA ResourceClaim.
-# See docs/setup/gke-fft-timeslice.md.
+# See docs/fft/time-slicing.md.
 deploy-fft-timeslice:
 	kubectl apply --server-side -k k8s/deploy/distributed-fft-timeslice/
 

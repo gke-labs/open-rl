@@ -2,7 +2,7 @@
 
 How to run the Harvey LAB LoRA recipe against an OpenRL cluster deployed with
 the scheduler (`OPEN_RL_WORKER_MANAGER=scheduler`, see
-[gke-fft-timeslice.md](gke-fft-timeslice.md)), with one GPU for the trainer and
+[FFT time slicing](../fft/time-slicing.md)), with one GPU for the trainer and
 one for the sampler. Verified on 2026-09-07 with Qwen3.5-9B on two H100 nodes.
 
 ## What the cluster needs

@@ -77,7 +77,7 @@ real devices exercise the identical path; only the two env values differ.
 
 ## Deploy
 
-For the complete LoRA stack, use the [LoRA deployment overlays](../docs/setup/lora-dra.md).
+For the complete LoRA stack, use the [Kubernetes deployment guide](../docs/setup/kubernetes.md).
 The standalone scheduler base includes its service account, CRDs, and RBAC:
 
 ```

@@ -36,9 +36,9 @@ whose default renderer is hardcoded for a different family, such as
 
 ## Start the Server
 
-These recipes need a GPU deployment of OpenRL. On Kubernetes, follow the
-[GKE setup guide](../../docs/setup/gke-setup.md) and port-forward the API server
-to `127.0.0.1:9003`.
+These recipes need a GPU deployment of OpenRL. On Kubernetes, follow
+[Getting started](../../docs/getting-started.md), which deploys OpenRL and
+port-forwards the API server to `127.0.0.1:9003`.
 
 For development on a machine with two GPUs, start Redis and run the API server
 from the repository root. It launches the trainer and the vLLM sampler as

@@ -51,10 +51,10 @@ sequenceDiagram
 
 ## Setup
 
-Before running the training, you need to set up the environment and deploy OpenRL. You can choose to run it locally on a VM with multiple GPUs or on a GKE cluster.
+Before running the training, deploy OpenRL:
 
-*   For **Local Setup** (recommended for baseline), follow the [Local Setup Guide](../../docs/setup/local-setup.md).
-*   For **GKE Setup** (recommended for scaling), follow the [GKE Setup Guide](../../docs/setup/gke-setup.md).
+*   On a **Kubernetes cluster**, follow [Getting started](../../docs/getting-started.md).
+*   For **development on a GPU VM**, follow [Development setup](../../docs/development.md#on-a-gpu-vm).
 
 On GKE, the release bundle serves the recipe as is: the recipe names its base model when it creates the training client. To make Gemma 4 E2B the API server's default model as well, deploy this directory's overlay instead of the bundle:
 

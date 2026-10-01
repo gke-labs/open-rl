@@ -1,5 +1,7 @@
 # Full Parameter Fine-Tuning (FFT) Architecture & Implementation Guide
 
+How FFT workers take turns on a shared GPU is described in [FFT time slicing](time-slicing.md).
+
 This document provides a comprehensive technical deep-dive into the multi-tenant Full Parameter Fine-Tuning (FFT) and Reinforcement Learning (RL) architecture in Open-RL. It consolidates cluster topology, pod placement, dynamic weight swapping, control plane decoupling, hardware time-slicing, workload profiling, and empirical benchmark verifications into a single authoritative reference.
 
 ---

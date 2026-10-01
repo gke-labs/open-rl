@@ -61,10 +61,9 @@ experiments for parameter sweeps and reward-signal improvement against a shared 
 
 ## Quick Start
 
-Deploy the [LoRA scheduler release on kind or GKE](docs/setup/lora-dra.md) using the existing render command against an NVIDIA DRA cluster. Trainer and sampler workers use separate GPUs.
-
- - Follow the [Pig Latin notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) or [Text-to-SQL notebook](examples/sft/text-to-sql/texttosql_sft_notebook.ipynb) to see supervised fine-tuning in action.
- - Follow the [Text-to-SQL RL recipe](examples/text-to-sql/README.md) to see reinforcement learning in action.
+**[Getting started](docs/getting-started.md)** deploys OpenRL on a Kubernetes cluster with
+GPUs and runs a supervised and a reinforcement learning job against it from your machine.
+To work on OpenRL itself, see [Development setup](docs/development.md).
 
 Snippet below shows a sample Reinforcement Learning loop like GRPO, where the 4 API primitives are used to create a generate-and-reward-train loop:
 
@@ -122,6 +121,10 @@ asyncio.run(rlvr_loop())
 
 Detailed guides and runnable examples are structured under `docs/` and `examples/`:
 
+- **Setup:**
+  - [Getting started](docs/getting-started.md)
+  - [Deploy OpenRL on Kubernetes](docs/setup/kubernetes.md)
+  - [Development setup](docs/development.md)
 - **Guides:**
   - Supervised finetuning:
     - [Pig Latin SFT Notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) & [script guide](examples/sft/pig-latin/README.md)
@@ -131,8 +134,8 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
 - **Technical Documentation**:
   - [Architecture](docs/architecture.md)
   - [Tinker Client Compatibility](docs/tinker-client-compatibility.md)
-- **Deployment**:
-  - [Kubernetes Deployment Guide (GKE)](docs/setup/gke-setup.md)
+  - [Configuration](docs/configuration.md)
+  - [FFT time slicing](docs/fft/time-slicing.md)
 
 ## Roadmap
 

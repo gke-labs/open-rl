@@ -86,7 +86,7 @@ Choose one recipe overlay:
 # Fast text-SQL, no model server.
 kubectl apply -k examples/autoresearch/recipes/text_sql
 
-# Math-RL add-on. First deploy OpenRL with docs/setup/gke-setup.md,
+# Math-RL add-on. First deploy OpenRL with docs/setup/kubernetes.md,
 # or reuse an existing backend at http://open-rl-api-server-service.openrl-system:8000.
 kubectl apply -k examples/autoresearch/recipes/math_rl
 
@@ -111,7 +111,7 @@ kubectl port-forward svc/open-rl-autoresearch-ui 8080:8080
 http://localhost:8080/experiments.html
 ```
 
-Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
+Use the normal [Kubernetes deployment guide](../../docs/setup/kubernetes.md) for cluster,
 GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
 the UI on top of that shared backend. They deploy into the current namespace,
 not the backend's `openrl-system`, keep their logs on their own

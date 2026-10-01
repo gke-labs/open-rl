@@ -72,7 +72,7 @@ kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/late
 kubectl -n openrl-system port-forward svc/open-rl-api-server-service 8000:8000
 ```
 
-Your training script still points at `localhost:8000` — but now the requests flow to the OpenRL API server on your cluster, which starts trainer and sampler workers on GPU nodes as you create models. The [GKE Deployment Guide](../setup/gke-setup.md) covers creating the cluster.
+Your training script still points at `localhost:8000` — but now the requests flow to the OpenRL API server on your cluster, which starts trainer and sampler workers on GPU nodes as you create models. The [GKE Deployment Guide](../setup/kubernetes.md) covers creating the cluster.
 
 To run the Text-to-SQL client against GKE, use the `gemma4_e2b` preset and point it to your port-forwarded URL:
 
@@ -98,7 +98,7 @@ Check out the [Architecture Deep Dive](../architecture.md) for a detailed explan
 
 - **[Text-to-SQL Notebook](../../examples/sft/text-to-sql/texttosql_sft_notebook.ipynb)** — Fine-tune Gemma 3 1B locally, start to finish
 - **[Pig Latin Notebook](../../examples/sft/pig-latin/piglatin_sft_notebook.ipynb)** — Simpler example to learn the API
-- **[GKE Deployment Guide](../setup/gke-setup.md)** — Set up the distributed backend on Kubernetes
+- **[GKE Deployment Guide](../setup/kubernetes.md)** — Set up the distributed backend on Kubernetes
 - **[Architecture Deep Dive](../architecture.md)** — How the API server, Queue, and Clock Cycle Engine work together
 
 OpenRL is Apache 2.0 licensed. Contributions welcome.

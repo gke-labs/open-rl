@@ -63,7 +63,7 @@ vllm = [
 cluster = [
     "kubernetes>=29",
     # Kept in step with the snapshot-agent image deployed in
-    # docs/setup/gke-fft-timeslice.md: both come from this upstream release.
+    # docs/fft/time-slicing.md: both come from this upstream release.
     "timeslice @ git+https://github.com/llm-d-incubation/llm-d-rl-time-slicing.git@v0.1.0#subdirectory=pkg/client/python",
 ]
 dev = [

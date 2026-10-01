@@ -66,7 +66,7 @@ uv run python -m run_attempt \
 
 ## Kubernetes Run
 
-Use the normal [GKE setup guide](../../../../docs/setup/gke-setup.md) to deploy
+Use the normal [Kubernetes deployment guide](../../../../docs/setup/kubernetes.md) to deploy
 OpenRL, or reuse an existing backend. Then add the autoresearch researchers and
 UI:
 
