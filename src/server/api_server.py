@@ -25,7 +25,7 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError, Validation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import proto_codec
-from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config, get_model_metadata, persist_model_metadata
+from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config, get_model_metadata, persist_model_metadata, resolve_parallelism
 from server.session_registry import SessionRegistry
 from server.store import RedisStateStore, get_state_store, get_store
 from server.worker_manager import WorkerManager, create_worker_manager, owner_of
@@ -99,9 +99,14 @@ class SessionHeartbeatRequest(BaseModel):
   session_id: str | None = None
 
 
+class CreateSessionRequest(BaseModel):
+  user_metadata: dict[str, Any] | None = None
+
+
 class CreateModelRequest(BaseModel):
   base_model: str
   session_id: str | None = None
+  user_metadata: dict[str, Any] | None = None
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
   full_config: FFTConfig = Field(default_factory=FFTConfig)
 
@@ -117,6 +122,7 @@ class CreateModelFromStateRequest(BaseModel):
   # The checkpoint's metadata names the base model when the client does not.
   base_model: str | None = None
   session_id: str | None = None
+  user_metadata: dict[str, Any] | None = None
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
   full_config: FFTConfig = Field(default_factory=FFTConfig)
 
@@ -346,6 +352,10 @@ async def _extract_and_persist_model_metadata(
 
   full_config["weight_sync_strategy"] = weight_sync_cfg.strategy
 
+  # The model's own user_metadata wins over what the session was opened with.
+  user_metadata = dict(req.user_metadata or {})
+  session_metadata = await session_registry.user_metadata(req.session_id)
+
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
@@ -354,7 +364,16 @@ async def _extract_and_persist_model_metadata(
     weight_sync_config=weight_sync_cfg,
     full_config=full_config,
     lora_config=lora_config,
+    user_metadata=user_metadata,
+    trainer_parallelism=resolve_parallelism("trainer", user_metadata, session_metadata, headers=headers),
+    sampler_parallelism=resolve_parallelism("sampler", user_metadata, session_metadata, headers=headers),
   )
+  # Kept on the model so a multi-GPU trainer can be launched from it later.
+  if meta_obj.trainer_parallelism.devices > 1:
+    raise ValueError("trainer parallelism beyond one GPU is not supported yet")
+  sampler = meta_obj.sampler_parallelism
+  if sampler.tp > 1 or sampler.cp > 1:
+    raise ValueError("sampler parallelism supports dp only for now (one single-GPU sampler per replica)")
   await persist_model_metadata(state, model_id, meta_obj)
 
   return model_id, meta_obj
@@ -601,9 +620,10 @@ async def client_config(_: dict):
 
 
 @app.post("/api/v1/create_session")
-async def create_session(_: dict):
+async def create_session(req: CreateSessionRequest):
   session_id = f"sess-{uuid.uuid4().hex[:12]}"
   await session_registry.heartbeat(session_id)
+  await session_registry.remember(session_id, req.user_metadata or {})
   return {"session_id": session_id, "type": "create_session"}
 
 

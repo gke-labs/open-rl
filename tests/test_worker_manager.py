@@ -420,5 +420,22 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
     self.assertIn("model-fft-1", cmd_args)
 
 
+class ParallelismTest(unittest.TestCase):
+  def test_parse_accepts_any_subset_of_the_keys(self) -> None:
+    from server.model_metadata import Parallelism
+
+    self.assertEqual(Parallelism.parse("dp=1,tp=4,cp=1").devices, 4)
+    self.assertEqual(Parallelism.parse("cp=2").model_dump(), {"dp": 1, "tp": 1, "cp": 2})
+    self.assertEqual(Parallelism.parse(" tp=2 ; dp=2 ").devices, 4)
+    self.assertEqual(Parallelism().spec, "dp=1,tp=1,cp=1")
+
+  def test_parse_refuses_what_it_does_not_understand(self) -> None:
+    from server.model_metadata import Parallelism
+
+    for bad in ("gpus=4", "tp=four", "tp=0", "4"):
+      with self.subTest(spec=bad), self.assertRaises(ValueError):
+        Parallelism.parse(bad)
+
+
 if __name__ == "__main__":
   unittest.main()
