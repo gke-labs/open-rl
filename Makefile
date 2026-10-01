@@ -18,7 +18,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_delta_weight_transfer_engine tests.test_diffing_backends tests.test_sampler_weight_rotation
+UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_diffing_backends tests.test_sampler_weight_rotation tests.test_commands tests.test_weight_sync_config
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
@@ -56,7 +56,7 @@ help:
 	@echo "make test piglatin                      # pig-latin example end-to-end tests"
 	@echo "make cluster-eval EVAL_MODEL_PATH=/mnt/shared/open-rl/checkpoints/...  # one-off vLLM eval job on the cluster"
 	@echo "make lint | fmt"
-	@echo "make render OVERLAY=k8s/deploy/distributed-shared VERSION=v0.0.1  # pinned manifests to stdout"
+	@echo "make render OVERLAY=k8s/deploy/lora VERSION=v0.0.1  # pinned manifests to stdout"
 	@echo "make release-bundle VERSION=v0.0.1     # release assets into $(DIST_DIR)/"
 
 # ---------------------------------------------------------------------------
@@ -115,6 +115,10 @@ test:
 	  echo "Unknown test mode '$$mode'. Expected unit, e2e, or piglatin."; \
 	  exit 2; \
 	fi
+
+.PHONY: test-weight-transfer
+test-weight-transfer:
+	uv run --frozen --extra vllm --extra gpu --extra cluster python -m unittest tests.test_delta_weight_transfer_engine tests.test_delta_weight_sync tests.test_weight_sync_config tests.test_sampler_patch tests.test_weight_transfer_gpu
 
 lint:
 	uv run --extra dev ruff check .
@@ -249,9 +253,6 @@ kind-prune:
 kind-delete:
 	kind delete cluster --name open-rl-dra
 
-deploy:
-	kubectl apply -k k8s/deploy/distributed-lustre/
-
 # FFT DRA variant: the API server launches one worker pod per FFT model, all pinned
 # to one physical GPU allocation via a shared DRA ResourceClaim.
 # See docs/setup/gke-fft-timeslice.md.
@@ -259,7 +260,7 @@ deploy-fft-timeslice:
 	kubectl apply --server-side -k k8s/deploy/distributed-fft-timeslice/
 
 rollout:
-	kubectl rollout restart deployment redis-store open-rl-api-server open-rl-trainer-worker vllm-worker
+	kubectl -n openrl-system rollout restart deployment redis-store open-rl-api-server
 
 # One-off vLLM eval of a checkpoint on the shared PVC:
 cluster-eval:
@@ -285,8 +286,6 @@ cluster-e2e:
 	if [ -n "$(E2E_ARGS)" ]; then set -- "$$@" --args "$(E2E_ARGS)"; fi; \
 	if [ -n "$(E2E_NAMESPACE)" ]; then set -- "$$@" --namespace "$(E2E_NAMESPACE)"; fi; \
 	if [ -n "$(WEIGHT_SYNC_STRATEGY)" ]; then set -- "$$@" --weight-sync-strategy "$(WEIGHT_SYNC_STRATEGY)"; fi; \
-	if [ -n "$(WEIGHT_SYNC_DELTA_FORMAT)" ]; then set -- "$$@" --weight-sync-delta-format "$(WEIGHT_SYNC_DELTA_FORMAT)"; fi; \
-	if [ -n "$(WEIGHT_SYNC_DELTA_APPLY_METHOD)" ]; then set -- "$$@" --weight-sync-delta-apply-method "$(WEIGHT_SYNC_DELTA_APPLY_METHOD)"; fi; \
 	python3 scripts/run_cluster_e2e.py "$$@"
 
 # Local Redis (for testing distributed mode):
@@ -314,7 +313,7 @@ RELEASE_IMAGES ?= server api-server client scheduler
 DIST_DIR       ?= dist
 
 # Print any overlay with the open-rl images pinned to VERSION:
-#   make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
+#   make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply --server-side -f -
 # Works on a temp copy of the repo: `kustomize edit` rewrites the kustomization
 # in place, and overlays reach into k8s/deploy/ by relative path.
 render:
@@ -335,8 +334,6 @@ render:
 release-bundle:
 	@test -n "$(VERSION)" || { echo "Set VERSION=<tag>, e.g. VERSION=v0.0.1"; exit 2; }
 	@rm -rf $(DIST_DIR) && mkdir -p $(DIST_DIR)
-	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-shared VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-shared.yaml
-	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/distributed-lustre VERSION=$(VERSION) > $(DIST_DIR)/openrl-distributed-lustre.yaml
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/lora VERSION=$(VERSION) > $(DIST_DIR)/openrl-lora.yaml
 	@$(MAKE) --no-print-directory render OVERLAY=k8s/deploy/fft VERSION=$(VERSION) > $(DIST_DIR)/openrl-fft.yaml
 	@cd $(DIST_DIR) && { command -v sha256sum >/dev/null && sha256sum *.yaml || shasum -a 256 *.yaml; } > checksums.sha256

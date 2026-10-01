@@ -1,0 +1,31 @@
+baseURL = "https://openrl.dev/"
+title = "OpenRL"
+locale = "en-us"
+enableRobotsTXT = true
+disableKinds = ["taxonomy", "term"]
+timeZone = "UTC"
+
+[params]
+  description = "A self-hosted, Kubernetes-native post-training API for fine-tuning LLMs."
+  repo = "https://github.com/gke-labs/open-rl"
+  ogImage = "img/og.jpg"
+
+[markup]
+  [markup.goldmark.renderer]
+    unsafe = true
+  [markup.highlight]
+    noClasses = false
+    lineNos = false
+    guessSyntax = false
+
+[outputs]
+  home = ["html"]
+  section = ["html", "rss"]
+  page = ["html"]
+
+[services]
+  [services.rss]
+    limit = 20
+
+[sitemap]
+  changefreq = "weekly"

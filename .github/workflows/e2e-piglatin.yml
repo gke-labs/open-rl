@@ -1,9 +1,24 @@
 name: Pig-latin E2E
 
 on:
+  # docs and website changes do not touch the code under test
   pull_request:
+    paths-ignore:
+      - "site/**"
+      - "decks/**"
+      - "docs/**"
+      - "runs/**"
+      - "**/*.md"
+      - ".github/workflows/site.yml"
   push:
     branches: [main]
+    paths-ignore:
+      - "site/**"
+      - "decks/**"
+      - "docs/**"
+      - "runs/**"
+      - "**/*.md"
+      - ".github/workflows/site.yml"
 
 # Cancel in-flight runs on the same PR when a new commit lands.
 concurrency:
@@ -25,7 +40,7 @@ jobs:
         # protobuf; 0.24.1 is the last SDK that speaks JSON both ways.
         tinker: ["0.29.0", "0.24.1"]
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install uv
         uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2

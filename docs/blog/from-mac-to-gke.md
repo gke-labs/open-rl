@@ -66,13 +66,13 @@ Here's the key insight: **your client code doesn't change.** The Tinker API abst
 
 ```bash
 # Deploy to GKE
-kubectl apply -k server/kubernetes/single-process-gke/
+kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
 
 # Port-forward to your local machine
-kubectl port-forward svc/open-rl-single-service 8000:8000
+kubectl -n openrl-system port-forward svc/open-rl-api-server-service 8000:8000
 ```
 
-Your training script still points at `localhost:8000` — but now the requests flow to a dedicated GPU node running OpenRL as a single process (the easiest way to scale up from your Mac!).
+Your training script still points at `localhost:8000` — but now the requests flow to the OpenRL API server on your cluster, which starts trainer and sampler workers on GPU nodes as you create models. The [GKE Deployment Guide](../setup/gke-setup.md) covers creating the cluster.
 
 To run the Text-to-SQL client against GKE, use the `gemma4_e2b` preset and point it to your port-forwarded URL:
 

@@ -1,0 +1,24 @@
+{{ define "main" }}
+{{- $video := "Mbz6-cYjGlM" }}
+<section class="hero">
+  <div class="wrap hero-copy">
+    <h1>OpenRL</h1>
+    <p class="tag">A self-hosted post-training API for fine-tuning LLMs on your own Kubernetes cluster.</p>
+
+    <a class="video" href="https://youtu.be/{{ $video }}" data-video="{{ $video }}">
+      <img src="{{ "img/video-poster.jpg" | relURL }}" width="1280" height="720" alt="What is OpenRL? A short explainer video">
+      <span class="play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z"/></svg></span>
+    </a>
+
+    <p class="actions">
+      <a class="btn" href="{{ site.Params.repo }}">GitHub</a>
+      <a class="btn ghost" href="{{ site.Params.repo }}#quick-start">Get started</a>
+      <a class="btn ghost" href="{{ "/blog/" | relURL }}">Blog</a>
+    </p>
+  </div>
+</section>
+{{ end }}
+
+{{ define "scripts" }}
+{{ with resources.Get "js/video.js" | minify | fingerprint }}<script src="{{ .RelPermalink }}" integrity="{{ .Data.Integrity }}" defer></script>{{ end }}
+{{ end }}

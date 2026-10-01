@@ -2,7 +2,6 @@
 sampler exists before it enqueues work. Local mode spawns subprocesses; the
 scheduler mode (scheduler_worker_manager.py) creates Workloads."""
 
-import json
 import logging
 import os
 import re
@@ -15,7 +14,8 @@ from typing import Protocol
 
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.estimator import footprint
-from server.model_metadata import TrainingModelMetadata
+from server.model_metadata import TrainingModelMetadata, decode_model_metadata
+from server.store import get_state_store
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
@@ -27,14 +27,7 @@ logger = logging.getLogger(__name__)
 
 def metadata_for(model_id: str) -> TrainingModelMetadata | None:
   """The metadata create_model stored for this model, or None."""
-  from server.store import get_store
-
-  try:
-    raw = get_store().get_value_sync(f"open_rl:model_meta:{model_id}")
-    data = json.loads(raw) if isinstance(raw, str) else raw
-    return TrainingModelMetadata.from_dict(data) if isinstance(data, dict) else None
-  except Exception:
-    return None
+  return decode_model_metadata(get_state_store().get_value_sync(f"open_rl:model_meta:{model_id}"))
 
 
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
@@ -90,12 +83,7 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
     # vLLM fraction from it against the device it actually gets.
     "OPEN_RL_ACCELERATOR_MEMORY": str(footprint(base_model, meta.fine_tuning_type, role).accelerator_bytes),
   }
-  weight_sync = getattr(meta, "weight_sync_config", None)
-  if weight_sync is not None:
-    env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = weight_sync.strategy
-    if weight_sync.strategy == "delta":
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT"] = weight_sync.delta_format
-      env["OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD"] = weight_sync.delta_apply_method
+  env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
   if role == "trainer":
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
   else:
@@ -107,10 +95,8 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
   return env
 
 
-def worker_module(role: str, is_lora: bool) -> str:
-  if role == "trainer":
-    return "server.training_requests_processor"
-  return "server.lora_sampler" if is_lora else "server.vllm_sampler"
+def worker_module(role: str) -> str:
+  return "server.training_requests_processor" if role == "trainer" else "server.vllm_sampler"
 
 
 def worker_args(runtime: str, role: str, is_lora: bool) -> list[str]:
@@ -189,7 +175,7 @@ class LocalWorkerManager:
         # An override venv (e.g. vllm-tpu for the sampler) may not have open-rl
         # installed; put the source tree on its path so worker modules resolve.
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(self.project_dir / "src"), env.get("PYTHONPATH")]))
-      command = python_command(extras, worker_module(role, is_lora), worker_args(runtime, role, is_lora), python=python)
+      command = python_command(extras, worker_module(role), worker_args(runtime, role, is_lora), python=python)
       log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
       log_dir.mkdir(parents=True, exist_ok=True)
       with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:

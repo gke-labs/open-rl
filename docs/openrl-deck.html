@@ -1133,7 +1133,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
           </div></div>
           <div class="step"><span class="n">3</span><div>
             <p>Install OpenRL.</p>
-            <pre class="wrap"><span class="p">$ </span><span class="cmd">kubectl</span> apply <span class="fl">-f</span> https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml</pre>
+            <pre class="wrap"><span class="p">$ </span><span class="cmd">kubectl</span> apply <span class="fl">--server-side -f</span> https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml</pre>
           </div></div>
         </div>
         <div class="col" data-step="2">

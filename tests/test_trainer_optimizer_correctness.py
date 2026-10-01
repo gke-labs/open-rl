@@ -225,13 +225,13 @@ class _TimeSlicerStub:
 
 
 def _datum(model_input, target_tokens, *, weights=None, logprobs=None, advantages=None):
-  loss_fn_inputs = {"target_tokens": trainer_worker_module.TensorData(data=target_tokens)}
+  loss_fn_inputs = {"target_tokens": {"data": target_tokens}}
   if weights is not None:
-    loss_fn_inputs["weights"] = trainer_worker_module.TensorData(data=weights)
+    loss_fn_inputs["weights"] = {"data": weights}
   if logprobs is not None:
-    loss_fn_inputs["logprobs"] = trainer_worker_module.TensorData(data=logprobs)
+    loss_fn_inputs["logprobs"] = {"data": logprobs}
   if advantages is not None:
-    loss_fn_inputs["advantages"] = trainer_worker_module.TensorData(data=advantages)
+    loss_fn_inputs["advantages"] = {"data": advantages}
   return trainer_worker_module.Datum(model_input=model_input, loss_fn_inputs=loss_fn_inputs)
 
 
@@ -416,7 +416,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
   async def test_lora_processor_create_model_uses_worker_create_model(self) -> None:
     worker = _RecordingLoraWorker()
     store = _FutureStoreStub()
-    processor = training_requests_processor_module.LoraTrainingRequestsProcessor(store, worker)
+    processor = training_requests_processor_module.TrainingRequestsProcessor(store, worker)
 
     await processor.process_request(
       {
@@ -428,7 +428,6 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
           "lora_config": {"seed": 123, "rank": 2},
         },
       },
-      "adapter-a",
     )
 
     self.assertEqual(worker.loaded_base_models, [])
@@ -443,28 +442,13 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(result["fine_tuning_type"], "lora")
     self.assertEqual(result["type"], "model_created")
 
-  def test_parse_datum_flattens_chunked_model_input(self) -> None:
-    datum = training_requests_processor_module.parse_datum(
-      {
-        "model_input": {"chunks": [{"tokens": [1, 2]}, {"tokens": [3]}]},
-        "loss_fn_inputs": {
-          "target_tokens": [2, 3, 4],
-          "weights": {"data": [1.0, 0.5, 0.25]},
-        },
-      }
-    )
-
-    self.assertEqual(datum.model_input, [1, 2, 3])
-    self.assertEqual(datum.loss_fn_inputs["target_tokens"].data, [2, 3, 4])
-    self.assertEqual(datum.loss_fn_inputs["weights"].data, [1.0, 0.5, 0.25])
-
   async def test_full_processor_create_model_uses_model_worker(self) -> None:
     worker = _RecordingFullWorker()
     store = _FutureStoreStub()
     time_slicer = _TimeSlicerStub()
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.TrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
       await processor.process_request(
         {
           "request_id": "req-a",
@@ -472,10 +456,10 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
           "op": "create_model",
           "payload": {
             "base_model": "base-model",
+            "fine_tuning_type": "full",
             "full_config": {"seed": 123, "rank": 8},
           },
         },
-        "model-a",
       )
 
     self.assertEqual(worker.loaded_base_models, [])
@@ -495,7 +479,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     time_slicer = _TimeSlicerStub()
 
     with patch.dict(os.environ, {"OPEN_RL_TMP_DIR": "/tmp/open-rl-test", "REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.TrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
       await processor.process_request(
         {
           "request_id": "req-a",
@@ -506,7 +490,6 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7",
           },
         },
-        "model-a",
       )
 
     self.assertEqual(
@@ -558,6 +541,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "op": "create_model",
             "payload": {
               "base_model": "base-model",
+              "fine_tuning_type": "full",
               "full_config": {"seed": 123},
             },
           }
@@ -599,6 +583,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "op": "create_model",
             "payload": {
               "base_model": "base-model",
+              "fine_tuning_type": "full",
               "full_config": {"seed": 123},
             },
           }
@@ -609,7 +594,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     time_slicer = _TimeSlicerStub(events=events)
 
     with patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}):
-      processor = training_requests_processor_module.FFTTrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      processor = training_requests_processor_module.TrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
       await processor.run_once()
 
     self.assertEqual([event[0] for event in events], ["acquire", "release", "set_future"])

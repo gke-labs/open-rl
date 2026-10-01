@@ -12,7 +12,8 @@ import unittest
 import torch
 from transformers import LlamaConfig, LlamaForCausalLM
 
-from training.trainer_worker import BaseTrainerWorker, Datum, TensorData
+from training.trainer_worker import BaseTrainerWorker
+from training.types import Datum, TensorData
 
 
 def _tiny_model() -> LlamaForCausalLM:

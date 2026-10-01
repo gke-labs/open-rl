@@ -53,10 +53,6 @@ def render_manifest(
     env_vars = []
     if strategy := weight_sync_cfg.get("strategy"):
       env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_STRATEGY\n          value: "{strategy}"')
-    if delta_format := weight_sync_cfg.get("delta_format"):
-      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_FORMAT\n          value: "{delta_format}"')
-    if delta_apply_method := weight_sync_cfg.get("delta_apply_method"):
-      env_vars.append(f'        - name: OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD\n          value: "{delta_apply_method}"')
 
     if env_vars:
       env_yaml = "\n".join(env_vars)
@@ -79,20 +75,6 @@ def main() -> None:
     help="Weight sync strategy override (delta | full).",
   )
   parser.add_argument(
-    "--weight-sync-delta-format",
-    "--delta-format",
-    dest="delta_format",
-    default="",
-    help="Delta format override (vllm_fused | native).",
-  )
-  parser.add_argument(
-    "--weight-sync-delta-apply-method",
-    "--delta-apply-method",
-    dest="delta_apply_method",
-    default="",
-    help="Delta apply method override (patch_in_place | full_replace).",
-  )
-  parser.add_argument(
     "--image-pull-policy",
     default="Always",
     choices=["Always", "IfNotPresent", "Never"],
@@ -105,10 +87,6 @@ def main() -> None:
   weight_sync_cfg = {}
   if args.strategy:
     weight_sync_cfg["strategy"] = args.strategy
-  if args.delta_format:
-    weight_sync_cfg["delta_format"] = args.delta_format
-  if args.delta_apply_method:
-    weight_sync_cfg["delta_apply_method"] = args.delta_apply_method
 
   kubectl = ["kubectl"] + (["-n", args.namespace] if args.namespace else [])
   manifest = render_manifest(

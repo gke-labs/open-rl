@@ -1,22 +1,20 @@
 # GKE Setup Guide
 
-This guide describes how to create a minimal GKE Standard cluster to run OpenRL workloads. It sets up the OpenRL API server, one vLLM worker, one trainer worker, Redis, and a shared Filestore PVC.
-
-This guide is based on the [Text-to-SQL recipe](../../examples/text-to-sql/README.md) requirements.
+This guide describes how to create a minimal GKE Standard cluster to run OpenRL workloads. It installs the OpenRL API server, the scheduler, Redis, and a shared Filestore PVC into the `openrl-system` namespace. Trainer and sampler workers are not deployed up front: the API server asks the scheduler for one when a client creates a model, and the scheduler places it on a GPU through a DRA `ResourceClaim`.
 
 ## Shape
 
 | Component | Minimum used here | Why |
 | --- | --- | --- |
-| CPU node pool | `1 x e2-standard-4` | API server, Redis, system pods. |
-| GPU node pool | `1 x g2-standard-24` | Two NVIDIA L4 GPUs, one for vLLM and one for the trainer. |
-| GPU VRAM | `2 x 24 GB` | Expected separate 24 GB-class GPUs. |
-| Shared storage | `100Gi standard-rwx` Filestore PVC | Shared adapter snapshots, checkpoints, and Hugging Face cache. |
-| Server images | one API server image, one worker image | vLLM and trainer share the worker image. |
+| GKE version | `1.35` or newer | Required for [DRA for GPUs](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/set-up-dra). |
+| CPU node pool | `1 x e2-standard-4` | API server, scheduler, Redis, system pods. |
+| GPU node pool | `1 x g2-standard-24` | Two NVIDIA L4 GPUs. LoRA trainer and sampler workers each need their own GPU. |
+| Shared storage | `1Ti standard-rwx` Filestore PVC | Shared adapter snapshots, checkpoints, and Hugging Face cache. |
+| Server images | one API server image, one worker image | Trainer and sampler workers share the worker image. |
 
 Google references:
 
-- GKE Standard GPU node pools: https://docs.cloud.google.com/kubernetes-engine/docs/how-to/gpus
+- GKE DRA for GPUs: https://docs.cloud.google.com/kubernetes-engine/docs/how-to/set-up-dra
 - G2 / NVIDIA L4 machine specs: https://docs.cloud.google.com/compute/docs/gpus#g2-vms
 - Filestore CSI driver and `standard-rwx`: https://docs.cloud.google.com/filestore/docs/csi-driver
 
@@ -49,7 +47,7 @@ gcloud services enable \
   file.googleapis.com
 ```
 
-Create the GKE Standard cluster with a small CPU node pool:
+Create the GKE Standard cluster with a small CPU node pool. DRA for GPUs needs GKE 1.35 or newer; add `--cluster-version` if the release channel default is older:
 
 ```bash
 gcloud container clusters create "${CLUSTER}" \
@@ -72,7 +70,7 @@ gcloud container clusters update "${CLUSTER}" \
 > [!TIP]
 > **Custom VPC Networks:** If your GCP project does not have a `default` VPC network, GKE's pre-provisioned Filestore StorageClasses will fail to provision. You will need to create a custom `StorageClass` that explicitly specifies your network (e.g., `network: your-vpc-name`) and update the PVC manifest to reference it.
 
-Add a GPU node pool. You should name it something that identifies it (e.g., `open-rl-l4`), and ensure your recipe's Kustomize overlay selects this node pool by name. GKE exposes each GPU to a pod as `nvidia.com/gpu: 1`, so the vLLM and trainer pods can land on the same node but use separate GPUs.
+Add a GPU node pool. Workers get their GPUs through DRA `ResourceClaim`s instead of the GKE device plugin, so the pool disables the default device plugin and the automatic driver install. The `openrl.io/enabled=true` label opts the nodes in to the OpenRL scheduler. A node with no `openrl.io/trainer` or `openrl.io/sampler` label accepts both roles, so both workers can land on this node, each on its own GPU.
 
 ```bash
 gcloud container node-pools create open-rl-l4 \
@@ -80,11 +78,11 @@ gcloud container node-pools create open-rl-l4 \
   --location="${REGION}" \
   --node-locations="${ZONE}" \
   --machine-type=g2-standard-24 \
-  --accelerator=type=nvidia-l4,count=2,gpu-driver-version=default \
+  --accelerator=type=nvidia-l4,count=2,gpu-driver-version=disabled \
+  --node-labels=openrl.io/enabled=true,gke-no-default-nvidia-gpu-device-plugin=true,nvidia.com/gpu.present=true \
   --image-type=COS_CONTAINERD \
   --num-nodes=1 \
-  --disk-size=200 \
-  --node-taints=nvidia.com/gpu=present:NoSchedule
+  --disk-size=200
 ```
 
 Connect `kubectl`:
@@ -93,51 +91,81 @@ Connect `kubectl`:
 gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 ```
 
+Install two drivers:
+
+- **The NVIDIA GPU driver**, the kernel driver and CUDA libraries on the node. GKE normally installs it, but the pool above turns that off (`gpu-driver-version=disabled`) as the GKE DRA setup requires, so install it with Google's installer DaemonSet. The `latest` installer also provides the CUDA checkpoint support the FFT bundle needs.
+- **The NVIDIA DRA driver**, a Kubernetes add-on (Helm v3). It replaces the GKE device plugin, which exposes GPUs as an `nvidia.com/gpu` count. Instead, it publishes each GPU as a `ResourceSlice` with its model and memory, and allocates GPUs to `ResourceClaim`s of DeviceClass `gpu.nvidia.com`. The OpenRL scheduler places every worker by creating such a claim, so without this driver no worker is ever placed.
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded-latest.yaml
+
+helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
+helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
+  --version="25.8.0" --create-namespace --namespace nvidia-dra-driver-gpu \
+  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
+```
+
+Check that the GPU node has a `ResourceSlice` from driver `gpu.nvidia.com` listing both GPUs:
+
+```bash
+kubectl get resourceslices
+```
+
 ## 3. Deploy OpenRL
 
-Apply **only one** of the following. Options A and B install images pinned to a released version, so the cluster stays on that version until you deploy another one. Option C tracks `main`.
+Apply **only one** of the following release bundles. Both install the same API server, scheduler, Redis, and shared PVC into `openrl-system`. Server-side apply is required because the Workload CRD exceeds the client-side apply annotation limit.
 
-*   **Option A: Generic Base Setup** (without recipe-specific configurations). Apply the release bundle directly:
+*   **Option A: LoRA.** Trainer and sampler workers each get a GPU of their own.
     ```bash
-    kubectl apply -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-distributed-shared.yaml
-    ```
-    Use `openrl-distributed-lustre.yaml` instead for a Lustre-backed filesystem, or replace `latest/download` with `download/v0.0.1` to pin a specific version.
-
-*   **Option B: Recipe-Specific Setup** (e.g., for Text-to-SQL). The recipe overlay includes the base setup and applies its own customizations, so do not apply Option A as well. Clone the repository at the release tag and render the overlay with its images pinned:
-    ```bash
-    git clone https://github.com/gke-labs/open-rl.git
-    cd open-rl
-    git checkout v0.0.1
-    make render OVERLAY=examples/text-to-sql VERSION=v0.0.1 | kubectl apply -f -
+    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
     ```
 
-*   **Option C: Install from Source** (contributors, tracking unreleased code):
+*   **Option B: LoRA and full fine-tuning (FFT).** Adds FFT workers, which can share a GPU with other FFT workers, and two DaemonSets that coordinate that sharing on each GPU node: the accelerator time-slicer and the llm-d snapshot agent.
     ```bash
-    kubectl apply -k k8s/deploy/distributed-shared    # or: kubectl apply -k examples/text-to-sql
+    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml
     ```
-    This deploys `:latest`, which is retagged on every push to `main`.
+    The DaemonSets run privileged, with host PID and host network, and schedule onto nodes labeled `nvidia.com/gpu.present=true` (set on the pool above). The snapshot agent checkpoints CUDA processes and needs NVIDIA driver r570 or newer, which the `latest` driver installer above provides. FFT workers never share a GPU with a LoRA worker. See [GKE FFT Time-Slice Setup](gke-fft-timeslice.md) for how the sharing works.
+
+Replace `latest/download` with `download/<tag>` to pin a specific version. See [OpenRL on an existing DRA cluster](lora-dra.md) for what each bundle installs, and for using storage other than Filestore.
+
+To track unreleased code on `main` instead, render the overlay from a checkout, `k8s/deploy/lora` or `k8s/deploy/fft`:
+
+```bash
+make render OVERLAY=k8s/deploy/lora VERSION=latest | kubectl apply --server-side -f -
+```
 
 Wait for the shared storage (PVC) to be bound:
 
 ```bash
-kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/open-rl-shared-pvc --timeout=5m
+kubectl -n openrl-system wait --for=jsonpath='{.status.phase}'=Bound pvc/open-rl-shared-pvc --timeout=5m
 ```
 
 Wait for the deployments to become ready:
 
 ```bash
-kubectl rollout status deploy/redis-store
-kubectl rollout status deploy/open-rl-api-server
-kubectl rollout status deploy/vllm-worker
-kubectl rollout status deploy/open-rl-trainer-worker
+kubectl -n openrl-system rollout status deploy/redis-store
+kubectl -n openrl-system rollout status deploy/open-rl-scheduler
+kubectl -n openrl-system rollout status deploy/open-rl-api-server
+```
+
+With Option B, also wait for the DaemonSets:
+
+```bash
+kubectl -n openrl-system rollout status daemonset/open-rl-accel-timeslicer
+kubectl -n openrl-system rollout status daemonset/snapshot-agent
 ```
 
 Useful logs:
 
 ```bash
-kubectl logs deploy/vllm-worker -f
-kubectl logs deploy/open-rl-trainer-worker -f
-kubectl logs deploy/open-rl-api-server -f
+kubectl -n openrl-system logs deploy/open-rl-api-server -f
+kubectl -n openrl-system logs deploy/open-rl-scheduler -f
+```
+
+Worker pods appear once a client creates a model. Inspect them and their GPU allocations with:
+
+```bash
+kubectl -n openrl-system get workloads,resourceclaims,pods
 ```
 
 ## 4. Port-Forward the API server
@@ -145,7 +173,7 @@ kubectl logs deploy/open-rl-api-server -f
 To access the API server from your local machine:
 
 ```bash
-kubectl port-forward svc/open-rl-api-server-service 9003:8000
+kubectl -n openrl-system port-forward svc/open-rl-api-server-service 9003:8000
 ```
 
 Smoke test:

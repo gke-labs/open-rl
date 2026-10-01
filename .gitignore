@@ -1,5 +1,6 @@
 # uv / Virtual Environments
 .venv/
+.venv-*/
 venv/
 ENV/
 env/
@@ -62,3 +63,9 @@ runs/
 *.pyc
 docs/fft/2026-08-20-*.html
 docs/fft/2026-08-20-*.md
+
+# website build outputs
+site/public/
+site/resources/_gen/
+site/static/deck/
+site/.hugo_build.lock

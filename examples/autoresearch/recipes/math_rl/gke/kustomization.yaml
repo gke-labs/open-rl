@@ -1,13 +1,18 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
+# One-shot Math-RL stack: the OpenRL LoRA stack in openrl-system, plus the
+# math_rl autoresearch add-on in the current namespace.
 resources:
-- ../../../../../k8s/deploy/distributed-shared
+- ../../../../../k8s/deploy/lora
 - autoresearch
+
+generatorOptions:
+  disableNameSuffixHash: true
 
 configMapGenerator:
 - name: open-rl-config
+  namespace: openrl-system
   behavior: merge
   literals:
   - BASE_MODEL=Qwen/Qwen2.5-0.5B-Instruct
-  - VLLM_GPU_MEMORY_UTILIZATION=0.35

@@ -75,16 +75,10 @@ published. Use `OVERLAY=k8s/deploy/fft` to render LoRA and FFT together.
 Published bundles are ordinary YAML. You can download a bundle, edit its
 environment variables or storage settings, and apply the edited file with
 `kubectl apply --server-side -f <file>`. Kustomize is optional for that workflow.
+[Use different storage](#use-different-storage) walks through the storage case.
 
 Server-side apply is required because the Workload CRD embeds the Kubernetes
 pod schema and exceeds the client-side apply annotation limit.
-
-For custom storage or model defaults, add a Kustomize overlay over the platform
-directory and pass that directory to `make render`. GKE needs shared RWX storage
-across nodes; kind uses RWO storage because every process runs on one node.
-API server and workers must mount the same PVC. If reusing a differently named PVC,
-patch the API server's `shared-storage` volume and `OPEN_RL_SHARED_PVC` environment
-variable, and omit the default PVC resource from your overlay.
 
 Check readiness and connect to the API:
 
@@ -101,6 +95,54 @@ on first use; API server readiness does not imply model loading has completed.
 Any Tinker SDK from 0.23 onward can talk to the API server. SDKs from 0.25 send
 training requests and read training and sampling results as protobuf; the
 API server serves both that and the older JSON encoding.
+
+## Use different storage
+
+Both bundles create one PersistentVolumeClaim, `open-rl-shared-pvc`, on the GKE
+Filestore class `standard-rwx`. The API server and every worker mount it. GKE
+needs shared RWX storage across nodes; kind uses RWO storage because every
+process runs on one node.
+
+To use another backend, such as
+[Managed Lustre](https://cloud.google.com/kubernetes-engine/docs/concepts/managed-lustre),
+download the bundle and edit the `open-rl-shared-pvc` claim in place. Keep the
+name so the API server and workers find it; change the storage class and size:
+
+```bash
+curl -fsSLO https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+```
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: open-rl-shared-pvc
+  namespace: openrl-system
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: lustre-rwx-1000mbps-per-tib  # was standard-rwx
+  resources:
+    requests:
+      storage: 1200Gi                            # Lustre's size steps differ from Filestore's
+```
+
+```bash
+kubectl --context my-cluster apply --server-side -f openrl-lora.yaml
+```
+
+The storage class must already exist in the cluster. A PVC's storage class
+cannot be changed after it is bound, so make this edit before the first apply,
+or delete the old PVC (and the data on it) first.
+
+To reuse an existing, differently named PVC instead, delete the
+`open-rl-shared-pvc` claim from the bundle, then point the API server's
+`shared-storage` volume at your claim and set the `OPEN_RL_SHARED_PVC`
+environment variable on the API server container to its name. The API server
+mounts that claim in every worker pod it creates.
+
+From a checkout, make the same changes as a Kustomize overlay over
+`k8s/deploy/lora` or `k8s/deploy/fft` and pass it to `make render`. Model
+defaults such as `BASE_MODEL` can be changed the same way.
 
 ## Verify and upgrade
 

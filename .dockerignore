@@ -1,6 +1,7 @@
 .git
 .gitignore
 .venv
+.venv-*
 examples/.venv
 runs
 scratch

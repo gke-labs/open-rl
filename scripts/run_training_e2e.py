@@ -348,19 +348,6 @@ def clean_cli_extra(extra: str) -> list[str]:
   return [token for token in shlex.split(extra) if not (token.startswith("weight_sync_strategy=") or token.startswith("jitter_sec="))]
 
 
-def _set_fft_delta_apply(env: dict[str, str]) -> None:
-  """FFT scenarios default to in-place delta patching, but an apply method
-  already in the environment (run_cluster_e2e.py's
-  --weight-sync-delta-apply-method) wins. OPEN_RL_IN_PLACE_DELTA forces the
-  in-place path in the sampler regardless of the method, so it is only set
-  when in-place is what was asked for."""
-  method = env.setdefault("OPEN_RL_WEIGHT_SYNC_DELTA_APPLY_METHOD", "patch_in_place")
-  if method == "patch_in_place":
-    env["OPEN_RL_IN_PLACE_DELTA"] = "1"
-  else:
-    env.pop("OPEN_RL_IN_PLACE_DELTA", None)
-
-
 def examples_env(config: RunConfig) -> dict[str, str]:
   env = os.environ.copy()
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
@@ -373,7 +360,6 @@ def examples_env(config: RunConfig) -> dict[str, str]:
     env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = config.weight_sync_strategy
   if config.scenario.startswith("fft") or "fft" in config.scenario:
     env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-    _set_fft_delta_apply(env)
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env
@@ -511,7 +497,7 @@ def run_gsm8k_train(config: RunConfig, base_url: str, watch: list[ManagedProcess
   return run_example(config, ["examples/sft/gsm8k/gsm8k_sft.py"], defaults, watch=watch, prefix=prefix)
 
 
-def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
+def run_gsm8k_eval(config: RunConfig, base_url: str, model_path: str | list[str]) -> None:
   paths = model_path if isinstance(model_path, list) else [model_path]
   path_args = []
   for p in paths:
@@ -521,7 +507,7 @@ def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
     + path_args
     + [
       "--base-url",
-      config.base_url or "http://127.0.0.1:8000",
+      base_url,
       "--data",
       str(write_gsm8k_eval_data(config)),
       "--gpu-memory-utilization",
@@ -534,7 +520,7 @@ def run_gsm8k_eval(config: RunConfig, model_path: str | list[str]) -> None:
 
 def run_gsm8k(config: RunConfig, base_url: str, watch: list[ManagedProcess]) -> None:
   output = run_gsm8k_train(config, base_url, watch, "fft_gsm8k")
-  run_gsm8k_eval(config, resolve_eval_model_path(output))
+  run_gsm8k_eval(config, base_url, resolve_eval_model_path(output))
 
 
 def check_snapshot_interleaving(config: RunConfig) -> None:
@@ -595,7 +581,7 @@ def run_gsm8k_x2(config: RunConfig, base_url: str, watch: list[ManagedProcess]) 
     assert isinstance(result, str)
     eval_paths.append(resolve_eval_model_path(result))
   print(f"[training-e2e] evaluating jobs in single micro-batched invocation: {eval_paths}")
-  run_gsm8k_eval(config, eval_paths)
+  run_gsm8k_eval(config, base_url, eval_paths)
 
 
 def _math_rl_train_module_and_renderer(base_model: str) -> tuple[str, str]:
@@ -730,10 +716,8 @@ def run_gsm8k_rl_x4_mixed(config: RunConfig, base_url: str, watch: list[ManagedP
       env = examples_env(config).copy()
       if mode == "lora":
         env["OPEN_RL_FINE_TUNING_TYPE"] = "lora"
-        env.pop("OPEN_RL_IN_PLACE_DELTA", None)
       else:
         env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
-        _set_fft_delta_apply(env)
 
       results[job] = run_command(
         [*examples_python(), "-m", module_name, *args],

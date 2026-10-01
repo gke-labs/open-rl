@@ -8,7 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from server import api_server
-from server.store import InMemoryStore
+from server.store import InMemoryStateStore, InMemoryStore
 
 
 class ApiServerTest(unittest.TestCase):
@@ -17,6 +17,7 @@ class ApiServerTest(unittest.TestCase):
 
   def setUp(self) -> None:
     self.enterContext(patch.object(api_server, "store", InMemoryStore()))
+    self.enterContext(patch.object(api_server, "state", InMemoryStateStore()))
     self.client = TestClient(api_server.app)
 
   def post(self, path: str, body: dict, **kwargs):
@@ -40,7 +41,7 @@ class GetInfoTest(ApiServerTest):
 
   def test_get_info_prefers_the_models_own_base_model(self) -> None:
     meta = json.dumps({"base_model": "google/gemma-4-e2b", "fine_tuning_type": "full"})
-    asyncio.run(api_server.store.set_value("open_rl:model_meta:model-g", meta))
+    asyncio.run(api_server.state.set_value("open_rl:model_meta:model-g", meta))
     with patch.dict(os.environ, {"BASE_MODEL": "Qwen/Qwen2.5-0.5B"}, clear=True):
       info = self.post("get_info", {"model_id": "model-g"}).json()
       via_sampler_ref = self.post("get_info", {"model_id": "tinker://model-g/sampler_weights/sampler-1"}).json()
@@ -74,8 +75,8 @@ class GetInfoTest(ApiServerTest):
     model_id = self.post("create_model", {"base_model": "my-model"}).json()["request_id"]
     queued = self.queued()
     self.assertEqual(queued[0]["model_id"], model_id)
-    self.assertEqual(queued[0]["payload"], {})
-    meta = json.loads(api_server.store.get_value_sync(f"open_rl:model_meta:{model_id}"))
+    self.assertEqual(queued[0]["payload"]["base_model"], "my-model")
+    meta = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta["base_model"], "my-model")
 
 
@@ -190,6 +191,7 @@ class ProtobufWireTest(unittest.TestCase):
     patcher = patch.object(api_server, "store", InMemoryStore())
     patcher.start()
     self.addCleanup(patcher.stop)
+    self.enterContext(patch.object(api_server, "state", InMemoryStateStore()))
     self.client = TestClient(api_server.app)
 
   def _queued(self) -> list[dict]:
@@ -295,3 +297,44 @@ class SampleSequenceIdsTest(ApiServerTest):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class InputBoundaryTest(ApiServerTest):
+  def test_invalid_training_datum_is_a_validation_error(self) -> None:
+    response = self.post(
+      "forward_backward",
+      {"model_id": "m", "forward_backward_input": {"data": [{"model_input": {"chunks": [{"tokens": ["bad"]}]}, "loss_fn_inputs": {}}]}},
+    )
+    self.assertEqual(response.status_code, 422)
+    self.assertEqual(api_server.store.queues, {})
+
+  def test_null_configs_and_sampling_defaults_preserve_zero(self) -> None:
+    response = self.post("create_model", {"base_model": "base", "lora_config": None, "full_config": None})
+    self.assertEqual(response.status_code, 200)
+    self.assertEqual(self.queued()[0]["payload"]["lora_config"]["rank"], 16)
+    for value in (None, 0):
+      with self.subTest(value=value), patch.object(api_server, "get_sampler_backend", return_value="torch"):
+        response = self.post(
+          "asample", {"model_id": "base", "prompt": {"chunks": [{"tokens": [1]}]}, "sampling_params": {"temperature": value, "max_tokens": value}}
+        )
+        self.assertEqual(response.status_code, 200)
+        queued = self.queued()[0]["payload"]
+        self.assertEqual(queued["temperature"], 1.0 if value is None else 0)
+        self.assertEqual(queued["max_tokens"], 20 if value is None else 0)
+
+
+class RestoreRoutingTest(ApiServerTest):
+  def test_restore_uses_checkpoint_identity(self):
+    for kind in ("lora", "full"):
+      with self.subTest(kind=kind), tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+        with open(os.path.join(directory, "metadata.json"), "w") as f:
+          json.dump({"base_model": "checkpoint-base"}, f)
+        if kind == "lora":
+          with open(os.path.join(directory, "adapter_config.json"), "w") as f:
+            json.dump({"r": 8}, f)
+        response = self.post("create_model_from_state", {"state_path": directory})
+        self.assertEqual(response.status_code, 200)
+        model_id = response.json()["request_id"]
+        metadata = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
+        self.assertEqual((metadata["base_model"], metadata["fine_tuning_type"]), ("checkpoint-base", kind))
+        self.assertEqual(self.queued()[0]["payload"]["fine_tuning_type"], kind)

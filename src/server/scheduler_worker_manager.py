@@ -79,8 +79,8 @@ def worker_image(role: str) -> str:
   return os.getenv(f"OPEN_RL_{role.upper()}_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest")
 
 
-def worker_command(role: str, is_lora: bool) -> list[str]:
-  module = worker_module(role, is_lora)
+def worker_command(role: str) -> list[str]:
+  module = worker_module(role)
   if on_tpu() and role == "sampler":
     return ["python3", "-u", "-m", module]  # the vllm-tpu base image carries no uv
   return ["uv", "run", "python", "-u", "-m", module]
@@ -124,7 +124,7 @@ def pod_template(worker: Worker) -> dict[str, Any]:
         {
           "name": "worker",
           "image": worker_image(worker.role),
-          "command": worker_command(worker.role, worker.is_lora),
+          "command": worker_command(worker.role),
           "args": worker_args(worker.runtime, worker.role, worker.is_lora),
           "env": pod_env(worker),
           "resources": resources,

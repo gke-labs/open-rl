@@ -23,6 +23,9 @@ dependencies = [
     "tqdm>=4.50",
 ]
 
+[project.entry-points."vllm.general_plugins"]
+open_rl_weight_transfer = "server.delta_weight_transfer_engine:register_delta_weight_transfer"
+
 [project.optional-dependencies]
 cpu = [
     "cachetools",
@@ -64,7 +67,7 @@ vllm = [
     "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
-    "vllm==0.25.1; sys_platform == 'linux'",
+    "vllm==0.30.0; sys_platform == 'linux'",
 ]
 # TPU sampling via tpu-inference. vllm-tpu bundles vllm and tpu_inference at
 # matched versions; its vllm differs from the CUDA extra's pin, hence the
@@ -152,7 +155,7 @@ explicit = true
 
 [[tool.uv.index]]
 name = "vllm-cu129"
-url = "https://wheels.vllm.ai/0.25.1/cu129"
+url = "https://wheels.vllm.ai/0.30.0/cu129"
 explicit = true
 
 [tool.uv.sources]

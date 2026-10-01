@@ -87,17 +87,19 @@ Choose one recipe overlay:
 kubectl apply -k examples/autoresearch/recipes/text_sql
 
 # Math-RL add-on. First deploy OpenRL with docs/setup/gke-setup.md,
-# or reuse an existing backend at http://open-rl-api-server-service:8000.
+# or reuse an existing backend at http://open-rl-api-server-service.openrl-system:8000.
 kubectl apply -k examples/autoresearch/recipes/math_rl
 
 # Convenience one-shot Math-RL stack: OpenRL backend + autoresearch add-on.
-kubectl apply -k examples/autoresearch/recipes/math_rl/gke
+kubectl apply --server-side -k examples/autoresearch/recipes/math_rl/gke
 ```
 
-Each overlay starts one Sandbox that runs one Gemini CLI researcher. If that
-process exits nonzero or the pod crashes, the run stops; Kubernetes does not
-retry it. The intended recovery is to inspect the UI/logs and start a new run
-explicitly.
+Each overlay starts one Sandbox that runs one Gemini CLI researcher, with the
+UI as a second container in the same pod. If the researcher exits nonzero or
+the pod crashes, the run stops; Kubernetes does not retry it. The UI keeps
+serving after the researcher exits, until the Sandbox is deleted or its 6-hour
+deadline passes. The intended recovery is to inspect the UI/logs and start a
+new run explicitly.
 
 Open the UI:
 
@@ -111,11 +113,14 @@ http://localhost:8080/experiments.html
 
 Use the normal [GKE setup guide](../../docs/setup/gke-setup.md) for cluster,
 GPU, storage, and the OpenRL backend. These overlays add researcher sandboxes and
-the UI on top of that shared backend.
+the UI on top of that shared backend. They deploy into the current namespace,
+not the backend's `openrl-system`, keep their logs on their own
+`open-rl-autoresearch-shared` volume, and reach the API server at
+`open-rl-api-server-service.openrl-system:8000`.
 
 Researcher pods wait for comma-separated `READY_URLS` before the agent starts, so
-early pod startup does not race vLLM, the trainer worker, or the API server. The
-convenience Math-RL stack sets those URLs for vLLM, trainer, and API server health.
+early pod startup does not race the API server. The Math-RL overlays wait on the
+API server's health endpoint; its trainer and sampler workers start on demand.
 
 ## Shared Pieces
 

@@ -1,3 +1,6 @@
+# Deploys into the current namespace, not openrl-system: researchers are
+# clients of the API server, not part of it. They keep their logs on their own
+# volume and reach the API server by its cross-namespace service name.
 resources:
 - resources.yaml
 

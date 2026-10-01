@@ -1,3 +1,15 @@
+# Researcher logs. The researcher and the UI run as two containers in one pod,
+# so a single-node volume on the cluster's default storage class is enough.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: autoresearch-shared
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -9,27 +21,73 @@ data:
   AGENT_FLAGS: "--include-directories /mnt/shared --yolo --output-format stream-json"
   ENABLE_GCP_TRACE: "1"
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: v1
+kind: Service
 metadata:
   name: autoresearch-ui
   labels:
     app.kubernetes.io/name: autoresearch
     app.kubernetes.io/component: ui
 spec:
-  replicas: 1
   selector:
-    matchLabels:
-      app.kubernetes.io/name: autoresearch
-      app.kubernetes.io/component: ui
-  template:
+    app.kubernetes.io/name: autoresearch
+    app.kubernetes.io/component: researcher
+  ports:
+  - name: http
+    port: 8080
+    targetPort: http
+---
+apiVersion: agents.x-k8s.io/v1alpha1
+kind: Sandbox
+metadata:
+  name: autoresearch-researcher-1
+  labels:
+    app.kubernetes.io/name: autoresearch
+    app.kubernetes.io/component: researcher
+    open-rl/researcher: "1"
+spec:
+  podTemplate:
     metadata:
       labels:
         app.kubernetes.io/name: autoresearch
-        app.kubernetes.io/component: ui
+        app.kubernetes.io/component: researcher
+        open-rl/researcher: "1"
     spec:
-      serviceAccountName: open-rl-sa
+      restartPolicy: Never
+      activeDeadlineSeconds: 21600
       containers:
+      - name: researcher
+        image: ghcr.io/gke-labs/open-rl/autoresearch:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            ephemeral-storage: "10Gi"
+            memory: "4Gi"
+            cpu: "1"
+          limits:
+            ephemeral-storage: "10Gi"
+            memory: "8Gi"
+            cpu: "2"
+        command: ["sh", "-c"]
+        args:
+        - exec "${REPO_DIR}/run_research_agent.sh"
+        envFrom:
+        - configMapRef:
+            name: autoresearch-settings
+        - secretRef:
+            name: researcher-agent-secrets
+            optional: true
+        env:
+        - name: RESEARCHER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+      # Serves the researcher's logs. It keeps running after the researcher
+      # exits, so the run stays inspectable until the Sandbox is deleted or
+      # the deadline passes.
       - name: ui
         image: ghcr.io/gke-labs/open-rl/autoresearch:latest
         imagePullPolicy: Always
@@ -64,69 +122,4 @@ spec:
       volumes:
       - name: shared-storage
         persistentVolumeClaim:
-          claimName: open-rl-shared-pvc
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: autoresearch-ui
-  labels:
-    app.kubernetes.io/name: autoresearch
-    app.kubernetes.io/component: ui
-spec:
-  selector:
-    app.kubernetes.io/name: autoresearch
-    app.kubernetes.io/component: ui
-  ports:
-  - name: http
-    port: 8080
-    targetPort: http
----
-apiVersion: agents.x-k8s.io/v1alpha1
-kind: Sandbox
-metadata:
-  name: autoresearch-researcher-1
-  labels:
-    app.kubernetes.io/name: autoresearch
-    app.kubernetes.io/component: researcher
-    open-rl/researcher: "1"
-spec:
-  podTemplate:
-    spec:
-      serviceAccountName: open-rl-sa
-      restartPolicy: Never
-      activeDeadlineSeconds: 21600
-      containers:
-      - name: researcher
-        image: ghcr.io/gke-labs/open-rl/autoresearch:latest
-        imagePullPolicy: Always
-        resources:
-          requests:
-            ephemeral-storage: "10Gi"
-            memory: "4Gi"
-            cpu: "1"
-          limits:
-            ephemeral-storage: "10Gi"
-            memory: "8Gi"
-            cpu: "2"
-        command: ["sh", "-c"]
-        args:
-        - exec "${REPO_DIR}/run_research_agent.sh"
-        envFrom:
-        - configMapRef:
-            name: autoresearch-settings
-        - secretRef:
-            name: researcher-agent-secrets
-            optional: true
-        env:
-        - name: RESEARCHER_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        volumeMounts:
-        - name: shared-storage
-          mountPath: /mnt/shared
-      volumes:
-      - name: shared-storage
-        persistentVolumeClaim:
-          claimName: open-rl-shared-pvc
+          claimName: autoresearch-shared

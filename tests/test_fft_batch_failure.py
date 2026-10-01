@@ -5,7 +5,7 @@ import unittest
 from unittest.mock import patch
 
 from server.store import InMemoryStore
-from server.training_requests_processor import FFTTrainingRequestsProcessor
+from server.training_requests_processor import TrainingRequestsProcessor
 
 
 class SlicerStub:
@@ -51,7 +51,7 @@ class BatchStore(InMemoryStore):
 
 def processor(store, slicer):
   with patch.dict(os.environ, {"REDIS_URL": "redis://test"}):
-    return FFTTrainingRequestsProcessor(store, BrokenWorker(), "run-a", slicer)
+    return TrainingRequestsProcessor(store, BrokenWorker(), "run-a", time_slicer=slicer)
 
 
 class FFTBatchFailureTest(unittest.TestCase):
@@ -66,7 +66,7 @@ class FFTBatchFailureTest(unittest.TestCase):
       self.assertIn("CUDA out of memory", result["error_message"])
 
   def test_a_worker_the_slicer_could_not_park_exits_without_unregistering(self) -> None:
-    store = BatchStore([{"request_id": "sv-1", "op": "save_weights"}])
+    store = BatchStore([{"request_id": "sv-1", "op": "save_state"}])
     slicer = SlicerStub()
     proc = processor(store, slicer)
     exits = []
@@ -74,7 +74,7 @@ class FFTBatchFailureTest(unittest.TestCase):
     async def record_exit(unregister=True):
       exits.append(unregister)
 
-    async def handled(request, model_id):
+    async def handled(request):
       slicer.faulted = "checkpoint failed for workload run-a; it still holds the accelerator and must exit"
       return request["request_id"], {"type": "SaveWeightsResponse"}
 

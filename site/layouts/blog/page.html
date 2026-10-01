@@ -1,0 +1,15 @@
+{{ define "main" }}
+<article class="wrap narrow post">
+  <header>
+    <p class="crumb"><a href="{{ "/blog/" | relURL }}">Blog</a></p>
+    <h1>{{ .Title }}</h1>
+    <p class="meta">
+      <time datetime="{{ .Date.Format "2006-01-02" }}">{{ .Date.Format "January 2, 2006" }}</time>
+      {{ with .Params.authors }} · {{ delimit . ", " }}{{ end }}
+    </p>
+  </header>
+  <div class="prose">
+  {{ .Content }}
+  </div>
+</article>
+{{ end }}

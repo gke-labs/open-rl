@@ -56,7 +56,15 @@ Before running the training, you need to set up the environment and deploy OpenR
 *   For **Local Setup** (recommended for baseline), follow the [Local Setup Guide](../../docs/setup/local-setup.md).
 *   For **GKE Setup** (recommended for scaling), follow the [GKE Setup Guide](../../docs/setup/gke-setup.md).
 
-After completing the setup and ensuring the API server and vLLM sampler are running, proceed to the training section below.
+On GKE, the release bundle serves the recipe as is: the recipe names its base model when it creates the training client. To make Gemma 4 E2B the API server's default model as well, deploy this directory's overlay instead of the bundle:
+
+```bash
+make render OVERLAY=examples/text-to-sql VERSION=latest | kubectl apply --server-side -f -
+```
+
+The trainer and vLLM sampler workers start when the training script creates its training client, so the first step waits for the model to load.
+
+After completing the setup and ensuring the API server is running, proceed to the training section below.
 
 
 ## Running the Training

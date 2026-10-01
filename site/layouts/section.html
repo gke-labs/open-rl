@@ -1,0 +1,4 @@
+{{ define "main" }}
+<div class="wrap narrow"><h1 class="page-title">{{ .Title }}</h1>{{ .Content }}
+<ul class="posts">{{ range .Pages }}<li><h2><a href="{{ .RelPermalink }}">{{ .Title }}</a></h2></li>{{ end }}</ul></div>
+{{ end }}

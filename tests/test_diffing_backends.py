@@ -78,7 +78,8 @@ class TestUniversalStreamedDiffing(unittest.TestCase):
 
     self.assertEqual(meta["changed_elements"], 0)
     self.assertEqual(meta["total_elements"], worker.total_model_elements)
-    self.assertEqual(meta["layer_names"], worker.model_layer_names)
+    self.assertEqual(meta["layer_names"], [])
+    self.assertEqual(meta["layer_shapes"], [])
 
 
 if __name__ == "__main__":
