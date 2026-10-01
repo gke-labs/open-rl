@@ -1,0 +1,39 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The LoRA scheduler overlay on GKE TPU nodes served by the community TPU DRA
+# driver (kubernetes-sigs/dra-driver-google-tpu). Same control plane as
+# k8s/deploy/lora; the scheduler is pointed at the TPU DeviceClass and told
+# how to price devices the driver publishes no memory for, and every claim
+# takes a whole node because the driver prepares nothing smaller.
+namespace: openrl-system
+resources:
+  - ../lora
+
+# Private builds of the control plane; workers use the trainer-tpu and
+# sampler-tpu images named in api-server.yaml.
+images:
+  - name: ghcr.io/gke-labs/open-rl/api-server
+    newName: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/api-server
+    newTag: q20b-09231519
+  - name: ghcr.io/gke-labs/open-rl/scheduler
+    newName: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/scheduler
+    newTag: q20-09231454
+
+# Env every worker pod gets: the same engine shape and trainer settings as
+# the single-VM e2e runs.
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: open-rl-worker-env
+    literals:
+      - VLLM_MAX_MODEL_LEN=1024
+      - VLLM_MAX_NUM_SEQS=8
+      - VLLM_SERVER_DEV_MODE=1
+      - VLLM_ALLOW_INSECURE_SERIALIZATION=1
+      - OPEN_RL_TRAIN_SHAPE_BUCKETS=1
+      - OPEN_RL_TRAIN_TOKEN_BUDGET=32768
+
+patches:
+  - path: scheduler.yaml
+  - path: api-server.yaml

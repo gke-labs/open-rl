@@ -44,6 +44,8 @@ func main() {
 		namespace        string
 		deviceClass      string
 		deviceDriver     string
+		memoryTable      string
+		wholeNode        bool
 		retryInterval    time.Duration
 		placementTimeout time.Duration
 		strategy         string
@@ -57,6 +59,10 @@ func main() {
 	flag.StringVar(&namespace, "namespace", env("OPEN_RL_WORKER_NAMESPACE", "openrl-system"), "Namespace holding workers, claims and pods.")
 	flag.StringVar(&deviceClass, "device-class", env("OPEN_RL_DEVICE_CLASS", "gpu.nvidia.com"), "DeviceClass generated claims request.")
 	flag.StringVar(&deviceDriver, "device-driver", env("OPEN_RL_DEVICE_DRIVER", ""), "Driver publishing the ResourceSlices. Defaults to the device class.")
+	flag.StringVar(&memoryTable, "device-memory-table", env("OPEN_RL_DEVICE_MEMORY_TABLE", ""),
+		"Per-device memory for drivers that publish no memory capacity, as attr:value=quantity,... (e.g. tpuGen:v5e=16Gi,v6e=32Gi,v7x=192Gi).")
+	flag.BoolVar(&wholeNode, "whole-node-claims", os.Getenv("OPEN_RL_WHOLE_NODE_CLAIMS") == "true",
+		"Claim every device on a node (allocationMode All) instead of one; for drivers that only prepare whole-host claims.")
 	flag.DurationVar(&retryInterval, "retry-interval", envDuration("OPEN_RL_RECONCILE_INTERVAL", 10*time.Second), "How often an unplaced worker is retried.")
 	flag.DurationVar(&placementTimeout, "placement-timeout", envDuration("OPEN_RL_PLACEMENT_TIMEOUT", 15*time.Minute),
 		"How long a worker may go unplaced before the request is declared unsatisfiable. 0 waits forever.")
@@ -78,6 +84,11 @@ func main() {
 	parsedStrategy, err := placement.ParseStrategy(strategy)
 	if err != nil {
 		setupLog.Error(err, "invalid placement strategy")
+		os.Exit(1)
+	}
+	parsedTable, err := placement.ParseMemoryTable(memoryTable)
+	if err != nil {
+		setupLog.Error(err, "invalid device memory table")
 		os.Exit(1)
 	}
 
@@ -113,6 +124,8 @@ func main() {
 		Namespace:               namespace,
 		DeviceClass:             deviceClass,
 		DeviceDriver:            deviceDriver,
+		DeviceMemoryTable:       parsedTable,
+		WholeNodeClaims:         wholeNode,
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
 		PlacementStrategy:       parsedStrategy,
@@ -133,7 +146,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver, "strategy", strategy)
+	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver, "strategy", strategy,
+		"memoryTable", memoryTable, "wholeNodeClaims", wholeNode)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")
 		os.Exit(1)

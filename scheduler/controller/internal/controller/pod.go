@@ -84,19 +84,25 @@ func claimNameFor(worker *openrlv1alpha1.Workload) string {
 // and a floor rounded up to whole GiB could exceed the device. The ceiling
 // rounds up, which admits nothing new. There is no node selector; that is
 // kube-scheduler's call.
+//
+// With a DeviceMemoryTable the bounds are written against the table's
+// attribute instead, since such devices carry no capacity to compare. Under
+// WholeNodeClaims each tier asks for all matching devices on the node.
 func (r *WorkloadReconciler) buildClaim(claimName string, tiers []placement.Tier) *resourcev1.ResourceClaim {
 	subrequests := make([]resourcev1.DeviceSubRequest, len(tiers))
 	for i, tier := range tiers {
-		bounds := fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
-			r.DeviceDriver, tier.FloorBytes, r.DeviceDriver, placement.CeilGiB(tier.CeilingBytes))
 		subrequests[i] = resourcev1.DeviceSubRequest{
 			Name:            tier.Name,
 			DeviceClassName: r.DeviceClass,
 			AllocationMode:  resourcev1.DeviceAllocationModeExactCount,
 			Count:           int64(tier.Count),
 			Selectors: []resourcev1.DeviceSelector{{
-				CEL: &resourcev1.CELDeviceSelector{Expression: bounds},
+				CEL: &resourcev1.CELDeviceSelector{Expression: r.tierBounds(tier)},
 			}},
+		}
+		if r.WholeNodeClaims {
+			subrequests[i].AllocationMode = resourcev1.DeviceAllocationModeAll
+			subrequests[i].Count = 0
 		}
 	}
 
@@ -117,6 +123,22 @@ func (r *WorkloadReconciler) buildClaim(claimName string, tiers []placement.Tier
 			},
 		},
 	}
+}
+
+// tierBounds is the CEL that admits exactly the devices a tier was priced
+// on: a capacity comparison when the driver publishes memory, else membership
+// in the memory table's values for that size bucket.
+func (r *WorkloadReconciler) tierBounds(tier placement.Tier) string {
+	if !r.DeviceMemoryTable.Enabled() {
+		return fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
+			r.DeviceDriver, tier.FloorBytes, r.DeviceDriver, placement.CeilGiB(tier.CeilingBytes))
+	}
+	values := r.DeviceMemoryTable.ValuesWithin(tier.FloorBytes, tier.CeilingBytes)
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = fmt.Sprintf("%q", value)
+	}
+	return fmt.Sprintf(`device.attributes["%s"].%s in [%s]`, r.DeviceDriver, r.DeviceMemoryTable.Attribute, strings.Join(quoted, ", "))
 }
 
 // workerContainerName is the container in the template that consumes the

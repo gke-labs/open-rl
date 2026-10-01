@@ -69,6 +69,23 @@ def describe_worker(model_id: str, role: str) -> Worker:
   return Worker(role, runtime, base_model, is_lora, is_lora, meta, footprint(base_model, meta.fine_tuning_type, role))
 
 
+def on_tpu() -> bool:
+  return os.getenv("OPEN_RL_DEVICE", "").lower() == "tpu"
+
+
+def worker_image(role: str) -> str:
+  """One image for both roles on GPU; per-role images on TPU, where trainer
+  (torch_tpu) and sampler (vllm-tpu) cannot share an environment."""
+  return os.getenv(f"OPEN_RL_{role.upper()}_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest")
+
+
+def worker_command(role: str) -> list[str]:
+  module = worker_module(role)
+  if on_tpu() and role == "sampler":
+    return ["python3", "-u", "-m", module]  # the vllm-tpu base image carries no uv
+  return ["uv", "run", "python", "-u", "-m", module]
+
+
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
   """The shared worker env plus what only the cluster knows. The time-slice
   group is placement's and the scheduler stamps it."""
@@ -85,6 +102,8 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   }
   if os.getenv("VLLM_GPU_MEMORY_UTILIZATION"):
     values["VLLM_GPU_MEMORY_UTILIZATION"] = os.environ["VLLM_GPU_MEMORY_UTILIZATION"]
+  if on_tpu():
+    values["OPEN_RL_DEVICE"] = "tpu"
   env: list[dict[str, Any]] = [{"name": name, "value": value} for name, value in values.items()]
   env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
   return env
@@ -93,17 +112,22 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
 def pod_template(worker: Worker) -> dict[str, Any]:
   """The complete worker pod minus placement. Node selection and claims are
   the scheduler's; it rejects a template that carries them."""
+  resources = worker.footprint.resources
+  if limit := os.getenv("OPEN_RL_WORKER_MEMORY_LIMIT"):
+    # TPU engines precompile at startup and peak well above the estimator's
+    # host figure; the operator may raise the ceiling for all workers.
+    resources = {**resources, "limits": {**resources["limits"], "memory": limit}}
   template = {
     "spec": {
       "restartPolicy": "OnFailure",
       "containers": [
         {
           "name": "worker",
-          "image": os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"),
-          "command": ["uv", "run", "python", "-u", "-m", worker_module(worker.role)],
+          "image": worker_image(worker.role),
+          "command": worker_command(worker.role),
           "args": worker_args(worker.runtime, worker.role, worker.is_lora),
           "env": pod_env(worker),
-          "resources": worker.footprint.resources,
+          "resources": resources,
           "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],
         }
       ],
@@ -113,9 +137,16 @@ def pod_template(worker: Worker) -> dict[str, Any]:
           "persistentVolumeClaim": {"claimName": os.getenv("OPEN_RL_SHARED_PVC", "open-rl-shared-pvc")},
         }
       ],
-      "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+      "tolerations": [{"key": "google.com/tpu" if on_tpu() else "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
     },
   }
+  if on_tpu() and worker.role == "sampler":
+    template["spec"]["containers"][0]["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
+    template["spec"]["volumes"].append({"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}})
+  # Operator-chosen worker settings (vLLM shape, shape bucketing) come from one
+  # ConfigMap rather than riding through the API server's own env.
+  if worker_env_map := os.getenv("OPEN_RL_WORKER_ENV_CONFIGMAP"):
+    template["spec"]["containers"][0]["envFrom"] = [{"configMapRef": {"name": worker_env_map}}]
 
   if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
     template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy

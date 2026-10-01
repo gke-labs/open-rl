@@ -5,22 +5,28 @@ import os
 from typing import Any
 
 import torch
+from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from training import losses
-from training.types import Datum
+from training.device import resolve_device
+from training.types import Datum, TensorData
 
 
 class BaseTrainerWorker:
+  # Smallest padded sequence length when shape bucketing is on. Compile cost on
+  # XLA is near-flat in sequence length, so generous rungs are cheap.
+  MIN_LENGTH_BUCKET = 64
+  # Tokens per output-head chunk in compute_target_logprobs. 1024 x a 262k
+  # vocab x fp32 is 1 GiB per live copy.
+  DEFAULT_LOGPROB_CHUNK_TOKENS = 1024
+
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
 
-    if torch.cuda.is_available():
-      self.device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-      self.device = torch.device("mps")
-    else:
-      self.device = torch.device("cpu")
+    # TPU requires an explicit OPEN_RL_DEVICE=tpu (Dockerfile.tpu sets it);
+    # a torch_tpu venv can still run a cpu trainer, e.g. next to a TPU sampler.
+    self.device = resolve_device()
 
   def forward_backward(
     self,
@@ -63,16 +69,23 @@ class BaseTrainerWorker:
       batch_indices = [idx for idx, _ in batch]
       batch_data = [datum for _, datum in batch]
 
+      if self.shape_bucketing_enabled():
+        bucketed_rows = self.bucket_size(len(batch_data))
+        batch_data.extend(self.make_padding_datum(batch_data[0]) for _ in range(bucketed_rows - len(batch_data)))
+
       input_ids, attention_mask, input_lengths = self.pad_model_inputs(batch_data)
       target_token_ids, weights, lengths = self.pad_targets_and_weights(batch_data, input_lengths)
+      padded_target_len = weights.shape[1]
       target_logprobs = self.compute_target_logprobs(model, input_ids, attention_mask, target_token_ids)
 
       match loss_fn:
         case "cross_entropy":
           elementwise_loss = losses.cross_entropy_loss(target_logprobs, weights)
         case "importance_sampling":
-          old_logprobs = self.pad_sequences([datum.loss_fn_inputs["logprobs"].data for datum in batch_data], lengths, torch.float32)
-          advantages = self.pad_sequences([datum.loss_fn_inputs["advantages"].data for datum in batch_data], lengths, torch.float32)
+          old_logprob_data = [datum.loss_fn_inputs["logprobs"].data for datum in batch_data]
+          advantage_data = [datum.loss_fn_inputs["advantages"].data for datum in batch_data]
+          old_logprobs = self.pad_sequences(old_logprob_data, lengths, torch.float32, width=padded_target_len)
+          advantages = self.pad_sequences(advantage_data, lengths, torch.float32, width=padded_target_len)
           elementwise_loss = losses.importance_sampling_loss(
             target_logprobs,
             weights,
@@ -80,8 +93,10 @@ class BaseTrainerWorker:
             advantages,
           )
         case "ppo":
-          old_logprobs = self.pad_sequences([datum.loss_fn_inputs["logprobs"].data for datum in batch_data], lengths, torch.float32)
-          advantages = self.pad_sequences([datum.loss_fn_inputs["advantages"].data for datum in batch_data], lengths, torch.float32)
+          old_logprob_data = [datum.loss_fn_inputs["logprobs"].data for datum in batch_data]
+          advantage_data = [datum.loss_fn_inputs["advantages"].data for datum in batch_data]
+          old_logprobs = self.pad_sequences(old_logprob_data, lengths, torch.float32, width=padded_target_len)
+          advantages = self.pad_sequences(advantage_data, lengths, torch.float32, width=padded_target_len)
           elementwise_loss = losses.ppo_loss(
             target_logprobs,
             weights,
@@ -135,10 +150,16 @@ class BaseTrainerWorker:
     batch: list[tuple[int, Datum]] = []
     batch_max_len = 0
 
+    bucketing = self.shape_bucketing_enabled()
+
     for item in ordered_data:
       length = len(item[1].model_input)
       next_max_len = max(batch_max_len, length)
       next_size = len(batch) + 1
+      if bucketing:
+        # Cost the padded shape the batch will actually run at.
+        next_max_len = self.bucket_size(next_max_len, self.MIN_LENGTH_BUCKET)
+        next_size = self.bucket_size(next_size)
       over_token_budget = next_max_len * next_size > token_budget
 
       if batch and over_token_budget:
@@ -154,15 +175,33 @@ class BaseTrainerWorker:
 
     return batches
 
+  def shape_bucketing_enabled(self) -> bool:
+    """When set, every batch is padded to a power-of-two (batch, length) pair so XLA backends see a bounded set of shapes."""
+    return os.getenv("OPEN_RL_TRAIN_SHAPE_BUCKETS", "").lower() in ("1", "true", "yes")
+
+  def bucket_size(self, value: int, minimum: int = 1) -> int:
+    """Round value up to the next power-of-two rung, starting at minimum."""
+    bucket = minimum
+    while bucket < value:
+      bucket *= 2
+    return bucket
+
+  def make_padding_datum(self, template: Datum) -> Datum:
+    """Return a zero-weight dummy datum used to pad a batch up to its bucketed row count."""
+    loss_fn_inputs = {key: TensorData(data=[0]) for key in template.loss_fn_inputs}
+    loss_fn_inputs["weights"] = TensorData(data=[0.0])
+    return Datum(loss_fn_inputs=loss_fn_inputs, model_input=[0])
+
   def pad_sequences(
     self,
     sequences: list[list[int] | list[float]],
     lengths: list[int],
     dtype: torch.dtype,
     pad_value: int | float = 0,
+    width: int | None = None,
   ) -> torch.Tensor:
-    """Return padded values with shape [batch, max(lengths)]."""
-    padded = torch.full((len(sequences), max(lengths)), pad_value, dtype=dtype, device=self.device)
+    """Return padded values with shape [batch, width or max(lengths)]."""
+    padded = torch.full((len(sequences), width or max(lengths)), pad_value, dtype=dtype, device=self.device)
     for row, sequence in enumerate(sequences):
       length = lengths[row]
       padded[row, :length] = padded.new_tensor(sequence[:length])
@@ -177,8 +216,10 @@ class BaseTrainerWorker:
     batch_size = len(data)
     input_lengths = [len(datum.model_input) for datum in data]
     max_input_len = max(input_lengths)
+    if self.shape_bucketing_enabled():
+      max_input_len = self.bucket_size(max_input_len, self.MIN_LENGTH_BUCKET)
 
-    input_ids = self.pad_sequences([datum.model_input for datum in data], input_lengths, torch.long, pad_token_id)
+    input_ids = self.pad_sequences([datum.model_input for datum in data], input_lengths, torch.long, pad_token_id, width=max_input_len)
     attention_mask = input_ids.new_zeros((batch_size, max_input_len))
     for row, input_len in enumerate(input_lengths):
       attention_mask[row, :input_len] = 1
@@ -194,11 +235,14 @@ class BaseTrainerWorker:
     batch_size = len(data)
     target_lengths = [len(datum.loss_fn_inputs["target_tokens"].data) for datum in data]
     lengths = [min(input_lengths[row], target_lengths[row]) for row in range(batch_size)]
-    target_token_ids = self.pad_sequences([datum.loss_fn_inputs["target_tokens"].data for datum in data], lengths, torch.long)
+    max_target_len = max(lengths)
+    if self.shape_bucketing_enabled():
+      max_target_len = self.bucket_size(max_target_len, self.MIN_LENGTH_BUCKET)
+    target_token_ids = self.pad_sequences([datum.loss_fn_inputs["target_tokens"].data for datum in data], lengths, torch.long, width=max_target_len)
     weight_sequences = [
       datum.loss_fn_inputs["weights"].data if "weights" in datum.loss_fn_inputs else [1.0] * target_lengths[row] for row, datum in enumerate(data)
     ]
-    weights = self.pad_sequences(weight_sequences, lengths, torch.float32)
+    weights = self.pad_sequences(weight_sequences, lengths, torch.float32, width=max_target_len)
 
     return target_token_ids, weights, lengths
 
@@ -209,10 +253,68 @@ class BaseTrainerWorker:
     attention_mask: torch.Tensor,
     target_token_ids: torch.Tensor,
   ) -> torch.Tensor:
-    """Return selected target logprobs with shape [batch, max_target_len]."""
-    outputs = model(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True)
-    logits = outputs.logits[:, : target_token_ids.shape[1], :]
-    return torch.nn.functional.log_softmax(logits, dim=-1).gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1)
+    """Return selected target logprobs with shape [batch, max_target_len].
+
+    The full [tokens x vocab] logits are never materialised: the decoder body
+    runs once, then the output head and log_softmax run per chunk of positions
+    under activation checkpointing, so peak memory at the loss is bounded by
+    the chunk size rather than by the token budget.
+    """
+    target_len = target_token_ids.shape[1]
+    parts = self.split_causal_lm(model)
+    if parts is None:
+      outputs = model(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True)
+      logits = outputs.logits[:, :target_len, :]
+      return torch.nn.functional.log_softmax(logits, dim=-1).gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1)
+
+    body, head, softcap = parts
+    hidden_states = body(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True).last_hidden_state[:, :target_len, :]
+    positions_per_chunk = max(1, self.logprob_chunk_tokens() // hidden_states.shape[0])
+    chunks = []
+    for start in range(0, target_len, positions_per_chunk):
+      stop = start + positions_per_chunk
+      chunks.append(
+        checkpoint(
+          self.chunk_target_logprobs,
+          head,
+          softcap,
+          hidden_states[:, start:stop, :],
+          target_token_ids[:, start:stop],
+          use_reentrant=False,
+          preserve_rng_state=False,
+        )
+      )
+    return torch.cat(chunks, dim=1)
+
+  @staticmethod
+  def chunk_target_logprobs(head: torch.nn.Module, softcap: float | None, hidden_states: torch.Tensor, target_token_ids: torch.Tensor):
+    logits = head(hidden_states)
+    if softcap:
+      # Gemma's final_logit_softcapping, normally applied by the CausalLM forward.
+      logits = torch.tanh(logits / softcap) * softcap
+    logits = logits.float()
+    return torch.log_softmax(logits, dim=-1).gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1)
+
+  def logprob_chunk_tokens(self) -> int:
+    """Tokens (rows x positions) per output-head chunk; memory at the loss is ~this x vocab x a few bytes."""
+    return int(os.getenv("OPEN_RL_TRAIN_LOGPROB_CHUNK_TOKENS", str(self.DEFAULT_LOGPROB_CHUNK_TOKENS)))
+
+  def split_causal_lm(self, model: Any) -> tuple[torch.nn.Module, torch.nn.Module, float | None] | None:
+    """(decoder body, output head, final logit softcap) of an HF causal LM, or None when the model does not expose them.
+
+    PEFT is unwrapped first: its attribute forwarding would otherwise hand back
+    the whole causal LM (LoRA layers are injected in place, so the body found
+    on the unwrapped model still carries the adapters).
+    """
+    hf_model = model.get_base_model() if hasattr(model, "get_base_model") else model
+    prefix = getattr(hf_model, "base_model_prefix", None)
+    body = getattr(hf_model, prefix, None) if prefix else None
+    head = hf_model.get_output_embeddings() if hasattr(hf_model, "get_output_embeddings") else None
+    if body is None or head is None:
+      return None
+    config = getattr(hf_model, "config", None)
+    text_config = config.get_text_config() if hasattr(config, "get_text_config") else config
+    return body, head, getattr(text_config, "final_logit_softcapping", None)
 
   def generate(
     self,

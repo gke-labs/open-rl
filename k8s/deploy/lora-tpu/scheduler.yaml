@@ -1,0 +1,21 @@
+# Point the scheduler at the TPU driver. The slices carry no memory capacity,
+# so tiers are priced from the HBM-per-generation table, and every claim asks
+# for all of a node's chips.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-scheduler
+spec:
+  template:
+    spec:
+      containers:
+      - name: manager
+        env:
+        - name: OPEN_RL_DEVICE_CLASS
+          value: tpu.google.com
+        - name: OPEN_RL_DEVICE_DRIVER
+          value: tpu.google.com
+        - name: OPEN_RL_DEVICE_MEMORY_TABLE
+          value: tpuGen:v5e=16Gi,v6e=32Gi,v5p=95Gi,v7x=192Gi
+        - name: OPEN_RL_WHOLE_NODE_CLAIMS
+          value: "true"

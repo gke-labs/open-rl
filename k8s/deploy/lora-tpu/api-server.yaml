@@ -1,0 +1,27 @@
+# TPU workers: one image per role (torch_tpu trainer, vllm-tpu sampler), the
+# worker env ConfigMap above, and a longer sampler-ready timeout for
+# tpu-inference's startup precompile.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-api-server
+spec:
+  template:
+    spec:
+      containers:
+      - name: api-server
+        env:
+        - name: OPEN_RL_DEVICE
+          value: tpu
+        - name: OPEN_RL_TRAINER_IMAGE
+          value: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/trainer-tpu:latest
+        - name: OPEN_RL_SAMPLER_IMAGE
+          value: us-central2-docker.pkg.dev/gke-shared-ai-dev/openrl/sampler-tpu:latest
+        - name: OPEN_RL_WORKER_IMAGE_PULL_POLICY
+          value: Always
+        - name: OPEN_RL_WORKER_ENV_CONFIGMAP
+          value: open-rl-worker-env
+        - name: OPEN_RL_WORKER_MEMORY_LIMIT
+          value: 96Gi
+        - name: OPEN_RL_SAMPLER_READY_TIMEOUT_S
+          value: "900"

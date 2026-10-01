@@ -45,6 +45,13 @@ type WorkloadReconciler struct {
 	// domain its capacities live under. Distinct from DeviceClass in principle,
 	// identical for NVIDIA's driver.
 	DeviceDriver string
+	// DeviceMemoryTable supplies device memory for drivers whose slices
+	// publish no `memory` capacity (the TPU driver). Zero value: off.
+	DeviceMemoryTable placement.MemoryTable
+	// WholeNodeClaims makes every claim take all of a node's devices
+	// (allocationMode All) instead of counting them out. For hardware whose
+	// driver only prepares whole-host claims; DRA then serializes the node.
+	WholeNodeClaims bool
 	// RetryInterval is how often a worker that could not be placed is retried.
 	RetryInterval time.Duration
 	// PlacementTimeout is how long a worker may go unplaced before the request

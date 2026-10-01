@@ -117,18 +117,13 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 		name := *spec.NodeName
 		for j := range spec.Devices {
 			device := spec.Devices[j]
-			capacity, ok := device.Capacity["memory"]
+			memory, ok := r.deviceMemory(&device)
 			if !ok {
 				continue
 			}
-			memory := capacity.Value.Value()
 			pool, seen := devices[name]
 			if !seen {
-				product := ""
-				if attr, ok := device.Attributes["productName"]; ok && attr.StringValue != nil {
-					product = *attr.StringValue
-				}
-				devices[name] = &placement.Node{Name: name, DeviceCount: 1, DeviceMemoryBytes: memory, Product: product}
+				devices[name] = &placement.Node{Name: name, DeviceCount: 1, DeviceMemoryBytes: memory, Product: productOf(&device)}
 				continue
 			}
 			pool.DeviceCount++
@@ -170,6 +165,34 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 		pools[node.Name] = pool
 	}
 	return pools
+}
+
+// deviceMemory is a device's memory: the driver's own `memory` capacity when
+// it publishes one, else the operator's MemoryTable looked up by attribute.
+// A device with neither is not placeable and is skipped.
+func (r *WorkloadReconciler) deviceMemory(device *resourcev1.Device) (int64, bool) {
+	if capacity, ok := device.Capacity["memory"]; ok {
+		return capacity.Value.Value(), true
+	}
+	if !r.DeviceMemoryTable.Enabled() {
+		return 0, false
+	}
+	attr, ok := device.Attributes[resourcev1.QualifiedName(r.DeviceMemoryTable.Attribute)]
+	if !ok || attr.StringValue == nil {
+		return 0, false
+	}
+	return r.DeviceMemoryTable.Lookup(*attr.StringValue)
+}
+
+// productOf is the device's product label for messages: NVIDIA's
+// `productName`, or the TPU driver's `accelerator`.
+func productOf(device *resourcev1.Device) string {
+	for _, key := range []resourcev1.QualifiedName{"productName", "accelerator"} {
+		if attr, ok := device.Attributes[key]; ok && attr.StringValue != nil {
+			return *attr.StringValue
+		}
+	}
+	return ""
 }
 
 // foreignHostBytes sums, per node, the memory requests of pods this

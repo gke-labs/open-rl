@@ -65,6 +65,7 @@ make server BASE_MODEL=google/gemma-4-e2b SAMPLING_BACKEND=vllm
 | --- | --- | --- |
 | `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. |
 | `OPEN_RL_TRAIN_TOKEN_BUDGET` | `0` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `0` keeps the previous one-datum-at-a-time execution path. |
+| `OPEN_RL_TRAIN_LOGPROB_CHUNK_TOKENS` | `1024` | Tokens per output-head chunk when the trainer computes target logprobs. The full `[tokens x vocab]` logits are never materialised, so loss memory scales with this value times the vocabulary instead of with the token budget. |
 | `CUDA_VISIBLE_DEVICES` | unset | Standard PyTorch GPU selector. Use different devices when the vLLM worker and trainer run on separate GPUs. |
 
 ## Worker manager
