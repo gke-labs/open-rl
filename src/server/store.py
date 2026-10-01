@@ -390,7 +390,9 @@ class RedisStateStore(StateStore):
 
 @cache
 def redis_client(redis_url: str) -> redis.Redis:
-  return redis.from_url(redis_url, decode_responses=True, health_check_interval=2, max_connections=10000)
+  # The socket timeout must outlast the 5s blocking pops: redis-py 8 defaults it
+  # to 5s, and a read timing out as the server hands over an item loses it.
+  return redis.from_url(redis_url, decode_responses=True, health_check_interval=2, max_connections=10000, socket_timeout=30)
 
 
 @cache
