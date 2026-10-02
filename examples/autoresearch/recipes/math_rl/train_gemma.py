@@ -34,7 +34,10 @@ class Gemma4Renderer(renderers.Renderer):
     return RenderedMessage(header=header, output=output)
 
   def parse_response(self, response: list[int]):
-    return parse_response_for_stop_token(response, self.tokenizer, self._end_message_token)
+    # Gemma 4 base models usually end a reply with <eos> instead of <turn|>; accept either as the stop token.
+    ends_with_eos = bool(response) and response[-1] == self.tokenizer.eos_token_id
+    stop_token = self.tokenizer.eos_token_id if ends_with_eos else self._end_message_token
+    return parse_response_for_stop_token(response, self.tokenizer, stop_token)
 
 
 # Register into SDK global lookup dictionary at script startup
