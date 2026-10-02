@@ -48,11 +48,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
     use_bf16 = self.device.type == "tpu" or (self.device.type == "cuda" and torch.cuda.is_bf16_supported())
     dtype = torch.bfloat16 if use_bf16 else torch.float32
 
-    if self.device.type == "tpu":
-      # accelerate's device_map only handles torch's built-in device types; load on CPU and move.
-      self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype).to(self.device)
-    else:
-      self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
+    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
 
   def target_lora_modules(self, config: LoraConfig) -> list[str]:

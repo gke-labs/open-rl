@@ -84,11 +84,10 @@ class TestLoadBaseModel(unittest.TestCase):
       worker.load_base_model("tiny/model")
     return auto_model.from_pretrained, is_bf16_supported
 
-  def test_tpu_loads_bf16_on_cpu_then_moves(self) -> None:
+  def test_tpu_loads_bf16(self) -> None:
     device = SimpleNamespace(type="tpu")
     from_pretrained, is_bf16_supported = self.load(device, cuda=False)
-    from_pretrained.assert_called_once_with("tiny/model", dtype=torch.bfloat16)
-    from_pretrained.return_value.to.assert_called_once_with(device)
+    from_pretrained.assert_called_once_with("tiny/model", dtype=torch.bfloat16, device_map=device)
     is_bf16_supported.assert_not_called()
 
   def test_cpu_loads_fp32(self) -> None:
