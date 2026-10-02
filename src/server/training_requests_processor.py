@@ -298,6 +298,9 @@ class TrainingRequestsProcessor:
         if checkpoint:
           await self.publish_checkpoint(command.model_id, checkpoint)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
+      case commands.DeleteModel():
+        await asyncio.to_thread(self.worker.delete_model, command.model_id)
+        return {"status": "ok", "type": "model_deleted"}
       case commands.Shutdown():
         return {"status": "ok", "type": "shutdown_acknowledged"}
       case _:
@@ -329,6 +332,15 @@ async def run_training_requests_processor(
   await TrainingRequestsProcessor(store, worker, model_id, active_tenant_set_id, time_slicer).run()
 
 
+def build_worker(is_lora: bool) -> TrainingWorker:
+  if os.getenv("OPEN_RL_TRAINER_BACKEND") == "automodel":
+    # nemo-automodel lives only in the automodel image, so import it there.
+    from training.automodel_worker import AutomodelTrainingWorker
+
+    return AutomodelTrainingWorker()
+  return LoraTrainingWorker() if is_lora else FFTTrainingWorker()
+
+
 async def main_async(args: argparse.Namespace) -> None:
   fine_tuning_type = os.getenv("OPEN_RL_FINE_TUNING_TYPE") or ("full" if is_fft_enabled() else "lora")
   if args.model_id:
@@ -339,7 +351,7 @@ async def main_async(args: argparse.Namespace) -> None:
   is_lora = fine_tuning_type == "lora"
   print(f"-> Fine-Tuning Type: {fine_tuning_type} (Is LoRA: {is_lora})\n")
 
-  worker: TrainingWorker = LoraTrainingWorker() if is_lora else FFTTrainingWorker()
+  worker: TrainingWorker = build_worker(is_lora)
   preload_target = os.getenv("BASE_MODEL")
   is_ready = False
   if preload_target and is_lora:

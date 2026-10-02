@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from server import api_server
 from server.store import InMemoryStateStore, InMemoryStore
+from server.worker_manager import LocalWorkerManager
 from tests.test_session_lifecycle import RuntimeManager
 
 
@@ -415,6 +416,81 @@ class ExclusiveMetadataTest(ApiServerTest):
     unknown = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.exclusiv": "true"}})
     self.assertEqual(unknown.status_code, 400)
     self.assertIn("openrl.exclusiv: unknown setting", unknown.json()["error"])
+
+
+class TrainerBackendTest(ApiServerTest):
+  """An Automodel model is LoRA only and shares a trainer with Automodel models
+  of the same base, never with PyTorch ones."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    self.enterContext(patch("server.worker_manager.get_state_store", return_value=api_server.state))
+    self.enterContext(patch.object(api_server, "worker_manager", RuntimeManager()))
+
+  def metadata(self, model_id: str) -> dict:
+    return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
+
+  def active_set(self, model_id: str) -> str | None:
+    return asyncio.run(api_server._resolve_active_set_id(model_id))
+
+  def automodel(self, **extra) -> str:
+    body = {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel"}, **extra}
+    return self.post("create_model", body).json()["request_id"]
+
+  def test_automodel_tenants_of_any_shape_share(self) -> None:
+    first = self.automodel(lora_config={"rank": 16})
+    other_shape = self.automodel(lora_config={"rank": 32, "train_mlp": False})
+    self.assertEqual(self.metadata(first)["trainer_backend"], "automodel")
+    self.assertEqual(self.active_set(first), "automodel-m-1")
+    self.assertEqual(self.active_set(other_shape), "automodel-m-1")
+
+  def test_the_default_is_pytorch_and_lora_shares(self) -> None:
+    model_id = self.post("create_model", {"base_model": "m"}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["trainer_backend"], "pytorch")
+    self.assertEqual(self.active_set(model_id), "m-1")
+
+  def test_a_session_tag_supplies_the_backend(self) -> None:
+    session_id = self.post("create_session", {"tags": ["openrl.trainer_backend=automodel"]}).json()["session_id"]
+    model_id = self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["trainer_backend"], "automodel")
+
+  def test_full_fine_tuning_on_automodel_is_refused(self) -> None:
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      response = self.post(
+        "create_model",
+        {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel"}},
+        headers={"x-open-rl-fine-tuning-type": "full"},
+      )
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("LoRA only", response.json()["error"])
+
+  def test_an_unknown_backend_is_refused(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "nope"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.trainer_backend", response.json()["error"])
+
+  def test_jobs_on_one_trainer_image_share_apart_from_other_images(self) -> None:
+    def create(image: str) -> str:
+      session_id = self.post("create_session", {"tags": [f"openrl.trainer_backend={image}"]}).json()["session_id"]
+      return self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
+
+    first, second, other = create("ghcr.io/org/trainer:1"), create("ghcr.io/org/trainer:1"), create("ghcr.io/org/trainer:2")
+    self.assertEqual(self.metadata(first)["trainer_backend"], "ghcr.io/org/trainer:1")
+    self.assertRegex(self.active_set(first), r"^image-[0-9a-f]{10}-m-1$")
+    self.assertEqual(self.active_set(second), self.active_set(first))
+    self.assertNotEqual(self.active_set(other), self.active_set(first))
+
+  def test_a_local_worker_manager_refuses_a_trainer_image(self) -> None:
+    with patch.object(api_server, "worker_manager", object.__new__(LocalWorkerManager)):
+      response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "ghcr.io/org/trainer:1"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("pods", response.json()["error"])
+
+  def test_a_server_without_a_worker_manager_refuses_automodel(self) -> None:
+    with patch.object(api_server, "worker_manager", None):
+      response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("launches workers", response.json()["error"])
 
 
 if __name__ == "__main__":

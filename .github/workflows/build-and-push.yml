@@ -31,6 +31,9 @@ jobs:
           - image_name: client
             context: .
             dockerfile: src/server/Dockerfile.client
+          - image_name: automodel
+            context: .
+            dockerfile: src/server/Dockerfile.automodel
           - image_name: scheduler
             context: scheduler/controller
             dockerfile: scheduler/controller/Dockerfile

@@ -19,7 +19,7 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_diffing_backends tests.test_sampler_weight_rotation tests.test_commands tests.test_weight_sync_config tests.test_exclusive_trainer
+UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_delta_weight_sync tests.test_diffing_backends tests.test_sampler_weight_rotation tests.test_commands tests.test_weight_sync_config tests.test_exclusive_trainer tests.test_delete_model tests.test_automodel_worker
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
@@ -181,6 +181,9 @@ cloud-build-api-server: require-gcp-project
 cloud-build-server: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-server,_DOCKERFILE=src/server/Dockerfile,_TAG=$(CLOUD_IMAGE_TAG) .
 
+cloud-build-automodel: require-gcp-project
+	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-automodel,_DOCKERFILE=src/server/Dockerfile.automodel,_TAG=$(CLOUD_IMAGE_TAG) .
+
 cloud-build-client: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-client,_DOCKERFILE=src/server/Dockerfile.client,_TAG=$(CLOUD_IMAGE_TAG) .
 
@@ -196,7 +199,12 @@ cloud-deploy-server: require-gcp-project
 	kubectl set env deployment/open-rl-api-server OPEN_RL_WORKER_IMAGE=$(CLOUD_REGISTRY)/open-rl-server:$(CLOUD_IMAGE_TAG)
 	@echo "workers -> $(CLOUD_REGISTRY)/open-rl-server:$(CLOUD_IMAGE_TAG)"
 
+cloud-deploy-automodel: require-gcp-project
+	kubectl set env deployment/open-rl-api-server OPEN_RL_AUTOMODEL_IMAGE=$(CLOUD_REGISTRY)/open-rl-automodel:$(CLOUD_IMAGE_TAG)
+	@echo "automodel trainers -> $(CLOUD_REGISTRY)/open-rl-automodel:$(CLOUD_IMAGE_TAG)"
+
 cloud-rollout-api-server: cloud-build-api-server cloud-deploy-api-server
+cloud-rollout-automodel: cloud-build-automodel cloud-deploy-automodel
 cloud-rollout-server: cloud-build-server cloud-deploy-server
 cloud-rollout: cloud-build-api-server cloud-build-server cloud-build-client cloud-deploy-api-server cloud-deploy-server
 

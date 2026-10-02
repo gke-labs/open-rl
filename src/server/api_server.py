@@ -20,7 +20,7 @@ from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import proto_codec
@@ -32,10 +32,10 @@ from server.model_metadata import (
 )
 from server.session_registry import SessionRegistry
 from server.store import RedisStateStore, get_state_store, get_store
-from server.worker_manager import WorkerManager, create_worker_manager, owner_of
+from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, owner_of
 from training import commands
 from training.commands import Command
-from training.types import Datum, FFTConfig, LoraConfig
+from training.types import TRAINER_BACKENDS, Datum, FFTConfig, LoraConfig
 
 store = get_store()
 state = get_state_store()
@@ -152,12 +152,22 @@ def parse_bool(value: Any) -> bool:
   return value
 
 
+def parse_trainer_backend(value: str) -> str:
+  # An image ref always has a registry or repository path.
+  if value not in TRAINER_BACKENDS and "/" not in value:
+    raise ValueError(f"must be one of {', '.join(TRAINER_BACKENDS)} or an image like ghcr.io/org/trainer:tag, got {value!r}")
+  return value
+
+
 class Settings(BaseModel):
   model_config = ConfigDict(extra="forbid")
 
   # A workload no other workload shares. The model gets its own trainer and
   # sampler, and nothing time-slices their GPUs.
   exclusive: Annotated[bool, BeforeValidator(parse_bool)] = False
+  # The trainer the model runs on. Automodel is LoRA only. An image runs its
+  # own trainer, picked by the OPEN_RL_TRAINER_BACKEND it sets.
+  trainer_backend: Annotated[str, AfterValidator(parse_trainer_backend)] = "pytorch"
 
 
 def tag_metadata(tags: list[str]) -> dict[str, str]:
@@ -414,6 +424,12 @@ async def _extract_and_persist_model_metadata(
   # Without a worker manager one static runtime serves every model.
   if settings.exclusive and worker_manager is None:
     raise ValueError("openrl.exclusive needs a server that launches workers per model")
+  if settings.trainer_backend != "pytorch" and worker_manager is None:
+    raise ValueError(f"openrl.trainer_backend={settings.trainer_backend} needs a server that launches workers per model")
+  if settings.trainer_backend not in TRAINER_BACKENDS and isinstance(worker_manager, LocalWorkerManager):
+    raise ValueError("A trainer image needs a server that launches workers as pods")
+  if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
+    raise ValueError("The automodel trainer supports LoRA only")
   # Nothing parks an exclusive trainer, so it stays on the GPU.
   if settings.exclusive:
     full_config["cpu_offload"] = False
@@ -427,6 +443,7 @@ async def _extract_and_persist_model_metadata(
     full_config=full_config,
     lora_config=lora_config,
     exclusive=settings.exclusive,
+    trainer_backend=settings.trainer_backend,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 
@@ -710,7 +727,12 @@ async def delete_model(req: ModelRequest):
   meta = await get_model_metadata(state, model_id)
   if meta is None:
     raise HTTPException(status_code=404, detail=f"Unknown model: {model_id}")
-  if not meta.shares_runtime() and worker_manager is not None:
+  if meta.shares_runtime():
+    # Other jobs keep the trainer, so it only frees this job's adapter, after
+    # the job's queued work.
+    delete = commands.DeleteModel(request_id=str(uuid.uuid4()), model_id=model_id)
+    await store.put_request(commands.wire(delete), active_set_id=await _resolve_active_set_id(model_id))
+  elif worker_manager is not None:
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)), active_set_id=await _resolve_active_set_id(model_id))
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})

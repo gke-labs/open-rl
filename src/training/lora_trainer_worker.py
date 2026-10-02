@@ -144,6 +144,13 @@ class LoraTrainingWorker(BaseTrainerWorker):
     self.load_base_model(base_model_name)
     self.create_adapter(model_id, config)
 
+  def delete_model(self, model_id: str) -> None:
+    """Drop the job's adapter and optimizer. The base model stays for the other jobs."""
+    if self.adapter_states.pop(model_id, None) is None:
+      return
+    self.peft_model.delete_adapter(model_id)
+    print(f"LoRA adapter '{model_id}' deleted.")
+
   def save_adapter(self, adapter_id: str, alias: str | None = None) -> None:
     """Save adapter weights to disk for reliability and sharing."""
     if self.peft_model is None:

@@ -109,7 +109,9 @@ COPY . .
 # spawned workers to discover the checkpoint weight-transfer backend.
 RUN uv sync --frozen --extra gpu --extra vllm --extra cluster
 
-ENV PATH="/usr/local/cuda/bin:$PATH" \
+# The venv is on PATH so a job that names this image as its trainer runs
+# `python -u -m server.training_requests_processor` like any other image.
+ENV PATH="/app/.venv/bin:/usr/local/cuda/bin:$PATH" \
     CUDA_HOME="/usr/local/cuda" \
     # The devel image exported this so JIT-built extensions can link -lcuda
     # against the driver stub; the base image does not.

@@ -92,6 +92,22 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
     await self.post("delete_model", {"model_id": exclusive})
     self.assertEqual(self.manager.released_models, [exclusive])
 
+  async def test_deleting_a_job_frees_its_adapter_or_its_workers(self):
+    session = (await self.post("create_session", {}))["session_id"]
+    shared = (await self.post("create_model", {"base_model": "test-base", "session_id": session}))["request_id"]
+    body = {"base_model": "test-base", "session_id": session, "user_metadata": {"openrl.exclusive": "true"}}
+    exclusive = (await self.post("create_model", body))["request_id"]
+    await self.store.get_requests(active_set_id="test-base-1")
+    await self.store.get_requests(active_set_id=f"{exclusive}-1")
+
+    await self.post("delete_model", {"model_id": shared})
+    await self.post("delete_model", {"model_id": exclusive})
+
+    # The shared trainer drops one adapter; the exclusive job's workers shut down.
+    self.assertEqual([(r["op"], r["model_id"]) for r in await self.store.get_requests(active_set_id="test-base-1")], [("delete_model", shared)])
+    self.assertEqual([r["op"] for r in await self.store.get_requests(active_set_id=f"{exclusive}-1")], ["shutdown_workers"])
+    self.assertEqual(self.manager.released_models, [exclusive])
+
   async def test_an_owner_stays_listed_until_forgotten(self):
     await self.registry.attach("a", "base")
     self.assertTrue(await self.registry.in_use("base"))

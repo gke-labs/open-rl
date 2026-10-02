@@ -35,7 +35,7 @@ def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
 
   A model that owns its runtime (FFT, or exclusive) has the model_id as the
   id. Other LoRA jobs on one base model share a runtime, so the id is the
-  base model. A model with no
+  base model, prefixed with the backend or an image hash off PyTorch. A model with no
   metadata (a sampling session opened on a bare base-model name) is FFT when
   this deployment enables FFT and LoRA otherwise, because an FFT sampler in
   a LoRA deployment would serve base weights and ignore every adapter.
@@ -87,6 +87,8 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
   env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
   if role == "trainer":
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if meta.trainer_backend == "automodel":
+      env["OPEN_RL_TRAINER_BACKEND"] = "automodel"
   else:
     env["OPEN_RL_MODEL_ID"] = runtime
     env["VLLM_SERVER_DEV_MODE"] = "1"
