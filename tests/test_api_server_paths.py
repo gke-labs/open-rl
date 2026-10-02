@@ -111,6 +111,43 @@ class ErrorShapeTest(ApiServerTest):
     self.assertEqual((unchanged.status_code, unchanged.body), (304, b""))
 
 
+class DeploymentAcceleratorTest(ApiServerTest):
+  """OPEN_RL_DEVICE on the API server picks the accelerator; the model's
+  metadata record keeps it."""
+
+  def create(self, device: str, **kwargs):
+    with patch.dict(os.environ, {"OPEN_RL_DEVICE": device}):
+      return self.post("create_model", {"base_model": "m"}, **kwargs)
+
+  def accelerator(self, response) -> str:
+    return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{response.json()['request_id']}"))["accelerator"]
+
+  def test_gpu_unless_the_device_is_tpu(self) -> None:
+    self.assertEqual(self.accelerator(self.post("create_model", {"base_model": "m"})), "gpu")
+    self.assertEqual(self.accelerator(self.create("cuda")), "gpu")
+    with patch.object(api_server, "check_supported"):
+      self.assertEqual(self.accelerator(self.create("tpu")), "tpu")
+
+  def test_tpu_full_fine_tuning_is_refused_whether_or_not_fft_is_enabled(self) -> None:
+    for fft_enabled in ("true", ""):
+      with self.subTest(fft_enabled=fft_enabled), patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": fft_enabled}):
+        response = self.create("tpu", headers={"X-Open-RL-Fine-Tuning-Type": "full"})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("LoRA only", response.json()["error"])
+
+  def test_tpu_is_refused_until_tpu_workers_exist(self) -> None:
+    response = self.create("tpu")
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("not supported yet", response.json()["error"])
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"OPEN_RL_DEVICE": "tpu"}):
+      for name, content in (("metadata.json", {"base_model": "checkpoint-base"}), ("adapter_config.json", {"r": 8})):
+        with open(os.path.join(directory, name), "w") as f:
+          json.dump(content, f)
+      restored = self.post("create_model_from_state", {"state_path": directory})
+    self.assertEqual(restored.status_code, 400)
+    self.assertEqual(api_server.store.queues, {})
+
+
 class SaveSeqIdZeroTest(ApiServerTest):
   def test_the_first_saves_zero_seq_id_is_kept(self) -> None:
     # The client's counter is 0-based; 0 must not fall back to a timestamp id.

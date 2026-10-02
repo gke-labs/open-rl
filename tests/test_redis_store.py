@@ -230,6 +230,9 @@ class MetadataTest(unittest.TestCase):
     old = decode_model_metadata('{"base_model": null, "fine_tuning_type": "restored", "lora_config": null}')
     self.assertEqual(old.fine_tuning_type, "lora")
     self.assertEqual(old.lora_config.rank, 16)
-    for raw in ("bad json", "[]", "{}", '{"base_model": "base", "fine_tuning_type": "invalid"}'):
+    # Records written before the accelerator field ran on GPU.
+    self.assertEqual(old.accelerator, "gpu")
+    self.assertEqual(decode_model_metadata('{"base_model": "base", "accelerator": "tpu"}').accelerator, "tpu")
+    for raw in ("bad json", "[]", "{}", '{"base_model": "base", "fine_tuning_type": "invalid"}', '{"base_model": "base", "accelerator": "cuda"}'):
       with self.subTest(raw=raw), self.assertRaises(ValueError):
         decode_model_metadata(raw)
