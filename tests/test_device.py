@@ -41,9 +41,8 @@ class TestResolveDevice(unittest.TestCase):
       self.assertEqual(resolve_device(), torch.device("cpu"))
 
   def test_tpu_without_torch_tpu_names_the_package(self) -> None:
-    for name in ("tpu", "tpu:0"):
-      with self.subTest(name=name), device_env(name), patch.dict(sys.modules, {"torch_tpu": None}), self.assertRaisesRegex(ImportError, "torch_tpu"):
-        resolve_device()
+    with device_env("tpu"), patch.dict(sys.modules, {"torch_tpu": None}), self.assertRaisesRegex(ImportError, "torch_tpu"):
+      resolve_device()
 
   def test_tpu_not_registered_says_why(self) -> None:
     # torch_tpu imports but registers nothing, as on a host with no chips or with autoload off.

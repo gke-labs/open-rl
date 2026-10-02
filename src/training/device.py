@@ -13,11 +13,11 @@ def resolve_device() -> torch.device:
   TORCH_DEVICE_BACKEND_AUTOLOAD is not 0.
   """
   name = os.environ.get("OPEN_RL_DEVICE", "").strip().lower()
-  if name.partition(":")[0] == "tpu":
+  if name == "tpu":
     try:
       import torch_tpu  # noqa: F401
     except ImportError as exc:
-      raise ImportError(f"OPEN_RL_DEVICE={name} needs the torch_tpu package: {exc}") from exc
+      raise ImportError(f"OPEN_RL_DEVICE=tpu needs the torch_tpu package: {exc}") from exc
     try:
       return torch.device(name)
     except RuntimeError as exc:
