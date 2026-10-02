@@ -9,6 +9,7 @@ from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from training import losses
+from training.device import resolve_device
 from training.types import Datum
 
 
@@ -19,13 +20,7 @@ class BaseTrainerWorker:
 
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
-
-    if torch.cuda.is_available():
-      self.device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-      self.device = torch.device("mps")
-    else:
-      self.device = torch.device("cpu")
+    self.device = resolve_device()
 
   def forward_backward(
     self,
