@@ -113,6 +113,57 @@ class ErrorShapeTest(ApiServerTest):
     self.assertEqual((unchanged.status_code, unchanged.body), (304, b""))
 
 
+class AccelPrefsTest(ApiServerTest):
+  """The client's openrl.trainer_accel_prefs and openrl.sampler_accel_prefs
+  settings; the model's metadata record keeps them."""
+
+  def metadata(self, response) -> dict:
+    return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{response.json()['request_id']}"))
+
+  def prefs(self, response) -> tuple[list[str], list[str]]:
+    meta = self.metadata(response)
+    return meta["trainer_accel_prefs"], meta["sampler_accel_prefs"]
+
+  def test_gpu_by_default(self) -> None:
+    self.assertEqual(self.prefs(self.post("create_model", {"base_model": "m"})), (["gpu"], ["gpu"]))
+
+  def test_prefs_come_from_tags_and_user_metadata(self) -> None:
+    with patch.object(api_server, "check_supported"):
+      session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
+      response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
+    self.assertEqual(self.prefs(response), (["tpu", "gpu"], ["tpu", "gpu"]))
+
+  def test_bad_prefs_are_refused(self) -> None:
+    for value, error in (("cuda", "Input should be 'gpu' or 'tpu'"), ("gpu,gpu", "lists an accelerator twice"), (["tpu", "cuda"], "Input should be")):
+      with self.subTest(value=value):
+        response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_accel_prefs": value}})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn(f"openrl.trainer_accel_prefs: {error}", response.json()["error"])
+
+  def test_full_fine_tuning_needs_gpu_in_both_lists(self) -> None:
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      response = self.post(
+        "create_model",
+        {"base_model": "m", "user_metadata": {"openrl.sampler_accel_prefs": "tpu"}},
+        headers={"X-Open-RL-Fine-Tuning-Type": "full"},
+      )
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("LoRA only", response.json()["error"])
+
+  def test_tpu_is_refused_until_tpu_workers_exist(self) -> None:
+    user_metadata = {"openrl.trainer_accel_prefs": "tpu|gpu"}
+    response = self.post("create_model", {"base_model": "m", "user_metadata": user_metadata})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("not supported yet", response.json()["error"])
+    with tempfile.TemporaryDirectory() as directory:
+      for name, content in (("metadata.json", {"base_model": "checkpoint-base"}), ("adapter_config.json", {"r": 8})):
+        with open(os.path.join(directory, name), "w") as f:
+          json.dump(content, f)
+      restored = self.post("create_model_from_state", {"state_path": directory, "user_metadata": user_metadata})
+    self.assertEqual(restored.status_code, 400)
+    self.assertEqual(api_server.store.queues, {})
+
+
 class SaveSeqIdZeroTest(ApiServerTest):
   def test_the_first_saves_zero_seq_id_is_kept(self) -> None:
     # The client's counter is 0-based; 0 must not fall back to a timestamp id.

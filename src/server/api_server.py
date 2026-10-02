@@ -24,6 +24,7 @@ from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, C
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import proto_codec
+from server.accelerators import Accelerator, check_supported, parse_accel_prefs
 from server.model_metadata import (
   TrainingModelMetadata,
   extract_weight_sync_config,
@@ -168,6 +169,10 @@ class Settings(BaseModel):
   # The trainer the model runs on. Automodel is LoRA only. An image runs its
   # own trainer, picked by the OPEN_RL_TRAINER_BACKEND it sets.
   trainer_backend: Annotated[str, AfterValidator(parse_trainer_backend)] = "pytorch"
+  # The accelerators the model's workers may run on, most preferred first,
+  # like tpu,gpu, or tpu|gpu in a tag.
+  trainer_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = ["gpu"]
+  sampler_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = ["gpu"]
 
 
 def tag_metadata(tags: list[str]) -> dict[str, str]:
@@ -430,6 +435,7 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("A trainer image needs a server that launches workers as pods")
   if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
     raise ValueError("The automodel trainer supports LoRA only")
+  check_supported(fine_tuning_type, settings.trainer_accel_prefs, settings.sampler_accel_prefs)
   # Nothing parks an exclusive trainer, so it stays on the GPU.
   if settings.exclusive:
     full_config["cpu_offload"] = False
@@ -444,6 +450,8 @@ async def _extract_and_persist_model_metadata(
     lora_config=lora_config,
     exclusive=settings.exclusive,
     trainer_backend=settings.trainer_backend,
+    trainer_accel_prefs=settings.trainer_accel_prefs,
+    sampler_accel_prefs=settings.sampler_accel_prefs,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 
