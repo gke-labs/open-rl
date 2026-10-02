@@ -5,6 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from server.accelerators import Accelerator
 from server.store import StateStore
 from training.types import FFTConfig, FineTuningType, LoraConfig
 
@@ -52,6 +53,8 @@ class TrainingModelMetadata(BaseModel):
   weight_sync_config: WeightSyncConfig = Field(default_factory=WeightSyncConfig)
   full_config: FFTConfig = Field(default_factory=FFTConfig)
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
+  # Set once when the model is created. Defaults to gpu.
+  accelerator: Accelerator = "gpu"
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None

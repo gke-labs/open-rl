@@ -24,6 +24,7 @@ from pydantic import AliasChoices, BaseModel, Field, ValidationError, Validation
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import proto_codec
+from server.accelerators import check_supported, deployment_accelerator
 from server.model_metadata import TrainingModelMetadata, extract_weight_sync_config, get_model_metadata, persist_model_metadata
 from server.session_registry import SessionRegistry
 from server.store import RedisStateStore, get_state_store, get_store
@@ -336,6 +337,10 @@ async def _extract_and_persist_model_metadata(
   elif h_val == "lora":
     fine_tuning_type = "lora"
 
+  # Before the FFT check, so a TPU deployment says FFT needs a GPU.
+  accelerator = deployment_accelerator()
+  check_supported(accelerator, fine_tuning_type)
+
   if fine_tuning_type == "full" and not is_fft_enabled():
     raise ValueError("Full Fine-Tuning (FFT) is disabled on this Open-RL API server instance")
 
@@ -352,6 +357,7 @@ async def _extract_and_persist_model_metadata(
     weight_sync_config=weight_sync_cfg,
     full_config=full_config,
     lora_config=lora_config,
+    accelerator=accelerator,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 

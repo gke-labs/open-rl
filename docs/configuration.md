@@ -93,6 +93,14 @@ backend by default for physical checkpoint/restore.
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
 | `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
 
+## Choosing an accelerator
+
+`OPEN_RL_DEVICE=tpu` on the API server makes every model it creates a TPU
+model. Unset, or any other value, means GPU. Each model stores its accelerator
+when it is created, and it never changes. TPU supports LoRA only. TPU workers
+are not supported yet, so for now the API server refuses to create models
+while `OPEN_RL_DEVICE=tpu` is set.
+
 ## Kubernetes deployment
 
 On Kubernetes the release bundles set these variables. The API server runs with
