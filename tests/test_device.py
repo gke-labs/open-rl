@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import torch
@@ -13,7 +13,7 @@ from training.device import resolve_device
 from training.lora_trainer_worker import LoraTrainingWorker
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-# torch_tpu renames PrivateUse1 to "tpu" on import; the stub does only that.
+# On a TPU host, importing torch_tpu renames PrivateUse1 to "tpu"; the stub does only that.
 STUB_TORCH_TPU = 'import torch\ntorch.utils.rename_privateuse1_backend("tpu")\n'
 
 
@@ -41,7 +41,17 @@ class TestResolveDevice(unittest.TestCase):
       self.assertEqual(resolve_device(), torch.device("cpu"))
 
   def test_tpu_without_torch_tpu_names_the_package(self) -> None:
-    with device_env("tpu"), patch.dict(sys.modules, {"torch_tpu": None}), self.assertRaisesRegex(ImportError, "torch_tpu"):
+    for name in ("tpu", "tpu:0"):
+      with self.subTest(name=name), device_env(name), patch.dict(sys.modules, {"torch_tpu": None}), self.assertRaisesRegex(ImportError, "torch_tpu"):
+        resolve_device()
+
+  def test_tpu_not_registered_says_why(self) -> None:
+    # torch_tpu imports but registers nothing, as on a host with no chips or with autoload off.
+    with (
+      device_env("tpu"),
+      patch.dict(sys.modules, {"torch_tpu": ModuleType("torch_tpu")}),
+      self.assertRaisesRegex(RuntimeError, "TORCH_DEVICE_BACKEND_AUTOLOAD"),
+    ):
       resolve_device()
 
   def test_tpu_imports_torch_tpu(self) -> None:
@@ -61,7 +71,8 @@ class TestResolveDevice(unittest.TestCase):
 
 class TestLoadBaseModel(unittest.TestCase):
   def load(self, device, cuda: bool, bf16: bool = False) -> tuple[MagicMock, MagicMock]:
-    worker = LoraTrainingWorker()
+    with device_env("cpu"):
+      worker = LoraTrainingWorker()
     worker.device = device
     is_bf16_supported = MagicMock(return_value=bf16)
     with (
@@ -80,11 +91,14 @@ class TestLoadBaseModel(unittest.TestCase):
     from_pretrained.return_value.to.assert_called_once_with(device)
     is_bf16_supported.assert_not_called()
 
-  def test_cpu_without_cuda_loads_fp32(self) -> None:
+  def test_cpu_loads_fp32(self) -> None:
+    # Also on a CUDA host, where OPEN_RL_DEVICE=cpu chose the CPU.
     device = torch.device("cpu")
-    from_pretrained, is_bf16_supported = self.load(device, cuda=False)
-    from_pretrained.assert_called_once_with("tiny/model", dtype=torch.float32, device_map=device)
-    is_bf16_supported.assert_not_called()
+    for cuda in (False, True):
+      with self.subTest(cuda=cuda):
+        from_pretrained, is_bf16_supported = self.load(device, cuda=cuda, bf16=True)
+        from_pretrained.assert_called_once_with("tiny/model", dtype=torch.float32, device_map=device)
+        is_bf16_supported.assert_not_called()
 
   def test_cuda_uses_bf16_when_supported(self) -> None:
     device = torch.device("cuda")
