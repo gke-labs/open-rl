@@ -59,6 +59,20 @@ vllm = [
     "torch-c-dlpack-ext; sys_platform == 'linux'",
     "vllm==0.30.0; sys_platform == 'linux'",
 ]
+# TPU trainer. torch_tpu is installed separately and pairs with torch 2.11.0.
+tpu = [
+    "datasets",
+    "numpy",
+    "peft",
+    "torch==2.11.0",
+    "transformers>=5.5.4",
+]
+# TPU sampler. torch and torchvision are listed so they come from the CPU index.
+tpu-sampler = [
+    "torch; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "torchvision; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "vllm-tpu==0.30.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
     "kubernetes>=29",
@@ -92,6 +106,34 @@ conflicts = [
         { extra = "cpu" },
         { extra = "vllm" },
     ],
+    [
+        { extra = "tpu" },
+        { extra = "cpu" },
+    ],
+    [
+        { extra = "tpu" },
+        { extra = "gpu" },
+    ],
+    [
+        { extra = "tpu" },
+        { extra = "vllm" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "cpu" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "gpu" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "vllm" },
+    ],
+    [
+        { extra = "tpu-sampler" },
+        { extra = "tpu" },
+    ],
 ]
 
 [[tool.uv.index]]
@@ -116,8 +158,11 @@ explicit = true
 
 [tool.uv.sources]
 # Pick the torch build from the user-facing cpu/gpu extras; vllm always uses CUDA torch.
+# Both TPU extras use the CPU build.
 torch = [
     { index = "torch-cpu", extra = "cpu" },
+    { index = "torch-cpu", extra = "tpu" },
+    { index = "torch-cpu", extra = "tpu-sampler", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
@@ -125,6 +170,7 @@ torchaudio = [
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
 torchvision = [
+    { index = "torch-cpu", extra = "tpu-sampler", marker = "sys_platform == 'linux' and platform_machine == 'x86_64'" },
     { index = "torch-gpu", extra = "gpu", marker = "sys_platform == 'linux'" },
     { index = "torch-gpu", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
