@@ -94,6 +94,19 @@ backend by default for physical checkpoint/restore.
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
 | `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
 
+## Choosing an accelerator
+
+A client picks the accelerators for a model's workers with two settings,
+`openrl.trainer_accel_prefs` and `openrl.sampler_accel_prefs`. Each lists
+`gpu` and `tpu`, most preferred first, and defaults to `gpu`. Pass them in the
+model's or session's `user_metadata` (`{"openrl.trainer_accel_prefs": "tpu,gpu"}`)
+or in `TINKER_TAGS`. A tag cannot hold a comma, so separate entries with `|`
+there (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu|gpu"`). The lists are stored
+with the model when it is created and never change.
+
+Full fine-tuning needs `gpu` in both lists. TPU workers are not supported yet,
+so for now the API server refuses any model that lists `tpu`.
+
 ## Kubernetes deployment
 
 On Kubernetes the release bundles set these variables. The API server runs with

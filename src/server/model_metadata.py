@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from server.accelerators import Accelerator
 from server.store import StateStore
 from training.types import TRAINER_BACKENDS, FFTConfig, FineTuningType, LoraConfig
 
@@ -55,6 +56,9 @@ class TrainingModelMetadata(BaseModel):
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
   exclusive: bool = False
   trainer_backend: str = "pytorch"
+  # Set once when the model is created. Records from before these fields ran on GPU.
+  trainer_accel_prefs: list[Accelerator] = ["gpu"]
+  sampler_accel_prefs: list[Accelerator] = ["gpu"]
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
