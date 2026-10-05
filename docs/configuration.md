@@ -51,6 +51,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | `SAMPLING_BACKEND` | `torch` in one process, `vllm` when `REDIS_URL` is set | Sampling backend selector. `torch` samples in the training process. `vllm` queues sampling requests for a vLLM sampler worker and needs `REDIS_URL`. |
 | `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
 | `OPEN_RL_FUTURE_TTL_S` | `300` | How long resolved request results stay readable by `retrieve_future` after a worker resolves them. |
+| `OPEN_RL_SAMPLER_READY_TIMEOUT_S` | `900` | How long `create_sampling_session` waits for a vLLM sampler worker to report ready before failing. vLLM on TPU precompiles shapes for several minutes first. |
 
 ## Server paths
 
@@ -93,6 +94,19 @@ backend by default for physical checkpoint/restore.
 | `HF_TOKEN` | unset | Required for gated Hugging Face models. `uv run hf auth login` is the easiest setup path. |
 | `ENABLE_GCP_TRACE` | `0` | `1` exports OpenTelemetry traces to Google Cloud Trace. |
 | `ENABLE_CONSOLE_TRACE` | `0` | `1` prints trace spans to stdout for debugging. |
+
+## Choosing an accelerator
+
+A client picks the accelerators for a model's workers with two settings,
+`openrl.trainer_accel_prefs` and `openrl.sampler_accel_prefs`. Each lists
+`gpu` and `tpu`, most preferred first, and defaults to `gpu`. Pass them in the
+model's or session's `user_metadata` (`{"openrl.trainer_accel_prefs": "tpu,gpu"}`)
+or in `TINKER_TAGS`. A tag cannot hold a comma, so separate entries with `|`
+there (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu|gpu"`). The lists are stored
+with the model when it is created and never change.
+
+Full fine-tuning needs `gpu` in both lists. TPU workers are not supported yet,
+so for now the API server refuses any model that lists `tpu`.
 
 ## Kubernetes deployment
 
