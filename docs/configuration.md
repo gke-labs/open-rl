@@ -61,6 +61,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | `OPEN_RL_TRAIN_TOKEN_BUDGET` | `0` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `0` keeps the previous one-datum-at-a-time execution path. |
 | `OPEN_RL_DEVICE` | unset | Torch device for the trainer: `cuda`, `mps`, `cpu` or `tpu`. Unset picks the first available of `cuda`, `mps` and `cpu`. `tpu` is never picked automatically, and needs the `torch_tpu` package on a host with TPU chips. |
 | `TRAINER_CUDA_VISIBLE_DEVICES`, `SAMPLER_CUDA_VISIBLE_DEVICES` | unset | GPUs given to the trainer and sampler worker processes the local worker manager launches. |
+| `TRAINER_TPU_VISIBLE_CHIPS` | unset | TPU chip given to a TPU trainer the local worker manager launches, for example `0`. Takes one chip only: libtpu gives a process one chip or the whole host. |
 
 ## Worker manager
 
