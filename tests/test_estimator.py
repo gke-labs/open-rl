@@ -55,6 +55,24 @@ class FootprintTest(unittest.TestCase):
     self.assertGreater(big.host_request_bytes, 110 * GIB)
     self.assertEqual(big.host_limit_bytes, big.host_request_bytes)
 
+  def test_tpu_workers_get_generous_host_memory(self) -> None:
+    # Every TPU run so far used a 96Gi limit and worked; the overheads start
+    # near it until measured peaks lower them.
+    for model in ("Qwen/Qwen3-0.6B", "google/gemma-4-E2B-it"):
+      for role in ("trainer", "sampler"):
+        fp = footprint(model, "lora", role, accelerator="tpu")
+        self.assertTrue(90 * GIB <= fp.host_request_bytes <= 110 * GIB, f"{model} {role} {fp}")
+        self.assertEqual(fp.host_limit_bytes, fp.host_request_bytes)
+
+  def test_tpu_keeps_the_gpu_device_figure(self) -> None:
+    for role in ("trainer", "sampler"):
+      tpu = footprint("google/gemma-4-E2B-it", "lora", role, accelerator="tpu")
+      self.assertEqual(tpu.accelerator_bytes, footprint("google/gemma-4-E2B-it", "lora", role).accelerator_bytes)
+
+  def test_gpu_is_the_default_accelerator(self) -> None:
+    for role in ("trainer", "sampler"):
+      self.assertEqual(footprint("Qwen/Qwen3-0.6B", "lora", role), footprint("Qwen/Qwen3-0.6B", "lora", role, accelerator="gpu"))
+
   def test_resources_render_as_whole_gib(self) -> None:
     fp = footprint("Qwen/Qwen2.5-0.5B", "lora", "trainer")
     self.assertRegex(fp.accelerator, r"^\d+Gi$")

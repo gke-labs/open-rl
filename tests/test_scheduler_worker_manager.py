@@ -118,6 +118,31 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(env["OPEN_RL_FINE_TUNING_TYPE"], "full")
     self.assertEqual(env["OPEN_RL_WORKLOAD_ID"], worker["metadata"]["name"])
 
+  def test_each_worker_is_sized_for_its_roles_first_accelerator(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu", "gpu"], "sampler_accel_prefs": ["gpu"]}
+    s = self.store_with("job-tpu", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-tpu", "trainer")
+      self.manager.ensure("job-tpu", "sampler")
+
+    trainer, sampler = self.api.created
+    for worker, accelerator in ((trainer, "tpu"), (sampler, "gpu")):
+      fp = footprint("Qwen/Qwen3-0.6B", "lora", worker["spec"]["role"], accelerator=accelerator)
+      container = worker["spec"]["template"]["spec"]["containers"][0]
+      env = {e["name"]: e.get("value") for e in container["env"]}
+      self.assertEqual(container["resources"], fp.resources, accelerator)
+      self.assertEqual(env["OPEN_RL_ACCELERATOR_MEMORY"], str(fp.accelerator_bytes))
+    self.assertNotEqual(trainer["spec"]["template"]["spec"]["containers"][0]["resources"], footprint("Qwen/Qwen3-0.6B", "lora", "trainer").resources)
+
+  def test_a_default_model_is_sized_for_gpu(self) -> None:
+    s = self.store_with("job-gpu", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-gpu", "trainer")
+
+    (worker,) = self.api.created
+    gpu = footprint("Qwen/Qwen3-0.6B", "lora", "trainer", accelerator="gpu")
+    self.assertEqual(worker["spec"]["template"]["spec"]["containers"][0]["resources"], gpu.resources)
+
   def test_mutable_worker_images_use_the_requested_pull_policy(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     with (

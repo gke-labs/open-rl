@@ -1,6 +1,7 @@
 import unittest
 
-from server.accelerators import check_supported, parse_accel_prefs
+from server.accelerators import accelerator_for, check_supported, parse_accel_prefs
+from server.model_metadata import TrainingModelMetadata
 
 
 class ParseAccelPrefsTest(unittest.TestCase):
@@ -13,6 +14,17 @@ class ParseAccelPrefsTest(unittest.TestCase):
     for value, error in (([], "at least one"), ("tpu|tpu", "twice")):
       with self.subTest(value=value), self.assertRaisesRegex(ValueError, error):
         parse_accel_prefs(value)
+
+
+class AcceleratorForTest(unittest.TestCase):
+  def test_each_role_takes_the_first_entry_of_its_list(self) -> None:
+    meta = TrainingModelMetadata(base_model="m", trainer_accel_prefs=["tpu", "gpu"], sampler_accel_prefs=["gpu", "tpu"])
+    self.assertEqual(accelerator_for(meta, "trainer"), "tpu")
+    self.assertEqual(accelerator_for(meta, "sampler"), "gpu")
+
+  def test_defaults_to_gpu(self) -> None:
+    meta = TrainingModelMetadata(base_model="m")
+    self.assertEqual((accelerator_for(meta, "trainer"), accelerator_for(meta, "sampler")), ("gpu", "gpu"))
 
 
 class CheckSupportedTest(unittest.TestCase):

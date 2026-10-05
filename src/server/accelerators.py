@@ -6,9 +6,12 @@ openrl.sampler_accel_prefs settings. Both default to gpu. The lists are fixed
 at creation and stored on the model's metadata record.
 """
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from training.types import FineTuningType
+
+if TYPE_CHECKING:
+  from server.model_metadata import TrainingModelMetadata
 
 Accelerator = Literal["gpu", "tpu"]
 
@@ -23,6 +26,11 @@ def parse_accel_prefs(value: Any) -> Any:
     if len(set(value)) != len(value):
       raise ValueError(f"lists an accelerator twice: {value!r}")
   return value
+
+
+def accelerator_for(meta: "TrainingModelMetadata", role: str) -> Accelerator:
+  # The most preferred entry until the scheduler chooses among them.
+  return (meta.trainer_accel_prefs if role == "trainer" else meta.sampler_accel_prefs)[0]
 
 
 def check_supported(fine_tuning_type: FineTuningType, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator]) -> None:
