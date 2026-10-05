@@ -80,6 +80,12 @@ class SaveWeightsForSampler(Command):
   sampling_session_id: str | None = None
 
 
+class DeleteModel(Command):
+  """Free a job's adapter on a trainer that other jobs keep using."""
+
+  op: Literal["delete_model"] = "delete_model"
+
+
 class Shutdown(Command):
   op: Literal["shutdown_workers"] = "shutdown_workers"
   request_id: str = SHUTDOWN_REQUEST_ID
@@ -95,6 +101,7 @@ TrainingCommand = Annotated[
   | SaveState
   | LoadWeights
   | SaveWeightsForSampler
+  | DeleteModel
   | Shutdown,
   Field(discriminator="op"),
 ]

@@ -78,30 +78,44 @@ spec:
                 description: Accelerator is the estimator's requirement this workload
                   is placed by.
                 properties:
+                  devices:
+                    description: Devices is how many devices a MultiGPU claim asks
+                      for, all on one node.
+                    format: int32
+                    minimum: 2
+                    type: integer
                   memory:
                     anyOf:
                     - type: integer
                     - type: string
-                    description: Memory is total peak accelerator memory. Never re-estimated.
+                    description: |-
+                      Memory is peak accelerator memory: the total for SingleGPU, the peak
+                      per device for MultiGPU. Never re-estimated.
                     pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
                     x-kubernetes-int-or-string: true
                   mode:
                     default: SingleGPU
-                    description: Mode is the claim shape Memory describes. Only SingleGPU
-                      exists today.
+                    description: Mode is the claim shape Memory describes.
                     enum:
                     - SingleGPU
+                    - MultiGPU
                     type: string
                 required:
                 - memory
                 type: object
+                x-kubernetes-validations:
+                - message: MultiGPU needs devices >= 2
+                  rule: self.mode != 'MultiGPU' || (has(self.devices) && self.devices
+                    >= 2)
+                - message: devices is only for MultiGPU
+                  rule: self.mode == 'MultiGPU' || !has(self.devices)
               exclusive:
                 default: true
                 description: |-
                   Exclusive keeps this worker alone on its GPU. Two workers share a
-                  claim only when neither is exclusive. The API server sets it from the
-                  training kind, true for LoRA workers because they cannot suspend
-                  between turns. Omitted means exclusive.
+                  claim only when neither is exclusive. The API server sets it when the
+                  worker cannot suspend between turns, as LoRA workers cannot, or when
+                  the model asked to share nothing. Omitted means exclusive.
                 type: boolean
               modelID:
                 description: |-

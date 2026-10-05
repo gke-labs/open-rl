@@ -137,6 +137,11 @@ def workload_from_env(pid: int | None = None, name: str | None = None, claim: st
   return WorkloadRef(str(pid), claim)
 
 
+def time_slicing_enabled() -> bool:
+  """False for a worker placed on GPUs it does not share, which never parks."""
+  return os.getenv("OPEN_RL_TIME_SLICING", "on").lower() != "off"
+
+
 def time_slicer_client_from_env() -> TimeSlicerClient:
   host = os.getenv("OPEN_RL_ACCEL_TIMESLICER_HOST")
   if host:

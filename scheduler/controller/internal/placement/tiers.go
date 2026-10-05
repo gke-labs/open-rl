@@ -65,10 +65,21 @@ func Tiers(req Request, catalog []Size) []Tier {
 		if size.DeviceMemoryBytes <= 0 || size.MaxPerNode < 1 {
 			continue
 		}
-		count := devicesFor(req.Memory, size.DeviceMemoryBytes)
-		// Never a width the runtime cannot drive, and claims stay one-node.
-		if count > req.widest() || count > size.MaxPerNode {
-			continue
+		var count int
+		if req.Devices > 0 {
+			// An exact group: the count is the request's, and each device must
+			// hold the per-device peak. A size no node offers that many of
+			// cannot serve it; claims stay one-node.
+			if size.DeviceMemoryBytes < req.Memory || size.MaxPerNode < req.Devices {
+				continue
+			}
+			count = req.Devices
+		} else {
+			count = devicesFor(req.Memory, size.DeviceMemoryBytes)
+			// Never a width the runtime cannot drive, and claims stay one-node.
+			if count > req.widest() || count > size.MaxPerNode {
+				continue
+			}
 		}
 		tier := Tier{
 			Name:         fmt.Sprintf("t%dx%d", count, CeilGiB(size.DeviceMemoryBytes)),
@@ -88,8 +99,8 @@ func Tiers(req Request, catalog []Size) []Tier {
 		if a.Count != b.Count {
 			return a.Count < b.Count
 		}
-		wasteA := int64(a.Count)*a.CeilingBytes - req.Memory
-		wasteB := int64(b.Count)*b.CeilingBytes - req.Memory
+		wasteA := int64(a.Count)*a.CeilingBytes - req.TotalBytes()
+		wasteB := int64(b.Count)*b.CeilingBytes - req.TotalBytes()
 		if wasteA != wasteB {
 			return wasteA < wasteB
 		}

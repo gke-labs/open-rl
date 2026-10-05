@@ -43,9 +43,9 @@ flowchart TD
 ```
 
 Sharing is allowed only between workers whose `spec.exclusive` is false.
-The API server sets it from the training kind: false for FFT workers, which
-suspend between turns, true for LoRA workers, which stay resident. An
-omitted field is exclusive. Each ledger seat records the flag; selection
+The API server sets it true when the worker cannot suspend between turns, as
+LoRA workers cannot, or when the model asked to share nothing; FFT workers
+otherwise suspend and share. An omitted field is exclusive. Each ledger seat records the flag; selection
 checks every occupant and booking repeats that check inside the ledger CAS
 loop.
 

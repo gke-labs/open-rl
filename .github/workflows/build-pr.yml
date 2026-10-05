@@ -26,6 +26,9 @@ jobs:
           - image_name: client
             context: .
             dockerfile: src/server/Dockerfile.client
+          - image_name: automodel
+            context: .
+            dockerfile: src/server/Dockerfile.automodel
           - image_name: autoresearch
             context: .
             dockerfile: examples/autoresearch/Dockerfile

@@ -52,26 +52,35 @@ const (
 )
 
 // AcceleratorMode names the claim shape the workload is asking for.
-// SingleGPU is the only mode today: one device with room for Memory. A
-// runtime that can drive a wider claim gets a new mode with its own
-// fields, an addition rather than a change.
-// +kubebuilder:validation:Enum=SingleGPU
+// SingleGPU is one device with room for Memory. MultiGPU is Devices whole
+// devices on one node for a runtime that drives them as one torchrun group
+// (tensor, context or data parallel); such a claim is exclusive and never
+// time-slice shared.
+// +kubebuilder:validation:Enum=SingleGPU;MultiGPU
 type AcceleratorMode string
 
 const (
 	AcceleratorModeSingleGPU AcceleratorMode = "SingleGPU"
+	AcceleratorModeMultiGPU  AcceleratorMode = "MultiGPU"
 )
 
-// AcceleratorSpec is the estimator's accelerator requirement. Every current
-// runtime drives exactly one device -- which is what SingleGPU says -- so
-// placement never guesses a count the process cannot drive.
+// AcceleratorSpec is the estimator's accelerator requirement: a claim shape
+// the process can actually drive, so placement never guesses a count.
+// +kubebuilder:validation:XValidation:rule="self.mode != 'MultiGPU' || (has(self.devices) && self.devices >= 2)",message="MultiGPU needs devices >= 2"
+// +kubebuilder:validation:XValidation:rule="self.mode == 'MultiGPU' || !has(self.devices)",message="devices is only for MultiGPU"
 type AcceleratorSpec struct {
-	// Mode is the claim shape Memory describes. Only SingleGPU exists today.
+	// Mode is the claim shape Memory describes.
 	// +kubebuilder:default=SingleGPU
 	Mode AcceleratorMode `json:"mode,omitempty"`
 
-	// Memory is total peak accelerator memory. Never re-estimated.
+	// Memory is peak accelerator memory: the total for SingleGPU, the peak
+	// per device for MultiGPU. Never re-estimated.
 	Memory resource.Quantity `json:"memory"`
+
+	// Devices is how many devices a MultiGPU claim asks for, all on one node.
+	// +kubebuilder:validation:Minimum=2
+	// +optional
+	Devices int32 `json:"devices,omitempty"`
 }
 
 // WorkloadSpec is one worker process's scheduling request. Memory arrives
@@ -101,9 +110,9 @@ type WorkloadSpec struct {
 	TrainingKind TrainingKind `json:"trainingKind,omitempty"`
 
 	// Exclusive keeps this worker alone on its GPU. Two workers share a
-	// claim only when neither is exclusive. The API server sets it from the
-	// training kind, true for LoRA workers because they cannot suspend
-	// between turns. Omitted means exclusive.
+	// claim only when neither is exclusive. The API server sets it when the
+	// worker cannot suspend between turns, as LoRA workers cannot, or when
+	// the model asked to share nothing. Omitted means exclusive.
 	// +kubebuilder:default=true
 	// +optional
 	Exclusive bool `json:"exclusive"`

@@ -38,7 +38,7 @@ func newSeat(worker *openrlv1alpha1.Workload, request placement.Request) openrlv
 		WorkloadUID:  worker.UID,
 		AssignmentID: string(uuid.NewUUID()),
 		OwnerID:      request.OwnerKey(),
-		Exclusive:    worker.Spec.Exclusive,
+		Exclusive:    !requestFrom(worker).Shareable,
 		HostRequest:  *resource.NewQuantity(request.HostRequestBytes, resource.BinarySI),
 	}
 }

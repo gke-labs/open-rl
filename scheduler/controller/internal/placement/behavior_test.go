@@ -289,3 +289,41 @@ func TestTierTableWorkloadsOnTheDevBox(t *testing.T) {
 		t.Fatalf("lora-3 landed on %q, want the fewest-workers claim %q", got, a)
 	}
 }
+
+// A torchrun group needs its devices on one node and never shares them: it
+// waits for a node with enough free devices, takes exactly that many, and a
+// later single-device worker cannot join its claim.
+func TestATorchrunGroupTakesWholeDevicesOnOneNode(t *testing.T) {
+	group := Request{Role: "trainer", WorkerID: "tp4", Memory: gib(40), Devices: 4, MaxDevices: 4, HostRequestBytes: gib(40)}
+
+	twoWide := newCluster(t, gpu80("node-a", "trainer"), gpu80("node-b", "trainer"))
+	if got := twoWide.arrive(group); got != "" {
+		t.Fatalf("a four-device group landed on %q in a fleet of two-device nodes", got)
+	}
+	if reason := twoWide.waitingReason(group); !strings.Contains(reason, "NoCapacity") {
+		t.Errorf("reason = %q, want NoCapacity: no node will ever have four devices", reason)
+	}
+
+	eight := &Node{Name: "wide", DeviceCount: 8, DeviceMemoryBytes: gib(80), HostMemoryBytes: gib(1200), Roles: map[string]bool{"trainer": true}}
+	c := newCluster(t, eight)
+	if c.arrive(group) == "" || c.placed["tp4"].DeviceCount != 4 {
+		t.Fatalf("placed = %+v, want a four-device claim", c.placed["tp4"])
+	}
+	second := group
+	second.WorkerID = "tp4-b"
+	if c.arrive(second) == "" {
+		t.Fatal("the four devices left should hold a second group")
+	}
+	third := group
+	third.WorkerID = "tp4-c"
+	if got := c.arrive(third); got != "" {
+		t.Fatalf("a third group landed on %q with no free devices", got)
+	}
+	if reason := c.waitingReason(third); !strings.Contains(reason, "WaitingForCapacity") {
+		t.Errorf("reason = %q, want WaitingForCapacity: the hardware exists and is busy", reason)
+	}
+	// A shareable single-device worker never joins a group's claim.
+	if got := c.arrive(trainer("small", 6)); got != "" {
+		t.Fatalf("a single-device worker joined %q, but group claims are exclusive", got)
+	}
+}

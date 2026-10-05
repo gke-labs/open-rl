@@ -86,6 +86,17 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(s_container["command"][-1], "server.vllm_sampler")
     self.assertIn("--active-tenant-set-id", t_container["args"])
 
+  def test_an_exclusive_fft_worker_is_placed_alone_and_never_time_sliced(self) -> None:
+    s = self.store_with("Model_A.1", {"base_model": "Qwen/Qwen3-8B", "fine_tuning_type": "full", "exclusive": True})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("Model_A.1", "trainer")
+      self.manager.ensure("Model_A.1", "sampler")
+
+    for worker in self.api.created:
+      self.assertTrue(worker["spec"]["exclusive"])
+      env = {e["name"]: e.get("value") for e in worker["spec"]["template"]["spec"]["containers"][0]["env"]}
+      self.assertEqual(env["OPEN_RL_TIME_SLICING"], "off")
+
   def test_fft_worker_is_its_own_owner(self) -> None:
     s = self.store_with("Model_A.1", {"base_model": "Qwen/Qwen3-8B", "fine_tuning_type": "full"})
     with patch("server.worker_manager.get_state_store", return_value=s):
@@ -103,6 +114,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     container = worker["spec"]["template"]["spec"]["containers"][0]
     env = {e["name"]: e.get("value") for e in container["env"]}
     self.assertEqual(env["OPEN_RL_ENABLE_FFT"], "true")
+    self.assertNotIn("OPEN_RL_TIME_SLICING", env)
     self.assertEqual(env["OPEN_RL_FINE_TUNING_TYPE"], "full")
     self.assertEqual(env["OPEN_RL_WORKLOAD_ID"], worker["metadata"]["name"])
 
@@ -158,6 +170,77 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.release("job-lora-1")
 
     self.assertEqual(self.api.deleted, [])
+
+  def test_exclusive_lora_models_get_runtimes_of_their_own(self) -> None:
+    s = InMemoryStateStore()
+    for model_id in ("job-a", "job-b"):
+      meta = {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora", "exclusive": True}
+      s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps(meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-a", "trainer")
+      self.manager.ensure("job-b", "trainer")
+      self.manager.release("job-a")
+
+    self.assertEqual([w["metadata"]["name"] for w in self.api.created], ["lora-job-a-0-trainer", "lora-job-b-0-trainer"])
+    self.assertEqual(self.api.deleted, ["lora-job-a-0-trainer"])
+
+  def test_automodel_jobs_share_a_runtime_apart_from_pytorch(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "automodel"}
+    s = self.store_with("job-am-1", meta)
+    s.kv_store["open_rl:model_meta:job-am-2"] = json.dumps({**meta, "lora_config": {"rank": 32}})
+    s.kv_store["open_rl:model_meta:job-pt"] = json.dumps({"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_AUTOMODEL_IMAGE": "am:1"}):
+      self.manager.ensure("job-am-1", "trainer")
+      self.manager.ensure("job-am-1", "sampler")
+      self.manager.ensure("job-am-2", "trainer")
+      self.manager.ensure("job-pt", "trainer")
+      self.manager.release("job-am-1")
+
+    # The second Automodel job's create found the first one's trainer, so only
+    # three workloads exist.
+    am_trainer, am_sampler, pt_trainer = self.api.created
+    self.assertEqual(am_trainer["metadata"]["name"], "lora-automodel-qwen-qwen3-0-6b-0-trainer")
+    self.assertEqual(pt_trainer["metadata"]["name"], "lora-qwen-qwen3-0-6b-0-trainer")
+    runtime = am_trainer["spec"]["modelID"]
+    self.assertEqual(am_sampler["spec"]["ownerID"], am_trainer["spec"]["ownerID"])
+    t_container = am_trainer["spec"]["template"]["spec"]["containers"][0]
+    s_container = am_sampler["spec"]["template"]["spec"]["containers"][0]
+    self.assertEqual(t_container["image"], "am:1")
+    self.assertEqual(t_container["command"], ["python", "-u", "-m", "server.training_requests_processor"])
+    self.assertEqual(t_container["args"], ["--model-id", runtime, "--active-tenant-set-id", f"{runtime}-1"])
+    self.assertEqual({e["name"]: e.get("value") for e in t_container["env"]}["OPEN_RL_TRAINER_BACKEND"], "automodel")
+    self.assertNotEqual(s_container["image"], "am:1")
+    self.assertEqual({e["name"]: e.get("value") for e in s_container["env"]}["OPEN_RL_MODEL_ID"], runtime)
+    # Like any shared LoRA runtime, deleting one job leaves it up.
+    self.assertEqual(self.api.deleted, [])
+
+  def test_an_exclusive_automodel_job_gets_its_own_automodel_trainer(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "automodel", "exclusive": True}
+    s = self.store_with("job-am", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_AUTOMODEL_IMAGE": "am:1"}):
+      self.manager.ensure("job-am", "trainer")
+      self.manager.release("job-am")
+
+    (trainer,) = self.api.created
+    self.assertEqual(trainer["metadata"]["name"], "lora-job-am-0-trainer")
+    self.assertEqual(trainer["spec"]["template"]["spec"]["containers"][0]["image"], "am:1")
+    self.assertEqual(self.api.deleted, ["lora-job-am-0-trainer"])
+
+  def test_a_job_that_names_an_image_runs_its_trainer_from_it(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1"}
+    s = self.store_with("job-img", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-img", "trainer")
+      self.manager.ensure("job-img", "sampler")
+
+    trainer, sampler = self.api.created
+    self.assertRegex(trainer["metadata"]["name"], r"^lora-image-[0-9a-f]{10}-qwen-qwen3-0-6b-0-trainer$")
+    t_container = trainer["spec"]["template"]["spec"]["containers"][0]
+    self.assertEqual(t_container["image"], "ghcr.io/org/trainer:1")
+    self.assertEqual(t_container["command"], ["python", "-u", "-m", "server.training_requests_processor"])
+    # The image sets its own OPEN_RL_TRAINER_BACKEND.
+    self.assertNotIn("OPEN_RL_TRAINER_BACKEND", {e["name"] for e in t_container["env"]})
+    self.assertNotEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "ghcr.io/org/trainer:1")
 
   def test_release_owner_deletes_a_shared_lora_pair_and_nothing_else(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})

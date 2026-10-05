@@ -11,7 +11,8 @@ metadata:
   name: fft-job-a-trainer
 spec:
   role: trainer                # which node pools may host it
-  trainingKind: fft            # FFT may time-slice; LoRA gets exclusive GPUs
+  trainingKind: fft            # informational; placement reads exclusive
+  exclusive: false             # true keeps it alone on its GPU
   modelID: job-a               # its identity everywhere
   ownerID: Qwen/Qwen3-0.6B     # optional: the unit of fairness it belongs to
   accelerator:
@@ -28,14 +29,15 @@ Everything else — device, tier, claim, node — is derived and reported back i
 
 ## Placement policy
 
-The default `binpack` strategy shares existing claims between FFT workers,
-which participate in time slicing. LoRA workers get exclusive claims and wait
-for a free GPU. An FFT worker cannot join a LoRA claim either. Multiple LoRA
+The default `binpack` strategy shares existing claims between workers that are
+not exclusive, which participate in time slicing. Exclusive workers, every
+LoRA worker and any model that asked to share nothing, get claims of their own
+and wait for a free GPU. Multiple LoRA
 adapters can still reuse the same worker; that happens before placement.
 
-`spread` tries a new claim first and falls back to sharing only between FFT
-workers. Both policies use the workload's existing `trainingKind`; there is no
-separate LoRA placement flag. An omitted kind also gets an exclusive claim.
+`spread` tries a new claim first and falls back to sharing only between
+workers that are not exclusive. Both policies read `exclusive`, never
+`trainingKind`. An omitted `exclusive` is exclusive.
 The LoRA release sets no placement timeout.
 
 DRA allocates the device from the claim's ordered alternatives. A ClaimLedger

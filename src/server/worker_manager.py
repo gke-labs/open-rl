@@ -33,8 +33,9 @@ def metadata_for(model_id: str) -> TrainingModelMetadata | None:
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
   """Which runtime serves this model, as (metadata, runtime id, is_lora).
 
-  An FFT job owns its runtime, so the id is the model_id. LoRA jobs on one
-  base model share a runtime, so the id is the base model. A model with no
+  A model that owns its runtime (FFT, or exclusive) has the model_id as the
+  id. Other LoRA jobs on one base model share a runtime, so the id is the
+  base model, prefixed with the backend or an image hash off PyTorch. A model with no
   metadata (a sampling session opened on a bare base-model name) is FFT when
   this deployment enables FFT and LoRA otherwise, because an FFT sampler in
   a LoRA deployment would serve base weights and ignore every adapter.
@@ -44,7 +45,7 @@ def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
     kind = "full" if os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true" else "lora"
     meta = TrainingModelMetadata(base_model=model_id, created_at=0.0, fine_tuning_type=kind)
   is_lora = meta.fine_tuning_type == "lora"
-  return meta, (meta.base_model if is_lora else model_id), is_lora
+  return meta, meta.runtime(model_id), is_lora
 
 
 def base_model_of(meta: TrainingModelMetadata, runtime: str) -> str:
@@ -86,6 +87,8 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
   env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
   if role == "trainer":
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    if meta.trainer_backend == "automodel":
+      env["OPEN_RL_TRAINER_BACKEND"] = "automodel"
   else:
     env["OPEN_RL_MODEL_ID"] = runtime
     env["VLLM_SERVER_DEV_MODE"] = "1"
@@ -115,7 +118,7 @@ class WorkerManager(Protocol):
     ...
 
   def release(self, model_id: str) -> None:
-    """Tear down the runtimes an FFT job owns. A shared LoRA runtime is left alone."""
+    """Tear down the runtime a model owns. A shared LoRA runtime is left alone."""
     ...
 
   def release_owner(self, owner: str) -> set[str]:

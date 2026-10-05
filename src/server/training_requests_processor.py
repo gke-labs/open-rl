@@ -14,7 +14,7 @@ from fastapi import FastAPI, HTTPException
 from opentelemetry import context as otel_context
 from opentelemetry import propagate, trace
 
-from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
+from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
 from server.model_metadata import get_model_metadata
 from server.store import RequestStore, get_state_store, get_store
@@ -69,11 +69,14 @@ class TrainingRequestsProcessor:
     active_tenant_set_id: str | None = None,
     time_slicer: TimeSlicerClient | None = None,
   ):
-    if time_slicer is not None:
-      if not os.getenv("REDIS_URL"):
-        raise RuntimeError("Full fine-tuning workers require REDIS_URL so they can share queues and futures with the API server")
-      if not model_id:
-        raise RuntimeError("A dedicated trainer worker needs --model-id so it knows which per-model queue to drain")
+    # A trainer started for one model drains that model's queue, sliced or not.
+    # Only a LoRA trainer serving a tenant set reads the set instead.
+    self.dedicated = bool(model_id) and not active_tenant_set_id
+    if time_slicer is not None and not self.dedicated:
+      raise RuntimeError("A time-sliced trainer needs --model-id and no tenant set")
+    # The API server's in-process trainer is the only one that works without Redis.
+    if self.dedicated and not os.getenv("REDIS_URL"):
+      raise RuntimeError("A dedicated trainer worker requires REDIS_URL so it can share queues and futures with the API server")
 
     self.store = store
     self.worker = worker
@@ -121,7 +124,7 @@ class TrainingRequestsProcessor:
     os._exit(0)
 
   async def next_batch(self) -> list[dict[str, Any]]:
-    if self.time_slicer is not None:
+    if self.dedicated:
       return await self.store.get_requests_for_model(self.model_id)
     return await self.store.get_requests(active_set_id=self.active_tenant_set_id)
 
@@ -295,6 +298,9 @@ class TrainingRequestsProcessor:
         if checkpoint:
           await self.publish_checkpoint(command.model_id, checkpoint)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
+      case commands.DeleteModel():
+        await asyncio.to_thread(self.worker.delete_model, command.model_id)
+        return {"status": "ok", "type": "model_deleted"}
       case commands.Shutdown():
         return {"status": "ok", "type": "shutdown_acknowledged"}
       case _:
@@ -321,9 +327,18 @@ async def run_training_requests_processor(
   store: RequestStore | None = None,
 ) -> None:
   store = get_store() if store is None else store
-  if isinstance(worker, FFTTrainingWorker):
+  if isinstance(worker, FFTTrainingWorker) and time_slicing_enabled():
     time_slicer = time_slicer or time_slicer_client_from_env()
   await TrainingRequestsProcessor(store, worker, model_id, active_tenant_set_id, time_slicer).run()
+
+
+def build_worker(is_lora: bool) -> TrainingWorker:
+  if os.getenv("OPEN_RL_TRAINER_BACKEND") == "automodel":
+    # nemo-automodel lives only in the automodel image, so import it there.
+    from training.automodel_worker import AutomodelTrainingWorker
+
+    return AutomodelTrainingWorker()
+  return LoraTrainingWorker() if is_lora else FFTTrainingWorker()
 
 
 async def main_async(args: argparse.Namespace) -> None:
@@ -336,7 +351,7 @@ async def main_async(args: argparse.Namespace) -> None:
   is_lora = fine_tuning_type == "lora"
   print(f"-> Fine-Tuning Type: {fine_tuning_type} (Is LoRA: {is_lora})\n")
 
-  worker: TrainingWorker = LoraTrainingWorker() if is_lora else FFTTrainingWorker()
+  worker: TrainingWorker = build_worker(is_lora)
   preload_target = os.getenv("BASE_MODEL")
   is_ready = False
   if preload_target and is_lora:

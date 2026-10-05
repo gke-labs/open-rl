@@ -342,3 +342,38 @@ func TestDefaultStrategyIsBinPack(t *testing.T) {
 		t.Error("an unknown strategy was accepted")
 	}
 }
+
+// A MultiGPU request is an exact group: the count is the request's, not the
+// memory's, each device must hold the per-device peak, and only sizes some
+// node offers that many of can serve it. Memory division never applies.
+func TestMultiGPURequestsCompileToExactCountTiers(t *testing.T) {
+	fleet := NewFleet()
+	fleet.Nodes["l4"] = l4Node("l4", "trainer")
+	fleet.Nodes["h100"] = bigNode("h100", 8, 80, "trainer")
+
+	four := Request{Role: "trainer", WorkerID: "tp4", Memory: gib(40), Devices: 4, MaxDevices: 4}
+	tiers := Tiers(four, Catalog(fleet, "trainer"))
+	if len(tiers) != 1 || tiers[0].Count != 4 || tiers[0].FloorBytes != gib(40) || CeilGiB(tiers[0].CeilingBytes) != 80 {
+		t.Fatalf("Tiers = %+v, want one t4x80 tier with a 40Gi floor; no L4 node has four devices", tiers)
+	}
+	// Under memory division 40Gi would be one 80Gi device. Never for a group.
+	if got := four.DevicesOn(fleet.Nodes["h100"]); got != 4 {
+		t.Errorf("DevicesOn(h100) = %d, want the requested 4", got)
+	}
+	if got := four.DevicesOn(fleet.Nodes["l4"]); got != 0 {
+		t.Errorf("DevicesOn(l4) = %d, want 0: two devices cannot hold a group of four", got)
+	}
+
+	// Two devices of 20Gi fit either size; the tighter fit is preferred.
+	two := Request{Role: "trainer", WorkerID: "tp2", Memory: gib(20), Devices: 2, MaxDevices: 2}
+	tiers = Tiers(two, Catalog(fleet, "trainer"))
+	if len(tiers) != 2 || tiers[0].Name != "t2x24" || tiers[1].Name != "t2x80" {
+		t.Fatalf("Tiers = %+v, want t2x24 before t2x80", tiers)
+	}
+
+	// Too much per device for any size: never, and the reason says why.
+	huge := Request{Role: "trainer", WorkerID: "big", Memory: gib(100), Devices: 2, MaxDevices: 2}
+	if got := Explain(huge, fleet, ""); !strings.Contains(got, "NoCapacity: needs 2 device(s) of 100Gi") {
+		t.Errorf("Explain = %q, want the group's shape in the reason", got)
+	}
+}

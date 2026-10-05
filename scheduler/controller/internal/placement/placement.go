@@ -190,9 +190,13 @@ type Request struct {
 	// WorkerID identifies the worker. Required, and required to be unique.
 	WorkerID string
 	// MaxDevices is the widest claim the runtime can drive; placement never
-	// sizes one wider. Zero means one: no shipped runtime is multi-device,
-	// and a wider claim is memory the pod can see but the process won't use.
+	// sizes one wider. Zero means one: a wider claim is memory the pod can
+	// see but the process won't use.
 	MaxDevices int
+	// Devices is an exact device count on one node, for a runtime that drives
+	// them as one group (a MultiGPU claim); Memory is then the peak per
+	// device. Zero means the memory-sized single-device shape.
+	Devices int
 	// HostRequestBytes is the pod template's memory request: what this
 	// worker's pod asks the node for, resident or parked.
 	HostRequestBytes int64
@@ -215,6 +219,13 @@ func (r Request) OwnerKey() string {
 func (r Request) DevicesOn(n *Node) int {
 	if n.DeviceMemoryBytes <= 0 {
 		return 0
+	}
+	if r.Devices > 0 {
+		// An exact group: every device must hold the per-device peak.
+		if n.DeviceCount < r.Devices || n.DeviceMemoryBytes < r.Memory {
+			return 0
+		}
+		return r.Devices
 	}
 	count := devicesFor(r.Memory, n.DeviceMemoryBytes)
 	if count > r.widest() || count > n.DeviceCount {
@@ -239,7 +250,19 @@ func (r Request) PerDeviceBytes(deviceCount int) int64 {
 	if deviceCount < 1 {
 		panic(fmt.Sprintf("deviceCount must be >= 1, got %d", deviceCount))
 	}
+	if r.Devices > 0 {
+		return r.Memory
+	}
 	return (r.Memory + int64(deviceCount) - 1) / int64(deviceCount)
+}
+
+// TotalBytes is the memory the whole claim covers: Memory itself for a
+// single-device shape, Memory on each of Devices for an exact group.
+func (r Request) TotalBytes() int64 {
+	if r.Devices > 0 {
+		return r.Memory * int64(r.Devices)
+	}
+	return r.Memory
 }
 
 // candidateNodes is every pool that accepts the role and fits the workload,
@@ -263,7 +286,7 @@ func candidateNodes(req Request, fleet *Fleet) map[string]int {
 // then fewest workers, then name. Advisory -- the ledger's CAS booking is what
 // makes it stick.
 func SelectClaim(req Request, fleet *Fleet) *Claim {
-	if !req.Shareable {
+	if !req.Shareable || req.Devices > 0 {
 		return nil
 	}
 	// One pass over the fleet up front: summing bookings per candidate would
@@ -343,8 +366,13 @@ func Explain(req Request, fleet *Fleet, detail string) string {
 				biggest = node
 			}
 		}
-		reason = fmt.Sprintf("NoCapacity: needs %dGi across at most %d device(s); largest pool offers %s",
-			CeilGiB(req.Memory), req.widest(), biggest.Describe())
+		if req.Devices > 0 {
+			reason = fmt.Sprintf("NoCapacity: needs %d device(s) of %dGi on one node; largest pool offers %s",
+				req.Devices, CeilGiB(req.Memory), biggest.Describe())
+		} else {
+			reason = fmt.Sprintf("NoCapacity: needs %dGi across at most %d device(s); largest pool offers %s",
+				CeilGiB(req.Memory), req.widest(), biggest.Describe())
+		}
 	}
 
 	if detail != "" {

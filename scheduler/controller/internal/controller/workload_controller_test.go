@@ -1205,3 +1205,46 @@ func TestRoleLabelFalseDeniesTheRole(t *testing.T) {
 		t.Errorf("trainer=false alone: trainer=%v sampler=%v, want neither -- the affinity admits neither", tr, sa)
 	}
 }
+
+// A MultiGPU workload cuts one claim for exactly its device count with a
+// per-device floor, holds an exclusive seat, and one that no node can hold
+// says so rather than waiting.
+func TestMultiGPUWorkloadCutsAnExactCountExclusiveClaim(t *testing.T) {
+	pair := worker("tp2", "model-a", openrlv1alpha1.RoleTrainer, "24Gi")
+	pair.Spec.Accelerator = openrlv1alpha1.AcceleratorSpec{Mode: openrlv1alpha1.AcceleratorModeMultiGPU, Devices: 2, Memory: resource.MustParse("24Gi")}
+	r := newReconciler(t, append(enabledNode(), pair)...)
+
+	runReconcile(t, r, "tp2")
+	placed := getWorker(t, r, "tp2")
+	if placed.Status.Phase != openrlv1alpha1.PhasePlacing || placed.Status.ClaimName == "" {
+		t.Fatalf("status = %+v, want Placing with a claim", placed.Status)
+	}
+	var claim resourcev1.ResourceClaim
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: placed.Status.ClaimName}, &claim); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	tiers := claim.Spec.Devices.Requests[0].FirstAvailable
+	if len(tiers) != 1 || tiers[0].Count != 2 {
+		t.Fatalf("firstAvailable = %+v, want one two-device tier", tiers)
+	}
+	cel := tiers[0].Selectors[0].CEL.Expression
+	if !strings.Contains(cel, fmt.Sprintf(`quantity("%d")) >= 0`, 24*placement.GiB)) || !strings.Contains(cel, `quantity("96Gi")) <= 0`) {
+		t.Errorf("claim CEL = %q, want the 24Gi per-device floor and the 96Gi ceiling", cel)
+	}
+	ledger := getLedger(t, r, ledgerNameFor(placed.Status.ClaimName))
+	if len(ledger.Spec.Seats) != 1 || !ledger.Spec.Seats[0].Exclusive {
+		t.Fatalf("seats = %+v, want one exclusive seat for the group", ledger.Spec.Seats)
+	}
+
+	// Four devices on a two-device node: never, and the reason names the shape.
+	quad := worker("tp4", "model-b", openrlv1alpha1.RoleTrainer, "24Gi")
+	quad.Spec.Accelerator = openrlv1alpha1.AcceleratorSpec{Mode: openrlv1alpha1.AcceleratorModeMultiGPU, Devices: 4, Memory: resource.MustParse("24Gi")}
+	if err := r.Create(context.Background(), quad); err != nil {
+		t.Fatalf("create tp4: %v", err)
+	}
+	runReconcile(t, r, "tp4")
+	waiting := getWorker(t, r, "tp4")
+	if waiting.Status.ClaimName != "" || !strings.Contains(waiting.Status.Reason, "4 device(s)") {
+		t.Fatalf("status = %+v, want no claim and a reason naming four devices", waiting.Status)
+	}
+}

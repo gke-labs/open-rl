@@ -23,7 +23,7 @@ from vllm.engine.async_llm_engine import AsyncLLMEngine
 from vllm.lora.request import LoRARequest
 from vllm.sampling_params import RequestOutputKind
 
-from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, workload_from_env
+from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
 from server.store import RequestStore, StateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, split_stop, text_only_engine_kwargs
@@ -367,7 +367,8 @@ async def run_sampling_worker(model_id: str) -> None:
         installed_signals.append(sig)
       except NotImplementedError:
         break
-    if fft_enabled:
+    # An exclusive sampler is alone on its GPU, so it serves awake like a LoRA one.
+    if fft_enabled and time_slicing_enabled():
       await serve_time_sliced(model_id, get_store(), make_engine)
     else:
       await serve(model_id, get_store(), make_engine)

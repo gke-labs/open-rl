@@ -14,9 +14,13 @@ class RuntimeManager:
   def __init__(self):
     self.ensured = []
     self.released = []
+    self.released_models = []
 
   def ensure(self, model_id, role):
     self.ensured.append((model_id, role))
+
+  def release(self, model_id):
+    self.released_models.append(model_id)
 
   def release_owner(self, owner):
     self.released.append(owner)
@@ -71,6 +75,38 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(self.manager.released, [fft_model.lower(), "test-base"])
     self.assertIsNone(await self.state.get_value("open_rl:sampler_ready:test-base"))
     self.assertEqual(await self.registry.owners(), [])
+
+  async def test_an_exclusive_lora_model_has_its_own_runtime(self):
+    session = (await self.post("create_session", {}))["session_id"]
+    shared = (await self.post("create_model", {"base_model": "test-base", "session_id": session}))["request_id"]
+    exclusive_metadata = {"openrl.exclusive": "true"}
+    body = {"base_model": "test-base", "session_id": session, "user_metadata": exclusive_metadata}
+    exclusive = (await self.post("create_model", body))["request_id"]
+
+    self.assertEqual(await self.registry.owners(), sorted(["test-base", exclusive.lower()]))
+    self.assertEqual([r["model_id"] for r in await self.store.get_requests(active_set_id="test-base-1")], [shared])
+    self.assertEqual([r["model_id"] for r in await self.store.get_requests(active_set_id=f"{exclusive}-1")], [exclusive])
+
+    await self.post("delete_model", {"model_id": shared})
+    self.assertEqual(self.manager.released_models, [])
+    await self.post("delete_model", {"model_id": exclusive})
+    self.assertEqual(self.manager.released_models, [exclusive])
+
+  async def test_deleting_a_job_frees_its_adapter_or_its_workers(self):
+    session = (await self.post("create_session", {}))["session_id"]
+    shared = (await self.post("create_model", {"base_model": "test-base", "session_id": session}))["request_id"]
+    body = {"base_model": "test-base", "session_id": session, "user_metadata": {"openrl.exclusive": "true"}}
+    exclusive = (await self.post("create_model", body))["request_id"]
+    await self.store.get_requests(active_set_id="test-base-1")
+    await self.store.get_requests(active_set_id=f"{exclusive}-1")
+
+    await self.post("delete_model", {"model_id": shared})
+    await self.post("delete_model", {"model_id": exclusive})
+
+    # The shared trainer drops one adapter; the exclusive job's workers shut down.
+    self.assertEqual([(r["op"], r["model_id"]) for r in await self.store.get_requests(active_set_id="test-base-1")], [("delete_model", shared)])
+    self.assertEqual([r["op"] for r in await self.store.get_requests(active_set_id=f"{exclusive}-1")], ["shutdown_workers"])
+    self.assertEqual(self.manager.released_models, [exclusive])
 
   async def test_an_owner_stays_listed_until_forgotten(self):
     await self.registry.attach("a", "base")

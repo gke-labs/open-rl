@@ -294,7 +294,7 @@ func isHostnameKey(key string) bool {
 // Validation is the CRD schema's job.
 func requestFrom(worker *openrlv1alpha1.Workload) placement.Request {
 	spec := worker.Spec
-	return placement.Request{
+	request := placement.Request{
 		Shareable: !spec.Exclusive,
 		Role:      string(spec.Role),
 		Memory:    spec.Accelerator.Memory.Value(),
@@ -305,11 +305,18 @@ func requestFrom(worker *openrlv1alpha1.Workload) placement.Request {
 		// The CR name: the one identity Kubernetes already guarantees unique.
 		// Model id is model configuration, not object identity.
 		WorkerID: worker.Name,
-		// Every current runtime drives one device -- the SingleGPU mode;
-		// a wider claim arrives as a new accelerator mode.
+		// SingleGPU: one device. MultiGPU widens this below.
 		MaxDevices:       1,
 		HostRequestBytes: hostRequestBytes(worker),
 	}
+	if spec.Accelerator.Mode == openrlv1alpha1.AcceleratorModeMultiGPU {
+		// A torchrun group drives exactly the devices it asked for, and it
+		// never parks: the claim is exclusive whatever the spec says.
+		request.Devices = int(spec.Accelerator.Devices)
+		request.MaxDevices = request.Devices
+		request.Shareable = false
+	}
+	return request
 }
 
 // hostRequestBytes is the worker container's memory request from the inline
