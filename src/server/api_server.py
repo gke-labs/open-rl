@@ -311,6 +311,11 @@ def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
 
+def sampler_ready_timeout_s() -> float:
+  # TPU samplers precompile shapes for minutes before reporting ready.
+  return float(os.getenv("OPEN_RL_SAMPLER_READY_TIMEOUT_S", "900"))
+
+
 def sampler_session_id(model_id: str, seq_id: int | str) -> str:
   return f"tinker://{model_id}/sampler_weights/sampler-{seq_id}"
 
@@ -1005,14 +1010,15 @@ async def create_sampling_session(req: CreateSamplingSessionRequest):
     await ensure_sampler_launched(target_model_id)
     if isinstance(state, RedisStateStore):
       print(f"[API_SERVER] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
+      timeout_s = sampler_ready_timeout_s()
       start_time = time.monotonic()
       while True:
         is_ready = await state.get_value(f"open_rl:sampler_ready:{ready_check_id}")
         if is_ready == "1" or is_ready == b"1":
           print(f"[API_SERVER] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
           break
-        if time.monotonic() - start_time > 300:
-          raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
+        if time.monotonic() - start_time > timeout_s:
+          raise TimeoutError(f"Timed out after {timeout_s:g}s waiting for dynamic vLLM sampler worker to be ready")
         await asyncio.sleep(1)
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
