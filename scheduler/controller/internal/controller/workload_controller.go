@@ -45,6 +45,10 @@ type WorkloadReconciler struct {
 	// domain its capacities live under. Distinct from DeviceClass in principle,
 	// identical for NVIDIA's driver.
 	DeviceDriver string
+	// TPUDeviceClass and TPUDeviceDriver are the same for TPU workloads; the
+	// two above serve GPU workloads. An empty driver means no TPU nodes.
+	TPUDeviceClass  string
+	TPUDeviceDriver string
 	// RetryInterval is how often a worker that could not be placed is retried.
 	RetryInterval time.Duration
 	// PlacementTimeout is how long a worker may go unplaced before the request
@@ -581,7 +585,7 @@ var errClaimTerminating = errors.New("the worker's previous claim is still being
 
 // cutDedicatedClaim books the first seat, then creates an ordered set of DRA alternatives.
 func (r *WorkloadReconciler) cutDedicatedClaim(ctx context.Context, worker *openrlv1alpha1.Workload, request placement.Request, fleet *placement.Fleet) (*placement.Claim, *openrlv1alpha1.Seat, string, error) {
-	tiers := placement.Tiers(request, placement.Catalog(fleet, request.Role))
+	tiers := placement.Tiers(request, placement.Catalog(fleet, request))
 	if len(tiers) == 0 {
 		return nil, nil, "", nil
 	}
@@ -618,7 +622,7 @@ func (r *WorkloadReconciler) cutDedicatedClaim(ctx context.Context, worker *open
 	}
 	log.FromContext(ctx).Info("cutting a claim", "claim", name, "worker", worker.Name, "tiers", summary)
 
-	body := r.buildClaim(name, tiers)
+	body := r.buildClaim(name, acceleratorType(worker), tiers)
 	// The ledger owns the claim. Retirement still deletes the ledger first --
 	// its absence stays the tombstone joiners honor -- and if the controller
 	// crashes before the follow-up claim delete, garbage collection finishes

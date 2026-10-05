@@ -44,6 +44,8 @@ func main() {
 		namespace        string
 		deviceClass      string
 		deviceDriver     string
+		tpuDeviceClass   string
+		tpuDeviceDriver  string
 		retryInterval    time.Duration
 		placementTimeout time.Duration
 		strategy         string
@@ -57,6 +59,8 @@ func main() {
 	flag.StringVar(&namespace, "namespace", env("OPEN_RL_WORKER_NAMESPACE", "openrl-system"), "Namespace holding workers, claims and pods.")
 	flag.StringVar(&deviceClass, "device-class", env("OPEN_RL_DEVICE_CLASS", "gpu.nvidia.com"), "DeviceClass generated claims request.")
 	flag.StringVar(&deviceDriver, "device-driver", env("OPEN_RL_DEVICE_DRIVER", ""), "Driver publishing the ResourceSlices. Defaults to the device class.")
+	flag.StringVar(&tpuDeviceClass, "tpu-device-class", env("OPEN_RL_TPU_DEVICE_CLASS", "tpu.google.com"), "DeviceClass claims for TPU workloads request.")
+	flag.StringVar(&tpuDeviceDriver, "tpu-device-driver", env("OPEN_RL_TPU_DEVICE_DRIVER", "tpu.google.com"), "Driver publishing the TPU ResourceSlices.")
 	flag.DurationVar(&retryInterval, "retry-interval", envDuration("OPEN_RL_RECONCILE_INTERVAL", 10*time.Second), "How often an unplaced worker is retried.")
 	flag.DurationVar(&placementTimeout, "placement-timeout", envDuration("OPEN_RL_PLACEMENT_TIMEOUT", 15*time.Minute),
 		"How long a worker may go unplaced before the request is declared unsatisfiable. 0 waits forever.")
@@ -113,6 +117,8 @@ func main() {
 		Namespace:               namespace,
 		DeviceClass:             deviceClass,
 		DeviceDriver:            deviceDriver,
+		TPUDeviceClass:          tpuDeviceClass,
+		TPUDeviceDriver:         tpuDeviceDriver,
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
 		PlacementStrategy:       parsedStrategy,
@@ -133,7 +139,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver, "strategy", strategy)
+	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver,
+		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver, "strategy", strategy)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")
 		os.Exit(1)

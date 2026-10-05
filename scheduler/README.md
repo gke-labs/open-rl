@@ -16,6 +16,7 @@ spec:
   modelID: job-a               # its identity everywhere
   ownerID: Qwen/Qwen3-0.6B     # optional: the unit of fairness it belongs to
   accelerator:
+    type: GPU                  # GPU (default) or TPU: only nodes of this type
     memory: 28Gi               # peak accelerator memory, from the estimator
   template:                    # the complete worker pod, inline
     spec:

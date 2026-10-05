@@ -64,11 +64,26 @@ const (
 	AcceleratorModeMultiGPU  AcceleratorMode = "MultiGPU"
 )
 
+// AcceleratorType is the kind of device a workload runs on. Each type has its
+// own DRA driver and device class, and a workload lands only on nodes whose
+// driver publishes its type.
+// +kubebuilder:validation:Enum=GPU;TPU
+type AcceleratorType string
+
+const (
+	AcceleratorTypeGPU AcceleratorType = "GPU"
+	AcceleratorTypeTPU AcceleratorType = "TPU"
+)
+
 // AcceleratorSpec is the estimator's accelerator requirement: a claim shape
 // the process can actually drive, so placement never guesses a count.
 // +kubebuilder:validation:XValidation:rule="self.mode != 'MultiGPU' || (has(self.devices) && self.devices >= 2)",message="MultiGPU needs devices >= 2"
 // +kubebuilder:validation:XValidation:rule="self.mode == 'MultiGPU' || !has(self.devices)",message="devices is only for MultiGPU"
 type AcceleratorSpec struct {
+	// Type is the kind of device: GPU or TPU.
+	// +kubebuilder:default=GPU
+	Type AcceleratorType `json:"type,omitempty"`
+
 	// Mode is the claim shape Memory describes.
 	// +kubebuilder:default=SingleGPU
 	Mode AcceleratorMode `json:"mode,omitempty"`

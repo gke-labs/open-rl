@@ -26,15 +26,15 @@ type Tier struct {
 	CeilingBytes int64
 }
 
-// Catalog is the fleet's device shapes as seen by one role. It says what
-// exists, never what is free. Sizes are bucketed by whole GiB so that
-// 79.65Gi and 80Gi devices form one tier, sized by the smaller so the fit
-// holds on both. MaxPerNode keeps a tier from asking one node for more
+// Catalog is the fleet's device shapes as seen by one request's role and
+// accelerator type. It says what exists, never what is free. Sizes are
+// bucketed by whole GiB so that 79.65Gi and 80Gi devices form one tier,
+// sized by the smaller so the fit holds on both. MaxPerNode keeps a tier from asking one node for more
 // devices than any node of that size has.
-func Catalog(fleet *Fleet, role string) []Size {
+func Catalog(fleet *Fleet, req Request) []Size {
 	bySize := map[int64]Size{}
 	for _, node := range fleet.Nodes {
-		if !node.Accepts(role) || node.DeviceMemoryBytes <= 0 || node.DeviceCount < 1 {
+		if !node.Serves(req) || node.DeviceMemoryBytes <= 0 || node.DeviceCount < 1 {
 			continue
 		}
 		bucket := CeilGiB(node.DeviceMemoryBytes)
@@ -125,7 +125,7 @@ type NodePreference struct {
 // largest shape is the baseline nothing needs to outrank. One adequate
 // shape in the fleet means there is no order to express.
 func PreferTightFit(fleet *Fleet, req Request) []NodePreference {
-	tiers := Tiers(req, Catalog(fleet, req.Role))
+	tiers := Tiers(req, Catalog(fleet, req))
 	if len(tiers) < 2 {
 		return nil
 	}
@@ -133,7 +133,7 @@ func PreferTightFit(fleet *Fleet, req Request) []NodePreference {
 	for i, tier := range tiers[:len(tiers)-1] {
 		var names []string
 		for name, node := range fleet.Nodes {
-			if node.Accepts(req.Role) && CeilGiB(node.DeviceMemoryBytes) == CeilGiB(tier.CeilingBytes) {
+			if node.Serves(req) && CeilGiB(node.DeviceMemoryBytes) == CeilGiB(tier.CeilingBytes) {
 				names = append(names, name)
 			}
 		}

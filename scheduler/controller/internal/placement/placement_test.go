@@ -154,11 +154,11 @@ func TestCatalogIgnoresOccupancy(t *testing.T) {
 	fleet.Claims["c1"] = booked(&Claim{Name: "c1", DeviceCount: 1, Node: "n"}, "job-a")
 	fleet.Claims["c2"] = booked(&Claim{Name: "c2", DeviceCount: 1, Node: "n"}, "job-b")
 
-	tiers := Tiers(trainer("w", 10), Catalog(fleet, "trainer"))
+	tiers := Tiers(trainer("w", 10), Catalog(fleet, Request{Role: "trainer"}))
 	if len(tiers) != 1 || tiers[0].Count != 1 {
 		t.Errorf("Tiers = %+v, want the one 80Gi shape regardless of what is booked", tiers)
 	}
-	if got := Catalog(fleet, "sampler"); len(got) != 0 {
+	if got := Catalog(fleet, Request{Role: "sampler"}); len(got) != 0 {
 		t.Errorf("Catalog(sampler) = %+v, want empty: the pool is trainer-only", got)
 	}
 }
@@ -191,13 +191,13 @@ func TestTiersPreferTheTightestFit(t *testing.T) {
 
 	// 20Gi wastes 4Gi on an L4 and 76Gi on the big pool: both are offered,
 	// the L4 shape first.
-	tiers := Tiers(trainer("w", 20), Catalog(fleet, "trainer"))
+	tiers := Tiers(trainer("w", 20), Catalog(fleet, Request{Role: "trainer"}))
 	if len(tiers) != 2 || tiers[0].CeilingBytes != gib(24) || tiers[0].Count != 1 {
 		t.Fatalf("Tiers = %+v, want the 24Gi shape leading", tiers)
 	}
 
 	// 200Gi does not fit four L4s at all, so the big shape is the only tier.
-	tiers = Tiers(trainer("w", 200), Catalog(fleet, "trainer"))
+	tiers = Tiers(trainer("w", 200), Catalog(fleet, Request{Role: "trainer"}))
 	if len(tiers) != 1 || tiers[0].CeilingBytes != gib(96) || tiers[0].Count != 3 {
 		t.Fatalf("Tiers = %+v, want only 3x96Gi", tiers)
 	}
@@ -225,14 +225,14 @@ func TestDefaultShapeIsSingleDevice(t *testing.T) {
 
 	// 60Gi would take three L4s, but an undeclared runtime drives one device.
 	undeclared := Request{Role: "trainer", WorkerID: "w", Memory: gib(60)}
-	if tiers := Tiers(undeclared, Catalog(fleet, "trainer")); len(tiers) != 0 {
+	if tiers := Tiers(undeclared, Catalog(fleet, Request{Role: "trainer"})); len(tiers) != 0 {
 		t.Fatalf("Tiers = %+v for a single-device runtime that fits no single device", tiers)
 	}
 
 	// Declaring the shape is what unlocks the wider claim.
 	declared := undeclared
 	declared.MaxDevices = 4
-	if tiers := Tiers(declared, Catalog(fleet, "trainer")); len(tiers) != 1 || tiers[0].Count != 3 {
+	if tiers := Tiers(declared, Catalog(fleet, Request{Role: "trainer"})); len(tiers) != 1 || tiers[0].Count != 3 {
 		t.Fatalf("Tiers = %+v, want 3 devices once the runtime declares them", tiers)
 	}
 }
@@ -314,7 +314,7 @@ func TestCatalogBucketsSubGiBSizes(t *testing.T) {
 	fleet.Nodes["short"].DeviceMemoryBytes = gib(80) - 360*1024*1024 // ~79.65Gi
 	fleet.Nodes["big"] = bigNode("big", 1, 96, "trainer")
 
-	catalog := Catalog(fleet, "trainer")
+	catalog := Catalog(fleet, Request{Role: "trainer"})
 	if len(catalog) != 2 {
 		t.Fatalf("Catalog = %+v, want two shapes: one 80Gi bucket and 96Gi", catalog)
 	}
@@ -352,7 +352,7 @@ func TestMultiGPURequestsCompileToExactCountTiers(t *testing.T) {
 	fleet.Nodes["h100"] = bigNode("h100", 8, 80, "trainer")
 
 	four := Request{Role: "trainer", WorkerID: "tp4", Memory: gib(40), Devices: 4, MaxDevices: 4}
-	tiers := Tiers(four, Catalog(fleet, "trainer"))
+	tiers := Tiers(four, Catalog(fleet, Request{Role: "trainer"}))
 	if len(tiers) != 1 || tiers[0].Count != 4 || tiers[0].FloorBytes != gib(40) || CeilGiB(tiers[0].CeilingBytes) != 80 {
 		t.Fatalf("Tiers = %+v, want one t4x80 tier with a 40Gi floor; no L4 node has four devices", tiers)
 	}
@@ -366,7 +366,7 @@ func TestMultiGPURequestsCompileToExactCountTiers(t *testing.T) {
 
 	// Two devices of 20Gi fit either size; the tighter fit is preferred.
 	two := Request{Role: "trainer", WorkerID: "tp2", Memory: gib(20), Devices: 2, MaxDevices: 2}
-	tiers = Tiers(two, Catalog(fleet, "trainer"))
+	tiers = Tiers(two, Catalog(fleet, Request{Role: "trainer"}))
 	if len(tiers) != 2 || tiers[0].Name != "t2x24" || tiers[1].Name != "t2x80" {
 		t.Fatalf("Tiers = %+v, want t2x24 before t2x80", tiers)
 	}
@@ -375,5 +375,77 @@ func TestMultiGPURequestsCompileToExactCountTiers(t *testing.T) {
 	huge := Request{Role: "trainer", WorkerID: "big", Memory: gib(100), Devices: 2, MaxDevices: 2}
 	if got := Explain(huge, fleet, ""); !strings.Contains(got, "NoCapacity: needs 2 device(s) of 100Gi") {
 		t.Errorf("Explain = %q, want the group's shape in the reason", got)
+	}
+}
+
+// typed tags a pool with its driver's accelerator type.
+func typed(n *Node, accelType string) *Node {
+	n.Type = accelType
+	return n
+}
+
+// A mixed fleet is two fleets for placement: a request sees only pools of
+// its own type, whatever their size or occupancy.
+func TestPlacementNeverCrossesAcceleratorTypes(t *testing.T) {
+	fleet := NewFleet()
+	fleet.Nodes["gpu"] = typed(bigNode("gpu", 2, 96, "trainer"), "GPU")
+	fleet.Nodes["tpu"] = typed(bigNode("tpu", 4, 32, "trainer"), "TPU")
+	fleet.Nodes["tpu-small"] = typed(bigNode("tpu-small", 4, 16, "trainer"), "TPU")
+	fleet.Claims["on-gpu"] = booked(&Claim{Name: "on-gpu", Node: "gpu", DeviceCount: 1}, "a")
+	fleet.Claims["on-tpu"] = booked(&Claim{Name: "on-tpu", Node: "tpu", DeviceCount: 1}, "b")
+
+	gpu := trainer("g", 10)
+	gpu.Type = "GPU"
+	tpu := trainer("t", 10)
+	tpu.Type = "TPU"
+
+	if tiers := Tiers(gpu, Catalog(fleet, gpu)); len(tiers) != 1 || tiers[0].Name != "t1x96" {
+		t.Errorf("GPU tiers = %+v, want only the GPU node's t1x96", tiers)
+	}
+	if tiers := Tiers(tpu, Catalog(fleet, tpu)); len(tiers) != 2 || tiers[0].Name != "t1x16" || tiers[1].Name != "t1x32" {
+		t.Errorf("TPU tiers = %+v, want only the TPU nodes' t1x16, t1x32", tiers)
+	}
+	if got := name(SelectClaim(gpu, fleet)); got != "on-gpu" {
+		t.Errorf("GPU joins %q, want on-gpu", got)
+	}
+	if got := name(SelectClaim(tpu, fleet)); got != "on-tpu" {
+		t.Errorf("TPU joins %q, want on-tpu", got)
+	}
+	for _, pref := range PreferTightFit(fleet, tpu) {
+		for _, node := range pref.Nodes {
+			if fleet.Nodes[node].Type != "TPU" {
+				t.Errorf("TPU request prefers %s, a %s node", node, fleet.Nodes[node].Type)
+			}
+		}
+	}
+
+	// Remove the GPU pool: the GPU request has nowhere to go, even though a
+	// TPU pool would hold it and a TPU claim is shareable.
+	delete(fleet.Nodes, "gpu")
+	delete(fleet.Claims, "on-gpu")
+	if tiers := Tiers(gpu, Catalog(fleet, gpu)); len(tiers) != 0 {
+		t.Errorf("GPU tiers on a TPU-only fleet = %+v, want none", tiers)
+	}
+	if got := SelectClaim(gpu, fleet); got != nil {
+		t.Errorf("GPU joined %s on a TPU node", got.Name)
+	}
+	if got := Explain(gpu, fleet, ""); !strings.Contains(got, "no enabled node has GPU devices") {
+		t.Errorf("Explain = %q, want it to name the missing type", got)
+	}
+}
+
+func TestCapacityCountsPerType(t *testing.T) {
+	fleet := NewFleet()
+	fleet.Nodes["gpu-a"] = typed(bigNode("gpu-a", 2, 96, "trainer"), "GPU")
+	fleet.Nodes["gpu-b"] = typed(bigNode("gpu-b", 8, 80, "sampler"), "GPU")
+	fleet.Nodes["tpu"] = typed(bigNode("tpu", 4, 0), "TPU")
+
+	for _, tc := range []struct {
+		accel          string
+		nodes, devices int
+	}{{"GPU", 2, 10}, {"TPU", 1, 4}, {"OTHER", 0, 0}} {
+		if nodes, devices := fleet.Capacity(tc.accel); nodes != tc.nodes || devices != tc.devices {
+			t.Errorf("Capacity(%s) = %d nodes, %d devices; want %d, %d", tc.accel, nodes, devices, tc.nodes, tc.devices)
+		}
 	}
 }
