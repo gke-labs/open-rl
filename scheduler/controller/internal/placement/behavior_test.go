@@ -54,9 +54,9 @@ func newCluster(t *testing.T, nodes ...*Node) *cluster {
 // SelectClaim, the verdict played as instant.
 func (c *cluster) arrive(req Request) string {
 	c.t.Helper()
-	for _, tier := range Tiers(req, Catalog(c.fleet, req.Role)) {
+	for _, tier := range Tiers(req, Catalog(c.fleet, req)) {
 		for _, node := range c.nodesByName() {
-			if !node.Accepts(req.Role) ||
+			if !node.Serves(req) ||
 				node.DeviceMemoryBytes < tier.FloorBytes || node.DeviceMemoryBytes > tier.CeilingBytes {
 				continue
 			}

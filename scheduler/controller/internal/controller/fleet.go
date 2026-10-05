@@ -105,34 +105,57 @@ func (r *WorkloadReconciler) readFleet(ctx context.Context) (*placement.Fleet, e
 	return fleet, nil
 }
 
-// poolsFrom merges what the driver publishes with what the operator allowed.
+// poolsFrom merges what the drivers publish with what the operator allowed.
+// Each node is tagged with the accelerator type of the driver describing it.
 // Devices accumulate across slices; where memory differs the smallest wins,
 // because the fit must hold for whichever devices DRA picks.
 func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.ResourceSlice, nodes []corev1.Node) map[string]*placement.Node {
 	logger := log.FromContext(ctx)
 
 	devices := map[string]*placement.Node{}
-	for _, i := range latestCompletePools(ctx, slices, r.DeviceDriver) {
-		spec := slices[i].Spec
-		name := *spec.NodeName
-		for j := range spec.Devices {
-			device := spec.Devices[j]
-			capacity, ok := device.Capacity["memory"]
-			if !ok {
+	for _, accel := range acceleratorTypes {
+		driver := r.deviceConfig(accel).driver
+		if driver == "" {
+			continue
+		}
+		// Devices with no memory capacity (the TPU driver publishes none) are
+		// counted only on a node with no sized devices; they size nothing.
+		unsized := map[string]int{}
+		for _, i := range latestCompletePools(ctx, slices, driver) {
+			spec := slices[i].Spec
+			name := *spec.NodeName
+			pool := devices[name]
+			if pool != nil && pool.Type != string(accel) {
+				logger.Info("node has devices of more than one accelerator type; placing only the first",
+					"node", name, "type", pool.Type, "ignored", accel)
 				continue
 			}
-			memory := capacity.Value.Value()
-			pool, seen := devices[name]
-			if !seen {
-				product := ""
-				if attr, ok := device.Attributes["productName"]; ok && attr.StringValue != nil {
-					product = *attr.StringValue
+			for j := range spec.Devices {
+				device := spec.Devices[j]
+				if pool == nil {
+					product := ""
+					if attr, ok := device.Attributes["productName"]; ok && attr.StringValue != nil {
+						product = *attr.StringValue
+					}
+					pool = &placement.Node{Name: name, Type: string(accel), Product: product}
+					devices[name] = pool
 				}
-				devices[name] = &placement.Node{Name: name, DeviceCount: 1, DeviceMemoryBytes: memory, Product: product}
-				continue
+				capacity, ok := device.Capacity["memory"]
+				if !ok {
+					unsized[name]++
+					continue
+				}
+				memory := capacity.Value.Value()
+				if pool.DeviceCount == 0 || memory < pool.DeviceMemoryBytes {
+					pool.DeviceMemoryBytes = memory
+				}
+				pool.DeviceCount++
 			}
-			pool.DeviceCount++
-			pool.DeviceMemoryBytes = min(pool.DeviceMemoryBytes, memory)
+		}
+		for name, count := range unsized {
+			if pool := devices[name]; pool.DeviceCount == 0 {
+				pool.DeviceCount = count
+			}
 		}
 	}
 
@@ -141,8 +164,8 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 		node := &nodes[i]
 		pool, ok := devices[node.Name]
 		if !ok {
-			logger.Info("node is enabled but no ResourceSlice from this driver describes it; skipping it for placement",
-				"node", node.Name, "driver", r.DeviceDriver)
+			logger.Info("node is enabled but no ResourceSlice from a known driver describes it; skipping it for placement",
+				"node", node.Name, "gpuDriver", r.DeviceDriver, "tpuDriver", r.TPUDeviceDriver)
 			continue
 		}
 		// No role labels means both roles. A label set to "false" denies
@@ -290,6 +313,29 @@ func isHostnameKey(key string) bool {
 	return key == corev1.LabelHostname || key == "metadata.name"
 }
 
+// acceleratorTypes is every type the fleet is read for, in the order a node
+// published by more than one driver is claimed.
+var acceleratorTypes = []openrlv1alpha1.AcceleratorType{openrlv1alpha1.AcceleratorTypeGPU, openrlv1alpha1.AcceleratorTypeTPU}
+
+// deviceConfig is the DRA device class and driver serving one accelerator type.
+type deviceConfig struct{ class, driver string }
+
+func (r *WorkloadReconciler) deviceConfig(accel openrlv1alpha1.AcceleratorType) deviceConfig {
+	if accel == openrlv1alpha1.AcceleratorTypeTPU {
+		return deviceConfig{class: r.TPUDeviceClass, driver: r.TPUDeviceDriver}
+	}
+	return deviceConfig{class: r.DeviceClass, driver: r.DeviceDriver}
+}
+
+// acceleratorType is the workload's type; unset reads as GPU, as the CRD
+// default does.
+func acceleratorType(worker *openrlv1alpha1.Workload) openrlv1alpha1.AcceleratorType {
+	if worker.Spec.Accelerator.Type == "" {
+		return openrlv1alpha1.AcceleratorTypeGPU
+	}
+	return worker.Spec.Accelerator.Type
+}
+
 // requestFrom is the placement Request an Workload spec is asking for.
 // Validation is the CRD schema's job.
 func requestFrom(worker *openrlv1alpha1.Workload) placement.Request {
@@ -297,6 +343,7 @@ func requestFrom(worker *openrlv1alpha1.Workload) placement.Request {
 	request := placement.Request{
 		Shareable: !spec.Exclusive,
 		Role:      string(spec.Role),
+		Type:      string(acceleratorType(worker)),
 		Memory:    spec.Accelerator.Memory.Value(),
 		// Raw: the spec calls the owner ID opaque, and sanitizing here would
 		// merge distinct owners ("A/B" and "a-b") into one fairness slot.

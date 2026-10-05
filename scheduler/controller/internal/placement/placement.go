@@ -50,6 +50,8 @@ func CeilGiB(bytes int64) int64 {
 // policy from the operator's node labels.
 type Node struct {
 	Name string
+	// Type is the accelerator type of the driver that published the node.
+	Type string
 	// DeviceCount and DeviceMemoryBytes come from the DRA driver.
 	DeviceCount       int
 	DeviceMemoryBytes int64
@@ -68,6 +70,10 @@ type Node struct {
 
 // Accepts reports whether the operator allowed this role on this pool.
 func (n *Node) Accepts(role string) bool { return n.Roles[role] }
+
+// Serves reports whether this pool may host the request: its accelerator
+// type matches and the operator allowed its role.
+func (n *Node) Serves(req Request) bool { return n.Type == req.Type && n.Accepts(req.Role) }
 
 // Describe renders the pool's hardware for an error message.
 func (n *Node) Describe() string {
@@ -159,6 +165,18 @@ func NewFleet() *Fleet {
 	return &Fleet{Nodes: map[string]*Node{}, Claims: map[string]*Claim{}}
 }
 
+// Capacity is how many nodes and devices of one accelerator type the fleet
+// holds, whatever their role or occupancy.
+func (f *Fleet) Capacity(accelType string) (nodes, devices int) {
+	for _, node := range f.Nodes {
+		if node.Type == accelType {
+			nodes++
+			devices += node.DeviceCount
+		}
+	}
+	return nodes, devices
+}
+
 // NodeHostBytes is the host memory every worker already assigned to this
 // node's claims will request from it. Summed across claims, because the
 // node's allocatable memory is one pool however many claims sit on it.
@@ -181,6 +199,8 @@ type Request struct {
 	Shareable bool
 	// Role selects node pools and nothing else; it does not partition claims.
 	Role string
+	// Type is the accelerator type; only nodes of this type are considered.
+	Type string
 	// Memory is the total accelerator memory the worker needs, across however
 	// many devices it ends up on.
 	Memory int64
@@ -270,7 +290,7 @@ func (r Request) TotalBytes() int64 {
 func candidateNodes(req Request, fleet *Fleet) map[string]int {
 	fits := map[string]int{}
 	for name, node := range fleet.Nodes {
-		if !node.Accepts(req.Role) {
+		if !node.Serves(req) {
 			continue
 		}
 		if count := req.DevicesOn(node); count > 0 {
@@ -308,7 +328,7 @@ func SelectClaim(req Request, fleet *Fleet) *Claim {
 	var best *Claim
 	for _, claim := range fleet.Claims {
 		node := fleet.Nodes[claim.Node]
-		if !claim.Shareable() || !claim.Allocated() || node == nil || !node.Accepts(req.Role) {
+		if !claim.Shareable() || !claim.Allocated() || node == nil || !node.Serves(req) {
 			continue
 		}
 		if claim.DeviceCount != 1 || req.DevicesOn(node) != 1 {
@@ -347,7 +367,7 @@ func claimLess(a, b *Claim) bool {
 func Explain(req Request, fleet *Fleet, detail string) string {
 	var pools []*Node
 	for _, node := range fleet.Nodes {
-		if node.Accepts(req.Role) {
+		if node.Serves(req) {
 			pools = append(pools, node)
 		}
 	}
@@ -355,7 +375,11 @@ func Explain(req Request, fleet *Fleet, detail string) string {
 	var reason string
 	switch {
 	case len(pools) == 0:
-		reason = fmt.Sprintf("NoCapacity: no enabled node accepts %s workers", req.Role)
+		if nodes, _ := fleet.Capacity(req.Type); nodes == 0 {
+			reason = fmt.Sprintf("NoCapacity: no enabled node has %s devices", req.Type)
+		} else {
+			reason = fmt.Sprintf("NoCapacity: no enabled node accepts %s workers", req.Role)
+		}
 	case len(candidateNodes(req, fleet)) > 0:
 		// The hardware exists; it is busy. Retrying is the right move.
 		reason = "WaitingForCapacity: a pool fits this workload but none has a free seat or a free accelerator"

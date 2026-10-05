@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 const (
 	testNamespace = "open-rl"
 	testDriver    = "gpu.nvidia.com"
+	testTPUDriver = "tpu.google.com"
 	testNode      = "node-a"
 )
 
@@ -164,6 +166,8 @@ func newReconciler(t *testing.T, objects ...client.Object) *WorkloadReconciler {
 		Namespace:        testNamespace,
 		DeviceClass:      testDriver,
 		DeviceDriver:     testDriver,
+		TPUDeviceClass:   testTPUDriver,
+		TPUDeviceDriver:  testTPUDriver,
 		RetryInterval:    time.Second,
 		PlacementTimeout: time.Hour,
 		// The scripted tests reason about one dedicated claim per worker, so
@@ -1164,7 +1168,7 @@ func TestClaimFloorIsExactBytes(t *testing.T) {
 	r := newReconciler(t, enabledNode()...)
 	device := 80*placement.GiB - 360*1024*1024 // ~79.65Gi
 	floor := 79*placement.GiB + 512*1024*1024  // 79.5Gi: fits the device, rounds up past it
-	claim := r.buildClaim("claim-x", []placement.Tier{{Name: "t1x80", Count: 1, FloorBytes: floor, CeilingBytes: device}})
+	claim := r.buildClaim("claim-x", openrlv1alpha1.AcceleratorTypeGPU, []placement.Tier{{Name: "t1x80", Count: 1, FloorBytes: floor, CeilingBytes: device}})
 
 	expr := claim.Spec.Devices.Requests[0].FirstAvailable[0].Selectors[0].CEL.Expression
 	if want := fmt.Sprintf(`quantity("%d")) >= 0`, floor); !strings.Contains(expr, want) {
@@ -1246,5 +1250,180 @@ func TestMultiGPUWorkloadCutsAnExactCountExclusiveClaim(t *testing.T) {
 	waiting := getWorker(t, r, "tp4")
 	if waiting.Status.ClaimName != "" || !strings.Contains(waiting.Status.Reason, "4 device(s)") {
 		t.Fatalf("status = %+v, want no claim and a reason naming four devices", waiting.Status)
+	}
+}
+
+// tpuNode is an enabled pool published by the TPU driver: four chips. The
+// real driver reports no memory capacity, so memory "" leaves it off; a
+// figure stands in for the sizing a later change adds.
+func tpuNode(name, memory string) []client.Object {
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{NodeLabelEnabled: "true"}},
+		Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("700Gi")}},
+	}
+	gen := "v6e"
+	devices := make([]resourcev1.Device, 4)
+	for i := range devices {
+		devices[i] = resourcev1.Device{
+			Name:       fmt.Sprintf("tpu-%d", i),
+			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{"tpuGen": {StringValue: &gen}},
+		}
+		if memory != "" {
+			devices[i].Capacity = map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{"memory": {Value: resource.MustParse(memory)}}
+		}
+	}
+	slice := &resourcev1.ResourceSlice{
+		ObjectMeta: metav1.ObjectMeta{Name: "slice-" + name},
+		Spec: resourcev1.ResourceSliceSpec{
+			Driver:   testTPUDriver,
+			NodeName: &node.Name,
+			Pool:     resourcev1.ResourcePool{Name: name, ResourceSliceCount: 1},
+			Devices:  devices,
+		},
+	}
+	return []client.Object{node, slice}
+}
+
+func tpuWorker(name, modelID string) *openrlv1alpha1.Workload {
+	w := trainerWorker(name, modelID)
+	w.Spec.Accelerator.Type = openrlv1alpha1.AcceleratorTypeTPU
+	return w
+}
+
+func claimFor(t *testing.T, r *WorkloadReconciler, worker string) *resourcev1.ResourceClaim {
+	t.Helper()
+	var claim resourcev1.ResourceClaim
+	if err := r.Get(context.Background(), types.NamespacedName{Namespace: testNamespace, Name: claimOf(t, r, worker)}, &claim); err != nil {
+		t.Fatalf("claim of %s: %v", worker, err)
+	}
+	return &claim
+}
+
+// The claim for a workload that names no type is byte-identical to the one
+// cut before types existed: the GPU class, the GPU driver's CEL domain, the
+// same tiers. A TPU node in the fleet changes nothing.
+func TestUntypedWorkloadClaimIsUnchanged(t *testing.T) {
+	objects := enabledNode()
+	node := objects[0].(*corev1.Node).DeepCopy()
+	slice := objects[1].(*resourcev1.ResourceSlice).DeepCopy()
+	node.Name, slice.Name = "node-b", "slice-b"
+	slice.Spec.NodeName, slice.Spec.Pool.Name = &node.Name, node.Name
+	for i := range slice.Spec.Devices {
+		slice.Spec.Devices[i].Capacity["memory"] = resourcev1.DeviceCapacity{Value: resource.MustParse("48Gi")}
+	}
+	objects = append(objects, node, slice, worker("w-a", "model-a", openrlv1alpha1.RoleTrainer, "40Gi"))
+	r := newReconciler(t, append(objects, tpuNode("tpu-a", "48Gi")...)...)
+
+	runReconcile(t, r, "w-a")
+	claim := claimFor(t, r, "w-a")
+	got, err := json.Marshal(struct {
+		Labels map[string]string
+		Spec   resourcev1.ResourceClaimSpec
+	}{claim.Labels, claim.Spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Captured from the scheduler before accelerator types were added.
+	const want = `{"Labels":{"openrl.io/managed":"true"},"Spec":{"devices":{"requests":[{"name":"gpu","firstAvailable":[{"name":"t1x48","deviceClassName":"gpu.nvidia.com","selectors":[{"cel":{"expression":"device.capacity[\"gpu.nvidia.com\"].memory.compareTo(quantity(\"42949672960\")) \u003e= 0 \u0026\u0026 device.capacity[\"gpu.nvidia.com\"].memory.compareTo(quantity(\"48Gi\")) \u003c= 0"}}],"allocationMode":"ExactCount","count":1},{"name":"t1x96","deviceClassName":"gpu.nvidia.com","selectors":[{"cel":{"expression":"device.capacity[\"gpu.nvidia.com\"].memory.compareTo(quantity(\"42949672960\")) \u003e= 0 \u0026\u0026 device.capacity[\"gpu.nvidia.com\"].memory.compareTo(quantity(\"96Gi\")) \u003c= 0"}}],"allocationMode":"ExactCount","count":1}]}]}}}`
+	if string(got) != want {
+		t.Errorf("claim changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// On a mixed fleet each workload's claim asks for its own type's device
+// class, priced only against its own type's nodes, and its pod prefers only
+// those nodes.
+func TestMixedFleetPlacesEachTypeOnItsOwnNodes(t *testing.T) {
+	objects := append(enabledNode(), tpuNode("tpu-a", "32Gi")...)
+	objects = append(objects, tpuNode("tpu-b", "16Gi")...)
+	objects = append(objects, worker("g", "model-a", openrlv1alpha1.RoleTrainer, "12Gi"), tpuWorker("t", "model-b"))
+	r := newReconciler(t, objects...)
+	settle(t, r, "g", "t")
+
+	for _, tc := range []struct {
+		worker, class string
+		tiers         []string
+	}{
+		{"g", testDriver, []string{"t1x96"}},
+		{"t", testTPUDriver, []string{"t1x32"}},
+	} {
+		var names []string
+		for _, sub := range claimFor(t, r, tc.worker).Spec.Devices.Requests[0].FirstAvailable {
+			names = append(names, sub.Name)
+			if sub.DeviceClassName != tc.class || !strings.Contains(sub.Selectors[0].CEL.Expression, `device.capacity["`+tc.class+`"]`) {
+				t.Errorf("%s tier %s: class %s, CEL %s; want %s for both", tc.worker, sub.Name, sub.DeviceClassName, sub.Selectors[0].CEL.Expression, tc.class)
+			}
+		}
+		if strings.Join(names, ",") != strings.Join(tc.tiers, ",") {
+			t.Errorf("%s tiers = %v, want %v", tc.worker, names, tc.tiers)
+		}
+	}
+	// A 12Gi TPU worker fits both TPU sizes, so its pod ranks them; no GPU node.
+	small := tpuWorker("t-small", "model-c")
+	small.Spec.Accelerator.Memory = resource.MustParse("12Gi")
+	if err := r.Create(context.Background(), small); err != nil {
+		t.Fatal(err)
+	}
+	settle(t, r, "t-small")
+	terms := getPod(t, r, "orw-t-small").Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+	if len(terms) != 1 || terms[0].Preference.MatchFields[0].Values[0] != "tpu-b" {
+		t.Errorf("t-small preferred terms = %+v, want only tpu-b", terms)
+	}
+}
+
+// readFleet tags every node with its driver's type and counts each type
+// apart. The real TPU driver's chips carry no memory: they still count, and
+// placement skips them instead of failing.
+func TestFleetCountsCapacityPerType(t *testing.T) {
+	objects := append(enabledNode(), tpuNode("tpu-a", "")...)
+	objects = append(objects, tpuNode("tpu-b", "")...)
+	r := newReconciler(t, append(objects, tpuWorker("t", "model-b"))...)
+
+	fleet, err := r.readFleet(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if nodes, devices := fleet.Capacity("GPU"); nodes != 1 || devices != 2 {
+		t.Errorf("GPU capacity = %d nodes, %d devices; want 1, 2", nodes, devices)
+	}
+	if nodes, devices := fleet.Capacity("TPU"); nodes != 2 || devices != 8 {
+		t.Errorf("TPU capacity = %d nodes, %d devices; want 2, 8", nodes, devices)
+	}
+	if got := fleet.Nodes[testNode].Type; got != "GPU" {
+		t.Errorf("%s type = %q, want GPU", testNode, got)
+	}
+
+	runReconcile(t, r, "t")
+	after := getWorker(t, r, "t")
+	if after.Status.Phase != openrlv1alpha1.PhasePending || after.Status.ClaimName != "" {
+		t.Errorf("status = %+v, want Pending with no claim: unsized chips fit nothing yet", after.Status)
+	}
+}
+
+// With no node of its type a workload waits like any other unplaced worker,
+// and its reason names the missing type.
+func TestNoNodeOfTheTypeWaitsNamingTheType(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		fleet   []client.Object
+		worker  *openrlv1alpha1.Workload
+		mention string
+	}{
+		{"TPU on GPU-only", enabledNode(), tpuWorker("w", "model-a"), "no enabled node has TPU devices"},
+		{"GPU on TPU-only", tpuNode("tpu-a", "96Gi"), trainerWorker("w", "model-a"), "no enabled node has GPU devices"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newReconciler(t, append(tc.fleet, tc.worker)...)
+			if result := runReconcile(t, r, "w"); result.RequeueAfter == 0 {
+				t.Errorf("requeueAfter = 0, want a retry")
+			}
+			after := getWorker(t, r, "w")
+			if after.Status.Phase != openrlv1alpha1.PhasePending || !strings.Contains(after.Status.Reason, tc.mention) {
+				t.Fatalf("status = %+v, want Pending with %q", after.Status, tc.mention)
+			}
+			if after.Status.ClaimName != "" {
+				t.Errorf("a claim was cut: %s", after.Status.ClaimName)
+			}
+		})
 	}
 }

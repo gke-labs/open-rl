@@ -83,15 +83,17 @@ func claimNameFor(worker *openrlv1alpha1.Workload) string {
 // bytes because devices report fractional sizes (an 80GB A100 is ~79.65Gi)
 // and a floor rounded up to whole GiB could exceed the device. The ceiling
 // rounds up, which admits nothing new. There is no node selector; that is
-// kube-scheduler's call.
-func (r *WorkloadReconciler) buildClaim(claimName string, tiers []placement.Tier) *resourcev1.ResourceClaim {
+// kube-scheduler's call. The device class and CEL domain are the accelerator
+// type's.
+func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.AcceleratorType, tiers []placement.Tier) *resourcev1.ResourceClaim {
+	devices := r.deviceConfig(accel)
 	subrequests := make([]resourcev1.DeviceSubRequest, len(tiers))
 	for i, tier := range tiers {
 		bounds := fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
-			r.DeviceDriver, tier.FloorBytes, r.DeviceDriver, placement.CeilGiB(tier.CeilingBytes))
+			devices.driver, tier.FloorBytes, devices.driver, placement.CeilGiB(tier.CeilingBytes))
 		subrequests[i] = resourcev1.DeviceSubRequest{
 			Name:            tier.Name,
-			DeviceClassName: r.DeviceClass,
+			DeviceClassName: devices.class,
 			AllocationMode:  resourcev1.DeviceAllocationModeExactCount,
 			Count:           int64(tier.Count),
 			Selectors: []resourcev1.DeviceSelector{{
