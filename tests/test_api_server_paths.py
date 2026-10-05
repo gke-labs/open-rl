@@ -493,5 +493,52 @@ class TrainerBackendTest(ApiServerTest):
     self.assertIn("launches workers", response.json()["error"])
 
 
+class SamplerReadyTimeoutTest(ApiServerTest):
+  """create_sampling_session waits for the sampler up to OPEN_RL_SAMPLER_READY_TIMEOUT_S."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    self.now = 0.0
+
+    async def fake_sleep(seconds: float) -> None:
+      self.now += seconds
+
+    # The wait only runs against Redis state; the in-memory store stands in for it.
+    self.enterContext(patch.object(api_server, "RedisStateStore", InMemoryStateStore))
+    self.enterContext(patch.object(api_server, "worker_manager", None))
+    self.enterContext(patch.object(api_server, "get_sampler_backend", return_value="vllm"))
+    self.enterContext(patch.object(api_server.time, "monotonic", lambda: self.now))
+    self.enterContext(patch.object(api_server.asyncio, "sleep", fake_sleep))
+
+  def open_session(self) -> dict:
+    return asyncio.run(api_server.create_sampling_session(api_server.CreateSamplingSessionRequest(base_model="m")))
+
+  def test_the_default_is_900_seconds(self) -> None:
+    with patch.dict(os.environ, {}, clear=True):
+      self.assertEqual(api_server.sampler_ready_timeout_s(), 900)
+      with self.assertRaises(TimeoutError):
+        self.open_session()
+    self.assertGreater(self.now, 900)
+    self.assertLessEqual(self.now, 901)
+
+  def test_the_env_value_wins(self) -> None:
+    with patch.dict(os.environ, {"OPEN_RL_SAMPLER_READY_TIMEOUT_S": "1800"}):
+      self.assertEqual(api_server.sampler_ready_timeout_s(), 1800)
+      with self.assertRaises(TimeoutError):
+        self.open_session()
+    self.assertGreater(self.now, 1800)
+    self.assertLessEqual(self.now, 1801)
+
+  def test_a_sampler_that_becomes_ready_in_time_opens_the_session(self) -> None:
+    async def ready_after(seconds: float) -> None:
+      self.now += seconds
+      if self.now >= 600:
+        await api_server.state.set_value("open_rl:sampler_ready:m", "1")
+
+    with patch.dict(os.environ, {}, clear=True), patch.object(api_server.asyncio, "sleep", ready_after):
+      self.assertEqual(self.open_session()["sampling_session_id"], "m")
+    self.assertEqual(self.now, 600)
+
+
 if __name__ == "__main__":
   unittest.main()
