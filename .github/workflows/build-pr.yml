@@ -29,6 +29,9 @@ jobs:
           - image_name: automodel
             context: .
             dockerfile: src/server/Dockerfile.automodel
+          - image_name: tpu-sampler
+            context: .
+            dockerfile: src/server/Dockerfile.tpu_sampler
           - image_name: autoresearch
             context: .
             dockerfile: examples/autoresearch/Dockerfile

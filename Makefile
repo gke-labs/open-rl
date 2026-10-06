@@ -139,13 +139,11 @@ require-gcp-project:
 # on a public index yet; build-images and push-images skip that image without it.
 TORCH_TPU_WHEEL ?= $(firstword $(wildcard wheels/torch_tpu-*.whl))
 
-# The TPU sampler image is built for linux/amd64 because the `tpu-sampler`
-# extra installs nothing on other platforms.
 build-images: require-gcp-project
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG) -f src/server/Dockerfile.api_server .
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-client:$(IMAGE_TAG) -f src/server/Dockerfile.client .
-	DOCKER_BUILDKIT=1 docker build --platform linux/amd64 -t $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG) -f src/server/Dockerfile.tpu_sampler .
+	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG) -f src/server/Dockerfile.tpu_sampler .
 	$(if $(TORCH_TPU_WHEEL),DOCKER_BUILDKIT=1 docker build --build-arg TORCH_TPU_WHEEL=$(TORCH_TPU_WHEEL) -t $(CLOUD_REGISTRY)/open-rl-tpu-trainer:$(IMAGE_TAG) -f src/server/Dockerfile.tpu .)
 
 push-images: require-gcp-project

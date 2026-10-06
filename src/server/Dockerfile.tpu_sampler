@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1
+# check=skip=FromPlatformFlagConstDisallowed
 
 # TPU sampler image. Same layout as src/server/Dockerfile.tpu, with the
 # `tpu-sampler` extra (vllm-tpu, which brings tpu-inference, JAX and libtpu)
 # instead of `tpu`. No torch_tpu wheel: the sampler reaches the TPU through JAX.
+# Pinned to linux/amd64 because the `tpu-sampler` extra installs nothing on
+# other platforms.
 
-FROM ubuntu:22.04
+FROM --platform=linux/amd64 ubuntu:22.04
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -47,10 +50,10 @@ COPY src src
 
 # MODEL_IMPL_TYPE=vllm: tpu-inference has LoRA only on its vLLM model path, and
 # would otherwise pick its JAX path for models such as Qwen.
-# TORCH_DEVICE_BACKEND_AUTOLOAD=0: keeps a TorchTPU install from claiming every
-# chip on `import torch`.
+# TORCH_DEVICE_BACKEND_AUTOLOAD=0: if torch_tpu is ever installed, keeps it from
+# claiming every chip on `import torch`.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app/src:$PYTHONPATH" \
+    PYTHONPATH=/app/src \
     MODEL_IMPL_TYPE=vllm \
     TORCH_DEVICE_BACKEND_AUTOLOAD=0
 
