@@ -84,8 +84,8 @@ SAMPLER_KV_TOKENS = 8 * 8192  # eight max-length requests in flight
 # plus process overhead. Measured: 0.5B trainer 28Gi, sampler 20Gi; 8B FFT
 # sampler 39Gi steady; 7B FFT trainer OOM-killed at 110Gi.
 HOST_BYTES_PER_PARAM = {("full", "trainer"): 14, ("lora", "trainer"): 2, ("full", "sampler"): 2, ("lora", "sampler"): 2}
-# TPU entries are placeholders near the 96Gi limit every TPU run has used.
-# Each TPU worker holds a whole node, so erring high costs nothing.
+# TPU entries are high placeholders. Each TPU worker holds a whole node, so
+# erring high costs nothing.
 # TODO: measure TPU trainer and sampler host peaks and lower these to match.
 HOST_OVERHEAD_BYTES = {("gpu", "trainer"): 20 * GIB, ("gpu", "sampler"): 24 * GIB, ("tpu", "trainer"): 94 * GIB, ("tpu", "sampler"): 94 * GIB}
 # Limits equal requests. Placement admits pods by request, so a pod that
@@ -122,8 +122,7 @@ def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str) -> int
 
 
 def footprint(base_model: str, fine_tuning_type: str, role: str, accelerator: Accelerator = "gpu") -> Footprint:
-  # TPU shares the device formula: it is a placement claim, and the LoRA
-  # models run on TPU so far fit one 32Gi v6e chip by it.
+  # TPU shares the device formula; the figure only places the worker on a chip.
   model = normalize_model_id(base_model)
   if model not in MODEL_TO_PARAM_COUNT:
     logger.warning("No known parameter count for %r; sizing it as %s.", base_model, UNKNOWN_MODEL)

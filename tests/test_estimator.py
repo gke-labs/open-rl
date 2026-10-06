@@ -56,8 +56,6 @@ class FootprintTest(unittest.TestCase):
     self.assertEqual(big.host_limit_bytes, big.host_request_bytes)
 
   def test_tpu_workers_get_generous_host_memory(self) -> None:
-    # Every TPU run so far used a 96Gi limit and worked; the overheads start
-    # near it until measured peaks lower them.
     for model in ("Qwen/Qwen3-0.6B", "google/gemma-4-E2B-it"):
       for role in ("trainer", "sampler"):
         fp = footprint(model, "lora", role, accelerator="tpu")

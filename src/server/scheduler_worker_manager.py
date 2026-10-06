@@ -25,7 +25,6 @@ from typing import Any
 
 from kubernetes import client, config
 
-from server.accelerators import accelerator_for
 from server.estimator import Footprint, footprint
 from server.worker_manager import base_model_of, owner_id, runtime_of, worker_args, worker_env, worker_module
 
@@ -70,8 +69,7 @@ def describe_worker(model_id: str, role: str) -> Worker:
   meta, runtime, is_lora = runtime_of(model_id)
   base_model = base_model_of(meta, runtime)
   exclusive = not meta.shares_gpu()
-  fp = footprint(base_model, meta.fine_tuning_type, role, accelerator_for(meta, role))
-  return Worker(role, runtime, base_model, is_lora, exclusive, meta, fp)
+  return Worker(role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role, meta.accelerator_for(role)))
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
