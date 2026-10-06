@@ -128,19 +128,25 @@ func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.A
 	}
 }
 
-// tierBounds is the CEL admitting the devices a tier was priced on: the
-// table values in its size bucket, or a capacity comparison when the type
-// has no table or no table value lands in that bucket.
+// tierBounds is the CEL admitting the devices a tier was priced on. It sizes
+// a device as deviceMemory does: its own memory capacity when it has one, else
+// the table entry for its attribute. A table check is only emitted when some
+// table value lands in the tier's size bucket. The "in" guards keep a device
+// missing the key from failing evaluation, which would abort the allocation.
 func tierBounds(devices deviceConfig, tier placement.Tier) string {
-	if values := devices.memoryTable.ValuesWithin(tier.FloorBytes, tier.CeilingBytes); len(values) > 0 {
-		quoted := make([]string, len(values))
-		for i, value := range values {
-			quoted[i] = strconv.Quote(value)
-		}
-		return fmt.Sprintf(`device.attributes["%s"].%s in [%s]`, devices.driver, devices.memoryTable.Attribute, strings.Join(quoted, ", "))
-	}
-	return fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
+	capacity := fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
 		devices.driver, tier.FloorBytes, devices.driver, placement.CeilGiB(tier.CeilingBytes))
+	values := devices.memoryTable.ValuesWithin(tier.FloorBytes, tier.CeilingBytes)
+	if len(values) == 0 {
+		return capacity
+	}
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = strconv.Quote(value)
+	}
+	attr := devices.memoryTable.Attribute
+	return fmt.Sprintf(`"memory" in device.capacity["%s"] ? (%s) : ("%s" in device.attributes["%s"] && device.attributes["%s"].%s in [%s])`,
+		devices.driver, capacity, attr, devices.driver, devices.driver, attr, strings.Join(quoted, ", "))
 }
 
 // workerContainerName is the container in the template that consumes the

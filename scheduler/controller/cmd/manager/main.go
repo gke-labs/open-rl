@@ -46,7 +46,6 @@ func main() {
 		deviceDriver     string
 		tpuDeviceClass   string
 		tpuDeviceDriver  string
-		tpuMemoryTable   string
 		tpuWholeNode     bool
 		retryInterval    time.Duration
 		placementTimeout time.Duration
@@ -63,8 +62,6 @@ func main() {
 	flag.StringVar(&deviceDriver, "device-driver", env("OPEN_RL_DEVICE_DRIVER", ""), "Driver publishing the ResourceSlices. Defaults to the device class.")
 	flag.StringVar(&tpuDeviceClass, "tpu-device-class", env("OPEN_RL_TPU_DEVICE_CLASS", "tpu.google.com"), "DeviceClass claims for TPU workloads request.")
 	flag.StringVar(&tpuDeviceDriver, "tpu-device-driver", env("OPEN_RL_TPU_DEVICE_DRIVER", "tpu.google.com"), "Driver publishing the TPU ResourceSlices.")
-	flag.StringVar(&tpuMemoryTable, "tpu-device-memory-table", env("OPEN_RL_TPU_DEVICE_MEMORY_TABLE", controller.DefaultTPUMemoryTable),
-		"Memory per TPU chip as attr:value=quantity,...; the TPU driver publishes no memory capacity.")
 	flag.BoolVar(&tpuWholeNode, "tpu-whole-node-claims", envBool("OPEN_RL_TPU_WHOLE_NODE_CLAIMS", true),
 		"TPU claims take every chip on the node (allocationMode All); the TPU driver prepares no partial-node claim.")
 	flag.DurationVar(&retryInterval, "retry-interval", envDuration("OPEN_RL_RECONCILE_INTERVAL", 10*time.Second), "How often an unplaced worker is retried.")
@@ -88,11 +85,6 @@ func main() {
 	parsedStrategy, err := placement.ParseStrategy(strategy)
 	if err != nil {
 		setupLog.Error(err, "invalid placement strategy")
-		os.Exit(1)
-	}
-	parsedTPUTable, err := controller.ParseMemoryTable(tpuMemoryTable)
-	if err != nil {
-		setupLog.Error(err, "invalid TPU device memory table")
 		os.Exit(1)
 	}
 
@@ -130,7 +122,7 @@ func main() {
 		DeviceDriver:            deviceDriver,
 		TPUDeviceClass:          tpuDeviceClass,
 		TPUDeviceDriver:         tpuDeviceDriver,
-		TPUDeviceMemoryTable:    parsedTPUTable,
+		TPUDeviceMemoryTable:    controller.DefaultTPUMemoryTable,
 		TPUWholeNodeClaims:      tpuWholeNode,
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
@@ -153,7 +145,7 @@ func main() {
 	}
 
 	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver,
-		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver, "tpuMemoryTable", tpuMemoryTable,
+		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver,
 		"tpuWholeNodeClaims", tpuWholeNode, "strategy", strategy)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")

@@ -174,18 +174,9 @@ func newReconciler(t *testing.T, objects ...client.Object) *WorkloadReconciler {
 		// they pin spread. Binpack tests set it explicitly; the storm runs both.
 		PlacementStrategy: placement.StrategySpread,
 		// The built-in TPU defaults, as main.go sets them.
-		TPUDeviceMemoryTable: mustMemoryTable(t, DefaultTPUMemoryTable),
+		TPUDeviceMemoryTable: DefaultTPUMemoryTable,
 		TPUWholeNodeClaims:   true,
 	}
-}
-
-func mustMemoryTable(t *testing.T, spec string) MemoryTable {
-	t.Helper()
-	table, err := ParseMemoryTable(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return table
 }
 
 func runReconcile(t *testing.T, r *WorkloadReconciler, name string) ctrl.Result {
@@ -1416,7 +1407,7 @@ func TestFleetCountsCapacityPerType(t *testing.T) {
 // table's entry for the device's attribute. A device with neither is not
 // sized.
 func TestDeviceMemoryPrefersCapacityThenTable(t *testing.T) {
-	table := mustMemoryTable(t, DefaultTPUMemoryTable)
+	table := DefaultTPUMemoryTable
 	device := func(gen, memory string) *resourcev1.Device {
 		d := &resourcev1.Device{Name: "d"}
 		if gen != "" {
@@ -1500,8 +1491,27 @@ func TestTPUClaimTakesTheWholeNodeByGeneration(t *testing.T) {
 		{"t1x16", `device.attributes["tpu.google.com"].tpuGen in ["v5e"]`},
 		{"t1x32", `device.attributes["tpu.google.com"].tpuGen in ["v6e"]`},
 	}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Errorf("tiers = %v, want %v", got, want)
+	if len(got) != len(want) {
+		t.Fatalf("tiers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].name != want[i].name || !strings.Contains(got[i].cel, want[i].cel) {
+			t.Errorf("tier %d = %v, want %s with %s", i, got[i], want[i].name, want[i].cel)
+		}
+	}
+}
+
+// A table-priced tier sizes a device the way deviceMemory does: by its own
+// capacity when it publishes one, else by the table. Both lookups are guarded,
+// so a device missing the key doesn't fail evaluation.
+func TestTierBoundsPrefersCapacityThenTable(t *testing.T) {
+	devices := deviceConfig{driver: "tpu.google.com", memoryTable: DefaultTPUMemoryTable}
+	tier := placement.Tier{Name: "t1x32", Count: 1, FloorBytes: 20 * placement.GiB, CeilingBytes: 32 * placement.GiB}
+	want := `"memory" in device.capacity["tpu.google.com"] ? ` +
+		`(device.capacity["tpu.google.com"].memory.compareTo(quantity("21474836480")) >= 0 && device.capacity["tpu.google.com"].memory.compareTo(quantity("32Gi")) <= 0) : ` +
+		`("tpuGen" in device.attributes["tpu.google.com"] && device.attributes["tpu.google.com"].tpuGen in ["v6e"])`
+	if got := tierBounds(devices, tier); got != want {
+		t.Errorf("CEL =\n%s\nwant\n%s", got, want)
 	}
 }
 
@@ -1516,13 +1526,13 @@ func TestTPUClaimSettings(t *testing.T) {
 	if sub.AllocationMode != resourcev1.DeviceAllocationModeExactCount || sub.Count != 2 {
 		t.Errorf("whole-node off: mode %s, count %d; want ExactCount, 2", sub.AllocationMode, sub.Count)
 	}
-	if want := `device.attributes["tpu.google.com"].tpuGen in ["v6e"]`; sub.Selectors[0].CEL.Expression != want {
+	if want := `device.attributes["tpu.google.com"].tpuGen in ["v6e"]`; !strings.Contains(sub.Selectors[0].CEL.Expression, want) {
 		t.Errorf("CEL = %s, want %s", sub.Selectors[0].CEL.Expression, want)
 	}
 
 	sized := placement.Tier{Name: "t1x48", Count: 1, FloorBytes: 20 * placement.GiB, CeilingBytes: 48 * placement.GiB}
 	sub = r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{sized}).Spec.Devices.Requests[0].FirstAvailable[0]
-	if want := `device.capacity["tpu.google.com"].memory`; !strings.Contains(sub.Selectors[0].CEL.Expression, want) {
+	if cel := sub.Selectors[0].CEL.Expression; !strings.HasPrefix(cel, `device.capacity["tpu.google.com"].memory`) || strings.Contains(cel, "tpuGen") {
 		t.Errorf("CEL = %s, want capacity bounds", sub.Selectors[0].CEL.Expression)
 	}
 }
