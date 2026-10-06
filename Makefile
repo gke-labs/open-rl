@@ -1,5 +1,5 @@
 .PHONY: server test lint fmt help render release-bundle push-vm pull-vm cluster-eval \
-	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer \
+	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer cloud-build-tpu-sampler \
 	cloud-deploy-api-server cloud-deploy-server \
 	cloud-rollout-api-server cloud-rollout-server cloud-rollout \
 	kind-host-setup kind-create kind-api-server kind-deploy \
@@ -143,12 +143,14 @@ build-images: require-gcp-project
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG) -f src/server/Dockerfile.api_server .
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-client:$(IMAGE_TAG) -f src/server/Dockerfile.client .
+	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG) -f src/server/Dockerfile.tpu_sampler .
 	$(if $(TORCH_TPU_WHEEL),DOCKER_BUILDKIT=1 docker build --build-arg TORCH_TPU_WHEEL=$(TORCH_TPU_WHEEL) -t $(CLOUD_REGISTRY)/open-rl-tpu-trainer:$(IMAGE_TAG) -f src/server/Dockerfile.tpu .)
 
 push-images: require-gcp-project
 	docker push $(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG)
 	docker push $(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG)
 	docker push $(CLOUD_REGISTRY)/open-rl-client:$(IMAGE_TAG)
+	docker push $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG)
 	$(if $(TORCH_TPU_WHEEL),docker push $(CLOUD_REGISTRY)/open-rl-tpu-trainer:$(IMAGE_TAG))
 	kubectl set image deployment/open-rl-api-server api-server=$(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=$(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
@@ -165,6 +167,7 @@ push-images: require-gcp-project
 #   make cloud-rollout-server    # CUDA worker image, ~20-40 min
 #   make cloud-rollout           # both, plus the client image
 #   make cloud-build-tpu-trainer # TPU trainer image; needs the torch_tpu wheel under wheels/
+#   make cloud-build-tpu-sampler # TPU sampler image (vllm-tpu)
 #
 # Tag for cloud-built images. A dirty tree gets a unique -dev<stamp> suffix so
 # uncommitted work never reuses the committed sha's tag, and so the kubelet is
@@ -200,6 +203,9 @@ cloud-build-client: require-gcp-project
 cloud-build-tpu-trainer: require-gcp-project
 	@set -- wheels/torch_tpu-*.whl; test $$# -eq 1 && test -f "$$1" || { echo "Put exactly one torch_tpu wheel under wheels/"; exit 2; }
 	$(CLOUD_BUILD) --ignore-file=.gcloudignore-tpu-trainer --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-trainer,_DOCKERFILE=src/server/Dockerfile.tpu,_TAG=$(CLOUD_IMAGE_TAG) .
+
+cloud-build-tpu-sampler: require-gcp-project
+	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_sampler,_TAG=$(CLOUD_IMAGE_TAG) .
 
 # Point the running workloads at the freshly built tag. Split from the build
 # steps so a tag built earlier can be re-deployed with
