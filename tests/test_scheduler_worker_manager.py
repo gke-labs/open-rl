@@ -416,6 +416,20 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertNotIn("OPEN_RL_TRAINER_BACKEND", {e["name"] for e in t_container["env"]})
     self.assertNotEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "ghcr.io/org/trainer:1")
 
+  def test_a_job_image_can_run_a_tpu_trainer(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1", "trainer_accel_prefs": ["tpu"]}
+    s = self.store_with("job-img-tpu", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-img-tpu", "trainer")
+
+    (trainer,) = self.api.created
+    self.assertEqual(trainer["spec"]["accelerator"]["type"], "TPU")
+    template_spec = trainer["spec"]["template"]["spec"]
+    container = template_spec["containers"][0]
+    self.assertEqual(container["image"], "ghcr.io/org/trainer:1")
+    self.assertEqual({e["name"]: e.get("value") for e in container["env"]}["OPEN_RL_DEVICE"], "tpu")
+    self.assertEqual(template_spec["tolerations"][0]["key"], "google.com/tpu")
+
   def test_release_owner_deletes_a_shared_lora_pair_and_nothing_else(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     s.kv_store["open_rl:model_meta:other"] = json.dumps({"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})

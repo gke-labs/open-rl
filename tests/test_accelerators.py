@@ -42,10 +42,12 @@ class CheckSupportedTest(unittest.TestCase):
     check_supported("lora", "pytorch", ["tpu"], ["tpu"])
     check_supported("lora", "automodel", ["gpu"], ["tpu"])
 
-  def test_a_tpu_trainer_runs_the_pytorch_backend_only(self) -> None:
-    for backend in ("automodel", "ghcr.io/org/trainer:1"):
-      with self.subTest(backend=backend), self.assertRaisesRegex(ValueError, f"openrl.trainer_backend={backend} needs a GPU trainer"):
-        check_supported("lora", backend, ["gpu", "tpu"], ["gpu"])
+  def test_a_tpu_trainer_refuses_automodel(self) -> None:
+    with self.assertRaisesRegex(ValueError, "openrl.trainer_backend=automodel needs a GPU trainer"):
+      check_supported("lora", "automodel", ["gpu", "tpu"], ["gpu"])
+
+  def test_a_tpu_trainer_takes_a_job_image(self) -> None:
+    check_supported("lora", "ghcr.io/org/trainer:1", ["tpu"], ["tpu"])
 
 
 class PodSpecTest(unittest.TestCase):

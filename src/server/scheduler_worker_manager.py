@@ -104,8 +104,8 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
 
 def worker_container(worker: Worker) -> tuple[str, list[str]]:
   """The image and command. An Automodel trainer, or one from an image the job
-  names, runs the python on its image's PATH. Both are GPU-only
-  (check_supported)."""
+  names, runs the python on its image's PATH. Automodel is GPU-only
+  (check_supported); a job's image for a TPU trainer must carry torch_tpu."""
   if worker.role == "trainer" and worker.meta.trainer_backend != "pytorch":
     image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/gke-labs/open-rl/automodel:latest")
     return image, ["python", "-u", "-m", worker_module(worker.role)]

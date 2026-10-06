@@ -33,8 +33,9 @@ def check_supported(
   with tpu in any position counts, so a later fallback cannot reach it."""
   if fine_tuning_type == "full" and ("tpu" in trainer_prefs or "tpu" in sampler_prefs):
     raise ValueError("TPU supports LoRA only; full fine-tuning needs a GPU")
-  if trainer_backend != "pytorch" and "tpu" in trainer_prefs:
-    raise ValueError(f"openrl.trainer_backend={trainer_backend} needs a GPU trainer")
+  # A job's own trainer image may run on TPU if it carries torch_tpu.
+  if trainer_backend == "automodel" and "tpu" in trainer_prefs:
+    raise ValueError("openrl.trainer_backend=automodel needs a GPU trainer")
 
 
 @dataclass(frozen=True)
