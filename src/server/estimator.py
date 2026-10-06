@@ -84,10 +84,10 @@ SAMPLER_KV_TOKENS = 8 * 8192  # eight max-length requests in flight
 # plus process overhead. Measured: 0.5B trainer 28Gi, sampler 20Gi; 8B FFT
 # sampler 39Gi steady; 7B FFT trainer OOM-killed at 110Gi.
 HOST_BYTES_PER_PARAM = {("full", "trainer"): 14, ("lora", "trainer"): 2, ("full", "sampler"): 2, ("lora", "sampler"): 2}
-# TPU workers need more: the trainer loads the model on CPU before moving it
-# to the chip. These are placeholders near the 96Gi limit every TPU run has
-# used, to be lowered from peaks measured in the final validation runs. Each
-# TPU worker holds a whole node, so erring high costs nothing.
+# TPU host use isn't measured yet. These are placeholders near the 96Gi limit
+# every TPU run has used, to be lowered from peaks measured in the final
+# validation runs. Each TPU worker holds a whole node, so erring high costs
+# nothing.
 HOST_OVERHEAD_BYTES = {("gpu", "trainer"): 20 * GIB, ("gpu", "sampler"): 24 * GIB, ("tpu", "trainer"): 94 * GIB, ("tpu", "sampler"): 94 * GIB}
 # Limits equal requests. Placement admits pods by request, so a pod that
 # could burst past it can push a co-seated neighbour into the kernel's OOM
