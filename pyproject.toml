@@ -58,6 +58,10 @@ vllm = [
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
     "vllm==0.30.0; sys_platform == 'linux'",
+    # Prebuilt FlashInfer kernels, pinned to the flashinfer-python vLLM brings.
+    # Without it a sampler JIT-builds kernels such as gdn_prefill_sm90 on every
+    # fresh pod, ~30 minutes at MAX_JOBS=4.
+    "flashinfer-jit-cache==0.6.18.post1; sys_platform == 'linux'",
 ]
 # TPU trainer. torch_tpu is installed separately and pairs with torch 2.11.0.
 tpu = [
@@ -156,6 +160,11 @@ name = "vllm-cu129"
 url = "https://wheels.vllm.ai/0.30.0/cu129"
 explicit = true
 
+[[tool.uv.index]]
+name = "flashinfer-cu129"
+url = "https://flashinfer.ai/whl/cu129"
+explicit = true
+
 [tool.uv.sources]
 # Pick the torch build from the user-facing cpu/gpu extras; vllm always uses CUDA torch.
 # Both TPU extras use the CPU build.
@@ -176,6 +185,9 @@ torchvision = [
 ]
 vllm = [
     { index = "vllm-cu129", extra = "vllm", marker = "sys_platform == 'linux'" },
+]
+flashinfer-jit-cache = [
+    { index = "flashinfer-cu129", extra = "vllm", marker = "sys_platform == 'linux'" },
 ]
 
 [tool.ruff]

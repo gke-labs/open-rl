@@ -50,3 +50,36 @@ def gpu_memory_utilization() -> float:
   if explicit:
     return float(explicit)
   return 0.90
+
+
+def sampler_batch_limits(device_memory_bytes: int | None = None) -> dict[str, int]:
+  """vLLM's concurrency for this device: sequences in flight and prefill tokens per step.
+
+  A sweep's sampler serves many groups at once, and the defaults (64
+  sequences, 2048 prefill tokens) leave most of an 80 GB card idle. Explicit
+  VLLM_MAX_NUM_SEQS / VLLM_MAX_NUM_BATCHED_TOKENS win; otherwise size by memory.
+  """
+  if device_memory_bytes is None:
+    device_memory_bytes = detected_device_memory_bytes()
+  gib = device_memory_bytes / 2**30
+  if gib >= 60:
+    seqs, tokens = 256, 16384
+  elif gib >= 36:
+    seqs, tokens = 128, 8192
+  else:
+    seqs, tokens = 64, 4096
+  return {
+    "max_num_seqs": int(os.getenv("VLLM_MAX_NUM_SEQS", seqs)),
+    "max_num_batched_tokens": int(os.getenv("VLLM_MAX_NUM_BATCHED_TOKENS", tokens)),
+  }
+
+
+def detected_device_memory_bytes() -> int:
+  try:
+    import torch
+
+    if torch.cuda.is_available():
+      return int(torch.cuda.get_device_properties(0).total_memory)
+  except Exception:
+    pass
+  return 0

@@ -961,6 +961,15 @@ wheels = [
 ]
 
 [[package]]
+name = "flashinfer-jit-cache"
+version = "0.6.18.post1+cu129"
+source = { registry = "https://flashinfer.ai/whl/cu129" }
+wheels = [
+    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_jit_cache-0.6.18.post1+cu129-cp39-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:e1a28730755dcef5c66dae87fafb06f9b73f638641f915521b7fc66686aac15c" },
+    { url = "https://github.com/flashinfer-ai/flashinfer/releases/download/v0.6.18.post1/flashinfer_jit_cache-0.6.18.post1+cu129-cp39-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:27704548e61c708ca4c9a56119a7c4fbaddda6ebcd061a394e087e1fa5725dce" },
+]
+
+[[package]]
 name = "flashinfer-python"
 version = "0.6.18.post1"
 source = { registry = "https://pypi.org/simple" }
@@ -2535,6 +2544,7 @@ tpu-sampler = [
     { name = "vllm-tpu", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 vllm = [
+    { name = "flashinfer-jit-cache", marker = "sys_platform == 'linux'" },
     { name = "torch", version = "2.13.0+cu129", source = { registry = "https://download.pytorch.org/whl/cu129" }, marker = "sys_platform == 'linux'" },
     { name = "torch-c-dlpack-ext", marker = "sys_platform == 'linux'" },
     { name = "torchaudio", marker = "sys_platform == 'linux'" },
@@ -2553,6 +2563,7 @@ requires-dist = [
     { name = "einops", marker = "extra == 'cpu'" },
     { name = "fastapi" },
     { name = "flash-linear-attention", marker = "extra == 'gpu'", specifier = "==0.5.1" },
+    { name = "flashinfer-jit-cache", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = "==0.6.18.post1", index = "https://flashinfer.ai/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
     { name = "httpx" },
     { name = "kubernetes", marker = "extra == 'cluster'", specifier = ">=29" },
     { name = "numpy", marker = "extra == 'cpu'" },

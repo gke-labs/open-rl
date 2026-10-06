@@ -26,7 +26,7 @@ def device_env(value: str | None):
 
 class TestResolveDevice(unittest.TestCase):
   def test_unset_auto_detects(self) -> None:
-    cases = [((True, True), "cuda"), ((False, True), "mps"), ((False, False), "cpu")]
+    cases = [((True, True), "cuda:0"), ((False, True), "mps"), ((False, False), "cpu")]
     for (cuda, mps), expected in cases:
       with (
         self.subTest(expected=expected),
@@ -35,6 +35,10 @@ class TestResolveDevice(unittest.TestCase):
         patch("torch.backends.mps.is_available", return_value=mps),
       ):
         self.assertEqual(resolve_device(), torch.device(expected))
+
+  def test_cuda_is_this_ranks_gpu(self) -> None:
+    with device_env(None), patch.dict(os.environ, {"LOCAL_RANK": "2"}), patch("torch.cuda.is_available", return_value=True):
+      self.assertEqual(resolve_device(), torch.device("cuda", 2))
 
   def test_explicit_device_wins_over_cuda(self) -> None:
     with device_env("CPU"), patch("torch.cuda.is_available", return_value=True):

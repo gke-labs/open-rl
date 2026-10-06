@@ -4,9 +4,13 @@ import os
 
 import torch
 
+from training.distributed import local_rank
+
 
 def resolve_device() -> torch.device:
   """Return the device named by OPEN_RL_DEVICE, else the first available of cuda, mps, cpu.
+
+  Auto-detected cuda is this rank's GPU under torchrun.
 
   tpu is used only when asked for. Importing torch_tpu registers the "tpu"
   device type, but only on a host with TPU chips and when
@@ -25,7 +29,7 @@ def resolve_device() -> torch.device:
   if name:
     return torch.device(name)
   if torch.cuda.is_available():
-    return torch.device("cuda")
+    return torch.device("cuda", local_rank())
   if torch.backends.mps.is_available():
     return torch.device("mps")
   return torch.device("cpu")
