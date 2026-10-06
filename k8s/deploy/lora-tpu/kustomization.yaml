@@ -4,7 +4,6 @@ kind: Kustomization
 # LoRA on GKE TPU nodes served by the TPU DRA driver. Same control plane as
 # k8s/deploy/lora; the scheduler's built-in TPU defaults need no settings.
 # Models run on TPU when the client sets the openrl.*_accel_prefs settings.
-# See docs/setup/gke-tpu.md.
 namespace: openrl-system
 resources:
   - ../lora
