@@ -27,19 +27,14 @@ def parse_accel_prefs(value: Any) -> Any:
 
 
 def check_supported(
-  fine_tuning_type: FineTuningType, trainer_backend: str, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator], launches_pods: bool
+  fine_tuning_type: FineTuningType, trainer_backend: str, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator]
 ) -> None:
   """Refuse a model whose workers could land where they cannot run. A list
-  with tpu in any position counts, so a later fallback cannot reach it.
-  launches_pods: the server runs workers as scheduler pods, the only mode
-  with TPU workers."""
+  with tpu in any position counts, so a later fallback cannot reach it."""
   if fine_tuning_type == "full" and ("tpu" in trainer_prefs or "tpu" in sampler_prefs):
     raise ValueError("TPU supports LoRA only; full fine-tuning needs a GPU")
   if trainer_backend != "pytorch" and "tpu" in trainer_prefs:
     raise ValueError(f"openrl.trainer_backend={trainer_backend} needs a GPU trainer")
-  # TODO: lift for the local worker manager with the TPU VM path.
-  if ("tpu" in trainer_prefs or "tpu" in sampler_prefs) and not launches_pods:
-    raise ValueError("TPU workers need a server that launches them as scheduler pods (OPEN_RL_WORKER_MANAGER=scheduler)")
 
 
 @dataclass(frozen=True)

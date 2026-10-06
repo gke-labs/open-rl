@@ -29,29 +29,23 @@ class AcceleratorForTest(unittest.TestCase):
 
 class CheckSupportedTest(unittest.TestCase):
   def test_gpu_takes_lora_and_full(self) -> None:
-    for launches_pods in (False, True):
-      check_supported("lora", "pytorch", ["gpu"], ["gpu"], launches_pods)
-      check_supported("full", "pytorch", ["gpu"], ["gpu"], launches_pods)
-      check_supported("lora", "automodel", ["gpu"], ["gpu"], launches_pods)
+    check_supported("lora", "pytorch", ["gpu"], ["gpu"])
+    check_supported("full", "pytorch", ["gpu"], ["gpu"])
+    check_supported("lora", "automodel", ["gpu"], ["gpu"])
 
   def test_full_fine_tuning_refuses_tpu_anywhere_in_either_list(self) -> None:
     for trainer, sampler in ((["tpu"], ["gpu"]), (["gpu"], ["tpu"]), (["gpu", "tpu"], ["gpu"])):
       with self.subTest(trainer=trainer, sampler=sampler), self.assertRaisesRegex(ValueError, "LoRA only"):
-        check_supported("full", "pytorch", trainer, sampler, launches_pods=True)
+        check_supported("full", "pytorch", trainer, sampler)
 
-  def test_tpu_lora_runs_in_scheduler_mode(self) -> None:
-    check_supported("lora", "pytorch", ["tpu"], ["tpu"], launches_pods=True)
-    check_supported("lora", "automodel", ["gpu"], ["tpu"], launches_pods=True)
-
-  def test_tpu_is_refused_outside_scheduler_mode(self) -> None:
-    for trainer, sampler in ((["tpu"], ["gpu"]), (["gpu"], ["tpu", "gpu"])):
-      with self.subTest(trainer=trainer, sampler=sampler), self.assertRaisesRegex(ValueError, "OPEN_RL_WORKER_MANAGER=scheduler"):
-        check_supported("lora", "pytorch", trainer, sampler, launches_pods=False)
+  def test_tpu_takes_lora(self) -> None:
+    check_supported("lora", "pytorch", ["tpu"], ["tpu"])
+    check_supported("lora", "automodel", ["gpu"], ["tpu"])
 
   def test_a_tpu_trainer_runs_the_pytorch_backend_only(self) -> None:
     for backend in ("automodel", "ghcr.io/org/trainer:1"):
       with self.subTest(backend=backend), self.assertRaisesRegex(ValueError, f"openrl.trainer_backend={backend} needs a GPU trainer"):
-        check_supported("lora", backend, ["gpu", "tpu"], ["gpu"], launches_pods=True)
+        check_supported("lora", backend, ["gpu", "tpu"], ["gpu"])
 
 
 class PodSpecTest(unittest.TestCase):

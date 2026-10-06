@@ -440,8 +440,7 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("A trainer image needs a server that launches workers as pods")
   if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
     raise ValueError("The automodel trainer supports LoRA only")
-  launches_pods = worker_manager is not None and not isinstance(worker_manager, LocalWorkerManager)
-  check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs, launches_pods)
+  check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs)
   # Nothing parks an exclusive trainer, so it stays on the GPU.
   if settings.exclusive:
     full_config["cpu_offload"] = False
