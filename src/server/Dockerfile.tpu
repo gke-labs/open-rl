@@ -1,0 +1,74 @@
+# syntax=docker/dockerfile:1
+
+# TPU trainer image. Same layout as src/server/Dockerfile, with no CUDA: a
+# plain Ubuntu base and the `tpu` extra instead of `gpu` + `vllm`.
+#
+# torch_tpu is not on a public index yet. The build context must carry its
+# wheel; TORCH_TPU_WHEEL is its path relative to the repo root. wheels/ is
+# gitignored and kept out of the other images' contexts; this image's own
+# Dockerfile.tpu.dockerignore and /.gcloudignore-tpu-trainer keep it in.
+
+# Holds only the wheel, so it is bind-mounted for the install and never copied
+# into the image.
+FROM scratch AS torch-tpu-wheel
+ARG TORCH_TPU_WHEEL=wheels/torch_tpu-*.whl
+COPY ${TORCH_TPU_WHEEL} /
+
+FROM ubuntu:22.04
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    DEBIAN_FRONTEND=noninteractive \
+    UV_FROZEN=1
+
+# git fetches the `cluster` extra's git dependency. Everything installs from
+# wheels, so no compiler.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/uv
+ENV PATH="/uv/bin:$PATH"
+
+# Install Python 3.12 via uv
+RUN uv python install 3.12
+
+WORKDIR /app
+
+# Copy dependency files
+COPY pyproject.toml .
+COPY uv.lock .
+
+# Same uv settings as src/server/Dockerfile. UV_NO_SYNC also keeps `uv run`
+# from syncing at start, which would remove torch_tpu (it is not in uv.lock).
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_SYNC=1
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --extra tpu --extra cluster
+
+# torch_tpu registers the "tpu" torch device. Its own requirements (libtpu,
+# ...) resolve from PyPI. The synced env is a constraint, so the install can add
+# packages but not change a locked one: a torch_tpu needing a newer torch fails
+# here instead of pulling CUDA torch.
+RUN --mount=type=bind,from=torch-tpu-wheel,target=/tmp/torch_tpu \
+    --mount=type=cache,target=/root/.cache/uv \
+    uv pip freeze --python /app/.venv/bin/python > /tmp/locked.txt \
+    && uv pip install --python /app/.venv/bin/python --constraint /tmp/locked.txt /tmp/torch_tpu/*.whl
+
+# Copy source code. The project is not installed: a later `uv sync` would
+# remove torch_tpu, and PYTHONPATH below exposes the source.
+COPY --exclude=wheels . .
+
+# The venv is on PATH so a job that names this image as its trainer runs
+# `python -u -m server.training_requests_processor` like any other image.
+# TORCH_DEVICE_BACKEND_AUTOLOAD stays unset: torch_tpu only registers its
+# device with autoload on.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src:/app:$PYTHONPATH" \
+    OPEN_RL_DEVICE=tpu
+
+CMD ["uv", "run", "python", "-u", "-m", "server.training_requests_processor"]
