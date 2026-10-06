@@ -1,6 +1,6 @@
 # GKE Setup Guide
 
-This guide describes how to create a minimal GKE Standard cluster to run OpenRL workloads. It installs the OpenRL API server, the scheduler, Redis, and a shared Filestore PVC into the `openrl-system` namespace. Trainer and sampler workers are not deployed up front: the API server asks the scheduler for one when a client creates a model, and the scheduler places it on a GPU through a DRA `ResourceClaim`.
+This guide describes how to create a minimal GKE Standard cluster to run OpenRL workloads. It installs the OpenRL API server, the scheduler, Redis, and a shared Filestore PVC into the `openrl-system` namespace. Trainer and sampler workers are not deployed up front: the API server asks the scheduler for one when a client creates a model, and the scheduler places it on a GPU through a DRA `ResourceClaim`. For TPU nodes, see [LoRA on GKE TPUs](gke-tpu.md).
 
 ## Shape
 
