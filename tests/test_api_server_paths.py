@@ -150,18 +150,20 @@ class AccelPrefsTest(ApiServerTest):
     self.assertEqual(response.status_code, 400)
     self.assertIn("LoRA only", response.json()["error"])
 
-  def test_tpu_is_refused_until_tpu_workers_exist(self) -> None:
+  def test_tpu_is_refused_outside_scheduler_mode(self) -> None:
     user_metadata = {"openrl.trainer_accel_prefs": "tpu|gpu"}
-    response = self.post("create_model", {"base_model": "m", "user_metadata": user_metadata})
-    self.assertEqual(response.status_code, 400)
-    self.assertIn("not supported yet", response.json()["error"])
-    with tempfile.TemporaryDirectory() as directory:
-      for name, content in (("metadata.json", {"base_model": "checkpoint-base"}), ("adapter_config.json", {"r": 8})):
-        with open(os.path.join(directory, name), "w") as f:
-          json.dump(content, f)
-      restored = self.post("create_model_from_state", {"state_path": directory, "user_metadata": user_metadata})
-    self.assertEqual(restored.status_code, 400)
-    self.assertEqual(api_server.store.queues, {})
+    for manager in (None, object.__new__(LocalWorkerManager)):
+      with self.subTest(manager=manager), patch.object(api_server, "worker_manager", manager):
+        response = self.post("create_model", {"base_model": "m", "user_metadata": user_metadata})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("OPEN_RL_WORKER_MANAGER=scheduler", response.json()["error"])
+        with tempfile.TemporaryDirectory() as directory:
+          for name, content in (("metadata.json", {"base_model": "checkpoint-base"}), ("adapter_config.json", {"r": 8})):
+            with open(os.path.join(directory, name), "w") as f:
+              json.dump(content, f)
+          restored = self.post("create_model_from_state", {"state_path": directory, "user_metadata": user_metadata})
+        self.assertEqual(restored.status_code, 400)
+        self.assertEqual(api_server.store.queues, {})
 
 
 class SaveSeqIdZeroTest(ApiServerTest):
