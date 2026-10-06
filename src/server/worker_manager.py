@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Protocol
 
 from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+from server.accelerators import accelerator_for, local_launch
 from server.estimator import footprint
 from server.model_metadata import TrainingModelMetadata, decode_model_metadata
 from server.store import get_state_store
@@ -156,8 +157,11 @@ class LocalWorkerManager:
       gpus = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES" if role == "trainer" else "SAMPLER_CUDA_VISIBLE_DEVICES")
       if gpus:
         env["CUDA_VISIBLE_DEVICES"] = gpus
-      extras = ["gpu"] if role == "trainer" else ["gpu", "vllm"]
-      command = python_command(extras, worker_module(role), worker_args(runtime, role, is_lora))
+      launch = local_launch(accelerator_for(meta, role), role)
+      env.update(launch.env)
+      if launch.env_dir:
+        env["UV_PROJECT_ENVIRONMENT"] = str(self.project_dir / launch.env_dir)
+      command = python_command(launch.extras, worker_module(role), worker_args(runtime, role, is_lora))
       log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
       log_dir.mkdir(parents=True, exist_ok=True)
       with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:

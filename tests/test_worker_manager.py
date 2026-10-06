@@ -248,6 +248,108 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       self.assertEqual(kwargs_s["env"].get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "delta")
 
 
+class LocalWorkerManagerCommandTest(unittest.TestCase):
+  """The exact command and env the local manager launches each worker with."""
+
+  BASE_ENV = {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm", "TRAINER_TPU_VISIBLE_CHIPS": "1"}
+
+  def launch(self, role: str, env: dict[str, str], **prefs) -> tuple[list[str], dict[str, str]]:
+    import tempfile
+    from pathlib import Path
+
+    from server.model_metadata import TrainingModelMetadata
+
+    meta = TrainingModelMetadata(base_model="Qwen/Qwen3-0.6B", fine_tuning_type="lora", **prefs)
+    with (
+      tempfile.TemporaryDirectory() as tmp,
+      patch.dict("os.environ", {**env, "OPEN_RL_TMP_DIR": tmp}, clear=True),
+      patch("server.worker_manager.metadata_for", return_value=meta),
+      patch("server.worker_manager.shutil.which", return_value="/usr/bin/uv"),
+      patch("server.worker_manager.subprocess.Popen") as popen,
+    ):
+      LocalWorkerManager(project_dir=Path("/repo")).ensure("model-1", role)
+    args, kwargs = popen.call_args
+    self.assertEqual(kwargs["cwd"], Path("/repo"))
+    launched_env = dict(kwargs["env"])
+    launched_env.pop("OPEN_RL_TMP_DIR")
+    return args[0], launched_env
+
+  def test_gpu_trainer_command_and_env_are_unchanged(self) -> None:
+    command, env = self.launch("trainer", {**self.BASE_ENV, "TRAINER_CUDA_VISIBLE_DEVICES": "0"})
+
+    self.assertEqual(
+      command,
+      [
+        "uv", "run", "--extra", "gpu", "python", "-u", "-m", "server.training_requests_processor",
+        "--model-id", "Qwen/Qwen3-0.6B", "--active-tenant-set-id", "Qwen/Qwen3-0.6B-1",
+      ],
+    )  # fmt: skip
+    self.assertEqual(
+      env,
+      {
+        **self.BASE_ENV,
+        "TRAINER_CUDA_VISIBLE_DEVICES": "0",
+        "BASE_MODEL": "Qwen/Qwen3-0.6B",
+        "OPEN_RL_BASE_MODEL": "Qwen/Qwen3-0.6B",
+        "OPEN_RL_ENABLE_FFT": "false",
+        "OPEN_RL_FINE_TUNING_TYPE": "lora",
+        "OPEN_RL_ACCELERATOR_MEMORY": "5487067136",
+        "OPEN_RL_WEIGHT_SYNC_STRATEGY": "delta",
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "OPEN_RL_TIME_SLICE_JOB_ID": "trainer-Qwen/Qwen3-0.6B",
+        "OPEN_RL_TIME_SLICE_GROUP": "trainers",
+        "CUDA_VISIBLE_DEVICES": "0",
+      },
+    )
+
+  def test_gpu_sampler_command_and_env_are_unchanged(self) -> None:
+    command, env = self.launch("sampler", {**self.BASE_ENV, "SAMPLER_CUDA_VISIBLE_DEVICES": "1"})
+
+    self.assertEqual(
+      command,
+      ["uv", "run", "--extra", "gpu", "--extra", "vllm", "python", "-u", "-m", "server.vllm_sampler", "--model-id", "Qwen/Qwen3-0.6B"],
+    )
+    self.assertEqual(
+      env,
+      {
+        **self.BASE_ENV,
+        "SAMPLER_CUDA_VISIBLE_DEVICES": "1",
+        "BASE_MODEL": "Qwen/Qwen3-0.6B",
+        "OPEN_RL_BASE_MODEL": "Qwen/Qwen3-0.6B",
+        "OPEN_RL_ENABLE_FFT": "false",
+        "OPEN_RL_FINE_TUNING_TYPE": "lora",
+        "OPEN_RL_ACCELERATOR_MEMORY": "10542424064",
+        "OPEN_RL_WEIGHT_SYNC_STRATEGY": "delta",
+        "OPEN_RL_MODEL_ID": "Qwen/Qwen3-0.6B",
+        "VLLM_SERVER_DEV_MODE": "1",
+        "VLLM_ALLOW_INSECURE_SERIALIZATION": "1",
+        "OPEN_RL_TIME_SLICE_JOB_ID": "sampler-Qwen/Qwen3-0.6B",
+        "OPEN_RL_TIME_SLICE_GROUP": "samplers",
+        "CUDA_VISIBLE_DEVICES": "1",
+      },
+    )
+
+  def test_tpu_trainer_runs_in_its_own_env_on_its_chip(self) -> None:
+    command, env = self.launch("trainer", {**self.BASE_ENV, "TORCH_DEVICE_BACKEND_AUTOLOAD": "0"}, trainer_accel_prefs=["tpu", "gpu"])
+
+    self.assertEqual(command[:4], ["uv", "run", "--extra", "tpu"])
+    self.assertIn("server.training_requests_processor", command)
+    self.assertEqual(env["UV_PROJECT_ENVIRONMENT"], "/repo/.venv-tpu-trainer")
+    self.assertEqual(env["OPEN_RL_DEVICE"], "tpu")
+    self.assertEqual(env["TORCH_DEVICE_BACKEND_AUTOLOAD"], "1")
+    self.assertEqual(env["TPU_VISIBLE_CHIPS"], "1")
+    self.assertEqual(env["TPU_PROCESS_BOUNDS"], "1,1,1")
+    self.assertEqual(env["TPU_CHIPS_PER_PROCESS_BOUNDS"], "1,1,1")
+
+  def test_tpu_trainer_refuses_a_multi_chip_pin(self) -> None:
+    with self.assertRaisesRegex(ValueError, "one chip"):
+      self.launch("trainer", {**self.BASE_ENV, "TRAINER_TPU_VISIBLE_CHIPS": "0,1"}, trainer_accel_prefs=["tpu"])
+
+  def test_tpu_sampler_is_refused_until_tpu_samplers_exist(self) -> None:
+    with self.assertRaisesRegex(NotImplementedError, "TPU samplers"):
+      self.launch("sampler", self.BASE_ENV, sampler_accel_prefs=["tpu"])
+
+
 class ApiServerMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
   def setUp(self) -> None:
     self.store = StoreStub()
