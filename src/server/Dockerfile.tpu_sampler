@@ -40,17 +40,17 @@ ENV UV_LINK_MODE=copy \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra tpu-sampler --extra cluster
 
-# Copy source code. .dockerignore keeps wheels/ out. The project is not
+# Only src/: the sampler needs nothing else from the repo. The project is not
 # installed, so the delta-sync vLLM plugin (FFT only) is not registered;
 # PYTHONPATH below exposes the source.
-COPY . .
+COPY src src
 
 # MODEL_IMPL_TYPE=vllm: tpu-inference has LoRA only on its vLLM model path, and
 # would otherwise pick its JAX path for models such as Qwen.
 # TORCH_DEVICE_BACKEND_AUTOLOAD=0: keeps a TorchTPU install from claiming every
 # chip on `import torch`.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app/src:/app:$PYTHONPATH" \
+    PYTHONPATH="/app/src:$PYTHONPATH" \
     MODEL_IMPL_TYPE=vllm \
     TORCH_DEVICE_BACKEND_AUTOLOAD=0
 
