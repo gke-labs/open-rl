@@ -128,9 +128,8 @@ class AccelPrefsTest(ApiServerTest):
     self.assertEqual(self.prefs(self.post("create_model", {"base_model": "m"})), (["gpu"], ["gpu"]))
 
   def test_prefs_come_from_tags_and_user_metadata(self) -> None:
-    with patch.object(api_server, "check_supported"):
-      session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
-      response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
+    session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
+    response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
     self.assertEqual(self.prefs(response), (["tpu", "gpu"], ["tpu", "gpu"]))
 
   def test_bad_prefs_are_refused(self) -> None:
