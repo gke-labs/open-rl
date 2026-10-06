@@ -20,6 +20,7 @@ Examples:
   uv run --extra gpu python scripts/run_training_e2e.py scenario=tiny-lora
   uv run --extra gpu python scripts/run_training_e2e.py scenario=tiny-rl steps=4
   uv run --extra gpu python scripts/run_training_e2e.py scenario=lora-textsql
+  uv run --extra gpu python scripts/run_training_e2e.py scenario=tiny-lora accelerator=tpu
   uv run --extra gpu python scripts/run_training_e2e.py scenario=fft-gsm8k extra='batch=2 rank=32'
   uv run --extra gpu python scripts/run_training_e2e.py scenario=fft-textsql-rl-x2 steps=40 \
       base_model=google/gemma-4-e2b extra_a='rl.learning_rate=1e-6' extra_b='rl.learning_rate=5e-6'
@@ -28,7 +29,10 @@ The example scripts validate their own results and exit nonzero on failure.
 `base_url=...` targets an existing backend instead of starting one. `steps=N`
 sets the example's step count and `extra='k=v ...'` forwards additional chz
 overrides to it; two-job scenarios also take `extra_a=` / `extra_b=`, applied on
-top of `extra=` to job-a / job-b only. The examples uv environment is kept separate from the root
+top of `extra=` to job-a / job-b only. `accelerator=tpu` adds
+openrl.trainer_accel_prefs=tpu and openrl.sampler_accel_prefs=tpu to the
+examples' TINKER_TAGS, so the API server (started here or at `base_url`) puts
+their workers on TPU. The examples uv environment is kept separate from the root
 server/eval uv environment; override that path with
 OPEN_RL_EXAMPLES_UV_PROJECT_ENVIRONMENT if needed.
 """
@@ -112,6 +116,8 @@ class RunConfig:
   host: str = "127.0.0.1"
   port: int | None = None
   uv_extra: str = "gpu"
+  # tpu asks the API server for TPU trainers and samplers through TINKER_TAGS.
+  accelerator: Literal["gpu", "tpu"] = "gpu"
   eval_uv_extra: str = "vllm"
   log_dir: str = "/tmp/open-rl-training-tests"
   startup_timeout: float = 300.0
@@ -333,6 +339,17 @@ def clean_cli_extra(extra: str) -> list[str]:
   return [token for token in shlex.split(extra) if not (token.startswith("weight_sync_strategy=") or token.startswith("jitter_sec="))]
 
 
+def with_accelerator_tags(env: dict[str, str], accelerator: str) -> None:
+  """Add the accel prefs tags for tpu to TINKER_TAGS. They replace any the
+  caller already set, since the SDK keeps tags in a set and a duplicate key
+  would resolve in arbitrary order."""
+  if accelerator == "gpu":
+    return
+  keys = ("openrl.trainer_accel_prefs", "openrl.sampler_accel_prefs")
+  kept = [tag for tag in env.get("TINKER_TAGS", "").split(",") if tag and tag.partition("=")[0] not in keys]
+  env["TINKER_TAGS"] = ",".join([*kept, *(f"{key}={accelerator}" for key in keys)])
+
+
 def examples_env(config: RunConfig) -> dict[str, str]:
   env = os.environ.copy()
   env["OPEN_RL_TMP_DIR"] = str(open_rl_tmp_dir(config))
@@ -347,6 +364,7 @@ def examples_env(config: RunConfig) -> dict[str, str]:
     env["OPEN_RL_FINE_TUNING_TYPE"] = "full"
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
+  with_accelerator_tags(env, config.accelerator)
   return env
 
 
