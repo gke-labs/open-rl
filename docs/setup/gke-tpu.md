@@ -1,8 +1,8 @@
 # LoRA on GKE TPUs
 
 This guide runs OpenRL LoRA training on Cloud TPU v6e nodes in GKE. It uses the
-same control plane as the GPU setup in [GKE Setup Guide](gke-setup.md): the API
-server, the scheduler, Redis and a shared Filestore PVC in `openrl-system`. The
+same control plane as [Getting started](../getting-started.md): the API server,
+the scheduler, Redis and a shared volume in `openrl-system`. The
 `k8s/deploy/lora-tpu` overlay adds what TPU workers need:
 
 - the TPU trainer and sampler images;
@@ -33,65 +33,72 @@ Models that don't ask get GPU workers.
 - **Each new input shape compiles once.** The trainer pads batches to
   power-of-two shapes to limit this, but the first steps are slow.
 
-## Shape
-
-| Component | Minimum used here | Why |
-| --- | --- | --- |
-| GKE version | `1.34` or newer | The TPU DRA driver uses the `resource.k8s.io/v1` API. |
-| CPU node pool | `1 x e2-standard-4` | API server, scheduler, Redis, system pods. |
-| TPU node pool | `2 x ct6e-standard-4t` | Four v6e chips per node. One node per worker: a trainer and a sampler. |
-| Shared storage | `1Ti standard-rwx` Filestore PVC | Adapter snapshots, checkpoints and the Hugging Face cache. |
+You need `gcloud`, `kubectl`, `helm`, `kustomize`, `git` and
+[uv](https://docs.astral.sh/uv/) on your machine, and a checkout of this repo.
 
 ## 1. Create the cluster
 
-Choose a zone with v6e capacity. v6e quota is often zero by default, so you may
-need a quota increase or a reservation.
+This creates a GKE Standard cluster with one CPU node (`e2-standard-4`) for the
+API server, scheduler and Redis, and two TPU nodes (`ct6e-standard-4t`, four
+v6e chips each) for one trainer and one sampler. Pick a region and zone with
+v6e capacity. v6e quota is often zero by default, so you may need a quota
+increase or a reservation:
 
 ```bash
 export PROJECT_ID="$(gcloud config get-value project)"
 export REGION="us-central2"
 export ZONE="us-central2-b"
-export CLUSTER="open-rl-tpu"
+export CLUSTER="openrl-tpu"
 export REGISTRY="${REGION}-docker.pkg.dev/${PROJECT_ID}/open-rl"
 ```
 
-Create the cluster with a CPU pool and the Filestore CSI driver. Add
-`--cluster-version` if the release channel's default is older than 1.34:
+Enable the APIs, create the cluster, and enable the Filestore CSI driver, which
+provides the shared volume OpenRL uses. The TPU DRA driver needs GKE 1.34 or
+newer; add `--cluster-version` if the release channel default is older:
 
 ```bash
+gcloud services enable compute.googleapis.com container.googleapis.com file.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+
 gcloud container clusters create "${CLUSTER}" \
-  --location="${ZONE}" \
-  --release-channel=rapid \
+  --location="${REGION}" \
+  --node-locations="${ZONE}" \
+  --release-channel=regular \
   --machine-type=e2-standard-4 \
   --num-nodes=1 \
-  --disk-size=100 \
-  --addons=GcpFilestoreCsiDriver
+  --disk-size=100
+
+gcloud container clusters update "${CLUSTER}" \
+  --location="${REGION}" \
+  --update-addons=GcpFilestoreCsiDriver=ENABLED
 ```
 
-Add the TPU pool. Two labels matter:
+If your project has no `default` VPC network, the Filestore storage classes
+cannot provision; create a `StorageClass` that names your network and use it as
+described in [Use different storage](lora-dra.md#use-different-storage).
+
+Add the TPU node pool. Two labels matter:
 
 - `cloud.google.com/gke-tpu-dra-driver=true` turns off GKE's TPU device plugin
   on these nodes, so the DRA driver can manage the chips.
-- `openrl.io/enabled=true` opts the nodes in to the OpenRL scheduler. Set it on
+- `openrl.io/enabled=true` lets the OpenRL scheduler use the nodes. Set it on
   the pool, not on nodes, so a recreated node keeps it.
 
 ```bash
-gcloud container node-pools create tpu-v6e \
+gcloud container node-pools create openrl-v6e \
   --cluster="${CLUSTER}" \
-  --location="${ZONE}" \
+  --location="${REGION}" \
+  --node-locations="${ZONE}" \
   --machine-type=ct6e-standard-4t \
+  --node-labels=openrl.io/enabled=true,cloud.google.com/gke-tpu-dra-driver=true \
   --num-nodes=2 \
-  --disk-size=200 \
-  --node-labels=cloud.google.com/gke-tpu-dra-driver=true,openrl.io/enabled=true
+  --disk-size=200
+
+gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 ```
 
 Don't pass `--tpu-topology`: GKE then treats the pool as a single one-node
 slice and refuses more than one node. To use a reservation, add
 `--reservation-affinity=specific --reservation=<name>`.
-
-```bash
-gcloud container clusters get-credentials "${CLUSTER}" --location="${ZONE}"
-```
 
 ## 2. Install the TPU DRA driver
 
@@ -103,9 +110,8 @@ its image as its README describes, then install it:
 
 ```bash
 git clone https://github.com/kubernetes-sigs/dra-driver-google-tpu
-cd dra-driver-google-tpu
 helm upgrade -i --create-namespace -n dra-driver-google-tpu dra-driver-google-tpu \
-  deployments/helm/dra-driver-google-tpu \
+  dra-driver-google-tpu/deployments/helm/dra-driver-google-tpu \
   --set image.repository=<driver-image> \
   --set image.tag=<driver-tag> \
   --set kubeletPlugin.priorityClassName="" \
@@ -114,7 +120,6 @@ helm upgrade -i --create-namespace -n dra-driver-google-tpu dra-driver-google-tp
   --set 'kubeletPlugin.tolerations[0].effect=NoSchedule' \
   --set 'kubeletPlugin.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].key=cloud.google.com/gke-tpu-dra-driver' \
   --set 'kubeletPlugin.affinity.nodeAffinity.requiredDuringSchedulingIgnoredDuringExecution.nodeSelectorTerms[0].matchExpressions[0].operator=Exists'
-cd -
 ```
 
 The tolerations let the driver's kubelet plugin run on the tainted TPU nodes,
@@ -123,7 +128,8 @@ the driver in its default mode. Its shares mode lets several claims hold the
 same node, so several workers would land on one node and fail to open the chips
 another worker already holds.
 
-Check that each TPU node has a slice from driver `tpu.google.com`:
+When the driver is up, each TPU node has a `ResourceSlice` from driver
+`tpu.google.com`:
 
 ```bash
 kubectl get resourceslices
@@ -132,7 +138,7 @@ kubectl get resourceslices
 ## 3. Build the TPU images
 
 TPU workers need two images of their own. Neither is published, so build them
-into your registry:
+into your registry from the root of this repo:
 
 - **Trainer:** PyTorch with TorchTPU. TorchTPU is not on a public package index
   yet, so put its wheel under `wheels/` first (exactly one). Build it from
@@ -167,14 +173,20 @@ images:
     newName: ${REGISTRY}/open-rl-tpu-sampler
     newTag: v1
 EOF
+```
+
+Render it with the control plane images pinned and apply it. `latest` follows
+`main`; a release tag pins that release. Server-side apply is required because
+the Workload CRD is larger than the client-side apply limit:
+
+```bash
 make render OVERLAY=k8s/deploy/my-lora-tpu VERSION=latest | kubectl apply --server-side -f -
 ```
 
-`VERSION` pins the control plane images as in [GKE Setup Guide](gke-setup.md).
 The same overlay is the place to change the worker env, for example a
 `configMapGenerator` entry for `open-rl-tpu-worker-env` with `behavior: replace`.
 
-Wait for the PVC and the control plane:
+Wait for the shared volume to bind and for each component to become ready:
 
 ```bash
 kubectl -n openrl-system wait --for=jsonpath='{.status.phase}'=Bound pvc/open-rl-shared-pvc --timeout=5m
@@ -183,43 +195,73 @@ kubectl -n openrl-system rollout status deploy/open-rl-scheduler
 kubectl -n openrl-system rollout status deploy/open-rl-api-server
 ```
 
-## 5. Train on TPU
+## 5. Connect
 
-Forward the API server's port:
+Forward the API server to your machine and leave this running:
 
 ```bash
 kubectl -n openrl-system port-forward svc/open-rl-api-server-service 9003:8000
 ```
 
+In another terminal, check that the API server answers:
+
+```bash
+curl http://127.0.0.1:9003/api/v1/healthz
+```
+
+## 6. Train on TPU
+
 Ask for TPU workers through `TINKER_TAGS`, or pass the same settings in the
-model's `user_metadata`:
+model's `user_metadata`. Teach `gemma-4-e2b` one answer with a LoRA adapter,
+then sample from the trained adapter:
 
 ```bash
+uv --project examples sync
 TINKER_TAGS="openrl.trainer_accel_prefs=tpu,openrl.sampler_accel_prefs=tpu" \
-  uv --project examples run python examples/tiny/tiny_sft.py \
-  base_model=Qwen/Qwen3-0.6B base_url=http://127.0.0.1:9003 sample_after_train=true
+  uv --project examples run python examples/tiny/tiny_sft.py base_model=google/gemma-4-e2b sample_after_train=true
 ```
 
-Or run an e2e scenario in the cluster. `accelerator=tpu` sets the same tags:
-
-```bash
-make cluster-e2e E2E_SCENARIO=tiny-lora E2E_ARGS="accelerator=tpu base_model=Qwen/Qwen3-0.6B"
-```
-
-Watch the workers and their claims:
+The first run can take 15 minutes or more while the cluster starts a trainer
+and a sampler, downloads the model and compiles. Check where the workers landed:
 
 ```bash
 kubectl -n openrl-system get workloads,resourceclaims,pods -o wide
 ```
 
-## 6. Clean up
-
-Delete OpenRL before the cluster. The PVC's Filestore instance is deleted with
-the PVC; deleting the cluster first leaves the instance behind, and it keeps
-billing.
+To run an e2e scenario in the cluster instead, pass `accelerator=tpu`, which
+sets the same tags:
 
 ```bash
+make cluster-e2e E2E_SCENARIO=tiny-lora E2E_ARGS="accelerator=tpu base_model=google/gemma-4-e2b"
+```
+
+## Troubleshooting
+
+- **A Workload stays `NoCapacity`.** No labeled node with a free TPU fits. Check
+  that the TPU nodes carry `openrl.io/enabled=true` and have a `ResourceSlice`
+  from `tpu.google.com`. Each worker takes a whole node, so a second model's
+  workers wait until the first model's are released.
+- **A worker pod fails with `InvalidImageName`.** The image placeholders were
+  not replaced; see [Deploy OpenRL](#4-deploy-openrl).
+- **The client gets an error back.** The API server log has the details:
+  `kubectl -n openrl-system logs deploy/open-rl-api-server`.
+
+## Clean up
+
+To remove OpenRL, delete the Workloads first, while the scheduler is still
+running to release their TPUs, then everything the overlay created. This also
+deletes the shared volume and its data:
+
+```bash
+kubectl -n openrl-system delete workloads --all
 kubectl delete -k k8s/deploy/my-lora-tpu
-kubectl get pv   # wait until the shared volume is gone
-gcloud container clusters delete "${CLUSTER}" --location="${ZONE}"
+```
+
+Do this before deleting the cluster. The shared volume's Filestore instance is
+deleted with the volume; deleting the cluster first leaves the instance behind,
+and it keeps billing. Once `kubectl get pv` no longer lists the volume, delete
+the cluster:
+
+```bash
+gcloud container clusters delete "${CLUSTER}" --location="${REGION}"
 ```
