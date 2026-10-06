@@ -49,6 +49,9 @@ type WorkloadReconciler struct {
 	// two above serve GPU workloads. An empty driver means no TPU nodes.
 	TPUDeviceClass  string
 	TPUDeviceDriver string
+	// TPUDeviceMemoryTable sizes TPU chips, whose driver publishes no memory
+	// capacity.
+	TPUDeviceMemoryTable MemoryTable
 	// RetryInterval is how often a worker that could not be placed is retried.
 	RetryInterval time.Duration
 	// PlacementTimeout is how long a worker may go unplaced before the request

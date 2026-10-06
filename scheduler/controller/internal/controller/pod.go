@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -85,20 +86,26 @@ func claimNameFor(worker *openrlv1alpha1.Workload) string {
 // rounds up, which admits nothing new. There is no node selector; that is
 // kube-scheduler's call. The device class and CEL domain are the accelerator
 // type's.
+//
+// A type with a memory table matches devices by the table's attribute, since
+// they carry no capacity to compare. A TPU tier takes every matching chip on
+// the node: the TPU driver prepares no partial-node claim.
 func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.AcceleratorType, tiers []placement.Tier) *resourcev1.ResourceClaim {
 	devices := r.deviceConfig(accel)
 	subrequests := make([]resourcev1.DeviceSubRequest, len(tiers))
 	for i, tier := range tiers {
-		bounds := fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
-			devices.driver, tier.FloorBytes, devices.driver, placement.CeilGiB(tier.CeilingBytes))
 		subrequests[i] = resourcev1.DeviceSubRequest{
 			Name:            tier.Name,
 			DeviceClassName: devices.class,
 			AllocationMode:  resourcev1.DeviceAllocationModeExactCount,
 			Count:           int64(tier.Count),
 			Selectors: []resourcev1.DeviceSelector{{
-				CEL: &resourcev1.CELDeviceSelector{Expression: bounds},
+				CEL: &resourcev1.CELDeviceSelector{Expression: tierBounds(devices, tier)},
 			}},
+		}
+		if accel == openrlv1alpha1.AcceleratorTypeTPU {
+			subrequests[i].AllocationMode = resourcev1.DeviceAllocationModeAll
+			subrequests[i].Count = 0
 		}
 	}
 
@@ -119,6 +126,27 @@ func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.A
 			},
 		},
 	}
+}
+
+// tierBounds is the CEL admitting the devices a tier was priced on. It sizes
+// a device as deviceMemory does: its own memory capacity when it has one, else
+// the table entry for its attribute. A table check is only emitted when some
+// table value lands in the tier's size bucket. The "in" guards keep a device
+// missing the key from failing evaluation, which would abort the allocation.
+func tierBounds(devices deviceConfig, tier placement.Tier) string {
+	capacity := fmt.Sprintf(`device.capacity["%s"].memory.compareTo(quantity("%d")) >= 0 && device.capacity["%s"].memory.compareTo(quantity("%dGi")) <= 0`,
+		devices.driver, tier.FloorBytes, devices.driver, placement.CeilGiB(tier.CeilingBytes))
+	values := devices.memoryTable.ValuesWithin(tier.FloorBytes, tier.CeilingBytes)
+	if len(values) == 0 {
+		return capacity
+	}
+	quoted := make([]string, len(values))
+	for i, value := range values {
+		quoted[i] = strconv.Quote(value)
+	}
+	attr := devices.memoryTable.Attribute
+	return fmt.Sprintf(`"memory" in device.capacity["%s"] ? (%s) : ("%s" in device.attributes["%s"] && device.attributes["%s"].%s in [%s])`,
+		devices.driver, capacity, attr, devices.driver, devices.driver, attr, strings.Join(quoted, ", "))
 }
 
 // workerContainerName is the container in the template that consumes the

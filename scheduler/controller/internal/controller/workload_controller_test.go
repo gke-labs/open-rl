@@ -173,6 +173,8 @@ func newReconciler(t *testing.T, objects ...client.Object) *WorkloadReconciler {
 		// The scripted tests reason about one dedicated claim per worker, so
 		// they pin spread. Binpack tests set it explicitly; the storm runs both.
 		PlacementStrategy: placement.StrategySpread,
+		// The built-in TPU defaults, as main.go sets them.
+		TPUDeviceMemoryTable: DefaultTPUMemoryTable,
 	}
 }
 
@@ -1253,23 +1255,18 @@ func TestMultiGPUWorkloadCutsAnExactCountExclusiveClaim(t *testing.T) {
 	}
 }
 
-// tpuNode is an enabled pool published by the TPU driver: four chips. The
-// real driver reports no memory capacity, so memory "" leaves it off; a
-// figure stands in for the sizing a later change adds.
-func tpuNode(name, memory string) []client.Object {
+// tpuNode is an enabled pool published by the TPU driver: four chips of one
+// generation. Like the real driver it reports no memory capacity.
+func tpuNode(name, gen string) []client.Object {
 	node := &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Labels: map[string]string{NodeLabelEnabled: "true"}},
 		Status:     corev1.NodeStatus{Allocatable: corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("700Gi")}},
 	}
-	gen := "v6e"
 	devices := make([]resourcev1.Device, 4)
 	for i := range devices {
 		devices[i] = resourcev1.Device{
 			Name:       fmt.Sprintf("tpu-%d", i),
 			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{"tpuGen": {StringValue: &gen}},
-		}
-		if memory != "" {
-			devices[i].Capacity = map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{"memory": {Value: resource.MustParse(memory)}}
 		}
 	}
 	slice := &resourcev1.ResourceSlice{
@@ -1312,7 +1309,7 @@ func TestUntypedWorkloadClaimIsUnchanged(t *testing.T) {
 		slice.Spec.Devices[i].Capacity["memory"] = resourcev1.DeviceCapacity{Value: resource.MustParse("48Gi")}
 	}
 	objects = append(objects, node, slice, worker("w-a", "model-a", openrlv1alpha1.RoleTrainer, "40Gi"))
-	r := newReconciler(t, append(objects, tpuNode("tpu-a", "48Gi")...)...)
+	r := newReconciler(t, append(objects, tpuNode("tpu-a", "v6e")...)...)
 
 	runReconcile(t, r, "w-a")
 	claim := claimFor(t, r, "w-a")
@@ -1334,8 +1331,8 @@ func TestUntypedWorkloadClaimIsUnchanged(t *testing.T) {
 // class, priced only against its own type's nodes, and its pod prefers only
 // those nodes.
 func TestMixedFleetPlacesEachTypeOnItsOwnNodes(t *testing.T) {
-	objects := append(enabledNode(), tpuNode("tpu-a", "32Gi")...)
-	objects = append(objects, tpuNode("tpu-b", "16Gi")...)
+	objects := append(enabledNode(), tpuNode("tpu-a", "v6e")...)
+	objects = append(objects, tpuNode("tpu-b", "v5e")...)
 	objects = append(objects, worker("g", "model-a", openrlv1alpha1.RoleTrainer, "12Gi"), tpuWorker("t", "model-b"))
 	r := newReconciler(t, objects...)
 	settle(t, r, "g", "t")
@@ -1350,7 +1347,7 @@ func TestMixedFleetPlacesEachTypeOnItsOwnNodes(t *testing.T) {
 		var names []string
 		for _, sub := range claimFor(t, r, tc.worker).Spec.Devices.Requests[0].FirstAvailable {
 			names = append(names, sub.Name)
-			if sub.DeviceClassName != tc.class || !strings.Contains(sub.Selectors[0].CEL.Expression, `device.capacity["`+tc.class+`"]`) {
+			if sub.DeviceClassName != tc.class || !strings.Contains(sub.Selectors[0].CEL.Expression, `["`+tc.class+`"]`) {
 				t.Errorf("%s tier %s: class %s, CEL %s; want %s for both", tc.worker, sub.Name, sub.DeviceClassName, sub.Selectors[0].CEL.Expression, tc.class)
 			}
 		}
@@ -1372,11 +1369,11 @@ func TestMixedFleetPlacesEachTypeOnItsOwnNodes(t *testing.T) {
 }
 
 // readFleet tags every node with its driver's type and counts each type
-// apart. The real TPU driver's chips carry no memory: they still count, and
-// placement skips them instead of failing.
+// apart. TPU chips are sized from the memory table; chips of a generation
+// the table lacks still count, but size nothing.
 func TestFleetCountsCapacityPerType(t *testing.T) {
-	objects := append(enabledNode(), tpuNode("tpu-a", "")...)
-	objects = append(objects, tpuNode("tpu-b", "")...)
+	objects := append(enabledNode(), tpuNode("tpu-a", "v6e")...)
+	objects = append(objects, tpuNode("tpu-b", "v4")...)
 	r := newReconciler(t, append(objects, tpuWorker("t", "model-b"))...)
 
 	fleet, err := r.readFleet(context.Background())
@@ -1392,11 +1389,52 @@ func TestFleetCountsCapacityPerType(t *testing.T) {
 	if got := fleet.Nodes[testNode].Type; got != "GPU" {
 		t.Errorf("%s type = %q, want GPU", testNode, got)
 	}
+	if got := fleet.Nodes["tpu-a"].DeviceMemoryBytes; got != 32*placement.GiB {
+		t.Errorf("tpu-a device memory = %d, want 32Gi from the table", got)
+	}
+	if got := fleet.Nodes["tpu-b"].DeviceMemoryBytes; got != 0 {
+		t.Errorf("tpu-b device memory = %d, want 0: v4 is not in the table", got)
+	}
 
 	runReconcile(t, r, "t")
-	after := getWorker(t, r, "t")
-	if after.Status.Phase != openrlv1alpha1.PhasePending || after.Status.ClaimName != "" {
-		t.Errorf("status = %+v, want Pending with no claim: unsized chips fit nothing yet", after.Status)
+	if after := getWorker(t, r, "t"); after.Status.ClaimName == "" {
+		t.Errorf("status = %+v, want a claim on the table-sized chips", after.Status)
+	}
+}
+
+// Device memory is the driver's own capacity when it has one, else the
+// table's entry for the device's attribute. A device with neither is not
+// sized.
+func TestDeviceMemoryPrefersCapacityThenTable(t *testing.T) {
+	table := DefaultTPUMemoryTable
+	device := func(gen, memory string) *resourcev1.Device {
+		d := &resourcev1.Device{Name: "d"}
+		if gen != "" {
+			d.Attributes = map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{"tpuGen": {StringValue: &gen}}
+		}
+		if memory != "" {
+			d.Capacity = map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{"memory": {Value: resource.MustParse(memory)}}
+		}
+		return d
+	}
+	for _, tc := range []struct {
+		name   string
+		device *resourcev1.Device
+		table  MemoryTable
+		want   int64
+		ok     bool
+	}{
+		{"capacity wins over the table", device("v6e", "48Gi"), table, 48 * placement.GiB, true},
+		{"capacity with no table", device("", "96Gi"), MemoryTable{}, 96 * placement.GiB, true},
+		{"table by attribute", device("v5p", ""), table, 95 * placement.GiB, true},
+		{"value not in the table", device("v4", ""), table, 0, false},
+		{"no attribute", device("", ""), table, 0, false},
+		{"no table", device("v6e", ""), MemoryTable{}, 0, false},
+	} {
+		got, ok := deviceMemory(tc.device, tc.table)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("%s: deviceMemory = %d, %v; want %d, %v", tc.name, got, ok, tc.want, tc.ok)
+		}
 	}
 }
 
@@ -1410,7 +1448,7 @@ func TestNoNodeOfTheTypeWaitsNamingTheType(t *testing.T) {
 		mention string
 	}{
 		{"TPU on GPU-only", enabledNode(), tpuWorker("w", "model-a"), "no enabled node has TPU devices"},
-		{"GPU on TPU-only", tpuNode("tpu-a", "96Gi"), trainerWorker("w", "model-a"), "no enabled node has GPU devices"},
+		{"GPU on TPU-only", tpuNode("tpu-a", "v6e"), trainerWorker("w", "model-a"), "no enabled node has GPU devices"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := newReconciler(t, append(tc.fleet, tc.worker)...)
@@ -1425,5 +1463,64 @@ func TestNoNodeOfTheTypeWaitsNamingTheType(t *testing.T) {
 				t.Errorf("a claim was cut: %s", after.Status.ClaimName)
 			}
 		})
+	}
+}
+
+// A TPU claim matches chips by generation, since they carry no capacity to
+// compare, and takes every matching chip on the node: the TPU driver only
+// prepares whole-node claims.
+func TestTPUClaimTakesTheWholeNodeByGeneration(t *testing.T) {
+	objects := append(tpuNode("tpu-a", "v6e"), tpuNode("tpu-b", "v5e")...)
+	small := tpuWorker("t", "model-a")
+	small.Spec.Accelerator.Memory = resource.MustParse("12Gi")
+	r := newReconciler(t, append(objects, small)...)
+	settle(t, r, "t")
+
+	type tier struct {
+		name, cel string
+	}
+	var got []tier
+	for _, sub := range claimFor(t, r, "t").Spec.Devices.Requests[0].FirstAvailable {
+		got = append(got, tier{sub.Name, sub.Selectors[0].CEL.Expression})
+		if sub.DeviceClassName != testTPUDriver || sub.AllocationMode != resourcev1.DeviceAllocationModeAll || sub.Count != 0 {
+			t.Errorf("tier %s: class %s, mode %s, count %d; want %s, All, 0", sub.Name, sub.DeviceClassName, sub.AllocationMode, sub.Count, testTPUDriver)
+		}
+	}
+	want := []tier{
+		{"t1x16", `device.attributes["tpu.google.com"].tpuGen in ["v5e"]`},
+		{"t1x32", `device.attributes["tpu.google.com"].tpuGen in ["v6e"]`},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("tiers = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i].name != want[i].name || !strings.Contains(got[i].cel, want[i].cel) {
+			t.Errorf("tier %d = %v, want %s with %s", i, got[i], want[i].name, want[i].cel)
+		}
+	}
+}
+
+// A table-priced tier sizes a device the way deviceMemory does: by its own
+// capacity when it publishes one, else by the table. Both lookups are guarded,
+// so a device missing the key doesn't fail evaluation.
+func TestTierBoundsPrefersCapacityThenTable(t *testing.T) {
+	devices := deviceConfig{driver: "tpu.google.com", memoryTable: DefaultTPUMemoryTable}
+	tier := placement.Tier{Name: "t1x32", Count: 1, FloorBytes: 20 * placement.GiB, CeilingBytes: 32 * placement.GiB}
+	want := `"memory" in device.capacity["tpu.google.com"] ? ` +
+		`(device.capacity["tpu.google.com"].memory.compareTo(quantity("21474836480")) >= 0 && device.capacity["tpu.google.com"].memory.compareTo(quantity("32Gi")) <= 0) : ` +
+		`("tpuGen" in device.attributes["tpu.google.com"] && device.attributes["tpu.google.com"].tpuGen in ["v6e"])`
+	if got := tierBounds(devices, tier); got != want {
+		t.Errorf("CEL =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A tier sized on a chip's own capacity, with no table entry in its size
+// bucket, keeps the capacity bounds.
+func TestTPUClaimCapacityTier(t *testing.T) {
+	r := newReconciler(t)
+	sized := placement.Tier{Name: "t1x48", Count: 1, FloorBytes: 20 * placement.GiB, CeilingBytes: 48 * placement.GiB}
+	sub := r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{sized}).Spec.Devices.Requests[0].FirstAvailable[0]
+	if cel := sub.Selectors[0].CEL.Expression; !strings.HasPrefix(cel, `device.capacity["tpu.google.com"].memory`) || strings.Contains(cel, "tpuGen") {
+		t.Errorf("CEL = %s, want capacity bounds", sub.Selectors[0].CEL.Expression)
 	}
 }

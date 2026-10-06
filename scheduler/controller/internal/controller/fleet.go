@@ -114,14 +114,14 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 
 	devices := map[string]*placement.Node{}
 	for _, accel := range acceleratorTypes {
-		driver := r.deviceConfig(accel).driver
-		if driver == "" {
+		config := r.deviceConfig(accel)
+		if config.driver == "" {
 			continue
 		}
-		// Devices with no memory capacity (the TPU driver publishes none) are
-		// counted only on a node with no sized devices; they size nothing.
+		// Devices with no known memory (neither capacity nor a table entry)
+		// are counted only on a node with no sized devices; they size nothing.
 		unsized := map[string]int{}
-		for _, i := range latestCompletePools(ctx, slices, driver) {
+		for _, i := range latestCompletePools(ctx, slices, config.driver) {
 			spec := slices[i].Spec
 			name := *spec.NodeName
 			pool := devices[name]
@@ -133,19 +133,14 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 			for j := range spec.Devices {
 				device := spec.Devices[j]
 				if pool == nil {
-					product := ""
-					if attr, ok := device.Attributes["productName"]; ok && attr.StringValue != nil {
-						product = *attr.StringValue
-					}
-					pool = &placement.Node{Name: name, Type: string(accel), Product: product}
+					pool = &placement.Node{Name: name, Type: string(accel), Product: productOf(&device)}
 					devices[name] = pool
 				}
-				capacity, ok := device.Capacity["memory"]
+				memory, ok := deviceMemory(&device, config.memoryTable)
 				if !ok {
 					unsized[name]++
 					continue
 				}
-				memory := capacity.Value.Value()
 				if pool.DeviceCount == 0 || memory < pool.DeviceMemoryBytes {
 					pool.DeviceMemoryBytes = memory
 				}
@@ -193,6 +188,33 @@ func (r *WorkloadReconciler) poolsFrom(ctx context.Context, slices []resourcev1.
 		pools[node.Name] = pool
 	}
 	return pools
+}
+
+// deviceMemory is the driver's own memory capacity when it publishes one,
+// else the table's entry for the device's attribute value.
+func deviceMemory(device *resourcev1.Device, table MemoryTable) (int64, bool) {
+	if capacity, ok := device.Capacity["memory"]; ok {
+		return capacity.Value.Value(), true
+	}
+	if !table.Enabled() {
+		return 0, false
+	}
+	attr, ok := device.Attributes[resourcev1.QualifiedName(table.Attribute)]
+	if !ok || attr.StringValue == nil {
+		return 0, false
+	}
+	return table.Lookup(*attr.StringValue)
+}
+
+// productOf is the device's product label for messages: NVIDIA's
+// productName, or the TPU driver's accelerator.
+func productOf(device *resourcev1.Device) string {
+	for _, key := range []resourcev1.QualifiedName{"productName", "accelerator"} {
+		if attr, ok := device.Attributes[key]; ok && attr.StringValue != nil {
+			return *attr.StringValue
+		}
+	}
+	return ""
 }
 
 // foreignHostBytes sums, per node, the memory requests of pods this
@@ -317,12 +339,17 @@ func isHostnameKey(key string) bool {
 // published by more than one driver is claimed.
 var acceleratorTypes = []openrlv1alpha1.AcceleratorType{openrlv1alpha1.AcceleratorTypeGPU, openrlv1alpha1.AcceleratorTypeTPU}
 
-// deviceConfig is the DRA device class and driver serving one accelerator type.
-type deviceConfig struct{ class, driver string }
+// deviceConfig is how one accelerator type is read and claimed: its DRA
+// device class and driver, and the memory table sizing devices that publish
+// no capacity.
+type deviceConfig struct {
+	class, driver string
+	memoryTable   MemoryTable
+}
 
 func (r *WorkloadReconciler) deviceConfig(accel openrlv1alpha1.AcceleratorType) deviceConfig {
 	if accel == openrlv1alpha1.AcceleratorTypeTPU {
-		return deviceConfig{class: r.TPUDeviceClass, driver: r.TPUDeviceDriver}
+		return deviceConfig{class: r.TPUDeviceClass, driver: r.TPUDeviceDriver, memoryTable: r.TPUDeviceMemoryTable}
 	}
 	return deviceConfig{class: r.DeviceClass, driver: r.DeviceDriver}
 }

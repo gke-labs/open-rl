@@ -119,6 +119,7 @@ func main() {
 		DeviceDriver:            deviceDriver,
 		TPUDeviceClass:          tpuDeviceClass,
 		TPUDeviceDriver:         tpuDeviceDriver,
+		TPUDeviceMemoryTable:    controller.DefaultTPUMemoryTable,
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
 		PlacementStrategy:       parsedStrategy,
