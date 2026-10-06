@@ -141,8 +141,7 @@ func main() {
 	}
 
 	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver,
-		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver,
-		"strategy", strategy)
+		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver, "strategy", strategy)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")
 		os.Exit(1)
