@@ -88,8 +88,8 @@ func claimNameFor(worker *openrlv1alpha1.Workload) string {
 // type's.
 //
 // A type with a memory table matches devices by the table's attribute, since
-// they carry no capacity to compare. With whole-node claims each tier takes
-// every matching device on the node.
+// they carry no capacity to compare. A TPU tier takes every matching chip on
+// the node: the TPU driver prepares no partial-node claim.
 func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.AcceleratorType, tiers []placement.Tier) *resourcev1.ResourceClaim {
 	devices := r.deviceConfig(accel)
 	subrequests := make([]resourcev1.DeviceSubRequest, len(tiers))
@@ -103,7 +103,7 @@ func (r *WorkloadReconciler) buildClaim(claimName string, accel openrlv1alpha1.A
 				CEL: &resourcev1.CELDeviceSelector{Expression: tierBounds(devices, tier)},
 			}},
 		}
-		if devices.wholeNode {
+		if accel == openrlv1alpha1.AcceleratorTypeTPU {
 			subrequests[i].AllocationMode = resourcev1.DeviceAllocationModeAll
 			subrequests[i].Count = 0
 		}
