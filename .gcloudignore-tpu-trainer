@@ -1,0 +1,6 @@
+# Cloud Build upload for the TPU trainer image: the default gcloud rules
+# (git-tracked files only), plus wheels/ for the torch_tpu wheel.
+.git
+.gitignore
+#!include:.gitignore
+!wheels/

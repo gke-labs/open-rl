@@ -194,11 +194,12 @@ cloud-build-automodel: require-gcp-project
 cloud-build-client: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-client,_DOCKERFILE=src/server/Dockerfile.client,_TAG=$(CLOUD_IMAGE_TAG) .
 
-# Cloud Build gets no build args, so the image takes the wheel from wheels/
-# (the Dockerfile's default), which .gcloudignore uploads.
+# Cloud Build gets no build args, so the image takes every wheel under wheels/
+# (the Dockerfile's default); there must be exactly one. Only this build
+# uploads wheels/.
 cloud-build-tpu-trainer: require-gcp-project
-	@ls wheels/torch_tpu-*.whl >/dev/null 2>&1 || { echo "Put the torch_tpu wheel under wheels/"; exit 2; }
-	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-trainer,_DOCKERFILE=src/server/Dockerfile.tpu,_TAG=$(CLOUD_IMAGE_TAG) .
+	@set -- wheels/torch_tpu-*.whl; test $$# -eq 1 && test -f "$$1" || { echo "Put exactly one torch_tpu wheel under wheels/"; exit 2; }
+	$(CLOUD_BUILD) --ignore-file=.gcloudignore-tpu-trainer --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-trainer,_DOCKERFILE=src/server/Dockerfile.tpu,_TAG=$(CLOUD_IMAGE_TAG) .
 
 # Point the running workloads at the freshly built tag. Split from the build
 # steps so a tag built earlier can be re-deployed with

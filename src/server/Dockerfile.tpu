@@ -5,7 +5,8 @@
 #
 # torch_tpu is not on a public index yet. The build context must carry its
 # wheel; TORCH_TPU_WHEEL is its path relative to the repo root. wheels/ is
-# gitignored, and .gcloudignore keeps it in the Cloud Build upload.
+# gitignored and kept out of the other images' contexts; this image's own
+# Dockerfile.tpu.dockerignore and /.gcloudignore-tpu-trainer keep it in.
 
 # Holds only the wheel, so it is bind-mounted for the install and never copied
 # into the image.
@@ -20,12 +21,11 @@ ENV PYTHONUNBUFFERED=1 \
     DEBIAN_FRONTEND=noninteractive \
     UV_FROZEN=1
 
-# git fetches the `cluster` extra's git dependency.
+# git fetches the `cluster` extra's git dependency. Everything installs from
+# wheels, so no compiler.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
-    build-essential \
-    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
@@ -50,11 +50,14 @@ ENV UV_LINK_MODE=copy \
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --extra tpu --extra cluster
 
-# torch_tpu registers the "tpu" torch device. Its torch requirement is met by
-# the torch==2.11.0 the `tpu` extra installed.
+# torch_tpu registers the "tpu" torch device. Its own requirements (libtpu,
+# ...) resolve from PyPI. The synced env is a constraint, so the install can add
+# packages but not change a locked one: a torch_tpu needing a newer torch fails
+# here instead of pulling CUDA torch.
 RUN --mount=type=bind,from=torch-tpu-wheel,target=/tmp/torch_tpu \
     --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --python /app/.venv/bin/python /tmp/torch_tpu/*.whl
+    uv pip freeze --python /app/.venv/bin/python > /tmp/locked.txt \
+    && uv pip install --python /app/.venv/bin/python --constraint /tmp/locked.txt /tmp/torch_tpu/*.whl
 
 # Copy source code. The project is not installed: a later `uv sync` would
 # remove torch_tpu, and PYTHONPATH below exposes the source.

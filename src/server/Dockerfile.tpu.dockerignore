@@ -1,3 +1,5 @@
+# BuildKit uses this instead of .dockerignore for Dockerfile.tpu. Same rules,
+# minus wheels/, which carries the torch_tpu wheel.
 .git
 .gitignore
 .venv
@@ -15,5 +17,3 @@ __pycache__
 huggingface
 *.log
 .system_generated
-# torch_tpu wheel; only src/server/Dockerfile.tpu.dockerignore lets it in.
-wheels
