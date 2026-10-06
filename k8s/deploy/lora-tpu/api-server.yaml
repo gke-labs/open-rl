@@ -18,8 +18,6 @@ spec:
             configMapKeyRef:
               name: open-rl-images
               key: tpu-sampler
-        - name: OPEN_RL_TPU_WORKER_ENV_CONFIGMAP
-          value: open-rl-tpu-worker-env
         # A sampler on a fresh TPU node waits for the node, the image pull and
         # vLLM's startup compile.
         - name: OPEN_RL_SAMPLER_READY_TIMEOUT_S

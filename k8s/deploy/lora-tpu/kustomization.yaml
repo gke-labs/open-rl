@@ -18,12 +18,6 @@ configMapGenerator:
     literals:
       - tpu-trainer=TPU-TRAINER-IMAGE
       - tpu-sampler=TPU-SAMPLER-IMAGE
-  # Env for TPU worker pods only, sized for one 32 GB v6e chip.
-  - name: open-rl-tpu-worker-env
-    literals:
-      - VLLM_MAX_MODEL_LEN=2048
-      - VLLM_MAX_NUM_SEQS=64
-      - OPEN_RL_TRAIN_TOKEN_BUDGET=32768
 
 configurations:
   - images.yaml
