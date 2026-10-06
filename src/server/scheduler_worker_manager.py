@@ -69,7 +69,7 @@ def describe_worker(model_id: str, role: str) -> Worker:
   meta, runtime, is_lora = runtime_of(model_id)
   base_model = base_model_of(meta, runtime)
   exclusive = not meta.shares_gpu()
-  return Worker(role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role))
+  return Worker(role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role, meta.accelerator_for(role)))
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:

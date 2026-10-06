@@ -4,6 +4,8 @@ import logging
 import re
 from dataclasses import dataclass
 
+from server.accelerators import Accelerator
+
 GIB = 1024**3
 
 logger = logging.getLogger(__name__)
@@ -82,7 +84,10 @@ SAMPLER_KV_TOKENS = 8 * 8192  # eight max-length requests in flight
 # plus process overhead. Measured: 0.5B trainer 28Gi, sampler 20Gi; 8B FFT
 # sampler 39Gi steady; 7B FFT trainer OOM-killed at 110Gi.
 HOST_BYTES_PER_PARAM = {("full", "trainer"): 14, ("lora", "trainer"): 2, ("full", "sampler"): 2, ("lora", "sampler"): 2}
-HOST_OVERHEAD_BYTES = {"trainer": 20 * GIB, "sampler": 24 * GIB}
+# TPU entries are high placeholders. Each TPU worker holds a whole node, so
+# erring high costs nothing.
+# TODO: measure TPU trainer and sampler host peaks and lower these to match.
+HOST_OVERHEAD_BYTES = {("gpu", "trainer"): 20 * GIB, ("gpu", "sampler"): 24 * GIB, ("tpu", "trainer"): 94 * GIB, ("tpu", "sampler"): 94 * GIB}
 # Limits equal requests. Placement admits pods by request, so a pod that
 # could burst past it can push a co-seated neighbour into the kernel's OOM
 # killer; an 8B FFT sampler ran at 39Gi against a 34Gi request.
@@ -116,7 +121,8 @@ def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str) -> int
   return device + kv_bytes_per_token * SAMPLER_KV_TOKENS
 
 
-def footprint(base_model: str, fine_tuning_type: str, role: str) -> Footprint:
+def footprint(base_model: str, fine_tuning_type: str, role: str, accelerator: Accelerator = "gpu") -> Footprint:
+  # TPU shares the device formula; the figure only places the worker on a chip.
   model = normalize_model_id(base_model)
   if model not in MODEL_TO_PARAM_COUNT:
     logger.warning("No known parameter count for %r; sizing it as %s.", base_model, UNKNOWN_MODEL)
@@ -127,5 +133,5 @@ def footprint(base_model: str, fine_tuning_type: str, role: str) -> Footprint:
     device = params * TRAINER_DEVICE_BYTES_PER_PARAM[kind] + TRAINER_DEVICE_RESERVE_BYTES
   else:
     device = sampler_device_bytes(params, MODEL_TO_KV_BYTES_PER_TOKEN[model], kind)
-  host = params * HOST_BYTES_PER_PARAM[(kind, role)] + HOST_OVERHEAD_BYTES[role]
+  host = params * HOST_BYTES_PER_PARAM[(kind, role)] + HOST_OVERHEAD_BYTES[(accelerator, role)]
   return Footprint(device, host, int(host * HOST_LIMIT_FACTOR))

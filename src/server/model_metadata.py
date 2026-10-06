@@ -73,6 +73,11 @@ class TrainingModelMetadata(BaseModel):
     many jobs, one adapter each. An FFT worker serves one job."""
     return self.fine_tuning_type == "lora" and not self.exclusive
 
+  def accelerator_for(self, role: str) -> Accelerator:
+    """The accelerator a role's workers run on: the most preferred entry
+    until the scheduler chooses among them."""
+    return (self.trainer_accel_prefs if role == "trainer" else self.sampler_accel_prefs)[0]
+
   def trainer_image(self) -> str | None:
     """The image trainer_backend names, when it is an image and not a trainer."""
     return None if self.trainer_backend in TRAINER_BACKENDS else self.trainer_backend
