@@ -46,7 +46,6 @@ func main() {
 		deviceDriver     string
 		tpuDeviceClass   string
 		tpuDeviceDriver  string
-		tpuWholeNode     bool
 		retryInterval    time.Duration
 		placementTimeout time.Duration
 		strategy         string
@@ -62,8 +61,6 @@ func main() {
 	flag.StringVar(&deviceDriver, "device-driver", env("OPEN_RL_DEVICE_DRIVER", ""), "Driver publishing the ResourceSlices. Defaults to the device class.")
 	flag.StringVar(&tpuDeviceClass, "tpu-device-class", env("OPEN_RL_TPU_DEVICE_CLASS", "tpu.google.com"), "DeviceClass claims for TPU workloads request.")
 	flag.StringVar(&tpuDeviceDriver, "tpu-device-driver", env("OPEN_RL_TPU_DEVICE_DRIVER", "tpu.google.com"), "Driver publishing the TPU ResourceSlices.")
-	flag.BoolVar(&tpuWholeNode, "tpu-whole-node-claims", envBool("OPEN_RL_TPU_WHOLE_NODE_CLAIMS", true),
-		"TPU claims take every chip on the node (allocationMode All); the TPU driver prepares no partial-node claim.")
 	flag.DurationVar(&retryInterval, "retry-interval", envDuration("OPEN_RL_RECONCILE_INTERVAL", 10*time.Second), "How often an unplaced worker is retried.")
 	flag.DurationVar(&placementTimeout, "placement-timeout", envDuration("OPEN_RL_PLACEMENT_TIMEOUT", 15*time.Minute),
 		"How long a worker may go unplaced before the request is declared unsatisfiable. 0 waits forever.")
@@ -123,7 +120,6 @@ func main() {
 		TPUDeviceClass:          tpuDeviceClass,
 		TPUDeviceDriver:         tpuDeviceDriver,
 		TPUDeviceMemoryTable:    controller.DefaultTPUMemoryTable,
-		TPUWholeNodeClaims:      tpuWholeNode,
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
 		PlacementStrategy:       parsedStrategy,
@@ -146,7 +142,7 @@ func main() {
 
 	setupLog.Info("placing workers", "namespace", namespace, "deviceClass", deviceClass, "deviceDriver", deviceDriver,
 		"tpuDeviceClass", tpuDeviceClass, "tpuDeviceDriver", tpuDeviceDriver,
-		"tpuWholeNodeClaims", tpuWholeNode, "strategy", strategy)
+		"strategy", strategy)
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")
 		os.Exit(1)
@@ -171,14 +167,6 @@ func envDuration(key string, fallback time.Duration) time.Duration {
 // envInt reads an integer from the environment.
 func envInt(key string, fallback int) int {
 	if parsed, err := strconv.Atoi(os.Getenv(key)); err == nil {
-		return parsed
-	}
-	return fallback
-}
-
-// envBool reads a boolean ("true", "false", "1", "0") from the environment.
-func envBool(key string, fallback bool) bool {
-	if parsed, err := strconv.ParseBool(os.Getenv(key)); err == nil {
 		return parsed
 	}
 	return fallback

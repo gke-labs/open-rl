@@ -341,7 +341,8 @@ var acceleratorTypes = []openrlv1alpha1.AcceleratorType{openrlv1alpha1.Accelerat
 
 // deviceConfig is how one accelerator type is read and claimed: its DRA
 // device class and driver, the memory table sizing devices that publish no
-// capacity, and whether claims take every matching device on the node.
+// capacity, and whether claims take every matching device on the node. TPU
+// claims always do: the TPU driver prepares no partial-node claim.
 type deviceConfig struct {
 	class, driver string
 	memoryTable   MemoryTable
@@ -350,7 +351,7 @@ type deviceConfig struct {
 
 func (r *WorkloadReconciler) deviceConfig(accel openrlv1alpha1.AcceleratorType) deviceConfig {
 	if accel == openrlv1alpha1.AcceleratorTypeTPU {
-		return deviceConfig{class: r.TPUDeviceClass, driver: r.TPUDeviceDriver, memoryTable: r.TPUDeviceMemoryTable, wholeNode: r.TPUWholeNodeClaims}
+		return deviceConfig{class: r.TPUDeviceClass, driver: r.TPUDeviceDriver, memoryTable: r.TPUDeviceMemoryTable, wholeNode: true}
 	}
 	return deviceConfig{class: r.DeviceClass, driver: r.DeviceDriver}
 }

@@ -175,7 +175,6 @@ func newReconciler(t *testing.T, objects ...client.Object) *WorkloadReconciler {
 		PlacementStrategy: placement.StrategySpread,
 		// The built-in TPU defaults, as main.go sets them.
 		TPUDeviceMemoryTable: DefaultTPUMemoryTable,
-		TPUWholeNodeClaims:   true,
 	}
 }
 
@@ -1515,23 +1514,12 @@ func TestTierBoundsPrefersCapacityThenTable(t *testing.T) {
 	}
 }
 
-// Each TPU setting stands alone: with whole-node claims off a tier counts
-// chips out, and a tier priced on a chip's own capacity, with no table entry
-// in its size bucket, keeps the capacity bounds.
-func TestTPUClaimSettings(t *testing.T) {
+// A tier sized on a chip's own capacity, with no table entry in its size
+// bucket, keeps the capacity bounds.
+func TestTPUClaimCapacityTier(t *testing.T) {
 	r := newReconciler(t)
-	r.TPUWholeNodeClaims = false
-	v6e := placement.Tier{Name: "t2x32", Count: 2, FloorBytes: 20 * placement.GiB, CeilingBytes: 32 * placement.GiB}
-	sub := r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{v6e}).Spec.Devices.Requests[0].FirstAvailable[0]
-	if sub.AllocationMode != resourcev1.DeviceAllocationModeExactCount || sub.Count != 2 {
-		t.Errorf("whole-node off: mode %s, count %d; want ExactCount, 2", sub.AllocationMode, sub.Count)
-	}
-	if want := `device.attributes["tpu.google.com"].tpuGen in ["v6e"]`; !strings.Contains(sub.Selectors[0].CEL.Expression, want) {
-		t.Errorf("CEL = %s, want %s", sub.Selectors[0].CEL.Expression, want)
-	}
-
 	sized := placement.Tier{Name: "t1x48", Count: 1, FloorBytes: 20 * placement.GiB, CeilingBytes: 48 * placement.GiB}
-	sub = r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{sized}).Spec.Devices.Requests[0].FirstAvailable[0]
+	sub := r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{sized}).Spec.Devices.Requests[0].FirstAvailable[0]
 	if cel := sub.Selectors[0].CEL.Expression; !strings.HasPrefix(cel, `device.capacity["tpu.google.com"].memory`) || strings.Contains(cel, "tpuGen") {
 		t.Errorf("CEL = %s, want capacity bounds", sub.Selectors[0].CEL.Expression)
 	}

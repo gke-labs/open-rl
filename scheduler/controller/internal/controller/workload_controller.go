@@ -50,10 +50,8 @@ type WorkloadReconciler struct {
 	TPUDeviceClass  string
 	TPUDeviceDriver string
 	// TPUDeviceMemoryTable sizes TPU chips, whose driver publishes no memory
-	// capacity. TPUWholeNodeClaims makes TPU claims take every chip on the
-	// node (allocationMode All), the only claim that driver prepares.
+	// capacity.
 	TPUDeviceMemoryTable MemoryTable
-	TPUWholeNodeClaims   bool
 	// RetryInterval is how often a worker that could not be placed is retried.
 	RetryInterval time.Duration
 	// PlacementTimeout is how long a worker may go unplaced before the request
