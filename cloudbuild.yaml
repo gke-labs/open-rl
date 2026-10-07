@@ -17,8 +17,7 @@ substitutions:
 
 options:
   # The CUDA server image needs both the CPU and the disk; the slim API server
-  # image finishes in a couple of minutes either way. The Automodel image
-  # compiles causal-conv1d and does not finish inside the timeout on 8 vCPUs.
+  # image finishes in a couple of minutes either way.
   machineType: E2_HIGHCPU_32
   diskSizeGb: 200
   # Default logging (GCS + Cloud Logging) so `gcloud builds submit` can stream

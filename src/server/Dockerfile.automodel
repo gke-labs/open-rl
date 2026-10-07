@@ -8,9 +8,9 @@
 # on one GPU, with OPEN_RL_TRAINER_BACKEND=automodel.
 #
 # Same CUDA 12.9 base and nvcc subset as src/server/Dockerfile: torch links the
-# pip cu129 wheels, and causal-conv1d, tilelang and the flash-linear-attention
-# kernels JIT against CUDA_HOME.
-FROM nvidia/cuda:12.9.0-base-ubuntu22.04 AS toolchain
+# pip cu129 wheels, and tilelang and the flash-linear-attention kernels JIT
+# against CUDA_HOME.
+FROM nvidia/cuda:12.9.0-base-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -37,43 +37,12 @@ ENV PATH="/uv/bin:$PATH" \
 
 RUN uv python install 3.12
 
-# causal-conv1d publishes no wheel for torch 2.11, and building it from source
-# took ~15 minutes of the venv step. It gets its own stage, which depends only
-# on the toolchain and these pins, so script changes do not recompile it. It is
-# built for the GPUs we run (sm_80 for A100 and L4, H100/H200, B200) instead of
-# the six architectures its setup.py targets. Keep TORCH_VERSION in step with
-# setup_automodel_env.sh; a mismatch fails the script's import check.
-FROM toolchain AS causal-conv1d
-ARG TORCH_VERSION=2.11.0
-ARG CAUSAL_CONV1D_VERSION=1.7.0
-RUN uv venv /build --python 3.12 \
-    && uv pip install --python /build/bin/python torch==${TORCH_VERSION} --index-url https://download.pytorch.org/whl/cu129 \
-    && uv pip install --python /build/bin/python pip setuptools wheel packaging ninja \
-    && curl -fsSL https://files.pythonhosted.org/packages/source/c/causal-conv1d/causal_conv1d-${CAUSAL_CONV1D_VERSION}.tar.gz | tar xz -C /tmp \
-    && mv /tmp/causal_conv1d-${CAUSAL_CONV1D_VERSION} /tmp/causal_conv1d
-RUN <<'EOF' /build/bin/python -
-import pathlib
-import re
-
-setup = pathlib.Path("/tmp/causal_conv1d/setup.py")
-# Each dropped pair becomes pass so its if-block stays valid.
-unused = r'(\n[ \t]*)cc_flag.append\("-gencode"\)\s*cc_flag.append\("arch=compute_(75|87|103|110|120|121),code=sm_\d+"\)'
-text, removed = re.subn(unused, r"\1pass", setup.read_text())
-assert removed == 6, f"causal-conv1d setup.py changed shape ({removed} arches removed)"
-setup.write_text(text)
-EOF
-RUN CAUSAL_CONV1D_FORCE_BUILD=TRUE MAX_JOBS=$(nproc) \
-    /build/bin/python -m pip wheel --no-build-isolation --no-deps -w /wheels /tmp/causal_conv1d
-
-FROM toolchain
 WORKDIR /app
-COPY --from=causal-conv1d /wheels /wheels
 # The venv recipe is the script the box uses, so the two stay one definition.
 # The venv layer depends only on the script, so a source change rebuilds in
 # minutes off the registry cache.
 COPY scripts/setup_automodel_env.sh scripts/setup_automodel_env.sh
 RUN --mount=type=cache,target=/root/.cache/uv \
-    CAUSAL_CONV1D_WHEEL=$(ls /wheels/causal_conv1d-*.whl) \
     AUTOMODEL_VENV=/app/automodel/.venv HOME=/root AUTOMODEL_CHECK_REPO=0 bash scripts/setup_automodel_env.sh
 # --link and no step after it, so a source-only build does not pull the venv
 # back out of the cache. The worker's imports get checked when its pod starts.

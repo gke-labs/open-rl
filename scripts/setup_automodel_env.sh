@@ -10,8 +10,7 @@
 #
 # Two things a forward pass will not tell you (see the qwen35 GDN notes):
 # the GDN backward on Hopper needs tilelang or fla refuses it, and tilelang
-# 0.1.9 needs apache-tvm-ffi pinned to 0.1.9. causal-conv1d compiles against
-# this env's torch, which is why it is installed without build isolation.
+# 0.1.9 needs apache-tvm-ffi pinned to 0.1.9.
 #
 # The 0.6.0 release was verified on the 8xH200 box (CUDA 12.9, driver cu129)
 # with torch 2.11.0+cu129 / transformers 5.12.1 / fla 0.5.1 / tilelang 0.1.9.
@@ -55,12 +54,10 @@ uv pip install --python "$V" "nemo-automodel @ git+https://github.com/NVIDIA-NeM
 # brings its own apache-tvm-ffi pin; 0.1.9 needed it held at 0.1.9 by hand.
 uv pip install --python "$V" "flash-linear-attention==0.5.1" "tilelang>=0.1.11" "torch==2.11.0" \
   --index-url "$TORCH_INDEX" --extra-index-url https://pypi.org/simple --index-strategy unsafe-best-match
-# The image builds the wheel in its own stage and passes it in.
-if [ -n "${CAUSAL_CONV1D_WHEEL:-}" ]; then
-  uv pip install --python "$V" --no-deps "$CAUSAL_CONV1D_WHEEL"
-else
-  MAX_JOBS=$(nproc) uv pip install --python "$V" --no-build-isolation "causal-conv1d>=1.4"
-fi
+# PyPI has no causal-conv1d wheel for torch 2.11. Astral's GPU index builds one
+# per torch and CUDA version, so the pin carries both.
+uv pip install --python "$V" --no-deps "causal-conv1d==1.7.0+cu.12.9.torch.2.11" \
+  --index-url https://wheels.astral.sh/simple/cu129/
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHONPATH="$REPO/src" "$V" - <<'EOF'
