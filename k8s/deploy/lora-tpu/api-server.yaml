@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-api-server
+spec:
+  template:
+    spec:
+      containers:
+      - name: api-server
+        env:
+        - name: OPEN_RL_TPU_TRAINER_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: open-rl-images
+              key: tpu-trainer
+        - name: OPEN_RL_TPU_SAMPLER_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: open-rl-images
+              key: tpu-sampler
+        # A sampler on a fresh TPU node waits for the node, the image pull and
+        # vLLM's startup compile.
+        - name: OPEN_RL_SAMPLER_READY_TIMEOUT_S
+          value: "1800"

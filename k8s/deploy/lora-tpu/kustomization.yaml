@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# LoRA on GKE TPU nodes served by the TPU DRA driver. Same control plane as
+# k8s/deploy/lora; the scheduler's built-in TPU defaults need no settings.
+# Models run on TPU when the client sets the openrl.*_accel_prefs settings.
+namespace: openrl-system
+resources:
+  - ../lora
+
+# The TPU images are not published. Point the placeholders at your builds with
+# an `images:` entry, e.g. `kustomize edit set image TPU-TRAINER-IMAGE=<image>`.
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: open-rl-images
+    behavior: merge
+    literals:
+      - tpu-trainer=TPU-TRAINER-IMAGE
+      - tpu-sampler=TPU-SAMPLER-IMAGE
+
+configurations:
+  - images.yaml
+
+patches:
+  - path: api-server.yaml
