@@ -128,9 +128,8 @@ class AccelPrefsTest(ApiServerTest):
     self.assertEqual(self.prefs(self.post("create_model", {"base_model": "m"})), (["gpu"], ["gpu"]))
 
   def test_prefs_come_from_tags_and_user_metadata(self) -> None:
-    with patch.object(api_server, "check_supported"):
-      session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
-      response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
+    session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
+    response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
     self.assertEqual(self.prefs(response), (["tpu", "gpu"], ["tpu", "gpu"]))
 
   def test_bad_prefs_are_refused(self) -> None:
@@ -149,19 +148,6 @@ class AccelPrefsTest(ApiServerTest):
       )
     self.assertEqual(response.status_code, 400)
     self.assertIn("LoRA only", response.json()["error"])
-
-  def test_tpu_is_refused_until_tpu_workers_exist(self) -> None:
-    user_metadata = {"openrl.trainer_accel_prefs": "tpu|gpu"}
-    response = self.post("create_model", {"base_model": "m", "user_metadata": user_metadata})
-    self.assertEqual(response.status_code, 400)
-    self.assertIn("not supported yet", response.json()["error"])
-    with tempfile.TemporaryDirectory() as directory:
-      for name, content in (("metadata.json", {"base_model": "checkpoint-base"}), ("adapter_config.json", {"r": 8})):
-        with open(os.path.join(directory, name), "w") as f:
-          json.dump(content, f)
-      restored = self.post("create_model_from_state", {"state_path": directory, "user_metadata": user_metadata})
-    self.assertEqual(restored.status_code, 400)
-    self.assertEqual(api_server.store.queues, {})
 
 
 class SaveSeqIdZeroTest(ApiServerTest):

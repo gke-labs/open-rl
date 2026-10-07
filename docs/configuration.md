@@ -105,8 +105,20 @@ or in `TINKER_TAGS`. A tag cannot hold a comma, so separate entries with `|`
 there (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu|gpu"`). The lists are stored
 with the model when it is created and never change.
 
-Full fine-tuning needs `gpu` in both lists. TPU workers are not supported yet,
-so for now the API server refuses any model that lists `tpu`.
+Workers run on the first entry of their role's list for now; later entries are
+not used yet. TPU workers run only in scheduler mode on Kubernetes. The API
+server refuses a model that lists `tpu` anywhere for full fine-tuning, since
+TPU supports LoRA only, and in the trainer list for the `automodel` trainer
+backend. A job's own trainer image can run on TPU if it includes `torch_tpu`.
+
+In scheduler mode these variables on the API server set up the worker pods:
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_TPU_TRAINER_IMAGE` | unset | Image for TPU trainer pods. A TPU trainer fails to start without it. |
+| `OPEN_RL_TPU_SAMPLER_IMAGE` | unset | Image for TPU sampler pods. A TPU sampler fails to start without it. |
+| `OPEN_RL_GPU_WORKER_ENV_CONFIGMAP` | unset | ConfigMap whose entries become env vars on GPU worker pods. |
+| `OPEN_RL_TPU_WORKER_ENV_CONFIGMAP` | unset | ConfigMap whose entries become env vars on TPU worker pods, e.g. TPU token budgets. |
 
 ## Kubernetes deployment
 

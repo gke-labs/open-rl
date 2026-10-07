@@ -54,6 +54,65 @@ class FakeCustomObjectsApi:
     return {"items": items}
 
 
+def gpu_golden(role: str) -> dict[str, Any]:
+  """A GPU LoRA worker's Workload for Qwen/Qwen3-0.6B, as it was before TPU workers."""
+  fp = footprint("Qwen/Qwen3-0.6B", "lora", role)
+  name = f"lora-qwen-qwen3-0-6b-0-{role}"
+  values = {
+    "REDIS_URL": "redis://localhost:6379",
+    "OPEN_RL_TMP_DIR": "/mnt/shared/open-rl",
+    "HF_HOME": "/mnt/shared/open-rl/huggingface",
+    "BASE_MODEL": "Qwen/Qwen3-0.6B",
+    "OPEN_RL_BASE_MODEL": "Qwen/Qwen3-0.6B",
+    "OPEN_RL_ENABLE_FFT": "false",
+    "OPEN_RL_FINE_TUNING_TYPE": "lora",
+    "OPEN_RL_ACCELERATOR_MEMORY": str(fp.accelerator_bytes),
+    "OPEN_RL_WEIGHT_SYNC_STRATEGY": "delta",
+  }
+  if role == "trainer":
+    values["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    module, args = "server.training_requests_processor", ["--model-id", "Qwen/Qwen3-0.6B", "--active-tenant-set-id", "Qwen/Qwen3-0.6B-1"]
+  else:
+    values.update({"OPEN_RL_MODEL_ID": "Qwen/Qwen3-0.6B", "VLLM_SERVER_DEV_MODE": "1", "VLLM_ALLOW_INSECURE_SERIALIZATION": "1"})
+    module, args = "server.vllm_sampler", ["--model-id", "Qwen/Qwen3-0.6B"]
+  values.update({"OPEN_RL_WORKLOAD_ID": name, "OPEN_RL_TIME_SLICE_JOB_ID": name})
+  values.update({"OPEN_RL_ACCEL_TIMESLICER_PORT": "9753", "OPEN_RL_TIME_SLICING": "off"})
+  env: list[dict[str, Any]] = [{"name": k, "value": v} for k, v in values.items()]
+  env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
+  return {
+    "apiVersion": "openrl.io/v1alpha1",
+    "kind": "Workload",
+    "metadata": {"name": name, "labels": {"app.kubernetes.io/managed-by": "open-rl-api-server"}},
+    "spec": {
+      "role": role,
+      "trainingKind": "lora",
+      "exclusive": True,
+      "modelID": "Qwen/Qwen3-0.6B",
+      "ownerID": "qwen-qwen3-0-6b",
+      "accelerator": {"mode": "SingleGPU", "memory": fp.accelerator},
+      "workerContainerName": "worker",
+      "template": {
+        "spec": {
+          "restartPolicy": "OnFailure",
+          "containers": [
+            {
+              "name": "worker",
+              "image": "ghcr.io/gke-labs/open-rl/server:latest",
+              "command": ["uv", "run", "python", "-u", "-m", module],
+              "args": args,
+              "env": env,
+              "resources": fp.resources,
+              "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],
+            }
+          ],
+          "volumes": [{"name": "shared-storage", "persistentVolumeClaim": {"claimName": "open-rl-shared-pvc"}}],
+          "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+        }
+      },
+    },
+  }
+
+
 class SchedulerWorkerManagerTest(unittest.TestCase):
   def setUp(self) -> None:
     self.enterContext(patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}))
@@ -121,7 +180,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
   def test_each_worker_is_sized_for_its_roles_first_accelerator(self) -> None:
     meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu", "gpu"], "sampler_accel_prefs": ["gpu"]}
     s = self.store_with("job-tpu", meta)
-    with patch("server.worker_manager.get_state_store", return_value=s):
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1"}):
       self.manager.ensure("job-tpu", "trainer")
       self.manager.ensure("job-tpu", "sampler")
 
@@ -142,6 +201,96 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     (worker,) = self.api.created
     gpu = footprint("Qwen/Qwen3-0.6B", "lora", "trainer", accelerator="gpu")
     self.assertEqual(worker["spec"]["template"]["spec"]["containers"][0]["resources"], gpu.resources)
+
+  def test_gpu_workloads_are_unchanged(self) -> None:
+    s = self.store_with("job", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job", "trainer")
+      self.manager.ensure("job", "sampler")
+
+    trainer, sampler = self.api.created
+    # Compared as JSON so key order counts too.
+    self.assertEqual(json.dumps(trainer), json.dumps(gpu_golden("trainer")))
+    self.assertEqual(json.dumps(sampler), json.dumps(gpu_golden("sampler")))
+
+  def tpu_workloads(self, env: dict[str, str] | None = None) -> tuple[dict, dict]:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["tpu", "gpu"]}
+    s = self.store_with("job-tpu", meta)
+    images = {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1"}
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {**images, **(env or {})}):
+      self.manager.ensure("job-tpu", "trainer")
+      self.manager.ensure("job-tpu", "sampler")
+    trainer, sampler = self.api.created
+    return trainer, sampler
+
+  def test_a_tpu_trainer_pod(self) -> None:
+    trainer, _ = self.tpu_workloads()
+    fp = footprint("Qwen/Qwen3-0.6B", "lora", "trainer", accelerator="tpu")
+    self.assertEqual(trainer["spec"]["accelerator"], {"type": "TPU", "mode": "SingleGPU", "memory": fp.accelerator})
+    template_spec = trainer["spec"]["template"]["spec"]
+    container = template_spec["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    self.assertEqual(container["image"], "tpu-trainer:1")
+    self.assertEqual(container["command"], ["uv", "run", "python", "-u", "-m", "server.training_requests_processor"])
+    self.assertEqual(env["OPEN_RL_DEVICE"], "tpu")
+    self.assertEqual(container["resources"], fp.resources)
+    self.assertEqual(template_spec["tolerations"], [{"key": "google.com/tpu", "operator": "Exists", "effect": "NoSchedule"}])
+    self.assertEqual([v["name"] for v in template_spec["volumes"]], ["shared-storage"])
+    self.assertEqual(container["volumeMounts"], [{"name": "shared-storage", "mountPath": "/mnt/shared"}])
+    self.assertNotIn("envFrom", container)
+
+  def test_a_tpu_sampler_pod(self) -> None:
+    _, sampler = self.tpu_workloads()
+    fp = footprint("Qwen/Qwen3-0.6B", "lora", "sampler", accelerator="tpu")
+    self.assertEqual(sampler["spec"]["accelerator"], {"type": "TPU", "mode": "SingleGPU", "memory": fp.accelerator})
+    template_spec = sampler["spec"]["template"]["spec"]
+    container = template_spec["containers"][0]
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    self.assertEqual(container["image"], "tpu-sampler:1")
+    self.assertEqual(container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"])
+    # OPEN_RL_DEVICE picks the trainer's device; the sampler image carries vllm-tpu.
+    self.assertNotIn("OPEN_RL_DEVICE", env)
+    self.assertEqual(container["resources"], fp.resources)
+    self.assertEqual(template_spec["tolerations"], [{"key": "google.com/tpu", "operator": "Exists", "effect": "NoSchedule"}])
+    self.assertIn({"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}, template_spec["volumes"])
+    self.assertIn({"name": "dshm", "mountPath": "/dev/shm"}, container["volumeMounts"])
+    self.assertIn({"name": "shared-storage", "mountPath": "/mnt/shared"}, container["volumeMounts"])
+
+  def test_tpu_placement_stays_out_of_the_template(self) -> None:
+    for worker in self.tpu_workloads():
+      template_spec = worker["spec"]["template"]["spec"]
+      for key in ("nodeSelector", "nodeName", "affinity", "resourceClaims"):
+        self.assertNotIn(key, template_spec)
+
+  def test_each_accelerator_reads_its_own_worker_configmap(self) -> None:
+    configmaps = {"OPEN_RL_GPU_WORKER_ENV_CONFIGMAP": "gpu-env", "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP": "tpu-env"}
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["gpu"]}
+    s = self.store_with("job-mixed", meta)
+    with (
+      patch("server.worker_manager.get_state_store", return_value=s),
+      patch.dict(os.environ, {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", **configmaps}),
+    ):
+      self.manager.ensure("job-mixed", "trainer")
+      self.manager.ensure("job-mixed", "sampler")
+
+    trainer, sampler = self.api.created
+    self.assertEqual(trainer["spec"]["template"]["spec"]["containers"][0]["envFrom"], [{"configMapRef": {"name": "tpu-env"}}])
+    self.assertEqual(sampler["spec"]["template"]["spec"]["containers"][0]["envFrom"], [{"configMapRef": {"name": "gpu-env"}}])
+
+  def test_no_worker_configmap_when_unset(self) -> None:
+    trainer, sampler = self.tpu_workloads({"OPEN_RL_GPU_WORKER_ENV_CONFIGMAP": "gpu-env"})
+    for worker in (trainer, sampler):
+      self.assertNotIn("envFrom", worker["spec"]["template"]["spec"]["containers"][0])
+
+  def test_a_tpu_worker_without_its_image_fails_naming_the_variable(self) -> None:
+    s = self.store_with("job-tpu", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "sampler_accel_prefs": ["tpu"]})
+    env = {k: v for k, v in os.environ.items() if k not in {"OPEN_RL_TPU_TRAINER_IMAGE", "OPEN_RL_TPU_SAMPLER_IMAGE"}}
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, env, clear=True):
+      self.manager.ensure("job-tpu", "trainer")
+      with self.assertRaisesRegex(RuntimeError, "OPEN_RL_TPU_SAMPLER_IMAGE"):
+        self.manager.ensure("job-tpu", "sampler")
+    # The GPU trainer still went out; the TPU sampler never did.
+    self.assertEqual([w["spec"]["role"] for w in self.api.created], ["trainer"])
 
   def test_mutable_worker_images_use_the_requested_pull_policy(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
@@ -267,6 +416,20 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertNotIn("OPEN_RL_TRAINER_BACKEND", {e["name"] for e in t_container["env"]})
     self.assertNotEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "ghcr.io/org/trainer:1")
 
+  def test_a_job_image_can_run_a_tpu_trainer(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1", "trainer_accel_prefs": ["tpu"]}
+    s = self.store_with("job-img-tpu", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-img-tpu", "trainer")
+
+    (trainer,) = self.api.created
+    self.assertEqual(trainer["spec"]["accelerator"]["type"], "TPU")
+    template_spec = trainer["spec"]["template"]["spec"]
+    container = template_spec["containers"][0]
+    self.assertEqual(container["image"], "ghcr.io/org/trainer:1")
+    self.assertEqual({e["name"]: e.get("value") for e in container["env"]}["OPEN_RL_DEVICE"], "tpu")
+    self.assertEqual(template_spec["tolerations"][0]["key"], "google.com/tpu")
+
   def test_release_owner_deletes_a_shared_lora_pair_and_nothing_else(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     s.kv_store["open_rl:model_meta:other"] = json.dumps({"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
@@ -342,6 +505,40 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(lora["spec"]["template"]["spec"]["containers"][0]["command"][-1], "server.vllm_sampler")
     self.assertEqual(fft["spec"]["trainingKind"], "fft")
     self.assertEqual(fft["metadata"]["name"], "fft-fft-a-sampler")
+
+
+class SchedulerModeTpuModelTest(unittest.IsolatedAsyncioTestCase):
+  async def create_tpu_model(self, env: dict[str, str]) -> tuple[FakeCustomObjectsApi, InMemoryStore, str]:
+    store = InMemoryStore()
+    state = InMemoryStateStore()
+    api = FakeCustomObjectsApi()
+    with (
+      patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", **env}),
+      patch("server.worker_manager.get_state_store", return_value=state),
+      patch.object(api_server, "store", store),
+      patch.object(api_server, "state", state),
+      patch.object(api_server, "get_store", return_value=store),
+      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api)),
+    ):
+      async with asgi_client() as client:
+        user_metadata = {"openrl.trainer_accel_prefs": "tpu", "openrl.sampler_accel_prefs": "tpu"}
+        created = await post_json(client, "create_model", {"base_model": "Qwen/Qwen3-0.6B", "user_metadata": user_metadata})
+    return api, store, created["request_id"]
+
+  async def test_a_tpu_model_gets_a_tpu_trainer(self) -> None:
+    api, _, _ = await self.create_tpu_model({"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1"})
+    (trainer,) = api.created
+    self.assertEqual(trainer["spec"]["accelerator"]["type"], "TPU")
+    self.assertEqual(trainer["spec"]["template"]["spec"]["containers"][0]["image"], "tpu-trainer:1")
+
+  async def test_a_missing_tpu_image_fails_the_request_by_name(self) -> None:
+    env = {k: v for k, v in os.environ.items() if k != "OPEN_RL_TPU_TRAINER_IMAGE"}
+    with patch.dict(os.environ, env, clear=True):
+      api, store, request_id = await self.create_tpu_model({})
+    self.assertEqual(api.created, [])
+    future = store.futures_store[request_id]
+    self.assertEqual(future["type"], "RequestFailedResponse")
+    self.assertIn("OPEN_RL_TPU_TRAINER_IMAGE", future["error_message"])
 
 
 if __name__ == "__main__":

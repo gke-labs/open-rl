@@ -25,6 +25,7 @@ from typing import Any
 
 from kubernetes import client, config
 
+from server.accelerators import PodSpec, pod_spec
 from server.estimator import Footprint, footprint
 from server.worker_manager import base_model_of, owner_id, runtime_of, worker_args, worker_env, worker_module
 
@@ -55,6 +56,7 @@ class Worker:
   exclusive: bool
   meta: Any
   footprint: Footprint
+  pod_spec: PodSpec
 
   @property
   def owner(self) -> str:
@@ -69,7 +71,10 @@ def describe_worker(model_id: str, role: str) -> Worker:
   meta, runtime, is_lora = runtime_of(model_id)
   base_model = base_model_of(meta, runtime)
   exclusive = not meta.shares_gpu()
-  return Worker(role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role, meta.accelerator_for(role)))
+  accelerator = meta.accelerator_for(role)
+  return Worker(
+    role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role, accelerator), pod_spec(accelerator, role)
+  )
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
@@ -88,6 +93,7 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   }
   if os.getenv("VLLM_GPU_MEMORY_UTILIZATION"):
     values["VLLM_GPU_MEMORY_UTILIZATION"] = os.environ["VLLM_GPU_MEMORY_UTILIZATION"]
+  values.update(worker.pod_spec.env)
   # No other worker shares an exclusive worker's GPUs, so it never parks.
   if worker.exclusive:
     values["OPEN_RL_TIME_SLICING"] = "off"
@@ -98,11 +104,15 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
 
 def worker_container(worker: Worker) -> tuple[str, list[str]]:
   """The image and command. An Automodel trainer, or one from an image the job
-  names, runs the python on its image's PATH."""
+  names, runs the python on its image's PATH. Automodel is GPU-only
+  (check_supported); a job's image for a TPU trainer must carry torch_tpu."""
   if worker.role == "trainer" and worker.meta.trainer_backend != "pytorch":
     image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/gke-labs/open-rl/automodel:latest")
     return image, ["python", "-u", "-m", worker_module(worker.role)]
-  image = os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest")
+  spec = worker.pod_spec
+  image = os.getenv(spec.image_env, spec.default_image)
+  if not image:
+    raise RuntimeError(f"{spec.image_env} is not set, so the API server has no image for this {worker.role}")
   return image, ["uv", "run", "python", "-u", "-m", worker_module(worker.role)]
 
 
@@ -110,6 +120,7 @@ def pod_template(worker: Worker) -> dict[str, Any]:
   """The complete worker pod minus placement. Node selection and claims are
   the scheduler's; it rejects a template that carries them."""
   image, command = worker_container(worker)
+  spec = worker.pod_spec
   template = {
     "spec": {
       "restartPolicy": "OnFailure",
@@ -121,18 +132,23 @@ def pod_template(worker: Worker) -> dict[str, Any]:
           "args": worker_args(worker.runtime, worker.role, worker.is_lora),
           "env": pod_env(worker),
           "resources": worker.footprint.resources,
-          "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],
+          "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}, *spec.volume_mounts],
         }
       ],
       "volumes": [
         {
           "name": "shared-storage",
           "persistentVolumeClaim": {"claimName": os.getenv("OPEN_RL_SHARED_PVC", "open-rl-shared-pvc")},
-        }
+        },
+        *spec.volumes,
       ],
-      "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
+      "tolerations": [{"key": spec.toleration_key, "operator": "Exists", "effect": "NoSchedule"}],
     },
   }
+
+  # Per-accelerator worker settings, so TPU tuning never reaches GPU workers.
+  if configmap := os.getenv(spec.env_configmap_env):
+    template["spec"]["containers"][0]["envFrom"] = [{"configMapRef": {"name": configmap}}]
 
   if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
     template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy
@@ -140,6 +156,9 @@ def pod_template(worker: Worker) -> dict[str, Any]:
 
 
 def workload_body(worker: Worker) -> dict[str, Any]:
+  accelerator: dict[str, Any] = {"mode": "SingleGPU", "memory": worker.footprint.accelerator}
+  if worker.pod_spec.workload_type:
+    accelerator["type"] = worker.pod_spec.workload_type
   return {
     "apiVersion": f"{GROUP}/{VERSION}",
     "kind": "Workload",
@@ -150,7 +169,7 @@ def workload_body(worker: Worker) -> dict[str, Any]:
       "exclusive": worker.exclusive,
       "modelID": worker.runtime,
       "ownerID": worker.owner,
-      "accelerator": {"mode": "SingleGPU", "memory": worker.footprint.accelerator},
+      "accelerator": accelerator,
       "workerContainerName": "worker",
       "template": pod_template(worker),
     },

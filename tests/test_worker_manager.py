@@ -2,6 +2,8 @@ import json
 import unittest
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
 from server import api_server
 from server.session_registry import SessionRegistry
 from server.worker_manager import LocalWorkerManager
@@ -158,6 +160,19 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
       await api_server.ensure_sampler_launched("model-x")
 
     self.assertEqual(self.worker_manager.launched_sampler_model_ids, ["model-x"])
+
+  async def test_ensure_sampler_launched_fails_with_the_launch_error(self) -> None:
+    def refuse(model_id: str, role: str) -> None:
+      raise RuntimeError("OPEN_RL_TPU_SAMPLER_IMAGE is not set")
+
+    with (
+      patch.dict("os.environ", {"SAMPLING_BACKEND": "vllm"}),
+      patch.object(self.worker_manager, "ensure", refuse),
+      self.assertRaises(HTTPException) as caught,
+    ):
+      await api_server.ensure_sampler_launched("model-x")
+    self.assertEqual(caught.exception.status_code, 500)
+    self.assertIn("OPEN_RL_TPU_SAMPLER_IMAGE is not set", caught.exception.detail)
 
   async def test_create_model_launches_trainer_when_worker_manager_present(self) -> None:
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "false"}):

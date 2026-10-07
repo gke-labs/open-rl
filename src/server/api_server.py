@@ -440,7 +440,7 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("A trainer image needs a server that launches workers as pods")
   if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
     raise ValueError("The automodel trainer supports LoRA only")
-  check_supported(fine_tuning_type, settings.trainer_accel_prefs, settings.sampler_accel_prefs)
+  check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs)
   # Nothing parks an exclusive trainer, so it stays on the GPU.
   if settings.exclusive:
     full_config["cpu_offload"] = False
@@ -515,11 +515,14 @@ async def launch_worker_and_enqueue(command: Command) -> str:
 
 
 async def ensure_sampler_launched(model_id: str) -> None:
+  # Fail the request with the reason, e.g. a missing image env var, instead of
+  # letting create_sampling_session wait out the ready timeout.
   if worker_manager is not None and get_sampler_backend() == "vllm":
     try:
       await asyncio.to_thread(worker_manager.ensure, model_id, "sampler")
-    except Exception:
+    except Exception as exc:
       traceback.print_exc()
+      raise HTTPException(status_code=500, detail=f"Could not start the sampler: {exc}") from exc
 
 
 def check_single_process_backend() -> None:
