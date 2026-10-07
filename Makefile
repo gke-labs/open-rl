@@ -1,5 +1,5 @@
 .PHONY: server test lint fmt help render release-bundle push-vm pull-vm cluster-eval \
-	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer cloud-build-tpu-sampler \
+	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer cloud-build-tpu-sampler cloud-build-tpu-fft-sampler \
 	cloud-deploy-api-server cloud-deploy-server \
 	cloud-rollout-api-server cloud-rollout-server cloud-rollout \
 	kind-host-setup kind-create kind-api-server kind-deploy \
@@ -168,6 +168,7 @@ push-images: require-gcp-project
 #   make cloud-rollout           # both, plus the client image
 #   make cloud-build-tpu-trainer # TPU trainer image; needs the torch_tpu wheel under wheels/
 #   make cloud-build-tpu-sampler # TPU sampler image (vllm-tpu)
+#   make cloud-build-tpu-fft-sampler # TPU FFT sampler image (vllm-torchtpu)
 #
 # Tag for cloud-built images. A dirty tree gets a unique -dev<stamp> suffix so
 # uncommitted work never reuses the committed sha's tag, and so the kubelet is
@@ -206,6 +207,9 @@ cloud-build-tpu-trainer: require-gcp-project
 
 cloud-build-tpu-sampler: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_sampler,_TAG=$(CLOUD_IMAGE_TAG) .
+
+cloud-build-tpu-fft-sampler: require-gcp-project
+	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-fft-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_fft_sampler,_TAG=$(CLOUD_IMAGE_TAG) .
 
 # Point the running workloads at the freshly built tag. Split from the build
 # steps so a tag built earlier can be re-deployed with

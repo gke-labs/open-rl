@@ -71,15 +71,19 @@ class FFTTrainingWorker(BaseTrainerWorker):
       print(f"Full fine-tuning model {base_model_name} already loaded.")
       return
 
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    target_device = "auto" if num_gpus > 1 else self.device
-    print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
+    print(f"Loading full fine-tuning model {base_model_name} on {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-
-    self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
+    self.model = self._load_causal_lm(base_model_name)
     print("Successfully loaded full fine-tuning model.")
+
+  def _load_causal_lm(self, path: str) -> PreTrainedModel:
+    # TPU is bf16-native; is_bf16_supported() is only meaningful on CUDA.
+    use_bf16 = self.device.type == "tpu" or (self.device.type == "cuda" and torch.cuda.is_bf16_supported())
+    dtype = torch.bfloat16 if use_bf16 else torch.float32
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    target_device = "auto" if num_gpus > 1 else self.device
+    return AutoModelForCausalLM.from_pretrained(path, dtype=dtype, device_map=target_device)
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
     """Load the per-job model if needed, then prepare it for full fine-tuning."""
@@ -299,10 +303,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self.base_model_name = base_model
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
-    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    target_device = "auto" if num_gpus > 1 else self.device
-    self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)
+    self.model = self._load_causal_lm(state_path)
     self.prepare_model_for_training()
 
     if restore_optimizer and metadata.get("has_optimizer"):

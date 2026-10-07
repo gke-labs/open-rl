@@ -39,13 +39,21 @@ def failed_response(message: str) -> dict[str, Any]:
   return {"type": "RequestFailedResponse", "error_message": message}
 
 
+def on_vllm_torchtpu() -> bool:
+  """Whether vLLM's active platform is vllm-torchtpu, whose worker has no weight-transfer methods."""
+  from vllm.platforms import current_platform
+
+  return type(current_platform).__module__.startswith("vllm_torchtpu.")
+
+
 def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
   if not model_name:
     raise ValueError("BASE_MODEL or VLLM_MODEL is required")
   engine_kwargs = {
     "model": model_name,
-    "enable_sleep_mode": fft_enabled,
+    # Only a time-sliced sampler sleeps; vllm-torchtpu has no sleep mode.
+    "enable_sleep_mode": fft_enabled and time_slicing_enabled(),
     "enable_lora": not fft_enabled,
     "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
     **sampler_batch_limits(),
@@ -59,6 +67,8 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
     engine_kwargs["hf_overrides"] = {"architectures": [architecture]}
   if fft_enabled:
     engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
+    if on_vllm_torchtpu():
+      engine_kwargs["worker_extension_cls"] = "server.tpu_worker_extension.TPUWeightTransferExtension"
   else:
     engine_kwargs["max_loras"] = int(os.getenv("VLLM_MAX_LORAS", "8"))
     engine_kwargs["max_lora_rank"] = int(os.getenv("VLLM_MAX_LORA_RANK", "64"))

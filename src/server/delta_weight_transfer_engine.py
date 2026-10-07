@@ -96,7 +96,10 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if not path.exists():
       raise ValueError(f"Target weights path does not exist: {path}")
     metadata = read_weight_metadata(path)
+    flipped = tpu_flipped_modules(self.model)
     if metadata.get("format") == "sparse_delta":
+      if flipped:
+        raise ValueError("Sparse deltas cannot patch vllm-torchtpu's transposed weights; use weight_sync_strategy=full")
       patches = read_sparse_patches(path, metadata, self.device)
       # The reader verified sorted, unique indices on CPU; skip re-sorting on GPU.
       load_checkpoint_weight_patches(self.model, patches, validate_unique_indices=False)
@@ -108,11 +111,22 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       files = sorted(str(file) for file in path.glob("*.safetensors")) if path.is_dir() else [str(path)]
       if not files or any(not file.endswith(".safetensors") or Path(file).name == "delta.safetensors" for file in files):
         raise ValueError(f"No full checkpoint safetensors found at {path}")
+      # The reload rebuilds each param untransposed, and vllm-torchtpu skips
+      # its transpose while the flag is set, so clear it first.
+      for module in flipped:
+        module._tpu_weight_flipped = False
       # Dense checkpoints need layerwise post-processing; sparse patches must bypass it.
       initialize_layerwise_reload(self.model)
       self.model.load_weights(safetensors_weights_iterator(files, use_tqdm_on_load=False))
       finalize_layerwise_reload(self.model, self.model_config)
+      if missed := [module for module in flipped if not module._tpu_weight_flipped]:
+        raise RuntimeError(f"{len(missed)} TPU linear layers were not reloaded from {path}")
       logger.info("Loaded full checkpoint from %s", path)
+
+
+def tpu_flipped_modules(model: torch.nn.Module) -> list[torch.nn.Module]:
+  """vllm-torchtpu's linear layers, which hold their weights transposed once loaded. None elsewhere."""
+  return [module for module in model.modules() if getattr(module, "_tpu_weight_flipped", False)]
 
 
 def register_delta_weight_transfer() -> None:
