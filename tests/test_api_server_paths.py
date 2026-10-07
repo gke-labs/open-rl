@@ -139,7 +139,7 @@ class AccelPrefsTest(ApiServerTest):
         self.assertEqual(response.status_code, 400)
         self.assertIn(f"openrl.trainer_accel_prefs: {error}", response.json()["error"])
 
-  def test_full_fine_tuning_needs_gpu_in_both_lists(self) -> None:
+  def test_shared_full_fine_tuning_needs_gpu_in_both_lists(self) -> None:
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
       response = self.post(
         "create_model",
@@ -147,7 +147,7 @@ class AccelPrefsTest(ApiServerTest):
         headers={"X-Open-RL-Fine-Tuning-Type": "full"},
       )
     self.assertEqual(response.status_code, 400)
-    self.assertIn("LoRA only", response.json()["error"])
+    self.assertIn("needs openrl.exclusive=true", response.json()["error"])
 
 
 class SaveSeqIdZeroTest(ApiServerTest):
@@ -419,6 +419,15 @@ class ExclusiveMetadataTest(ApiServerTest):
     self.post("session_heartbeat", {"session_id": session_id})
     model_id = self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
     self.assertTrue(self.metadata(model_id)["exclusive"])
+
+  def test_exclusive_full_fine_tuning_on_tpu_syncs_full_checkpoints(self) -> None:
+    tpu = {"openrl.exclusive": "true", "openrl.trainer_accel_prefs": "tpu", "openrl.sampler_accel_prefs": "tpu"}
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      response = self.post("create_model", {"base_model": "m", "user_metadata": tpu}, headers={"X-Open-RL-Fine-Tuning-Type": "full"})
+    self.assertEqual(response.status_code, 200, response.text)
+    meta = self.metadata(response.json()["request_id"])
+    self.assertEqual(meta["weight_sync_config"]["strategy"], "full")
+    self.assertEqual(meta["full_config"]["weight_sync_strategy"], "full")
 
   def test_a_server_without_a_worker_manager_refuses_exclusive(self) -> None:
     with patch.object(api_server, "worker_manager", None):

@@ -1,0 +1,32 @@
+# syntax=docker/dockerfile:1
+
+# TPU FFT sampler image. vllm-torchtpu keeps the model as torch Parameters, so a
+# full checkpoint can be reloaded in place each step, which the vllm-tpu LoRA
+# sampler image cannot do. Built on an image that already has vllm-torchtpu,
+# vLLM, torch and torch_tpu, by default vllm-torchtpu's prod image. open-rl adds
+# its core dependencies, held to the versions the base already has, so its own
+# vllm and torch pins never apply.
+
+ARG BASE_IMAGE=us-central1-docker.pkg.dev/cloud-ullm-inference-ci-cd/vllm-torchtpu/vllm-torchtpu-prod:latest
+FROM ${BASE_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+WORKDIR /app
+COPY pyproject.toml .
+COPY src src
+
+# Installed into the base's python, not just put on PYTHONPATH, so vLLM loads
+# the delta-sync plugin from the entry point. pyproject.toml goes afterwards:
+# workers start with `uv run`, which would otherwise sync /app as a project.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    PY="$(command -v python)" && \
+    uv pip freeze --python "$PY" > /tmp/base-constraints.txt && \
+    uv pip install --python "$PY" --constraint /tmp/base-constraints.txt . && \
+    rm -rf pyproject.toml build src/*.egg-info /tmp/base-constraints.txt && \
+    uv run python -c "import importlib.util, sys; assert importlib.util.find_spec('vllm_torchtpu'), sys.executable"
+
+ENV PYTHONPATH=/app/src
+
+CMD ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
