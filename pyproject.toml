@@ -44,7 +44,7 @@ cpu = [
 ]
 gpu = [
     "datasets",
-    "flash-linear-attention==0.5.1",
+    "flash-linear-attention==0.5.2",
     "numpy",
     "peft",
     "tilelang>=0.1.9; sys_platform == 'linux'",
