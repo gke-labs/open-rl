@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import importlib
 import json
 import os
 import shutil
@@ -376,11 +377,16 @@ async def run_training_requests_processor(
 
 
 def build_worker(is_lora: bool) -> TrainingWorker:
-  if os.getenv("OPEN_RL_TRAINER_BACKEND") == "automodel":
+  backend = os.getenv("OPEN_RL_TRAINER_BACKEND", "")
+  if backend == "automodel":
     # nemo-automodel lives only in the automodel image, so import it there.
     from training.automodel_worker import AutomodelTrainingWorker
 
     return AutomodelTrainingWorker()
+  if ":" in backend:
+    # A trainer image names its own trainer class as <module>:<Class>.
+    module, _, name = backend.partition(":")
+    return getattr(importlib.import_module(module), name)()
   return LoraTrainingWorker() if is_lora else FFTTrainingWorker()
 
 

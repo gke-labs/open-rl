@@ -128,6 +128,7 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
 - **Technical Documentation**:
   - [Architecture](docs/architecture.md)
   - [Tinker Client Compatibility](docs/tinker-client-compatibility.md)
+  - [Custom trainer images](docs/custom-trainer-image.md)
 - **Deployment**:
   - [Kubernetes Deployment Guide (GKE)](docs/setup/gke-setup.md)
 
