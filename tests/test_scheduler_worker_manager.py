@@ -39,7 +39,7 @@ class FakeCustomObjectsApi:
     metadata = dict(self.existing[name]["metadata"])
     if name in self.deleting:
       metadata["deletionTimestamp"] = "2026-09-08T00:00:00Z"
-    return {"metadata": metadata}
+    return {**self.existing[name], "metadata": metadata}
 
   def delete_namespaced_custom_object(self, group: str, version: str, namespace: str, plural: str, name: str) -> dict:
     if name not in self.existing:

@@ -23,7 +23,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from server import proto_codec
+from server import proto_codec, sampler_router
 from server.model_metadata import (
   TrainingModelMetadata,
   WeightSyncConfig,
@@ -40,6 +40,7 @@ from training.types import TRAINER_BACKENDS, Datum, FFTConfig, FineTuningType, L
 store = get_store()
 state = get_state_store()
 worker_manager: WorkerManager | None = None
+router: sampler_router.SamplerRouter | None = None
 
 session_registry = SessionRegistry(state)
 SESSION_REAP_INTERVAL_SEC = 30
@@ -186,6 +187,9 @@ class Settings(BaseModel):
   fft_seed: int | None = None
   # Park trainer state in host memory between turns. Exclusive models default to off.
   fft_cpu_offload: Annotated[bool | None, BeforeValidator(parse_bool)] = None
+  # An llm-d router on the model's first sampler sends each request to the
+  # replica that caches the longest prefix of its prompt. LoRA only.
+  sampler_router: Literal["llmd"] | None = None
 
 
 def tag_metadata(tags: list[str]) -> dict[str, str]:
@@ -453,6 +457,10 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("openrl.trainer_gpus above 1 needs openrl.trainer_backend=automodel")
   if settings.trainer_gpus > 1 and isinstance(worker_manager, LocalWorkerManager):
     raise ValueError("openrl.trainer_gpus above 1 needs a server that launches workers as pods")
+  if settings.sampler_router and fine_tuning_type != "lora":
+    raise ValueError("openrl.sampler_router supports LoRA only")
+  if settings.sampler_router and (worker_manager is None or isinstance(worker_manager, LocalWorkerManager)):
+    raise ValueError("openrl.sampler_router needs a server that launches workers as pods")
   if settings.trainer_gpus % settings.trainer_cp:
     raise ValueError(f"openrl.trainer_cp={settings.trainer_cp} must divide openrl.trainer_gpus={settings.trainer_gpus}")
   model_id = str(uuid.uuid4())
@@ -468,6 +476,7 @@ async def _extract_and_persist_model_metadata(
     trainer_backend=settings.trainer_backend,
     trainer_gpus=settings.trainer_gpus,
     trainer_cp=settings.trainer_cp,
+    sampler_router=settings.sampler_router,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 
@@ -529,8 +538,8 @@ async def ensure_sampler_launched(model_id: str) -> None:
   if worker_manager is not None and get_sampler_backend() == "vllm":
     try:
       await asyncio.to_thread(worker_manager.ensure, model_id, "sampler")
-    except Exception:
-      traceback.print_exc()
+    except Exception as exc:
+      raise HTTPException(status_code=503, detail=f"Cannot launch sampler: {exc}") from exc
 
 
 def check_single_process_backend() -> None:
@@ -598,7 +607,12 @@ async def reap_dead_sessions():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-  global worker_manager
+  global worker_manager, router
+  router = sampler_router.SamplerRouter(
+    state,
+    timeout=float(os.getenv("OPEN_RL_ROUTER_TIMEOUT_SECONDS", "1800")),
+    capacity=int(os.getenv("OPEN_RL_ROUTER_MAX_INFLIGHT", "256")),
+  )
   task = None
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
     worker_manager = create_worker_manager()
@@ -623,6 +637,8 @@ async def lifespan(_: FastAPI):
   try:
     yield
   finally:
+    await router.close()
+    router = None
     if reap_task is not None:
       reap_task.cancel()
     if task is not None:
@@ -837,7 +853,12 @@ async def retrieve_future(req: RetrieveFutureRequest, accept: str = Header(defau
   pending, failed, and every other result stay JSON.
   """
   request_id = req.request_id
-  result = await store.get_future(request_id, timeout=60.0)
+  if request_id.startswith(sampler_router.PREFIX):
+    if router is None:
+      raise HTTPException(status_code=503, detail="Sampler router is unavailable")
+    result = await router.result(request_id)
+  else:
+    result = await store.get_future(request_id, timeout=60.0)
   if result is None:
     return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
   if isinstance(result, dict) and result.get("type") == "RequestFailedResponse":
@@ -1088,10 +1109,10 @@ async def asample(req: AsampleRequest):
     return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
   # vLLM backend
-  req_id = str(uuid.uuid4())
-  carrier = await open_future(req_id)
-
   model_meta = await get_model_metadata(state, lookup_id)
+  routed = model_meta is not None and model_meta.sampler_router == "llmd"
+  req_id = (sampler_router.PREFIX if routed else "") + new_request_id()
+  carrier = await open_future(req_id)
   fine_tuning_type = model_meta.fine_tuning_type if model_meta else "lora"
 
   if fine_tuning_type == "lora":
@@ -1124,7 +1145,15 @@ async def asample(req: AsampleRequest):
     "trace_context": carrier,
   }
 
-  await store.put_sampling_request(sampling_req)
+  if routed:
+    if worker_manager is None or router is None:
+      raise HTTPException(status_code=503, detail="Sampler router is unavailable")
+    try:
+      await router.submit(worker_manager.router_url, lookup_id, sampling_req)
+    except sampler_router.RouterBusy as exc:
+      raise HTTPException(status_code=429, detail=str(exc)) from exc
+  else:
+    await store.put_sampling_request(sampling_req)
   return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
 

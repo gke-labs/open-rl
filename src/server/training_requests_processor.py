@@ -18,6 +18,7 @@ from opentelemetry import propagate, trace
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
+from server.lora_snapshots import freeze_adapter
 from server.model_metadata import get_model_metadata
 from server.store import RequestStore, get_state_store, get_store
 from training import commands
@@ -337,6 +338,8 @@ class TrainingRequestsProcessor:
         checkpoint = await asyncio.to_thread(self.worker.save_for_sampler, command.model_id, command.alias, ref)
         if checkpoint:
           await self.publish_checkpoint(command.model_id, checkpoint)
+        elif is_primary() and ref:
+          await asyncio.to_thread(freeze_adapter, command.model_id, command.path, command.sampling_session_id)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)

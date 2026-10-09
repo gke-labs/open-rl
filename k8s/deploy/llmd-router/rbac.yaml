@@ -1,0 +1,39 @@
+# The router on a sampler set's first sampler watches the set's pods.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openrl-llmd-router
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: openrl-llmd-router
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openrl-llmd-router
+subjects:
+- kind: ServiceAccount
+  name: openrl-llmd-router
+roleRef:
+  kind: Role
+  name: openrl-llmd-router
+  apiGroup: rbac.authorization.k8s.io
+---
+# The API server finds each set's router pod to send it requests.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openrl-llmd-router-gateway
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sa
+roleRef:
+  kind: Role
+  name: openrl-llmd-router
+  apiGroup: rbac.authorization.k8s.io

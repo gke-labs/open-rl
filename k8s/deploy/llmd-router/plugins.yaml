@@ -1,0 +1,24 @@
+# Score each replica on its queue depth and KV cache use, read from the
+# sampler's /metrics, and on how much of the prompt's prefix it holds. Scoring
+# them together keeps a replica with the prefix from collecting a queue while
+# others sit idle.
+apiVersion: llm-d.ai/v1alpha1
+kind: EndpointPickerConfig
+plugins:
+- type: queue-scorer
+- type: kv-cache-utilization-scorer
+- type: prefix-cache-scorer
+- type: metrics-data-source
+  parameters:
+    scheme: "http"
+    path: "/metrics"
+- type: core-metrics-extractor
+schedulingProfiles:
+- name: default
+  plugins:
+  - pluginRef: queue-scorer
+    weight: 2
+  - pluginRef: kv-cache-utilization-scorer
+    weight: 2
+  - pluginRef: prefix-cache-scorer
+    weight: 3

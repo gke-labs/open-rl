@@ -4,7 +4,6 @@ import json
 import math
 import os
 import time
-import traceback
 from datetime import datetime
 from typing import Any
 
@@ -154,28 +153,23 @@ class LoraTrainingWorker(BaseTrainerWorker):
   def save_adapter(self, adapter_id: str, alias: str | None = None) -> None:
     """Save adapter weights to disk for reliability and sharing."""
     if self.peft_model is None:
-      print(f"[LoRA] Cannot save adapter '{adapter_id}': no active PEFT model initialized.")
-      return
-    try:
-      tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-      save_path = os.path.join(tmp_dir, "peft", adapter_id)
-      os.makedirs(save_path, exist_ok=True)
+      raise RuntimeError(f"Cannot save adapter {adapter_id}: no active PEFT model initialized")
+    tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+    save_path = os.path.join(tmp_dir, "peft", adapter_id)
+    os.makedirs(save_path, exist_ok=True)
 
-      # Save the adapter weights
-      self.peft_model.set_adapter(adapter_id)
-      self.peft_model.save_pretrained(save_path, selected_adapters=[adapter_id])
+    # Save the adapter weights
+    self.peft_model.set_adapter(adapter_id)
+    self.peft_model.save_pretrained(save_path, selected_adapters=[adapter_id])
 
-      # Save minimal metadata
-      metadata = {"model_id": adapter_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
-      if alias is not None:
-        metadata["alias"] = alias
-      with open(os.path.join(save_path, "metadata.json"), "w") as f:
-        json.dump(metadata, f)
+    # Save minimal metadata
+    metadata = {"model_id": adapter_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
+    if alias is not None:
+      metadata["alias"] = alias
+    with open(os.path.join(save_path, "metadata.json"), "w") as f:
+      json.dump(metadata, f)
 
-      print(f"Auto-saved adapter '{adapter_id}' to {save_path}")
-    except Exception as e:
-      print(f"[ERROR] Failed to auto-save weights for {adapter_id}: {e}")
-      traceback.print_exc()
+    print(f"Auto-saved adapter '{adapter_id}' to {save_path}")
 
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     """Save adapter weights (and optionally optimizer state) to a specific path."""

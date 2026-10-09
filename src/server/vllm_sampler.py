@@ -25,14 +25,16 @@ from vllm.sampling_params import RequestOutputKind
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
+from server.lora_snapshots import resolve_lora_path
+from server.sampler_http import serve_http
 from server.store import RequestStore, StateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, sampler_batch_limits, split_stop, text_only_engine_kwargs
 
 tracer = trace.get_tracer("vllm.inference.worker")
 SHUTDOWN_SENTINEL = "SHUTDOWN_SENTINEL"
-TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
 READY_TTL_SECONDS = 3600
 ENGINE_POLL_SECONDS = 5
+STATS_LOG_SECONDS = 30
 
 
 def failed_response(message: str) -> dict[str, Any]:
@@ -50,7 +52,9 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
     "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
     **sampler_batch_limits(),
     "gpu_memory_utilization": gpu_memory_utilization(),
-    "enable_prefix_caching": False,
+    # FFT weights change in place under one name, so cached prefixes would go
+    # stale. Each LoRA version samples under its own adapter name.
+    "enable_prefix_caching": not fft_enabled,
     "enforce_eager": os.getenv("VLLM_ENFORCE_EAGER", "0") == "1",
     **text_only_engine_kwargs(),
   }
@@ -65,32 +69,6 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
   return engine_kwargs
 
 
-def resolve_lora_path(lora_id: str, lora_path: str | None) -> str:
-  """Find the PEFT directory holding adapter_config.json for this adapter."""
-  if lora_path and os.path.exists(os.path.join(lora_path, "adapter_config.json")):
-    return lora_path
-
-  if lora_path:
-    # Check subfolders created by PEFT save_pretrained
-    base_candidates = [
-      lora_id,
-      lora_id.rsplit("/", 1)[-1],
-      lora_id.split("://")[-1].split("/")[0] if "://" in lora_id else lora_id,
-    ]
-    for candidate in base_candidates:
-      candidate_path = os.path.join(lora_path, candidate)
-      if os.path.exists(os.path.join(candidate_path, "adapter_config.json")):
-        return candidate_path
-
-  # Check auto-saved PEFT directory: TMP_DIR/peft/<model_id>/<model_id>
-  base_id = lora_id.split("://")[-1].split("/")[0] if "://" in lora_id else lora_id
-  peft_dir = os.path.join(TMP_DIR, "peft", base_id, base_id)
-  if os.path.exists(os.path.join(peft_dir, "adapter_config.json")):
-    return peft_dir
-
-  return lora_path or peft_dir
-
-
 def lora_request_for(request: dict[str, Any]) -> LoRARequest | None:
   """A LoRA request when the adapter exists on disk. Before the first save a
   LoRA job samples from the base model, so a missing adapter is not an error."""
@@ -98,7 +76,7 @@ def lora_request_for(request: dict[str, Any]) -> LoRARequest | None:
   if not lora_id:
     return None
   path = resolve_lora_path(lora_id, request.get("lora_path"))
-  if not os.path.exists(os.path.join(path, "adapter_config.json")):
+  if path is None:
     return None
   lora_int_id = int(hashlib.md5(lora_id.encode("utf-8")).hexdigest(), 16) % (2**31 - 1) + 1
   return LoRARequest(lora_id, lora_int_id, path)
@@ -296,6 +274,9 @@ async def serve(
     if time_slicer is not None:
       await sampler.sleep()  # give the memory back before releasing the slot
   state = get_state_store()
+  stats = asyncio.create_task(log_engine_stats(sampler.engine))
+  # A routed sampler also takes requests from its set's llm-d router.
+  http = asyncio.create_task(serve_http(sampler, int(port))) if (port := os.getenv("OPEN_RL_SAMPLER_HTTP_PORT")) else None
   try:
     try:
       ready_at = float("-inf")
@@ -330,7 +311,21 @@ async def serve(
     finally:
       await state.delete_values(f"open_rl:sampler_ready:{model_id}")
   finally:
+    stats.cancel()
+    if http is not None:
+      http.cancel()
     sampler.engine.shutdown()
+
+
+async def log_engine_stats(engine: AsyncLLMEngine) -> None:
+  """vLLM only logs throughput and prefix cache hit rate when asked, which its
+  own server does every 10 seconds."""
+  while True:
+    await asyncio.sleep(STATS_LOG_SECONDS)
+    try:
+      await engine.do_log_stats()
+    except Exception as exc:
+      print(f"[vLLM Worker] Could not log engine stats: {exc}")
 
 
 async def serve_time_sliced(model_id: str, store: RequestStore, make_engine: Callable[[], AsyncLLMEngine]) -> None:

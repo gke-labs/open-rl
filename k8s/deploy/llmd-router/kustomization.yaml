@@ -1,0 +1,14 @@
+# What openrl.sampler_router=llmd needs beside the base deployment: the
+# router's config and permissions. Apply with kubectl apply -k.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: openrl-system
+resources:
+- rbac.yaml
+configMapGenerator:
+- name: openrl-llmd-router
+  files:
+  - envoy.yaml
+  - plugins.yaml
+generatorOptions:
+  disableNameSuffixHash: true

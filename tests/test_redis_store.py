@@ -11,9 +11,11 @@ import subprocess
 import time
 import unittest
 
+import httpx
 import redis as sync_redis
 import redis.asyncio as redis
 
+from server.sampler_router import SamplerRouter
 from server.store import InMemoryStateStore, RedisStateStore, RedisStore
 
 TEST_REDIS_URL = os.getenv("OPEN_RL_TEST_REDIS_URL")
@@ -104,6 +106,24 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
   async def test_pending_markers_are_not_stored(self) -> None:
     await self.store.set_future("req-1", {"status": "pending"})
     self.assertEqual((await self.store.get_future("req-1", timeout=0.3))["type"], "try_again")
+
+  async def test_routed_receipts_survive_api_process_replacement(self) -> None:
+    success = {"type": "sample", "sequences": [{"tokens": [2], "logprobs": [-0.5], "stop_reason": "length"}]}
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=success))
+    router = SamplerRouter(self.state, client=httpx.AsyncClient(transport=transport))
+    restarted = SamplerRouter(self.state, client=httpx.AsyncClient(transport=transport))
+    try:
+      request = {"request_id": "routed-test", "model_id": "job", "lora_id": None, "prompt_token_ids": [1], "max_tokens": 2, "num_samples": 1}
+      await router.submit(lambda model_id: "http://router", "job", request)
+      self.assertEqual(await router.result("routed-test"), success)
+      self.assertEqual(await restarted.result("routed-test"), success)
+      self.assertGreater(await self.store.redis.ttl("open_rl:routed_sample:routed-test"), 0)
+      await router.write("routed-abandoned", {"type": "try_again"})
+      self.assertIn("interrupted", (await restarted.result("routed-abandoned"))["error_message"])
+      self.assertEqual(await self.store.redis.keys("open_rl:sampling_queue:*"), [])
+    finally:
+      await router.close()
+      await restarted.close()
 
   async def test_get_requests_rotates_between_tenants(self) -> None:
     for i in range(3):
