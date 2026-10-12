@@ -14,6 +14,7 @@ substitutions:
   _IMAGE: '' # Fully-qualified repository, e.g. gcr.io/my-project/open-rl-api-server
   _DOCKERFILE: '' # Path to the Dockerfile, relative to the repo root
   _TAG: '' # Immutable tag for this build
+  _BASE_IMAGE: '' # Base image for Dockerfiles that take a BASE_IMAGE build arg
 
 options:
   # The CUDA server image needs both the CPU and the disk; the slim API server
@@ -42,6 +43,7 @@ steps:
       - buildx
       - build
       - --file=${_DOCKERFILE}
+      - --build-arg=BASE_IMAGE=${_BASE_IMAGE}
       - --tag=${_IMAGE}:${_TAG}
       - --tag=${_IMAGE}:latest
       - --cache-from=type=registry,ref=${_IMAGE}:buildcache
