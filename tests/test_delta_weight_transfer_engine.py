@@ -97,6 +97,19 @@ class PackedModel(torch.nn.Module):
     return loaded
 
 
+class FlippedModel(PackedModel):
+  """PackedModel as the TPU platform leaves it: marked as holding transposed weights."""
+
+  def __init__(self):
+    super().__init__()
+    self._tpu_weight_flipped = True
+    self.flag_during_load = None
+
+  def load_weights(self, weights):
+    self.flag_during_load = self._tpu_weight_flipped
+    return super().load_weights(weights)
+
+
 class WeightTransferEngineTest(unittest.TestCase):
   def make_engine(self, model):
     config = SimpleNamespace(parallel_config=SimpleNamespace(), model_config=SimpleNamespace())
@@ -178,3 +191,37 @@ class WeightTransferEngineTest(unittest.TestCase):
         start.assert_called_once_with(engine.model)
         finish.assert_called_once_with(engine.model, engine.model_config)
       self.assertTrue(torch.equal(engine.model.qkv[:4], torch.ones(4, 2)))
+
+  def reload_flipped(self, directory, transpose_again: bool) -> FlippedModel:
+    save_file({"q_proj.weight": torch.ones(4, 2)}, Path(directory) / "model.safetensors")
+    model = FlippedModel()
+
+    def finalize(model, model_config):
+      # The TPU platform's post-processing transposes the layer and sets the flag again.
+      model._tpu_weight_flipped = transpose_again
+
+    with (
+      patch("server.delta_weight_transfer_engine.initialize_layerwise_reload"),
+      patch("server.delta_weight_transfer_engine.finalize_layerwise_reload", side_effect=finalize),
+    ):
+      self.apply(self.make_engine(model), directory)
+    return model
+
+  def test_dense_reload_clears_the_tpu_flag_first(self):
+    with tempfile.TemporaryDirectory() as directory:
+      model = self.reload_flipped(directory, transpose_again=True)
+      self.assertFalse(model.flag_during_load)
+      self.assertTrue(model._tpu_weight_flipped)
+      self.assertTrue(torch.equal(model.qkv[:4], torch.ones(4, 2)))
+
+  def test_dense_reload_fails_when_a_tpu_layer_is_left_untransposed(self):
+    with tempfile.TemporaryDirectory() as directory, self.assertRaisesRegex(RuntimeError, "1 of 1 TPU linear layers were not reloaded"):
+      self.reload_flipped(directory, transpose_again=False)
+
+  def test_sparse_deltas_are_refused_on_tpu_weights(self):
+    with tempfile.TemporaryDirectory() as directory:
+      model = FlippedModel()
+      write_delta(directory)
+      with self.assertRaisesRegex(ValueError, "weight_sync_strategy=full"):
+        self.apply(self.make_engine(model), directory)
+      self.assertEqual(torch.count_nonzero(model.qkv), 0)
