@@ -9,7 +9,8 @@ from unittest.mock import MagicMock, patch
 
 import torch
 
-from training.device import resolve_device
+from training.device import model_dtype, resolve_device
+from training.fft_trainer_worker import FFTTrainingWorker
 from training.lora_trainer_worker import LoraTrainingWorker
 
 SRC = Path(__file__).resolve().parents[1] / "src"
@@ -108,6 +109,64 @@ class TestLoadBaseModel(unittest.TestCase):
       with self.subTest(bf16=bf16):
         from_pretrained, _ = self.load(device, cuda=True, bf16=bf16)
         from_pretrained.assert_called_once_with("tiny/model", dtype=dtype, device_map=device)
+
+
+class TestModelDtype(unittest.TestCase):
+  def test_bf16_on_tpu_and_on_cuda_that_supports_it(self) -> None:
+    cases = [
+      (SimpleNamespace(type="tpu"), False, torch.bfloat16),
+      (torch.device("cuda"), True, torch.bfloat16),
+      (torch.device("cuda"), False, torch.float32),
+      (torch.device("cpu"), True, torch.float32),
+      (torch.device("mps"), True, torch.float32),
+    ]
+    for device, bf16, expected in cases:
+      with self.subTest(device=device, bf16=bf16), patch("torch.cuda.is_bf16_supported", return_value=bf16):
+        self.assertEqual(model_dtype(device), expected)
+
+
+class TestLoadFFTModel(unittest.TestCase):
+  def load(self, device, gpus: int, bf16: bool = False) -> MagicMock:
+    with device_env("cpu"):
+      worker = FFTTrainingWorker()
+    worker.device = device
+    with (
+      patch("training.fft_trainer_worker.AutoTokenizer"),
+      patch("training.fft_trainer_worker.AutoModelForCausalLM") as auto_model,
+      patch("torch.cuda.is_available", return_value=gpus > 0),
+      patch("torch.cuda.device_count", return_value=gpus),
+      patch("torch.cuda.is_bf16_supported", return_value=bf16),
+    ):
+      worker.load_base_model("tiny/model")
+    return auto_model.from_pretrained
+
+  def test_tpu_loads_bf16(self) -> None:
+    device = SimpleNamespace(type="tpu")
+    self.load(device, gpus=0).assert_called_once_with("tiny/model", dtype=torch.bfloat16, device_map=device)
+
+  def test_cuda_uses_bf16_when_supported(self) -> None:
+    device = torch.device("cuda", 0)
+    for bf16, dtype in [(True, torch.bfloat16), (False, torch.float32)]:
+      with self.subTest(bf16=bf16):
+        self.load(device, gpus=1, bf16=bf16).assert_called_once_with("tiny/model", dtype=dtype, device_map=device)
+
+  def test_several_gpus_split_the_model(self) -> None:
+    self.load(torch.device("cuda", 0), gpus=2, bf16=True).assert_called_once_with("tiny/model", dtype=torch.bfloat16, device_map="auto")
+
+  def test_restore_from_state_uses_the_same_dtype(self) -> None:
+    with device_env("cpu"):
+      worker = FFTTrainingWorker()
+    worker.device = SimpleNamespace(type="tpu")
+    with tempfile.TemporaryDirectory() as state_path:
+      Path(state_path, "metadata.json").write_text('{"base_model": "tiny/model"}')
+      with (
+        patch("training.fft_trainer_worker.AutoTokenizer"),
+        patch("training.fft_trainer_worker.AutoModelForCausalLM") as auto_model,
+        patch.object(worker, "prepare_model_for_training"),
+        patch("torch.cuda.is_available", return_value=False),
+      ):
+        worker.load_from_state("model-1", state_path)
+    auto_model.from_pretrained.assert_called_once_with(state_path, dtype=torch.bfloat16, device_map=worker.device)
 
 
 if __name__ == "__main__":
