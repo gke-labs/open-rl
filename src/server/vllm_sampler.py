@@ -45,7 +45,8 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
     raise ValueError("BASE_MODEL or VLLM_MODEL is required")
   engine_kwargs = {
     "model": model_name,
-    "enable_sleep_mode": fft_enabled,
+    # Only a time-sliced sampler sleeps. vLLM refuses sleep mode on out-of-tree platforms such as vllm-torchtpu.
+    "enable_sleep_mode": fft_enabled and time_slicing_enabled(),
     "enable_lora": not fft_enabled,
     "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
     **sampler_batch_limits(),
