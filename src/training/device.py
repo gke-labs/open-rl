@@ -33,3 +33,10 @@ def resolve_device() -> torch.device:
   if torch.backends.mps.is_available():
     return torch.device("mps")
   return torch.device("cpu")
+
+
+def model_dtype(device: torch.device) -> torch.dtype:
+  """bf16 on TPU and on CUDA GPUs that support it, else fp32. is_bf16_supported() only answers for CUDA."""
+  if device.type == "tpu" or (device.type == "cuda" and torch.cuda.is_bf16_supported()):
+    return torch.bfloat16
+  return torch.float32

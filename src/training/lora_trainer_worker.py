@@ -13,6 +13,7 @@ from peft import LoraConfig as PeftLoraConfig
 from peft import PeftModelForCausalLM, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
+from training.device import model_dtype
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import LoraConfig
 
@@ -45,10 +46,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
     print(f"Loading base model {base_model_name} to {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    use_bf16 = self.device.type == "tpu" or (self.device.type == "cuda" and torch.cuda.is_bf16_supported())
-    dtype = torch.bfloat16 if use_bf16 else torch.float32
-
-    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
+    self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=model_dtype(self.device), device_map=self.device)
     print("Successfully loaded.")
 
   def target_lora_modules(self, config: LoraConfig) -> list[str]:
