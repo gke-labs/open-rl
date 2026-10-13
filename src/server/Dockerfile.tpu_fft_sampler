@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+
+# TPU sampler image for full fine-tuning. BASE_IMAGE must already have torch,
+# torch_tpu and a vLLM TPU build that keeps the model as torch Parameters, so a
+# full checkpoint can be reloaded in place each step, which vllm-tpu in the LoRA
+# sampler image cannot do. open-rl's dependencies are held to the versions the
+# base already has.
+
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+
+# UV_NO_PROJECT: workers start with `uv run`, which would otherwise build an
+# empty project venv in /app instead of using the base's python.
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_NO_PROJECT=1
+
+WORKDIR /app
+COPY pyproject.toml .
+COPY src src
+
+# Installed into the base's python so vLLM finds the delta-sync plugin's entry point.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    PY="$(command -v python)" && \
+    uv pip freeze --python "$PY" > /tmp/base-constraints.txt && \
+    uv pip install --python "$PY" --constraint /tmp/base-constraints.txt . && \
+    rm -rf build src/*.egg-info /tmp/base-constraints.txt
+
+# vLLM saves the compiled model to disk and reuses it on its next start. On TPU,
+# a reused copy can make vLLM run the model uncompiled, one op at a time, which
+# crashes the TPU runtime. Without the saved copy, every start compiles again.
+ENV PYTHONPATH=/app/src \
+    VLLM_DISABLE_COMPILE_CACHE=1
+
+CMD ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
