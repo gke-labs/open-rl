@@ -14,6 +14,7 @@ from vllm.model_executor.model_loader.reload import finalize_layerwise_reload, i
 from vllm.model_executor.model_loader.weight_utils import safetensors_weights_iterator
 
 from server.model_metadata import SPARSE_DELTA_VERSION
+from server.tpu_weights import check_flipped_again, clear_flipped, flipped_modules
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +97,11 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if not path.exists():
       raise ValueError(f"Target weights path does not exist: {path}")
     metadata = read_weight_metadata(path)
+    flipped = flipped_modules(self.model)
     if metadata.get("format") == "sparse_delta":
+      # Patch indices are in checkpoint layout; TPU linear weights are transposed.
+      if flipped:
+        raise ValueError("Sparse deltas cannot patch transposed TPU weights; use weight_sync_strategy=full")
       patches = read_sparse_patches(path, metadata, self.device)
       # The reader verified sorted, unique indices on CPU; skip re-sorting on GPU.
       load_checkpoint_weight_patches(self.model, patches, validate_unique_indices=False)
@@ -108,10 +113,12 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
       files = sorted(str(file) for file in path.glob("*.safetensors")) if path.is_dir() else [str(path)]
       if not files or any(not file.endswith(".safetensors") or Path(file).name == "delta.safetensors" for file in files):
         raise ValueError(f"No full checkpoint safetensors found at {path}")
+      clear_flipped(flipped)
       # Dense checkpoints need layerwise post-processing; sparse patches must bypass it.
       initialize_layerwise_reload(self.model)
       self.model.load_weights(safetensors_weights_iterator(files, use_tqdm_on_load=False))
       finalize_layerwise_reload(self.model, self.model_config)
+      check_flipped_again(flipped, str(path))
       logger.info("Loaded full checkpoint from %s", path)
 
 
