@@ -139,7 +139,7 @@ class AccelPrefsTest(ApiServerTest):
         self.assertEqual(response.status_code, 400)
         self.assertIn(f"openrl.trainer_accel_prefs: {error}", response.json()["error"])
 
-  def test_full_fine_tuning_needs_gpu_in_both_lists(self) -> None:
+  def test_shared_full_fine_tuning_on_tpu_is_refused(self) -> None:
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
       response = self.post(
         "create_model",
@@ -147,7 +147,7 @@ class AccelPrefsTest(ApiServerTest):
         headers={"X-Open-RL-Fine-Tuning-Type": "full"},
       )
     self.assertEqual(response.status_code, 400)
-    self.assertIn("LoRA only", response.json()["error"])
+    self.assertIn("needs openrl.exclusive=true", response.json()["error"])
 
 
 class SaveSeqIdZeroTest(ApiServerTest):
@@ -453,6 +453,31 @@ class ExclusiveMetadataTest(ApiServerTest):
     unknown = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.exclusiv": "true"}})
     self.assertEqual(unknown.status_code, 400)
     self.assertIn("openrl.exclusiv: unknown setting", unknown.json()["error"])
+
+  def create_fft(self, **user_metadata: str) -> dict:
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      response = self.post(
+        "create_model",
+        {"base_model": "m", "user_metadata": {"openrl.exclusive": "true", **user_metadata}},
+        headers={"X-Open-RL-Fine-Tuning-Type": "full"},
+      )
+    self.assertEqual(response.status_code, 200, response.text)
+    return self.metadata(response.json()["request_id"])
+
+  def test_exclusive_full_fine_tuning_on_tpu_syncs_full_checkpoints(self) -> None:
+    meta = self.create_fft(**{"openrl.trainer_accel_prefs": "tpu", "openrl.sampler_accel_prefs": "tpu"})
+    self.assertEqual(meta["weight_sync_config"]["strategy"], "full")
+    self.assertEqual(meta["full_config"]["weight_sync_strategy"], "full")
+    self.assertFalse(meta["full_config"]["cpu_offload"])
+
+  def test_a_tpu_fallback_in_the_sampler_prefs_also_syncs_full(self) -> None:
+    meta = self.create_fft(**{"openrl.sampler_accel_prefs": "gpu|tpu"})
+    self.assertEqual(meta["weight_sync_config"]["strategy"], "full")
+
+  def test_exclusive_full_fine_tuning_on_gpu_keeps_the_clients_strategy(self) -> None:
+    meta = self.create_fft()
+    self.assertEqual(meta["weight_sync_config"]["strategy"], "delta")
+    self.assertEqual(meta["full_config"]["weight_sync_strategy"], "delta")
 
 
 class TrainerBackendTest(ApiServerTest):

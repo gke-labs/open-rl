@@ -27,6 +27,7 @@ from server import proto_codec
 from server.accelerators import Accelerator, check_supported, parse_accel_prefs
 from server.model_metadata import (
   TrainingModelMetadata,
+  WeightSyncConfig,
   extract_weight_sync_config,
   get_model_metadata,
   persist_model_metadata,
@@ -440,10 +441,17 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("A trainer image needs a server that launches workers as pods")
   if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
     raise ValueError("The automodel trainer supports LoRA only")
-  check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs)
+  check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs, settings.exclusive)
   # Nothing parks an exclusive trainer, so it stays on the GPU.
   if settings.exclusive:
     full_config["cpu_offload"] = False
+  # A TPU sampler holds its linear weights transposed, so sparse patches in
+  # checkpoint coordinates cannot apply; it reloads full checkpoints instead.
+  if fine_tuning_type == "full" and "tpu" in settings.sampler_accel_prefs:
+    if weight_sync_cfg.strategy != "full":
+      print(f"[API_SERVER] weight sync {weight_sync_cfg.strategy} -> full: a TPU sampler reloads full checkpoints")
+    weight_sync_cfg = WeightSyncConfig(strategy="full")
+    full_config["weight_sync_strategy"] = "full"
 
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
