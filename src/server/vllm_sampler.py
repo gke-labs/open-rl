@@ -39,6 +39,13 @@ def failed_response(message: str) -> dict[str, Any]:
   return {"type": "RequestFailedResponse", "error_message": message}
 
 
+def on_tpu_platform() -> bool:
+  """Whether vLLM runs on the out-of-tree TPU platform, whose worker has no weight-transfer methods."""
+  from vllm.platforms import current_platform
+
+  return current_platform.is_out_of_tree() and current_platform.device_type == "tpu"
+
+
 def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
   if not model_name:
@@ -60,6 +67,9 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
     engine_kwargs["hf_overrides"] = {"architectures": [architecture]}
   if fft_enabled:
     engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
+    # vLLM refuses an extension that redefines a worker's methods, so only the TPU worker gets it.
+    if on_tpu_platform():
+      engine_kwargs["worker_extension_cls"] = "server.tpu_worker_extension.TPUWeightTransferExtension"
   else:
     engine_kwargs["max_loras"] = int(os.getenv("VLLM_MAX_LORAS", "8"))
     engine_kwargs["max_lora_rank"] = int(os.getenv("VLLM_MAX_LORA_RANK", "64"))
