@@ -41,20 +41,23 @@ def metadata_for(model_id: str) -> TrainingModelMetadata | None:
   return decode_model_metadata(get_state_store().get_value_sync(f"open_rl:model_meta:{model_id}"))
 
 
+def default_metadata(model_id: str) -> TrainingModelMetadata:
+  """A model with no metadata is a sampling session opened on a bare base-model
+  name. It is FFT when this deployment enables FFT and LoRA otherwise, because
+  an FFT sampler in a LoRA deployment would serve base weights and ignore every
+  adapter."""
+  kind = "full" if os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true" else "lora"
+  return TrainingModelMetadata(base_model=model_id, created_at=0.0, fine_tuning_type=kind)
+
+
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
   """Which runtime serves this model, as (metadata, runtime id, is_lora).
 
   A model that owns its runtime (FFT, or exclusive) has the model_id as the
   id. Other LoRA jobs on one base model share a runtime, so the id is the
-  base model, prefixed with the backend or an image hash off PyTorch. A model with no
-  metadata (a sampling session opened on a bare base-model name) is FFT when
-  this deployment enables FFT and LoRA otherwise, because an FFT sampler in
-  a LoRA deployment would serve base weights and ignore every adapter.
+  base model, prefixed with the backend or an image hash off PyTorch.
   """
-  meta = metadata_for(model_id)
-  if meta is None:
-    kind = "full" if os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true" else "lora"
-    meta = TrainingModelMetadata(base_model=model_id, created_at=0.0, fine_tuning_type=kind)
+  meta = metadata_for(model_id) or default_metadata(model_id)
   is_lora = meta.fine_tuning_type == "lora"
   return meta, meta.runtime(model_id), is_lora
 

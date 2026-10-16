@@ -11,6 +11,19 @@ spec:
   - port: 6379
     targetPort: 6379
 ---
+# Pending sampling requests live only in Redis, so it must survive a restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+  labels:
+    app: redis
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,11 +45,31 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        # A write is acknowledged only once it is on disk. Below the pod limit,
+        # a full Redis refuses writes rather than evicting keys or being killed.
+        args:
+        - --dir
+        - /data
+        - --appendonly
+        - "yes"
+        - --appendfsync
+        - always
+        - --maxmemory
+        - 3gb
+        - --maxmemory-policy
+        - noeviction
         ports:
         - containerPort: 6379
+        volumeMounts:
+        - name: data
+          mountPath: /data
         resources:
           limits:
             memory: "4Gi"
           requests:
             memory: "4Gi"
             cpu: "1"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: redis-data

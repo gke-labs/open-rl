@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import traceback
 import uuid
@@ -25,15 +26,18 @@ from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, C
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import openrl_status, proto_codec
+from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
   TrainingModelMetadata,
   WeightSyncConfig,
   get_model_metadata,
   persist_model_metadata,
 )
+from server.sampling_store import SamplingStore
 from server.session_registry import SessionRegistry
 from server.store import RedisStateStore, get_state_store, get_store
-from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, owner_of
+from server.vllm_options import split_stop
+from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, default_metadata, owner_of
 from training import commands
 from training.commands import Command
 from training.types import TRAINER_BACKENDS, Datum, FFTConfig, FineTuningType, LoraConfig
@@ -330,6 +334,7 @@ class SamplingParams(BaseModel):
   stop: Any = None
   top_p: float = 1.0
   top_k: int = -1
+  seed: int | None = None
 
   @field_validator("max_tokens", "temperature", "top_p", "top_k", mode="before")
   @classmethod
@@ -345,6 +350,7 @@ class AsampleRequest(BaseModel):
   prompt_logprobs: bool = Field(default=False, validation_alias=AliasChoices("prompt_logprobs", "include_prompt_logprobs"))
   model_id: str | None = None
   sampling_session_id: str | None = None
+  seq_id: int | None = None
 
 
 # *** Helpers ***
@@ -366,6 +372,11 @@ def get_default_model_name() -> str | None:
 
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
+
+
+def sampling_ref(sampling_session_id: str) -> str:
+  """The model reference a sampling session was created for, without its per-session suffix."""
+  return re.sub(r"@[0-9a-f]{32}$", "", sampling_session_id)
 
 
 def sampler_session_id(model_id: str, seq_id: int | str) -> str:
@@ -1197,6 +1208,45 @@ def sample_sequence_ids(request_id: str, num_samples: int) -> list[str]:
   the matching returned sequence; the final SampleResponse does not repeat them.
   """
   return [f"{request_id}:{index}" for index in range(max(1, int(num_samples)))]
+
+
+async def accept_pool_sample(req: AsampleRequest, prompt: list[int]) -> str:
+  """Missing weights are a 400, never a fallback to other weights."""
+  ref = sampling_ref(req.model_id or req.sampling_session_id or "")
+  lookup_id = base_model_id_from_sampling_ref(ref) or ref
+  meta = await get_model_metadata(state, lookup_id)
+  if meta is None:
+    meta, revision, model = default_metadata(lookup_id), "", lookup_id
+  elif meta.fine_tuning_type == "full":
+    revision, model = resolve_sampler_weights_path(ref), meta.base_model
+    # The trainer writes metadata.json last, so a save in progress is missing too.
+    if not os.path.isfile(os.path.join(revision, "metadata.json")):
+      raise HTTPException(status_code=400, detail=f"No saved sampler weights for {ref}")
+  else:
+    revision, model = "", snapshot_name(ref)
+    if model is None or not (snapshot_root() / model / "adapter_config.json").is_file():
+      raise HTTPException(status_code=400, detail=f"No saved LoRA sampler weights for {ref}")
+  try:
+    pool = meta.pool(lookup_id)
+  except ValueError as exc:
+    raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+  params = req.sampling_params
+  stop, stop_token_ids = split_stop(params.stop)
+  request_id = new_request_id()
+  return await SamplingStore(store.redis).accept(
+    {
+      "request_id": request_id,
+      "pool": pool,
+      "revision": revision,
+      "model": model,
+      "idempotency_key": f"{req.sampling_session_id}:{req.seq_id}" if req.sampling_session_id and req.seq_id is not None else None,
+      "prompt_token_ids": prompt,
+      "sampling_params": {"n": req.num_samples, **params.model_dump(exclude={"stop"}), "stop": stop or [], "stop_token_ids": stop_token_ids or []},
+      "include_prompt_logprobs": req.prompt_logprobs,
+      "trace_context": await open_future(request_id),
+    }
+  )
 
 
 @app.post("/api/v1/asample")
