@@ -165,14 +165,9 @@ class StatusViewsTest(unittest.IsolatedAsyncioTestCase):
     (trainer,) = (await self.get(f"openrl/models/{model_id}")).json()["workers"]
     self.assertEqual(trainer["state"], "ready")
 
-  async def test_a_sampler_is_starting_until_it_announces_itself(self):
+  async def test_a_sampler_is_ready_once_its_workload_runs(self):
     _, model_id = await self.create_model()
     self.manager.ensured.append(("test-base", "sampler"))
-    body = (await self.get(f"openrl/models/{model_id}")).json()
-    sampler = next(w for w in body["workers"] if w["role"] == "sampler")
-    self.assertEqual(sampler["state"], "starting")
-    self.assertIn("loading the model", sampler["detail"])
-    await self.state.set_value("open_rl:sampler_ready:test-base", "1")
     body = (await self.get(f"openrl/models/{model_id}")).json()
     sampler = next(w for w in body["workers"] if w["role"] == "sampler")
     self.assertEqual(sampler["state"], "ready")

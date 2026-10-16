@@ -71,6 +71,12 @@ spec:
             configMapKeyRef:
               name: open-rl-images
               key: worker
+        - name: OPEN_RL_DISPATCHER_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: open-rl-images
+              key: dispatcher
+              optional: true
         resources:
           limits:
             memory: "2Gi"

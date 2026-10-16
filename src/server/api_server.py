@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import traceback
 import uuid
@@ -25,15 +26,18 @@ from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, C
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import openrl_status, proto_codec
+from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
   TrainingModelMetadata,
   WeightSyncConfig,
   get_model_metadata,
   persist_model_metadata,
 )
+from server.sampling_store import SamplingStore
 from server.session_registry import SessionRegistry
-from server.store import RedisStateStore, get_state_store, get_store
-from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, owner_of
+from server.store import get_state_store, get_store
+from server.vllm_options import split_stop
+from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, default_metadata, owner_of
 from training import commands
 from training.commands import Command
 from training.types import TRAINER_BACKENDS, Datum, FFTConfig, FineTuningType, LoraConfig
@@ -71,7 +75,7 @@ async def reap_owner(owner: str) -> None:
       return
     print(f"[API_SERVER] No live session uses {owner}; tearing its workers down")
     for model in await asyncio.to_thread(worker_manager.release_owner, owner):
-      await state.delete_values(f"open_rl:sampler_ready:{model}", f"open_rl:trainer_ready:{model}")
+      await state.delete_values(f"open_rl:trainer_ready:{model}")
     await session_registry.forget(owner)
 
 
@@ -330,6 +334,7 @@ class SamplingParams(BaseModel):
   stop: Any = None
   top_p: float = 1.0
   top_k: int = -1
+  seed: int | None = None
 
   @field_validator("max_tokens", "temperature", "top_p", "top_k", mode="before")
   @classmethod
@@ -345,6 +350,7 @@ class AsampleRequest(BaseModel):
   prompt_logprobs: bool = Field(default=False, validation_alias=AliasChoices("prompt_logprobs", "include_prompt_logprobs"))
   model_id: str | None = None
   sampling_session_id: str | None = None
+  seq_id: int | None = None
 
 
 # *** Helpers ***
@@ -366,6 +372,11 @@ def get_default_model_name() -> str | None:
 
 def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
+
+
+def sampling_ref(sampling_session_id: str) -> str:
+  """The model reference a sampling session was created for, without its per-session suffix."""
+  return re.sub(r"@[0-9a-f]{32}$", "", sampling_session_id)
 
 
 def sampler_session_id(model_id: str, seq_id: int | str) -> str:
@@ -439,15 +450,6 @@ def base_model_id_from_sampling_ref(model_id: str | None) -> str | None:
     return path
 
   return model_id.split("-samp-")[0]
-
-
-def is_sampler_weights_ref(model_id: str | None) -> bool:
-  if not model_id or not model_id.startswith("tinker://"):
-    return False
-
-  path = model_id[len("tinker://") :]
-  parts = path.split("/")
-  return len(parts) >= 3 and parts[1] == "sampler_weights"
 
 
 async def _extract_and_persist_model_metadata(
@@ -896,7 +898,6 @@ async def delete_model(req: ModelRequest):
   elif worker_manager is not None:
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)), active_set_id=await _resolve_active_set_id(model_id))
-    await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
     await asyncio.to_thread(worker_manager.release, model_id)
   now = time.time()
   meta.status = "completed"
@@ -1144,26 +1145,13 @@ async def create_sampling_session(req: CreateSamplingSessionRequest):
     sess_id = req.model_id or "samp-session-live-123"
     target_model_id = sess_id
 
-  model_meta = await get_model_metadata(state, target_model_id) if target_model_id else None
-  ready_check_id = (model_meta.runtime(target_model_id) or target_model_id) if model_meta else target_model_id
-
   await bind_session(req.session_id, target_model_id)
 
-  if get_sampler_backend() == "vllm" and ready_check_id:
-    # Launch by model ID so the worker manager retains the training kind.
-    # LoRA readiness is still reported under the shared base-model runtime.
+  if get_sampler_backend() == "vllm":
+    # Requests wait in the pool's stream, so there is no sampler to wait for. The SDK
+    # numbers seq_id from 0 in every sampling client, so each session needs its own id.
     await ensure_sampler_launched(target_model_id)
-    if isinstance(state, RedisStateStore):
-      print(f"[API_SERVER] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
-      start_time = time.monotonic()
-      while True:
-        is_ready = await state.get_value(f"open_rl:sampler_ready:{ready_check_id}")
-        if is_ready == "1" or is_ready == b"1":
-          print(f"[API_SERVER] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
-          break
-        if time.monotonic() - start_time > 300:
-          raise TimeoutError("Timed out waiting for dynamic vLLM sampler worker to be ready")
-        await asyncio.sleep(1)
+    return {"sampling_session_id": f"{sess_id}@{uuid.uuid4().hex}", "type": "create_sampling_session"}
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
@@ -1178,7 +1166,8 @@ async def get_sampler(sampler_id: str):
   resolve to the base model, which is all the client wants -- it loads the
   tokenizer from the Hub itself.
   """
-  base_model_id = base_model_id_from_sampling_ref(sampler_id)
+  ref = sampling_ref(sampler_id)
+  base_model_id = base_model_id_from_sampling_ref(ref)
   model_meta = await get_model_metadata(state, base_model_id) if base_model_id else None
   base_model = (model_meta.base_model if model_meta is not None else None) or base_model_id or get_default_model_name()
   if not base_model:
@@ -1186,7 +1175,7 @@ async def get_sampler(sampler_id: str):
   return {
     "sampler_id": sampler_id,
     "base_model": base_model,
-    "model_path": sampler_id if sampler_id.startswith("tinker://") else None,
+    "model_path": ref if ref.startswith("tinker://") else None,
   }
 
 
@@ -1197,6 +1186,42 @@ def sample_sequence_ids(request_id: str, num_samples: int) -> list[str]:
   the matching returned sequence; the final SampleResponse does not repeat them.
   """
   return [f"{request_id}:{index}" for index in range(max(1, int(num_samples)))]
+
+
+async def accept_pool_sample(req: AsampleRequest, prompt: list[int]) -> str:
+  """Missing weights are a 400, never a fallback to other weights."""
+  ref = sampling_ref(req.model_id or req.sampling_session_id or "")
+  lookup_id = base_model_id_from_sampling_ref(ref) or ref
+  meta = await get_model_metadata(state, lookup_id)
+  if meta is None:
+    meta, revision, model = default_metadata(lookup_id), "", lookup_id
+  elif meta.fine_tuning_type == "full":
+    revision, model = resolve_sampler_weights_path(ref), meta.base_model
+    # The trainer writes metadata.json last, so a save in progress is missing too.
+    if not os.path.isfile(os.path.join(revision, "metadata.json")):
+      raise HTTPException(status_code=400, detail=f"No saved sampler weights for {ref}")
+  else:
+    revision, model = "", snapshot_name(ref)
+    if model is None or not (snapshot_root() / model / "adapter_config.json").is_file():
+      raise HTTPException(status_code=400, detail=f"No saved LoRA sampler weights for {ref}")
+  pool = meta.pool(lookup_id)
+
+  params = req.sampling_params
+  stop, stop_token_ids = split_stop(params.stop)
+  request_id = new_request_id()
+  return await SamplingStore(store.redis).accept(
+    {
+      "request_id": request_id,
+      "pool": pool,
+      "revision": revision,
+      "model": model,
+      "idempotency_key": f"{req.sampling_session_id}:{req.seq_id}" if req.sampling_session_id and req.seq_id is not None else None,
+      "prompt_token_ids": prompt,
+      "sampling_params": {"n": req.num_samples, **params.model_dump(exclude={"stop"}), "stop": stop or [], "stop_token_ids": stop_token_ids or []},
+      "include_prompt_logprobs": req.prompt_logprobs,
+      "trace_context": await open_future(request_id),
+    }
+  )
 
 
 @app.post("/api/v1/asample")
@@ -1224,44 +1249,7 @@ async def asample(req: AsampleRequest):
     )
     return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
-  # vLLM backend
-  req_id = str(uuid.uuid4())
-  carrier = await open_future(req_id)
-
-  model_meta = await get_model_metadata(state, lookup_id)
-  fine_tuning_type = model_meta.fine_tuning_type if model_meta else "lora"
-
-  if fine_tuning_type == "lora":
-    weights_path = None
-    lora_id = model_id
-    peft_dir = os.path.join(TMP_DIR, "peft", lookup_id, lookup_id)
-    lora_path = peft_dir if os.path.exists(peft_dir) else None
-    queue_id = (model_meta.runtime(lookup_id) if model_meta else None) or lookup_id
-  else:
-    resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
-    weights_path = resolved_path
-    lora_id = None
-    lora_path = None
-    queue_id = lookup_id
-
-  sampling_req = {
-    "request_id": req_id,
-    "prompt_token_ids": prompt,
-    "max_tokens": params.max_tokens,
-    "temperature": params.temperature,
-    "stop": params.stop,
-    "top_p": params.top_p,
-    "top_k": params.top_k,
-    "num_samples": num_samples,
-    "lora_id": lora_id,
-    "lora_path": lora_path,
-    "weights_path": weights_path,
-    "include_prompt_logprobs": req.prompt_logprobs,
-    "model_id": queue_id,
-    "trace_context": carrier,
-  }
-
-  await store.put_sampling_request(sampling_req)
+  req_id = await accept_pool_sample(req, prompt)
   return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
 

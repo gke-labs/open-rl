@@ -1,5 +1,6 @@
 # The API server requests one Workload per worker process; the scheduler owns the
-# pods and claims from there, so this account needs only the Workload verbs.
+# pods and claims from there. It also creates and deletes each sampling pool's
+# CPU-pod Deployment and NetworkPolicy.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -8,6 +9,12 @@ rules:
 - apiGroups: ["openrl.io"]
   resources: ["workloads"]
   verbs: ["create", "get", "list", "watch", "delete"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["create", "get", "list", "delete"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["create", "get", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -15,8 +22,35 @@ metadata:
   name: open-rl-worker-launcher
 subjects:
 - kind: ServiceAccount
-  name: open-rl-sa
+  name: open-rl-api-server
 roleRef:
   kind: Role
   name: open-rl-worker-launcher
+  apiGroup: rbac.authorization.k8s.io
+---
+# A pool's dispatcher and EPP find its samplers by label, ready or not.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-rl-sampler-dispatcher
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-rl-sampler-dispatcher
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-rl-sampler-dispatcher
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sampler-dispatcher
+roleRef:
+  kind: Role
+  name: open-rl-sampler-dispatcher
   apiGroup: rbac.authorization.k8s.io

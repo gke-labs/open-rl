@@ -1,3 +1,5 @@
 images:
   - path: data/worker
     kind: ConfigMap
+  - path: data/dispatcher
+    kind: ConfigMap

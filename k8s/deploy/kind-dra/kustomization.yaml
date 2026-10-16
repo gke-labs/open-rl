@@ -143,6 +143,9 @@ patches:
                   - name: OPEN_RL_WORKER_IMAGE
                     valueFrom: null
                     value: localhost:5001/open-rl-server:kind-dev
+                  - name: OPEN_RL_DISPATCHER_IMAGE
+                    valueFrom: null
+                    value: localhost:5001/open-rl-api-server:kind-dev
                   # The API server also stamps the pull policy into each Workload.
                   - name: OPEN_RL_WORKER_IMAGE_PULL_POLICY
                     value: Always

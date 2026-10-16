@@ -1,4 +1,5 @@
 import json
+import os
 import unittest
 from unittest.mock import patch
 
@@ -201,7 +202,7 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "trainer-Model_A.1")
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "trainers")
 
-  async def test_local_sampler_launch_stamps_workload_tags_and_process_group(self) -> None:
+  async def test_local_sampler_is_vllm_serve_and_its_dispatcher_each_in_its_own_process_group(self) -> None:
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm", "OPEN_RL_ENABLE_FFT": "true"}, clear=True),
       patch("server.worker_manager.subprocess.Popen") as popen,
@@ -209,12 +210,11 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       manager = LocalWorkerManager()
       manager.ensure("Model_A.1", "sampler")
 
-    _, kwargs = popen.call_args
-    self.assertTrue(kwargs["start_new_session"])
-    self.assertEqual(kwargs["env"]["OPEN_RL_ENABLE_FFT"], "true")
-    self.assertEqual(kwargs["env"]["OPEN_RL_MODEL_ID"], "Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "sampler-Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "samplers")
+    (serve, serve_kwargs), (dispatch, dispatch_kwargs) = [(c[0][0], c[1]) for c in popen.call_args_list]
+    self.assertEqual((serve_kwargs["start_new_session"], dispatch_kwargs["start_new_session"]), (True, True))
+    self.assertEqual((serve[serve.index("serve") + 1], serve_kwargs["env"]["OPEN_RL_ENABLE_FFT"]), ("Model_A.1", "true"))
+    self.assertNotIn("OPEN_RL_TIME_SLICE_JOB_ID", serve_kwargs["env"])
+    self.assertEqual(dispatch[-1], "server.sampling_dispatcher")
 
   async def test_launch_fetches_metadata_from_store(self) -> None:
     import json
@@ -242,7 +242,7 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
       self.assertEqual(kwargs["env"].get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "delta")
 
       manager.ensure("Model_A.1", "sampler")
-      _, kwargs_s = popen.call_args
+      _, kwargs_s = popen.call_args_list[-2]  # vllm serve; the last launch is its dispatcher
       self.assertEqual(kwargs_s["env"].get("BASE_MODEL"), "base-model-a")
       self.assertEqual(kwargs_s["env"].get("OPEN_RL_WEIGHT_SYNC_STRATEGY"), "delta")
 
@@ -370,19 +370,24 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
       fine_tuning_type="lora",
     )
 
-    # Launch for first LoRA model ID
+    # Launch for first LoRA model ID: a vllm serve replica and its dispatcher
     self.manager.ensure("model-lora-1", "sampler")
-    self.assertIn(("sampler", "Qwen/Qwen2.5-0.5B"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("Qwen/Qwen2.5-0.5B", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "Qwen/Qwen2.5-0.5B"), ("dispatcher", "Qwen/Qwen2.5-0.5B")})
+    (serve, serve_kwargs), (dispatch, dispatch_kwargs) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    port = serve[serve.index("--port") + 1]
+    self.assertEqual(serve[serve.index("serve") + 1 : serve.index("serve") + 2], ["Qwen/Qwen2.5-0.5B"])
+    self.assertIn("--enable-lora", serve)
+    self.assertEqual(serve_kwargs["env"]["VLLM_ALLOW_RUNTIME_LORA_UPDATING"], "true")
+    # Compile caches live on the shared volume, so a model's next replica skips compiling.
+    tmp = os.getenv("OPEN_RL_TMP_DIR", "/mnt/shared/open-rl")
+    self.assertEqual((serve_kwargs["env"]["VLLM_CACHE_ROOT"], serve_kwargs["env"]["TRITON_CACHE_DIR"]), (f"{tmp}/cache/vllm", f"{tmp}/cache/triton"))
+    self.assertIn("server.sampling_dispatcher", dispatch)
+    self.assertEqual(dispatch_kwargs["env"]["OPEN_RL_SAMPLER_ENDPOINTS"], f"http://127.0.0.1:{port}")
 
     # Launch for second LoRA model ID sharing the same base model
     self.manager.ensure("model-lora-2", "sampler")
     # Should reuse existing process and NOT call popen again!
-    self.assertEqual(mock_popen.call_count, 1)
+    self.assertEqual(mock_popen.call_count, 2)
 
   @patch("server.worker_manager.metadata_for")
   @patch("subprocess.Popen")
@@ -400,12 +405,11 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
     )
 
     self.manager.ensure("model-fft-1", "sampler")
-    self.assertIn(("sampler", "model-fft-1"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("model-fft-1", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "model-fft-1"), ("dispatcher", "model-fft-1")})
+    (serve, _), (_, dispatch_kwargs) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    self.assertEqual(serve[serve.index("serve") + 1], "Qwen/Qwen2.5-0.5B")
+    self.assertIn("--weight-transfer-config", serve)
+    self.assertEqual(dispatch_kwargs["env"]["OPEN_RL_SAMPLER_POOL"], "sampler-model-fft-1")
 
 
 if __name__ == "__main__":

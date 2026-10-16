@@ -54,9 +54,9 @@ async def workers_of_owner(ctx: StatusContext, owner: str) -> tuple[list[dict[st
   out = []
   for found in found_workers:
     worker = {field: found.get(field) for field in WORKER_FIELDS}
-    # The launcher sees a pod run minutes before the model is loaded; each
-    # worker announces itself when it can serve (open_rl:<role>_ready:<runtime>).
-    announced = await ctx.state.get_value(f"open_rl:{found['role']}_ready:{found['model_id']}") is not None
+    # The launcher sees a pod run minutes before the model is loaded, so a
+    # trainer announces itself when it can serve (open_rl:trainer_ready:<runtime>).
+    announced = found["role"] != "trainer" or await ctx.state.get_value(f"open_rl:trainer_ready:{found['model_id']}") is not None
     if worker["state"] == READY and not announced:
       worker["state"] = STARTING
       worker["detail"] = f"{worker['detail']}, loading the model"

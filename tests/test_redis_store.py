@@ -159,20 +159,6 @@ class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
     self.store = InMemoryStore()
     self.state = InMemoryStateStore()
 
-  async def test_sampling_queue_put_and_get(self) -> None:
-    req1 = {"model_id": "base-m1", "request_id": "r1"}
-    req2 = {"model_id": "base-m1", "request_id": "r2"}
-    await self.store.put_sampling_request(req1)
-    await self.store.put_sampling_request(req2)
-
-    batch = await self.store.get_sampling_requests_for_model("base-m1")
-    self.assertEqual(len(batch), 2)
-    self.assertEqual(batch[0]["request_id"], "r1")
-    self.assertEqual(batch[1]["request_id"], "r2")
-
-    empty_batch = await self.store.get_sampling_requests_for_model("base-m1")
-    self.assertEqual(empty_batch, [])
-
   async def test_get_requests_rotates_between_tenants(self) -> None:
     for i in range(3):
       await self.store.put_request({"model_id": "tenant-a", "request_id": f"a{i}"}, active_set_id="base-1")

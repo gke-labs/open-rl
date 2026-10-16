@@ -28,7 +28,7 @@ generate: $(CONTROLLER_GEN)
 # become the schema descriptions, so the prose lives in Go, not in the YAML.
 .PHONY: manifests
 manifests: $(CONTROLLER_GEN)
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:dir=$(GEN_DIR)/crd
+	$(CONTROLLER_GEN) crd:generateEmbeddedObjectMeta=true paths="./api/..." output:crd:dir=$(GEN_DIR)/crd
 	cp $(GEN_DIR)/crd/openrl.io_workloads.yaml $(CRD_MANIFEST)
 	cp $(GEN_DIR)/crd/openrl.io_claimledgers.yaml $(CRD_GROUP_MANIFEST)
 
@@ -36,7 +36,7 @@ manifests: $(CONTROLLER_GEN)
 # the case where the generator cannot be run on the machine holding the diff.
 .PHONY: manifests-check
 manifests-check: $(CONTROLLER_GEN)
-	$(CONTROLLER_GEN) crd paths="./api/..." output:crd:dir=$(GEN_DIR)/crd
+	$(CONTROLLER_GEN) crd:generateEmbeddedObjectMeta=true paths="./api/..." output:crd:dir=$(GEN_DIR)/crd
 	diff -u $(CRD_MANIFEST) $(GEN_DIR)/crd/openrl.io_workloads.yaml
 	diff -u $(CRD_GROUP_MANIFEST) $(GEN_DIR)/crd/openrl.io_claimledgers.yaml
 

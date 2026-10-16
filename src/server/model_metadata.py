@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,6 +9,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from server.store import StateStore
 from training.types import TRAINER_BACKENDS, FFTConfig, FineTuningType, LoraConfig
+
+POOL_NAME = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 
 SPARSE_DELTA_VERSION = 2
 
@@ -80,6 +83,15 @@ class TrainingModelMetadata(BaseModel):
       # An image ref is not label safe, so a hash of it keeps images apart.
       return f"image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
     return f"{self.trainer_backend}-{self.base_model}"
+
+  def pool(self, model_id: str) -> str:
+    """The sampling pool that serves this job's runtime. Base model names are not
+    valid Kubernetes names, so those runtimes get a slug and a hash."""
+    runtime = self.runtime(model_id)
+    if POOL_NAME.fullmatch(name := f"sampler-{runtime}"):
+      return name
+    slug = re.sub(r"[^a-z0-9]+", "-", runtime.lower()).strip("-")[:40]
+    return f"sampler-{slug}-{hashlib.sha256(runtime.encode()).hexdigest()[:8]}"
 
 
 def decode_model_metadata(raw: str | None) -> TrainingModelMetadata | None:

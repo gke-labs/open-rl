@@ -100,3 +100,27 @@ On Kubernetes the release bundles set these variables. The API server runs with
 each trainer and sampler, and the OpenRL scheduler starts their pods. The API
 server writes each worker's environment into the `Workload`'s pod template, so
 there are no worker deployments to configure by hand.
+
+## Sampling pools
+
+Sampling goes through sampling pools. A pool serves one FFT job, one exclusive
+LoRA job, or every shared LoRA job on one base model. Its samplers are plain
+`vllm serve` replicas, and a dispatcher sends each request to the replica the
+pool's router picks, then commits the result. Pending requests stay in a Redis
+stream until a result is committed, so the Redis in `k8s/deploy/base` keeps an
+append-only file on a persistent volume and never evicts keys.
+
+On Kubernetes each pool is `vllm serve` Workloads on exclusive GPUs plus one CPU
+Deployment, named after the pool, that runs the dispatcher, Envoy and the llm-d
+endpoint picker (configured by the `open-rl-sampler-router` ConfigMap in
+`k8s/deploy/base`). A replica is ready only while vLLM reports the weight version
+the dispatcher expects, and a NetworkPolicy lets only the pool's CPU pod reach it.
+On one machine the local worker manager starts one `vllm serve` on
+`SAMPLER_CUDA_VISIBLE_DEVICES` and a dispatcher that sends to it directly.
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_DISPATCH_CONCURRENCY` | `256` | Requests one pool's dispatcher keeps in flight across its replicas. |
+| `OPEN_RL_SAMPLER_ROUTER` | `http://127.0.0.1:8081` | Where a pool's dispatcher sends requests on Kubernetes, Envoy in its own pod. |
+| `OPEN_RL_SAMPLER_ENDPOINTS` | unset | Comma-separated replica URLs for a dispatcher with no router. The local worker manager sets it. |
+| `OPEN_RL_DISPATCHER_IMAGE` | the worker image | Image for each pool's dispatcher container. The release sets it to the API-server image, which carries the dispatcher without the GPU stack and pulls in seconds. |
