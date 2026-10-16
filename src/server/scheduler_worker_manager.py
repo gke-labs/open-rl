@@ -73,7 +73,14 @@ def describe_worker(model_id: str, role: str) -> Worker:
   exclusive = not meta.shares_gpu()
   accelerator = meta.accelerator_for(role)
   return Worker(
-    role, runtime, base_model, is_lora, exclusive, meta, footprint(base_model, meta.fine_tuning_type, role, accelerator), pod_spec(accelerator, role)
+    role,
+    runtime,
+    base_model,
+    is_lora,
+    exclusive,
+    meta,
+    footprint(base_model, meta.fine_tuning_type, role, accelerator),
+    pod_spec(accelerator, role, is_lora),
   )
 
 
