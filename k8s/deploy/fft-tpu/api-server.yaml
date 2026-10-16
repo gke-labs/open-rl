@@ -1,0 +1,17 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-api-server
+spec:
+  template:
+    spec:
+      containers:
+      - name: api-server
+        env:
+        - name: OPEN_RL_ENABLE_FFT
+          value: "true"
+        - name: OPEN_RL_TPU_FFT_SAMPLER_IMAGE
+          valueFrom:
+            configMapKeyRef:
+              name: open-rl-images
+              key: tpu-fft-sampler
