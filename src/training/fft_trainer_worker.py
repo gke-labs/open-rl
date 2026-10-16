@@ -50,6 +50,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._prev_weights_shadow: dict[str, torch.Tensor] = {}
     self.model_layer_shapes: dict[str, tuple[int, ...]] = {}
     self.total_model_elements: int = 0
+    # The last sampler save, which the next sparse delta must be applied on top of.
+    self.sampler_revision: str = ""
 
   def set_weight_sync_strategy(self, strategy: str) -> None:
     if strategy not in ("full", "delta"):
@@ -271,6 +273,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
       "total_elements": total_elements,
       "layer_names": layer_names_list,
       "density_pct": round(100.0 * total_changed / max(1, total_elements), 3),
+      "parent": self.sampler_revision,
       "timestamp": time.time(),
     }
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
@@ -286,6 +289,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
     local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
     self.save_state(model_id, local_path, False, "sampler")
+    self.sampler_revision = local_path
     return local_path
 
   def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
