@@ -1,0 +1,25 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Everything k8s/deploy/lora-tpu deploys, plus full fine-tuning; LoRA stays
+# available, as in k8s/deploy/fft. On TPU, FFT runs only for models with
+# openrl.exclusive=true, each worker on its own node, so no time slicer is needed.
+namespace: openrl-system
+resources:
+  - ../lora-tpu
+
+# Point the placeholder at your build, e.g.
+# `kustomize edit set image TPU-FFT-SAMPLER-IMAGE=<image>`.
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: open-rl-images
+    behavior: merge
+    literals:
+      - tpu-fft-sampler=TPU-FFT-SAMPLER-IMAGE
+
+configurations:
+  - images.yaml
+
+patches:
+  - path: api-server.yaml
