@@ -53,6 +53,11 @@ class SupportMatrixTest(unittest.TestCase):
     with self.assertRaisesRegex(ValueError, "vLLM's LoRA kernels support fp16/bf16 only"):
       check_dtypes("pytorch", "lora", "float32", "float32")
 
+  def test_fp32_lora_is_fine_with_the_torch_sampler(self) -> None:
+    check_dtypes("pytorch", "lora", "float32", "float32", vllm_sampler=False)
+    with self.assertRaisesRegex(ValueError, "automodel trainer trains in bfloat16 only"):
+      check_dtypes("automodel", "lora", "float32", "float32", vllm_sampler=False)
+
   def test_automodel_is_bf16_only(self) -> None:
     with self.assertRaisesRegex(ValueError, "automodel trainer trains in bfloat16 only"):
       check_dtypes("automodel", "lora", "float32", "float32")

@@ -132,6 +132,8 @@ class OpenRlServerCase(unittest.TestCase):
   REQUIRE_HF_TOKEN: bool = False
   STARTUP_TIMEOUT: int = 300
   SAMPLING_BACKEND: str = "torch"
+  # bfloat16 matmuls are far slower than float32 on CPU, where these run.
+  DTYPE: str = "float32"
   UV_RUN_ARGS: Sequence[str] = ("--extra", "cpu")
   HEALTH_PATH: str = "/api/v1/get_server_capabilities"
 
@@ -152,6 +154,7 @@ class OpenRlServerCase(unittest.TestCase):
       startup_timeout=cls.STARTUP_TIMEOUT,
       health_path=cls.HEALTH_PATH,
       uv_run_args=cls.UV_RUN_ARGS,
+      extra_env={"OPEN_RL_DTYPE": cls.DTYPE},
       stdout=None,
       stderr=None,
     )

@@ -65,9 +65,11 @@ DTYPES: tuple[str, ...] = ("float32", "bfloat16")
 DEFAULT_DEPLOYMENT_DTYPE = "bfloat16"
 # What each named trainer supports per fine-tuning type. A trainer image is not
 # listed: it gets the dtype and owns the check.
-#  - LoRA is bfloat16 only: vLLM's LoRA kernels assert fp16/bf16 inputs
-#    (vllm/lora/ops/triton_ops/lora_shrink_op.py). Shared LoRA runtimes rely
-#    on this; allowing a second LoRA dtype means keying the runtime by dtype.
+#  - LoRA is bfloat16 only with the vLLM sampler: vLLM's LoRA kernels assert
+#    fp16/bf16 inputs (vllm/lora/ops/triton_ops/lora_shrink_op.py). Shared
+#    LoRA runtimes rely on this; allowing a second LoRA dtype there means
+#    keying the runtime by dtype. The in-process torch sampler has no such
+#    limit, and its one static runtime runs in OPEN_RL_DTYPE anyway.
 #  - Automodel trains in bfloat16 only.
 SUPPORTED_DTYPES: dict[tuple[str, str], tuple[str, ...]] = {
   ("pytorch", "lora"): ("bfloat16",),
@@ -84,8 +86,13 @@ def deployment_dtype(env: Any = None) -> str:
   return value
 
 
-def check_dtypes(trainer_backend: str, fine_tuning_type: str, trainer_dtype: str | None, sampler_dtype: str | None) -> None:
-  """Raise ValueError unless this trainer/sampler dtype pair is supported."""
+def check_dtypes(
+  trainer_backend: str, fine_tuning_type: str, trainer_dtype: str | None, sampler_dtype: str | None, vllm_sampler: bool = True
+) -> None:
+  """Raise ValueError unless this trainer/sampler dtype pair is supported.
+
+  The LoRA bfloat16 limit is vLLM's; a server sampling with torch in one
+  process (vllm_sampler=False) lifts it for the pytorch trainer."""
   missing = [name for name, value in (("trainer_dtype", trainer_dtype), ("sampler_dtype", sampler_dtype)) if value is None]
   if missing:
     raise ValueError(" and ".join(f"openrl.{name}" for name in missing) + f" must be set ({' or '.join(DTYPES)}); there is no default")
@@ -95,6 +102,8 @@ def check_dtypes(trainer_backend: str, fine_tuning_type: str, trainer_dtype: str
       "precision mismatch between trainer and sampler is not supported yet"
     )
   supported = SUPPORTED_DTYPES.get((trainer_backend, fine_tuning_type))
+  if not vllm_sampler and (trainer_backend, fine_tuning_type) == ("pytorch", "lora"):
+    supported = DTYPES
   if supported is None:
     if trainer_backend in TRAINER_BACKENDS:
       raise ValueError(f"trainer_backend={trainer_backend} does not support fine_tuning_type={fine_tuning_type}")

@@ -23,6 +23,7 @@ class TestPigLatinGemma(OpenRlServerCase):
   def test_sft_improves(self) -> None:
     TEST_CONFIG = {
       "base_url": self.BASE_URL,
+      "dtype": self.DTYPE,
       "steps": 25,
       "assert_improvement": False,
       "plot_path": str(CLIENT_DIR / "artifacts" / "test_gemma_metrics.png"),

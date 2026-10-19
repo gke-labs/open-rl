@@ -524,7 +524,13 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("openrl.trainer_gpus above 1 needs a server that launches workers as pods")
   if settings.trainer_gpus % settings.trainer_cp:
     raise ValueError(f"openrl.trainer_cp={settings.trainer_cp} must divide openrl.trainer_gpus={settings.trainer_gpus}")
-  check_dtypes(settings.trainer_backend, fine_tuning_type, settings.trainer_dtype, settings.sampler_dtype)
+  check_dtypes(
+    settings.trainer_backend,
+    fine_tuning_type,
+    settings.trainer_dtype,
+    settings.sampler_dtype,
+    vllm_sampler=get_sampler_backend() == "vllm",
+  )
   if checkpoint_dtype is not None and settings.trainer_dtype != checkpoint_dtype:
     raise ValueError(f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype} does not match the checkpoint, which was saved in {checkpoint_dtype}")
   if worker_manager is None and settings.trainer_dtype != (static_dtype := deployment_dtype()):

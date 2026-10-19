@@ -34,6 +34,7 @@ class TestPigLatinQwen(OpenRlServerCase):
   def test_sft_improves(self) -> None:
     CI_CONFIG = {
       "base_url": self.BASE_URL,
+      "dtype": self.DTYPE,
       "steps": 5,
       "assert_improvement": False,
       "skip_before_eval": True,

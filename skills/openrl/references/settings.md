@@ -28,11 +28,14 @@ the wire: `"true"`, `"8"`. A bad value or an unknown key is a 400 that names the
 and says what it should be.
 
 ```python
-client = tinker.ServiceClient(base_url=..., user_metadata={
-  "openrl.trainer_dtype": "bfloat16",  # required on every model, no default
-  "openrl.sampler_dtype": "bfloat16",  # required; must equal trainer_dtype for now
-  "openrl.fine_tuning_type": "full",
-})
+client = tinker.ServiceClient(
+  base_url=...,
+  user_metadata={
+    "openrl.trainer_dtype": "bfloat16",  # required on every model, no default
+    "openrl.sampler_dtype": "bfloat16",  # required; must equal trainer_dtype for now
+    "openrl.fine_tuning_type": "full",
+  },
+)
 ```
 
 `openrl.trainer_dtype` and `openrl.sampler_dtype` are required: a model without them is a
