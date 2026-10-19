@@ -27,12 +27,13 @@ def parse_accel_prefs(value: Any) -> Any:
 
 
 def check_supported(
-  fine_tuning_type: FineTuningType, trainer_backend: str, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator]
+  fine_tuning_type: FineTuningType, trainer_backend: str, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator], exclusive: bool
 ) -> None:
   """Refuse a model whose workers could land where they cannot run. A list
   with tpu in any position counts, so a later fallback cannot reach it."""
-  if fine_tuning_type == "full" and ("tpu" in trainer_prefs or "tpu" in sampler_prefs):
-    raise ValueError("TPU supports LoRA only; full fine-tuning needs a GPU")
+  # Time slicing parks FFT workers with vLLM sleep mode and CPU offload, which TPU workers lack.
+  if fine_tuning_type == "full" and not exclusive and ("tpu" in trainer_prefs or "tpu" in sampler_prefs):
+    raise ValueError("Full fine-tuning on TPU needs openrl.exclusive=true")
   # A job's own trainer image may run on TPU if it carries torch_tpu.
   if trainer_backend == "automodel" and "tpu" in trainer_prefs:
     raise ValueError("openrl.trainer_backend=automodel needs a GPU trainer")

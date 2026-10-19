@@ -29,25 +29,30 @@ class AcceleratorForTest(unittest.TestCase):
 
 class CheckSupportedTest(unittest.TestCase):
   def test_gpu_takes_lora_and_full(self) -> None:
-    check_supported("lora", "pytorch", ["gpu"], ["gpu"])
-    check_supported("full", "pytorch", ["gpu"], ["gpu"])
-    check_supported("lora", "automodel", ["gpu"], ["gpu"])
+    check_supported("lora", "pytorch", ["gpu"], ["gpu"], False)
+    check_supported("full", "pytorch", ["gpu"], ["gpu"], False)
+    check_supported("lora", "automodel", ["gpu"], ["gpu"], False)
 
-  def test_full_fine_tuning_refuses_tpu_anywhere_in_either_list(self) -> None:
+  def test_shared_full_fine_tuning_refuses_tpu_anywhere_in_either_list(self) -> None:
     for trainer, sampler in ((["tpu"], ["gpu"]), (["gpu"], ["tpu"]), (["gpu", "tpu"], ["gpu"])):
-      with self.subTest(trainer=trainer, sampler=sampler), self.assertRaisesRegex(ValueError, "LoRA only"):
-        check_supported("full", "pytorch", trainer, sampler)
+      with self.subTest(trainer=trainer, sampler=sampler), self.assertRaisesRegex(ValueError, "needs openrl.exclusive=true"):
+        check_supported("full", "pytorch", trainer, sampler, False)
+
+  def test_tpu_takes_exclusive_full_fine_tuning(self) -> None:
+    for trainer, sampler in ((["tpu"], ["tpu"]), (["gpu"], ["tpu"]), (["tpu"], ["gpu"])):
+      with self.subTest(trainer=trainer, sampler=sampler):
+        check_supported("full", "pytorch", trainer, sampler, True)
 
   def test_tpu_takes_lora(self) -> None:
-    check_supported("lora", "pytorch", ["tpu"], ["tpu"])
-    check_supported("lora", "automodel", ["gpu"], ["tpu"])
+    check_supported("lora", "pytorch", ["tpu"], ["tpu"], False)
+    check_supported("lora", "automodel", ["gpu"], ["tpu"], False)
 
   def test_a_tpu_trainer_refuses_automodel(self) -> None:
     with self.assertRaisesRegex(ValueError, "openrl.trainer_backend=automodel needs a GPU trainer"):
-      check_supported("lora", "automodel", ["gpu", "tpu"], ["gpu"])
+      check_supported("lora", "automodel", ["gpu", "tpu"], ["gpu"], False)
 
   def test_a_tpu_trainer_takes_a_job_image(self) -> None:
-    check_supported("lora", "ghcr.io/org/trainer:1", ["tpu"], ["tpu"])
+    check_supported("lora", "ghcr.io/org/trainer:1", ["tpu"], ["tpu"], False)
 
 
 class PodSpecTest(unittest.TestCase):
