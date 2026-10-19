@@ -22,6 +22,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from tinker import types
 from tinker_cookbook.utils import ml_log
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
@@ -499,6 +500,8 @@ class Config:
   model: ModelConfig
   phase: str = "full"  # "full" | "sft_only" | "rl_only"
   fine_tuning_type: str = os.getenv("OPEN_RL_FINE_TUNING_TYPE", "lora")
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
   seed: int = 30
   grad_clip_norm: float = 0.3
@@ -549,6 +552,7 @@ if __name__ == "__main__":
   log_dir = Path(config.log_dir.replace("{preset}", f"{preset}_{config.phase}"))
   metrics_path = log_dir / "metrics.jsonl"
   ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
+  ensure_precision_tags(config.dtype)
   # Only an explicit choice; otherwise TINKER_TAGS decides.
   user_metadata = {"openrl.fine_tuning_type": config.fine_tuning_type} if config.fine_tuning_type and config.fine_tuning_type != "lora" else None
   service_client = tinker.ServiceClient(

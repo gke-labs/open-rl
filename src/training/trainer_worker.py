@@ -9,10 +9,23 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
 from training import losses
 from training.distributed import local_rank
-from training.types import Datum
+from training.types import DTYPES, Datum, deployment_dtype
 
 # Position marker for a filler pass, see _run_batches.
 FILLER_DATUM_INDEX = -1
+
+TORCH_DTYPES = {"float32": torch.float32, "bfloat16": torch.bfloat16}
+
+
+def trainer_dtype_from_env() -> str:
+  """OPEN_RL_TRAINER_DTYPE, which the worker manager always sets; a worker
+  started by hand falls back to the deployment dtype (OPEN_RL_DTYPE)."""
+  value = os.getenv("OPEN_RL_TRAINER_DTYPE")
+  if value is None:
+    return deployment_dtype()
+  if value not in DTYPES:
+    raise ValueError(f"OPEN_RL_TRAINER_DTYPE must be one of {', '.join(DTYPES)}, got {value!r}")
+  return value
 
 
 def shard_datum_indices(count: int, shard_rank: int, shard_count: int) -> list[int]:
@@ -34,6 +47,25 @@ class BaseTrainerWorker:
       self.device = torch.device("mps")
     else:
       self.device = torch.device("cpu")
+    # The dtype the API server resolved for this worker's models. Set once per
+    # process: a LoRA worker loads its shared base model before any command.
+    self.dtype_name = trainer_dtype_from_env()
+
+  def model_dtype(self) -> torch.dtype:
+    """The torch dtype to load and train in. Raises rather than falling back
+    when this device cannot run it."""
+    dtype = TORCH_DTYPES[self.dtype_name]
+    if dtype == torch.bfloat16 and self.device.type == "cuda" and not torch.cuda.is_bf16_supported():
+      raise RuntimeError(
+        f"trainer_dtype=bfloat16 was requested but {torch.cuda.get_device_name(self.device)} does not support bfloat16; "
+        "use a GPU with compute capability 8.0+ or trainer_dtype=float32 where the trainer supports it"
+      )
+    return dtype
+
+  def check_command_dtype(self, dtype: str | None) -> None:
+    """Refuse a model whose dtype is not the one this process runs in."""
+    if dtype is not None and dtype != self.dtype_name:
+      raise ValueError(f"model asks for trainer_dtype={dtype} but this trainer runs in {self.dtype_name}")
 
   def is_ready(self) -> bool:
     """Whether a model is loaded and the worker can serve requests. The

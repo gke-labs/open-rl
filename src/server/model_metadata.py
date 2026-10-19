@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from server.store import StateStore
-from training.types import TRAINER_BACKENDS, FFTConfig, FineTuningType, LoraConfig
+from training.types import TRAINER_BACKENDS, Dtype, FFTConfig, FineTuningType, LoraConfig, deployment_dtype
 
 POOL_NAME = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 
@@ -48,6 +48,10 @@ class TrainingModelMetadata(BaseModel):
   trainer_backend: str = "pytorch"
   trainer_gpus: int = 1
   trainer_cp: int = 1
+  # None on records stored before dtypes were required; those run in the
+  # deployment dtype (OPEN_RL_DTYPE). See worker_dtypes.
+  trainer_dtype: Dtype | None = None
+  sampler_dtype: Dtype | None = None
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
@@ -55,6 +59,12 @@ class TrainingModelMetadata(BaseModel):
   # view reads them to say whether the model's own session is still live; a
   # shared runtime's other sessions do not count.
   session_ids: list[str] = Field(default_factory=list)
+
+  def worker_dtypes(self) -> tuple[str, str]:
+    """(trainer dtype, sampler dtype) the workers run in. A record without
+    them, or a bare base-model sampling session, gets the deployment dtype."""
+    fallback = deployment_dtype()
+    return self.trainer_dtype or fallback, self.sampler_dtype or fallback
 
   def shares_gpu(self) -> bool:
     """Whether other workers may time-slice this job's GPUs. An FFT worker

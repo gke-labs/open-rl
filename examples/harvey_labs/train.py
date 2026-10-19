@@ -7,6 +7,7 @@ from pathlib import Path
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from common.tinker_utils import force_rich_log_colors, resolve_base_url
 from tinker_cookbook import checkpoint_utils
 from tinker_cookbook.rl import train as rl_train
@@ -106,6 +107,7 @@ async def run(config: RunConfig, *, sandbox_factory: SandboxFactory = podman_san
 def main() -> None:
   force_rich_log_colors()
   config = chz.entrypoint(RunConfig, allow_hyphens=True)
+  ensure_precision_tags(config.dtype)
   asyncio.run(run(config, sandbox_factory=configured_sandbox_factory(config.sandbox_warmpool, config.sandbox_namespace)))
 
 

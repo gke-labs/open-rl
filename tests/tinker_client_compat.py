@@ -84,7 +84,9 @@ def discover_methods() -> list[str]:
 
 
 def make_clients(base_url: str):
-  service = tinker.ServiceClient(api_key="tml-dummy-key", base_url=base_url)
+  # Session-level dtypes, so the probed calls that pass user_metadata={} still name them.
+  dtypes = {"openrl.trainer_dtype": "bfloat16", "openrl.sampler_dtype": "bfloat16"}
+  service = tinker.ServiceClient(api_key="tml-dummy-key", base_url=base_url, user_metadata=dtypes)
   training_client = service.create_lora_training_client(base_model=compat_model_path(), rank=2, train_unembed=False)
   state_path = training_client.save_state(STATE_NAME).result(timeout=PROBE_TIMEOUT).path
   sampling_client = training_client.save_weights_and_get_sampling_client(name=SAMPLING_ID)

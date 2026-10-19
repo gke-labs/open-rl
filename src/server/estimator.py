@@ -61,8 +61,10 @@ def parameter_count(base_model: str) -> int | None:
   return MODEL_TO_PARAM_COUNT.get(normalize_model_id(base_model))
 
 
-# Trainer on the device: fft 8 B/param (bf16 weights + grads + fp32 master),
-# frozen base 2 B/param; plus activations.
+# Trainer on the device, at bfloat16: fft 8 B/param (weights + grads + two
+# AdamW moments, all bf16; there are no fp32 master weights), frozen base
+# 2 B/param; plus activations. Every per-param and per-token figure in this
+# file is measured at bfloat16 and scales by DTYPE_SCALE for another dtype.
 TRAINER_DEVICE_BYTES_PER_PARAM = {"full": 8, "lora": 2}
 TRAINER_DEVICE_RESERVE_BYTES = 4 * GIB
 # Sampler on the device: bf16 weights, vLLM's activation peak and CUDA graphs,
@@ -87,6 +89,9 @@ HOST_OVERHEAD_BYTES = {"trainer": 20 * GIB, "sampler": 24 * GIB}
 # could burst past it can push a co-seated neighbour into the kernel's OOM
 # killer; an 8B FFT sampler ran at 39Gi against a 34Gi request.
 HOST_LIMIT_FACTOR = 1.0
+# Bytes per element relative to bfloat16, the dtype the figures above are for.
+# Weights, grads, optimizer state and the KV cache all follow the model dtype.
+DTYPE_SCALE = {"bfloat16": 1, "float32": 2}
 
 
 def gib(n: int) -> str:
@@ -108,24 +113,25 @@ class Footprint:
     return {"requests": {"memory": gib(self.host_request_bytes)}, "limits": {"memory": gib(self.host_limit_bytes)}}
 
 
-def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str) -> int:
-  device = params * SAMPLER_WEIGHT_BYTES_PER_PARAM
+def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str, scale: int = 1) -> int:
+  device = params * SAMPLER_WEIGHT_BYTES_PER_PARAM * scale
   device += SAMPLER_OVERHEAD_BYTES + int(params * SAMPLER_OVERHEAD_BYTES_PER_PARAM)
   if kind == "lora":
     device += SAMPLER_LORA_SLOT_BYTES + int(params * SAMPLER_LORA_SLOT_BYTES_PER_PARAM)
-  return device + kv_bytes_per_token * SAMPLER_KV_TOKENS
+  return device + kv_bytes_per_token * scale * SAMPLER_KV_TOKENS
 
 
-def footprint(base_model: str, fine_tuning_type: str, role: str) -> Footprint:
+def footprint(base_model: str, fine_tuning_type: str, role: str, dtype: str = "bfloat16") -> Footprint:
   model = normalize_model_id(base_model)
   if model not in MODEL_TO_PARAM_COUNT:
     logger.warning("No known parameter count for %r; sizing it as %s.", base_model, UNKNOWN_MODEL)
     model = UNKNOWN_MODEL
   params = MODEL_TO_PARAM_COUNT[model]
   kind = "lora" if fine_tuning_type == "lora" else "full"
+  scale = DTYPE_SCALE[dtype]
   if role == "trainer":
-    device = params * TRAINER_DEVICE_BYTES_PER_PARAM[kind] + TRAINER_DEVICE_RESERVE_BYTES
+    device = params * TRAINER_DEVICE_BYTES_PER_PARAM[kind] * scale + TRAINER_DEVICE_RESERVE_BYTES
   else:
-    device = sampler_device_bytes(params, MODEL_TO_KV_BYTES_PER_TOKEN[model], kind)
-  host = params * HOST_BYTES_PER_PARAM[(kind, role)] + HOST_OVERHEAD_BYTES[role]
+    device = sampler_device_bytes(params, MODEL_TO_KV_BYTES_PER_TOKEN[model], kind, scale)
+  host = params * HOST_BYTES_PER_PARAM[(kind, role)] * scale + HOST_OVERHEAD_BYTES[role]
   return Footprint(device, host, int(host * HOST_LIMIT_FACTOR))

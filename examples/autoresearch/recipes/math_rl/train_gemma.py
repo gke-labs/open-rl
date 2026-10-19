@@ -5,6 +5,7 @@ import asyncio
 import chz
 import tinker
 import tinker_cookbook.renderers as renderers
+from common.precision import ensure_precision_tags
 from tinker_cookbook.recipes.math_rl.train import CLIConfig, cli_main
 from tinker_cookbook.renderers.base import Message, RenderContext, RenderedMessage, parse_response_for_stop_token
 
@@ -40,5 +41,7 @@ class Gemma4Renderer(renderers.Renderer):
 renderers.register_renderer("gemma4", lambda tokenizer, img_proc=None: Gemma4Renderer(tokenizer))
 
 if __name__ == "__main__":
+  # The cookbook CLI has no dtype field; set TINKER_TAGS to train in another one.
+  ensure_precision_tags("bfloat16")
   cli_config = chz.entrypoint(CLIConfig)
   asyncio.run(cli_main(cli_config))

@@ -13,6 +13,8 @@ class RunConfig:
   model_name: str = "Qwen/Qwen3.5-9B"
   renderer_name: str | None = None
   base_url: str | None = None
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   lab_root: Path = chz.field(default=Path(__file__).resolve().parent / "harvey-labs", munger=lambda _, path: Path(path).expanduser().resolve())
   log_path: str = "artifacts/harvey-labs"
 

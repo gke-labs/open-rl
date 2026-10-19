@@ -48,7 +48,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
     print(f"Loading base model {base_model_name} to {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
 
     self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
@@ -199,6 +199,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
       "kind": kind,
       "has_optimizer": include_optimizer and optimizer is not None,
       "model_id": model_id,
+      "dtype": self.dtype_name,
       "timestamp": time.time(),
     }
     with open(os.path.join(state_path, "metadata.json"), "w") as f:

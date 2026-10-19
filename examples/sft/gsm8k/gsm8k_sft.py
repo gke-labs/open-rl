@@ -5,6 +5,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from datasets import load_dataset
 from tinker import types
 from tinker_cookbook import checkpoint_utils, cli_utils
@@ -49,6 +50,8 @@ class GSM8KDataset(SupervisedDatasetBuilder):
 class Config:
   base_model: str = "Qwen/Qwen2.5-0.5B"
   base_url: str = os.getenv("TINKER_BASE_URL", os.getenv("BASE_URL", "http://127.0.0.1:9003"))
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   log_path: str = str(Path(__file__).with_name("artifacts") / "gsm8k_sft")
   epochs: int = 1
   batch: int = 16
@@ -63,6 +66,7 @@ class Config:
 
 
 def main(config: Config) -> None:
+  ensure_precision_tags(config.dtype)
   cli_utils.check_log_dir(config.log_path, behavior_if_exists=config.behavior_if_log_dir_exists)
   asyncio.run(
     train(
