@@ -40,7 +40,7 @@ from server.vllm_options import split_stop
 from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, default_metadata, owner_of
 from training import commands
 from training.commands import Command
-from training.types import TRAINER_BACKENDS, Datum, FFTConfig, FineTuningType, LoraConfig
+from training.types import TRAINER_BACKENDS, Datum, Dtype, FFTConfig, FineTuningType, LoraConfig, check_dtypes, deployment_dtype
 
 store = get_store()
 state = get_state_store()
@@ -215,6 +215,21 @@ class Settings(BaseModel):
     default=None,
     description="lora unless set. A model restored from a checkpoint takes the checkpoint's type.",
   )
+  trainer_dtype: Dtype | None = Field(
+    default=None,
+    description=(
+      "Required on every model, including one restored from a checkpoint (where it must match the checkpoint). "
+      "The precision the trainer holds weights, grads and optimizer state in. pytorch: float32 or bfloat16 for full, "
+      "bfloat16 for lora. automodel: bfloat16. A worker whose GPU cannot run it fails instead of falling back."
+    ),
+  )
+  sampler_dtype: Dtype | None = Field(
+    default=None,
+    description=(
+      "Required on every model. The precision the vLLM sampler runs in (float32 or bfloat16 for full, bfloat16 for lora). "
+      "May differ from openrl.trainer_dtype on full fine-tuning (for example, float32 trainer with bfloat16 sampler)."
+    ),
+  )
   # The rest apply to full fine-tuning only.
   weight_sync: Literal["delta", "full"] | None = Field(
     default=None,
@@ -348,6 +363,8 @@ class AsampleRequest(BaseModel):
   num_samples: int = 1
   # The SDK has sent this under both names.
   prompt_logprobs: bool = Field(default=False, validation_alias=AliasChoices("prompt_logprobs", "include_prompt_logprobs"))
+  topk_sample_logprobs: int = Field(default=0, ge=0)
+  topk_prompt_logprobs: int = Field(default=0, ge=0)
   model_id: str | None = None
   sampling_session_id: str | None = None
   seq_id: int | None = None
@@ -390,7 +407,8 @@ def sampler_weights_path(model_id: str, name: str) -> str:
 def resolve_sampler_weights_path(model_id: str) -> str:
   """Resolves a model_id or tinker session reference to a fully-qualified step-specific weights path on disk."""
   rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
-  local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
+  sampler_tmp = os.getenv("OPEN_RL_SAMPLER_TMP_DIR") or TMP_DIR
+  local_path = os.path.join(sampler_tmp, "sampler_full", rel_path)
   weights_path = local_path
   if not os.path.basename(weights_path).startswith("sampler-"):
     sampler_weights_dir = os.path.join(weights_path, "sampler_weights")
@@ -465,9 +483,11 @@ async def _extract_and_persist_model_metadata(
   req: CreateModelRequest | CreateModelFromStateRequest,
   request: Request | None = None,
   checkpoint_kind: FineTuningType | None = None,
+  checkpoint_dtype: str | None = None,
 ) -> tuple[str, TrainingModelMetadata]:
   """Resolve the model's configuration from its openrl. settings and persist TrainingModelMetadata once.
-  checkpoint_kind is the fine-tuning type of the checkpoint a restored model loads."""
+  checkpoint_kind and checkpoint_dtype describe the checkpoint a restored model loads; checkpoint_dtype is
+  None for a checkpoint saved before dtypes were recorded."""
   base_model = req.base_model
   if not base_model:
     raise ValueError("base_model is required in request payload")
@@ -510,6 +530,26 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("openrl.trainer_gpus above 1 needs a server that launches workers as pods")
   if settings.trainer_gpus % settings.trainer_cp:
     raise ValueError(f"openrl.trainer_cp={settings.trainer_cp} must divide openrl.trainer_gpus={settings.trainer_gpus}")
+  check_dtypes(
+    settings.trainer_backend,
+    fine_tuning_type,
+    settings.trainer_dtype,
+    settings.sampler_dtype,
+    vllm_sampler=get_sampler_backend() == "vllm",
+  )
+  if checkpoint_dtype is not None and settings.trainer_dtype != checkpoint_dtype:
+    raise ValueError(f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype} does not match the checkpoint, which was saved in {checkpoint_dtype}")
+  if worker_manager is None:
+    static_trainer_dtype = os.getenv("OPEN_RL_TRAINER_DTYPE") or deployment_dtype()
+    static_sampler_dtype = os.getenv("OPEN_RL_SAMPLER_DTYPE") or deployment_dtype()
+    if settings.trainer_dtype != static_trainer_dtype:
+      raise ValueError(
+        f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype}: this server runs one set of workers in {static_trainer_dtype} (OPEN_RL_DTYPE)"
+      )
+    if settings.sampler_dtype != static_sampler_dtype:
+      raise ValueError(
+        f"{SETTINGS_PREFIX}sampler_dtype={settings.sampler_dtype}: this server runs one set of workers in {static_sampler_dtype} (OPEN_RL_DTYPE)"
+      )
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
@@ -523,6 +563,8 @@ async def _extract_and_persist_model_metadata(
     trainer_backend=settings.trainer_backend,
     trainer_gpus=settings.trainer_gpus,
     trainer_cp=settings.trainer_cp,
+    trainer_dtype=settings.trainer_dtype,
+    sampler_dtype=settings.sampler_dtype,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 
@@ -888,6 +930,7 @@ async def create_model(req: CreateModelRequest, request: Request) -> dict[str, A
     fine_tuning_type=meta.fine_tuning_type,
     lora_config=meta.lora_config or {},
     full_config=meta.full_config or {},
+    dtype=meta.trainer_dtype,
   )
   req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
@@ -933,7 +976,9 @@ async def create_model_from_state(req: CreateModelFromStateRequest, request: Req
     if req.base_model is not None and req.base_model != checkpoint["base_model"]:
       raise ValueError("base_model does not match the checkpoint")
     req = req.model_copy(update={"base_model": checkpoint["base_model"]})
-    model_id, meta = await _extract_and_persist_model_metadata(req, request, checkpoint_kind=kind)
+    if checkpoint.get("dtype") is None:
+      print(f"[API_SERVER] WARNING: checkpoint {resolved_path} records no dtype; trusting the client's openrl.trainer_dtype")
+    model_id, meta = await _extract_and_persist_model_metadata(req, request, checkpoint_kind=kind, checkpoint_dtype=checkpoint.get("dtype"))
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -944,6 +989,7 @@ async def create_model_from_state(req: CreateModelFromStateRequest, request: Req
     state_path=resolved_path,
     restore_optimizer=req.restore_optimizer,
     fine_tuning_type="full" if meta.fine_tuning_type == "full" else "lora",
+    dtype=meta.trainer_dtype,
   )
   req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
@@ -1138,7 +1184,10 @@ def checkpoint_info(path: str) -> dict[str, Any]:
     if not isinstance(adapter_config, dict):
       raise ValueError("Checkpoint adapter config must be an object")
     rank = adapter_config.get("r")
-  return {"base_model": saved["base_model"], "is_lora": is_lora, "lora_rank": rank, "type": "weights_info"}
+  dtype = saved.get("dtype")
+  if dtype is not None and dtype not in ("float32", "bfloat16"):
+    raise ValueError(f"Checkpoint dtype must be float32 or bfloat16, got {dtype!r}")
+  return {"base_model": saved["base_model"], "is_lora": is_lora, "lora_rank": rank, "dtype": dtype, "type": "weights_info"}
 
 
 # *** SamplingClient endpoints ***
@@ -1266,8 +1315,11 @@ async def asample(req: AsampleRequest):
         prompt_tokens=prompt,
         max_tokens=params.max_tokens,
         temperature=params.temperature,
+        top_p=params.top_p,
+        top_k=params.top_k,
         num_samples=num_samples,
         prompt_logprobs=req.prompt_logprobs,
+        topk_sample_logprobs=req.topk_sample_logprobs,
       )
     )
     return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
@@ -1305,6 +1357,7 @@ async def asample(req: AsampleRequest):
     "lora_path": lora_path,
     "weights_path": weights_path,
     "include_prompt_logprobs": req.prompt_logprobs,
+    "topk_sample_logprobs": req.topk_sample_logprobs,
     "model_id": queue_id,
     "trace_context": carrier,
   }

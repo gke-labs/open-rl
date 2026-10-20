@@ -63,6 +63,22 @@ def read_sparse_patches(path: Path, metadata: dict, device: torch.device | str =
   return patches
 
 
+DTYPE_NAMES = {torch.float32: "float32", torch.bfloat16: "bfloat16", torch.float16: "float16"}
+
+
+def check_weight_dtype(metadata: dict, engine_dtype: torch.dtype) -> None:
+  """Validate checkpoint metadata dtype and log when cross-precision casting applies.
+  Weights from a trainer that predates the dtype record carry none and pass."""
+  saved = metadata.get("dtype")
+  if saved is None:
+    return
+  if saved not in ("float32", "bfloat16"):
+    raise ValueError(f"Unsupported checkpoint dtype {saved!r}; expected float32 or bfloat16")
+  running = DTYPE_NAMES.get(engine_dtype, str(engine_dtype))
+  if saved != running:
+    logger.info("Cross-precision weight transfer: loading weights saved in %s into sampler running in %s", saved, running)
+
+
 @dataclass
 class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
   target_weights_path: str
@@ -96,6 +112,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if not path.exists():
       raise ValueError(f"Target weights path does not exist: {path}")
     metadata = read_weight_metadata(path)
+    check_weight_dtype(metadata, self.model_config.dtype)
     if metadata.get("format") == "sparse_delta":
       patches = read_sparse_patches(path, metadata, self.device)
       # The reader verified sorted, unique indices on CPU; skip re-sorting on GPU.

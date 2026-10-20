@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from server import api_server
 from server.store import InMemoryStateStore, InMemoryStore
 from server.worker_manager import LocalWorkerManager
+from tests.api_client import with_dtypes
 from tests.test_session_lifecycle import RuntimeManager
 
 
@@ -23,7 +24,7 @@ class ApiServerTest(unittest.TestCase):
     self.client = TestClient(api_server.app)
 
   def post(self, path: str, body: dict, **kwargs):
-    return self.client.post(f"/api/v1/{path}", json=body, **kwargs)
+    return self.client.post(f"/api/v1/{path}", json=with_dtypes(path, body), **kwargs)
 
   def post_bytes(self, path: str, body: bytes, media_type: str):
     return self.client.post(f"/api/v1/{path}", content=body, headers={"Content-Type": media_type})

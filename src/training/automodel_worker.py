@@ -304,7 +304,9 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     if self.device.type == "cuda":
       torch.cuda.set_device(self.device)
     self.load_base_model(base_model_name)
-    kwargs: dict[str, Any] = {"torch_dtype": torch.bfloat16, "use_liger_kernel": False, "peft_config": self.peft_config}
+    if self.dtype_name != "bfloat16":
+      raise ValueError(f"The automodel trainer trains in bfloat16 only, not trainer_dtype={self.dtype_name}")
+    kwargs: dict[str, Any] = {"torch_dtype": self.model_dtype(), "use_liger_kernel": False, "peft_config": self.peft_config}
     # Qwen3.5 ships a multi-token-prediction head that would run over the whole
     # sequence on every forward; the loss never reads it.
     if AutoConfig.from_pretrained(base_model_name).get_text_config().model_type.startswith("qwen3_5"):
@@ -626,5 +628,6 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
       "kind": kind,
       "has_optimizer": has_optimizer,
       "model_id": model_id,
+      "dtype": self.dtype_name,
       "timestamp": time.time(),
     }

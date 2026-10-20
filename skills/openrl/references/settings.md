@@ -28,8 +28,20 @@ the wire: `"true"`, `"8"`. A bad value or an unknown key is a 400 that names the
 and says what it should be.
 
 ```python
-client = tinker.ServiceClient(base_url=..., user_metadata={"openrl.fine_tuning_type": "full"})
+client = tinker.ServiceClient(
+  base_url=...,
+  user_metadata={
+    "openrl.trainer_dtype": "bfloat16",  # required on every model, no default
+    "openrl.sampler_dtype": "bfloat16",  # required; may differ from trainer_dtype on full fine-tuning
+    "openrl.fine_tuning_type": "full",
+  },
+)
 ```
+
+`openrl.trainer_dtype` and `openrl.sampler_dtype` are required: a model without them is a
+400. On a model restored from a checkpoint they are required too and must match the dtype
+the checkpoint was saved in. The schema's descriptions say which trainer supports which
+dtype.
 
 Which settings a server accepts depends on how it runs workers: several are refused
 outside the Kubernetes deployment (`openrl.worker_launcher` in capabilities is not

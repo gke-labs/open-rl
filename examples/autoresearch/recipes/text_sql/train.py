@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from common.tinker_utils import force_rich_log_colors, resolve_base_url
 from tinker import types
 from tinker_cookbook.utils import ml_log
@@ -30,6 +31,8 @@ class RunConfig:
   data_dir: Path = Path("artifacts/autoresearch/text_sql")
   attempt_timeout_minutes: float = 30.0
   base_url: str | None = None
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   base_model: str = DEFAULT_BASE_MODEL
   tokenizer_name: str | None = None
   rank: int = 8
@@ -99,6 +102,7 @@ def build_rollout(tokenizer: Any, example: dict[str, Any], sequence: Any) -> dic
 
 def create_service_client(args: RunConfig) -> Any:
   base_url = resolve_base_url(args.base_url)
+  ensure_precision_tags(args.dtype)
   return tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=base_url)
 
 

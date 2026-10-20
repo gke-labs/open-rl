@@ -36,6 +36,7 @@ from server.worker_manager import (
   WAITING_FOR_PLACEMENT,
   base_model_of,
   owner_id,
+  role_dtype,
   runtime_of,
   worker_args,
   worker_env,
@@ -98,7 +99,7 @@ def describe_worker(model_id: str, role: str) -> Worker:
   base_model = base_model_of(meta, runtime)
   exclusive = not meta.shares_gpu()
   devices = meta.trainer_gpus if role == "trainer" else 1
-  size = footprint(base_model, meta.fine_tuning_type, role)
+  size = footprint(base_model, meta.fine_tuning_type, role, role_dtype(meta, role))
   # Each torchrun rank is its own process with its own host memory.
   size = replace(size, host_request_bytes=size.host_request_bytes * devices, host_limit_bytes=size.host_limit_bytes * devices)
   return Worker(role, runtime, base_model, is_lora, exclusive, meta, size, devices)
@@ -120,7 +121,16 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   }
   # MAX_JOBS caps FlashInfer's JIT build, which otherwise runs one ~3GB
   # compiler per core and blows through the pod's host memory limit.
-  for name in ("VLLM_GPU_MEMORY_UTILIZATION", "VLLM_MAX_MODEL_LEN", "OPEN_RL_TRAIN_TOKEN_BUDGET", "MAX_JOBS"):
+  for name in (
+    "VLLM_GPU_MEMORY_UTILIZATION",
+    "VLLM_MAX_MODEL_LEN",
+    "OPEN_RL_TRAIN_TOKEN_BUDGET",
+    "MAX_JOBS",
+    "PYTHONPATH",
+    "OPEN_RL_SAMPLER_VERSIONS_KEPT",
+    "OPEN_RL_KEEP_DELTAS",
+    "OPEN_RL_SAMPLER_TMP_DIR",
+  ):
     if os.getenv(name):
       values[name] = os.environ[name]
   # No other worker shares an exclusive worker's GPUs, so it never parks.
@@ -176,6 +186,10 @@ def pod_template(worker: Worker) -> dict[str, Any]:
   if worker.devices > 1:
     template["spec"]["containers"][0]["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
     template["spec"]["volumes"].append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
+
+  if sampler_tmp := os.getenv("OPEN_RL_SAMPLER_TMP_DIR"):
+    template["spec"]["containers"][0]["volumeMounts"].append({"name": "sampler-local", "mountPath": sampler_tmp})
+    template["spec"]["volumes"].append({"name": "sampler-local", "hostPath": {"path": sampler_tmp, "type": "DirectoryOrCreate"}})
 
   if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
     template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy

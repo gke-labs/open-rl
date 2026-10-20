@@ -13,6 +13,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from datasets import load_dataset
 from tinker import types
 from tinker_cookbook.utils import ml_log
@@ -59,6 +60,8 @@ class Config:
   learning_rate: float
   prompt_format: str = "chat_template"
   base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   grad_clip_norm: float = 0.3
   eval_every: int = 50
   train_limit: int = 2_048
@@ -106,6 +109,7 @@ async def run_training(config: Config, preset: str) -> dict[str, float | str]:
   log_dir = Path(config.log_dir.replace("{preset}", preset))
   ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
   metrics_path = log_dir / "metrics.jsonl"
+  ensure_precision_tags(config.dtype)
   client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
   server_model = await require_server(client, config.base_url, expected_model=config.base_model)
   logging.info("Server ready at %s | model=%s", config.base_url, server_model or "unset")

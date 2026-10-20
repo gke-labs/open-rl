@@ -85,6 +85,12 @@ def owner_of(model_id: str) -> str:
 # -- the process ------------------------------------------------------------------
 
 
+def role_dtype(meta: TrainingModelMetadata, role: str) -> str:
+  """The dtype this role's worker runs in."""
+  trainer_dtype, sampler_dtype = meta.worker_dtypes()
+  return trainer_dtype if role == "trainer" else sampler_dtype
+
+
 def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lora: bool, role: str) -> dict[str, str]:
   """The env every worker gets, whichever manager launches it. Time-slice
   identity is the manager's to add."""
@@ -95,11 +101,13 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
     "OPEN_RL_FINE_TUNING_TYPE": "lora" if is_lora else "full",
     # The device budget this worker was sized for; a sampler derives its
     # vLLM fraction from it against the device it actually gets.
-    "OPEN_RL_ACCELERATOR_MEMORY": str(footprint(base_model, meta.fine_tuning_type, role).accelerator_bytes),
+    "OPEN_RL_ACCELERATOR_MEMORY": str(footprint(base_model, meta.fine_tuning_type, role, role_dtype(meta, role)).accelerator_bytes),
   }
   env["OPEN_RL_WEIGHT_SYNC_STRATEGY"] = meta.weight_sync_config.strategy
+  trainer_dtype, sampler_dtype = meta.worker_dtypes()
   if role == "trainer":
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    env["OPEN_RL_TRAINER_DTYPE"] = trainer_dtype
     if meta.trainer_backend == "automodel":
       env["OPEN_RL_TRAINER_BACKEND"] = "automodel"
     if meta.trainer_gpus > 1:
@@ -109,6 +117,7 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
       env["OPEN_RL_AUTOMODEL_CP"] = str(meta.trainer_cp)
   else:
     env["OPEN_RL_MODEL_ID"] = runtime
+    env["OPEN_RL_SAMPLER_DTYPE"] = sampler_dtype
     env["VLLM_SERVER_DEV_MODE"] = "1"
     env["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
     if not is_lora and ("gemma-4" in base_model.lower() or "gemma4" in base_model.lower()):

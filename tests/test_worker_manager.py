@@ -5,7 +5,7 @@ from unittest.mock import patch
 from server import api_server
 from server.session_registry import SessionRegistry
 from server.worker_manager import LocalWorkerManager
-from tests.api_client import asgi_client, post_json
+from tests.api_client import DEFAULT_DTYPES, asgi_client, post_json
 
 
 class StoreStub:
@@ -256,7 +256,7 @@ class ApiServerMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
   async def test_extract_and_persist_metadata_from_settings(self) -> None:
     import json
 
-    user_metadata = {"openrl.fine_tuning_type": "full", "openrl.weight_sync": "full", "openrl.fft_seed": "7"}
+    user_metadata = {"openrl.fine_tuning_type": "full", "openrl.weight_sync": "full", "openrl.fft_seed": "7", **DEFAULT_DTYPES}
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
       model_id, _ = await api_server._extract_and_persist_model_metadata(
         api_server.CreateModelRequest(base_model="Qwen/Qwen2.5-0.5B", user_metadata=user_metadata)

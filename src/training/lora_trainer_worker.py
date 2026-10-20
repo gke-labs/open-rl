@@ -48,7 +48,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
     print(f"Loading base model {base_model_name} to {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
 
     self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
@@ -199,6 +199,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
       "kind": kind,
       "has_optimizer": include_optimizer and optimizer is not None,
       "model_id": model_id,
+      "dtype": self.dtype_name,
       "timestamp": time.time(),
     }
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
@@ -344,7 +345,20 @@ class LoraTrainingWorker(BaseTrainerWorker):
     temperature: float = 0.0,
     model_id: str | None = None,
     include_prompt_logprobs: bool = False,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    topk_sample_logprobs: int = 0,
   ) -> dict[str, Any]:
     if model_id:
       self.peft_model.set_adapter(model_id)
-    return super().generate(self.peft_model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+    return super().generate(
+      self.peft_model,
+      prompt_tokens,
+      max_tokens,
+      num_samples,
+      temperature,
+      include_prompt_logprobs,
+      top_p=top_p,
+      top_k=top_k,
+      topk_sample_logprobs=topk_sample_logprobs,
+    )

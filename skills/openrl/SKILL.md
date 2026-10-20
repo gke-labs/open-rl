@@ -45,6 +45,7 @@ following cookbook advice about API keys, model choice, checkpoints or
 | One-command check | `uv --project examples run openrl-doctor` from a clone, or `python -m common.openrl_doctor` in the client image |
 | Base models | Any Hugging Face model id. `supported_models` lists only the configured default. First use of a model downloads it on the cluster. |
 | LoRA or full fine-tuning | `openrl.fine_tuning_type=lora` (default) or `full`; full needs `openrl.fft_enabled: true` in capabilities |
+| Precision (required) | every model must set `openrl.trainer_dtype` and `openrl.sampler_dtype`, equal for now: `bfloat16`, or `float32` for full fine-tuning on the `pytorch` trainer. LoRA and `automodel` are `bfloat16` only. No default, no fallback: a GPU that cannot run the dtype fails the worker |
 | A model too big for one GPU | first a bigger device with `openrl.exclusive=true`; then `openrl.trainer_backend=automodel` with `openrl.trainer_gpus=N` to shard the trainer across `N` GPUs on one node (LoRA only). The sampler always needs one device that fits the model. Sizing rules in `references/lifecycle.md` |
 | Settings | the server's OpenAPI document, `components.schemas.OpenRLSettings` (`/openapi.json`, rendered at `/docs`); `references/settings.md` says how to read and pass them. Pass as `user_metadata` or `TINKER_TAGS=openrl.key=value` |
 | Keep the run alive | Keep the client process and the port-forward up. Session TTL is 120 s; workers are released about 2 minutes after the last heartbeat. |
@@ -57,7 +58,7 @@ following cookbook advice about API keys, model choice, checkpoints or
    model view.
 2. **Pick the settings.** Read them from the server: `curl -s $OPENRL/openapi.json | jq
    .components.schemas.OpenRLSettings`; `references/settings.md` says how to read and pass
-   them. Most runs need none. Full fine-tuning, exclusive GPUs, more sampler replicas and the
+   them. Every run needs `openrl.trainer_dtype` and `openrl.sampler_dtype`; most need nothing else. Full fine-tuning, exclusive GPUs, more sampler replicas and the
    Automodel trainer are settings, not code.
 3. **Write or run the loop with the cookbook skills.** `examples/tiny/tiny_sft.py` and
    `tiny_rl.py` in the repository are complete minimal loops; cookbook recipes run unchanged

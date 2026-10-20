@@ -9,7 +9,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
-from training.types import Datum, FFTConfig, FineTuningType, LoraConfig
+from training.types import Datum, Dtype, FFTConfig, FineTuningType, LoraConfig
 
 SHUTDOWN_REQUEST_ID = "SHUTDOWN_SENTINEL"
 
@@ -29,6 +29,8 @@ class CreateModel(Command):
   fine_tuning_type: FineTuningType = "lora"
   lora_config: LoraConfig = LoraConfig()
   full_config: FFTConfig = FFTConfig()
+  # The trainer dtype the model was created with. None from an older server.
+  dtype: Dtype | None = None
 
 
 class CreateModelFromState(Command):
@@ -36,6 +38,7 @@ class CreateModelFromState(Command):
   state_path: str
   restore_optimizer: bool = False
   fine_tuning_type: FineTuningType = "lora"
+  dtype: Dtype | None = None
 
 
 class ForwardBackward(Command):
@@ -57,7 +60,10 @@ class Sample(Command):
   max_tokens: int = 20
   num_samples: int = 1
   temperature: float = 1.0
+  top_p: float = 1.0
+  top_k: int = -1
   prompt_logprobs: bool = False
+  topk_sample_logprobs: int = 0
 
 
 class SaveState(Command):

@@ -27,6 +27,7 @@ from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_fr
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
 from server.store import RequestStore, StateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, sampler_batch_limits, split_stop, text_only_engine_kwargs
+from training.types import DTYPES, deployment_dtype
 
 tracer = trace.get_tracer("vllm.inference.worker")
 SHUTDOWN_SENTINEL = "SHUTDOWN_SENTINEL"
@@ -43,8 +44,16 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
   if not model_name:
     raise ValueError("BASE_MODEL or VLLM_MODEL is required")
+  # Always explicit: vLLM's "auto" would follow the checkpoint config and, for
+  # an fp32 checkpoint, silently downcast.
+  dtype = os.getenv("OPEN_RL_SAMPLER_DTYPE") or deployment_dtype()
+  if dtype not in DTYPES:
+    raise ValueError(f"OPEN_RL_SAMPLER_DTYPE must be one of {', '.join(DTYPES)}, got {dtype!r}")
+  if dtype != "bfloat16" and not fft_enabled:
+    raise ValueError(f"A LoRA sampler runs in bfloat16 only (vLLM's LoRA kernels), not {dtype}")
   engine_kwargs = {
     "model": model_name,
+    "dtype": dtype,
     "enable_sleep_mode": fft_enabled,
     "enable_lora": not fft_enabled,
     "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
@@ -148,6 +157,7 @@ class Sampler:
     max_tokens = request.get("max_tokens", 20)
     lora_request = lora_request_for(request)
     stop_strings, stop_token_ids = split_stop(request.get("stop"))
+    topk_sample_logprobs = int(request.get("topk_sample_logprobs") or 0)
     sampling_params = SamplingParams(
       n=request.get("num_samples", 1),
       temperature=request.get("temperature", 1.0),
@@ -156,7 +166,7 @@ class Sampler:
       stop_token_ids=stop_token_ids,
       top_p=request.get("top_p", 1.0),
       top_k=request.get("top_k", -1),
-      logprobs=1,  # return logprobs for TITO RL
+      logprobs=max(1, topk_sample_logprobs),  # return logprobs for TITO RL (and top-k when requested)
       prompt_logprobs=1 if request.get("include_prompt_logprobs", False) else None,
       output_kind=RequestOutputKind.FINAL_ONLY,
     )
@@ -179,6 +189,7 @@ class Sampler:
     for output in outputs:
       generated_token_ids = list(output.token_ids)
       logprobs = []
+      topk_logprobs: list[list[tuple[int, float]]] | None = [] if topk_sample_logprobs > 0 else None
       if output.logprobs:
         for idx, token_logprobs in enumerate(output.logprobs):
           # token_logprobs is a dict of {token_id: Logprob}
@@ -188,7 +199,24 @@ class Sampler:
           else:
             logprob = -9999.0
           logprobs.append(logprob)
-      sequences_out.append({"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason})
+          if topk_logprobs is not None:
+            if token_logprobs:
+              # Sort by descending logprob (breaking ties by rank if present, then token_id)
+              # and take the top K entries.
+              ranked = sorted(
+                token_logprobs.items(),
+                key=lambda item: (getattr(item[1], "rank", None) or 10**9, -float(item[1].logprob), int(item[0])),
+              )[:topk_sample_logprobs]
+              topk_logprobs.append([(int(tid), float(entry.logprob)) for tid, entry in ranked])
+            else:
+              topk_logprobs.append([])
+      elif topk_logprobs is not None:
+        topk_logprobs = [[] for _ in generated_token_ids]
+      seq_entry: dict[str, Any] = {"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason}
+      if topk_logprobs is not None:
+        seq_entry["topk_logprobs"] = topk_logprobs
+        seq_entry["topk_k"] = topk_sample_logprobs
+      sequences_out.append(seq_entry)
 
     prompt_logprobs_out = None
     if final_output and final_output.prompt_logprobs:

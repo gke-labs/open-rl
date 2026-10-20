@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from tinker import types
 
 BASE_URL = "http://127.0.0.1:9003"
@@ -28,6 +29,11 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 class Config:
   base_model: str = "Qwen/Qwen2.5-0.5B"
   base_url: str = os.getenv("TINKER_BASE_URL", os.getenv("BASE_URL", BASE_URL))
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
+  trainer_dtype: str | None = None
+  sampler_dtype: str | None = None
+  fine_tuning_type: str = "lora"
   log_dir: str = str(Path(__file__).with_name("artifacts") / "tiny_rl")
   prompt: str = "Question: What is 2 + 2?\nAnswer:"
   target: str = "4"
@@ -35,11 +41,17 @@ class Config:
   samples_per_prompt: int = 8
   max_tokens: int = 16
   temperature: float = 1.0
+  top_p: float = 1.0
+  mis_rho_min: float | None = None
+  mis_rho_max: float | None = None
+  score_centering: bool = False
+  topk_sample_logprobs: int = 0
   learning_rate: float = 1e-5
   grad_clip_norm: float = 1.0
   loss_fn: str = "importance_sampling"
   rank: int = 16
   seed: int = 0
+  save_final_state: bool = True
   behavior_if_log_dir_exists: str = "delete"
 
 
@@ -61,21 +73,42 @@ def write_metric(log_dir: Path, row: dict[str, Any]) -> None:
     f.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def build_datum(prompt_tokens: list[int], completion_tokens: list[int], logprobs: list[float], advantage: float) -> types.Datum:
+def build_datum(
+  prompt_tokens: list[int],
+  completion_tokens: list[int],
+  logprobs: list[float],
+  advantage: float,
+  topk_logprobs_np: Any = None,
+) -> types.Datum:
   tokens = prompt_tokens + completion_tokens
   prompt_pad = [0.0] * (len(prompt_tokens) - 1)
+  loss_fn_inputs: dict[str, Any] = {
+    "target_tokens": tokens[1:],
+    "weights": prompt_pad + [1.0] * len(completion_tokens),
+    "logprobs": prompt_pad + logprobs,
+    "advantages": prompt_pad + [advantage] * len(completion_tokens),
+  }
+  if topk_logprobs_np is not None:
+    loss_fn_inputs["topk_token_ids"] = types.TensorData.from_numpy(topk_logprobs_np.token_ids)
+    loss_fn_inputs["topk_logprobs"] = types.TensorData.from_numpy(topk_logprobs_np.logprobs)
   return types.Datum(
     model_input=types.ModelInput.from_ints(tokens=tokens[:-1]),
-    loss_fn_inputs=cast(
-      Any,
-      {
-        "target_tokens": tokens[1:],
-        "weights": prompt_pad + [1.0] * len(completion_tokens),
-        "logprobs": prompt_pad + logprobs,
-        "advantages": prompt_pad + [advantage] * len(completion_tokens),
-      },
-    ),
+    loss_fn_inputs=cast(Any, loss_fn_inputs),
   )
+
+
+def build_loss_fn_config(config: Config) -> dict[str, float] | None:
+  loss_cfg: dict[str, float] = {}
+  if config.top_p < 1.0:
+    loss_cfg["top_p"] = config.top_p
+    loss_cfg["temperature"] = config.temperature
+  if config.mis_rho_min is not None:
+    loss_cfg["mis_rho_min"] = config.mis_rho_min
+  if config.mis_rho_max is not None:
+    loss_cfg["mis_rho_max"] = config.mis_rho_max
+  if config.score_centering:
+    loss_cfg["score_centering"] = 1.0
+  return loss_cfg or None
 
 
 def main(config: Config) -> None:
@@ -84,7 +117,9 @@ def main(config: Config) -> None:
   log_dir = Path(config.log_dir)
   reset_log_dir(log_dir, config.behavior_if_log_dir_exists)
 
+  ensure_precision_tags(config.dtype, trainer_dtype=config.trainer_dtype, sampler_dtype=config.sampler_dtype)
   client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
+  user_metadata = {"openrl.fine_tuning_type": config.fine_tuning_type} if config.fine_tuning_type != "lora" else None
   trainer = client.create_lora_training_client(
     base_model=config.base_model,
     rank=config.rank,
@@ -94,6 +129,7 @@ def main(config: Config) -> None:
     # Qwen2.5-0.5B ties lm_head to embed_tokens; LoRA on the tied head trips a
     # PEFT warning and vLLM cannot load lm_head adapter weights at all.
     train_unembed=False,
+    user_metadata=user_metadata,
   )
 
   # Progress and diagnosis live on the server. While a call below blocks, this
@@ -108,12 +144,23 @@ def main(config: Config) -> None:
     # fragments without its BOS token, and Qwen tokenizers add nothing here.
     prompt_tokens = tokenizer.encode(config.prompt, add_special_tokens=True)
     prompt = types.ModelInput.from_ints(tokens=prompt_tokens)
-    sampling_params = types.SamplingParams(max_tokens=config.max_tokens, temperature=config.temperature)
+    sampling_params = types.SamplingParams(max_tokens=config.max_tokens, temperature=config.temperature, top_p=config.top_p)
+    topk_k = config.topk_sample_logprobs or (20 if config.score_centering else 0)
+    loss_fn_config = build_loss_fn_config(config)
 
     mean_reward = 0.0
     for step in range(1, config.steps + 1):
       sampler = trainer.save_weights_and_get_sampling_client()
-      sequences = sampler.sample(prompt=prompt, num_samples=config.samples_per_prompt, sampling_params=sampling_params).result().sequences
+      sequences = (
+        sampler.sample(
+          prompt=prompt,
+          num_samples=config.samples_per_prompt,
+          sampling_params=sampling_params,
+          topk_sample_logprobs=topk_k,
+        )
+        .result()
+        .sequences
+      )
 
       rewards = []
       for sequence in sequences:
@@ -131,22 +178,59 @@ def main(config: Config) -> None:
         advantages = [1.0] * len(rewards)
 
       datums = [
-        build_datum(prompt_tokens, list(sequence.tokens), list(sequence.logprobs or []), advantage)
+        build_datum(
+          prompt_tokens,
+          list(sequence.tokens),
+          list(sequence.logprobs or []),
+          advantage,
+          topk_logprobs_np=sequence.topk_logprobs_np if config.score_centering else None,
+        )
         for sequence, advantage in zip(sequences, advantages)
       ]
-      fwdbwd = trainer.forward_backward(datums, config.loss_fn).result()
+      fwdbwd = trainer.forward_backward(datums, config.loss_fn, loss_fn_config=loss_fn_config).result()
       trainer.optim_step(types.AdamParams(learning_rate=config.learning_rate, grad_clip_norm=config.grad_clip_norm)).result()
+
+      log_ratios: list[float] = []
+      prompt_offset = len(prompt_tokens) - 1
+      for sequence, out_record in zip(sequences, fwdbwd.loss_fn_outputs):
+        sampler_lps = list(sequence.logprobs or [])
+        trainer_lps = out_record["logprobs"].tolist()[prompt_offset : prompt_offset + len(sampler_lps)]
+        for s_lp, t_lp in zip(sampler_lps, trainer_lps):
+          if s_lp > -9000.0 and t_lp > -9000.0:
+            log_ratios.append(float(t_lp) - float(s_lp))
+
+      mean_abs_log_ratio = statistics.fmean(abs(lr) for lr in log_ratios) if log_ratios else 0.0
+      kl_sample_train = statistics.fmean(-lr for lr in log_ratios) if log_ratios else 0.0
+      max_ratio = max((math.exp(min(lr, 20.0)) for lr in log_ratios), default=1.0)
+      min_ratio = min((math.exp(max(lr, -20.0)) for lr in log_ratios), default=1.0)
 
       loss = float(fwdbwd.metrics.get("loss:mean", 0.0))
       if not math.isfinite(loss):
         raise RuntimeError(f"Loss must be finite, got {loss!r}")
-      write_metric(log_dir, {"phase": "train", "step": step, "loss": loss, "mean_reward": mean_reward, "num_datums": len(datums)})
-      print(f"[tiny-rl] step={step:02d}/{config.steps} loss={loss:.6f} mean_reward={mean_reward:.2f} datums={len(datums)}")
+      write_metric(
+        log_dir,
+        {
+          "phase": "train",
+          "step": step,
+          "loss": loss,
+          "mean_reward": mean_reward,
+          "mean_abs_log_ratio": mean_abs_log_ratio,
+          "kl_sample_train": kl_sample_train,
+          "max_ratio": max_ratio,
+          "min_ratio": min_ratio,
+          "num_datums": len(datums),
+        },
+      )
+      print(
+        f"[tiny-rl] step={step:02d}/{config.steps} loss={loss:.6f} mean_reward={mean_reward:.2f} "
+        f"|log_rho|={mean_abs_log_ratio:.5f} ratio=[{min_ratio:.4f}, {max_ratio:.4f}] datums={len(datums)}"
+      )
 
-    final_state_path = trainer.save_state("tiny-rl-final").result().path
+    final_state_path = trainer.save_state("tiny-rl-final").result().path if config.save_final_state else ""
     write_metric(log_dir, {"phase": "final", "step": config.steps, "final_state_path": final_state_path, "mean_reward": mean_reward})
     print(f"[tiny-rl] mean_reward={mean_reward:.2f}")
-    print(f"final_state_path={final_state_path}")
+    if final_state_path:
+      print(f"final_state_path={final_state_path}")
   finally:
     import json
     import urllib.request

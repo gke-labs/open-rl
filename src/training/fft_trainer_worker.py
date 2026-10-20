@@ -79,7 +79,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
 
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
     print("Successfully loaded full fine-tuning model.")
@@ -158,6 +158,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "kind": "weights",
       "model_id": alias,
       "timestamp": time.time(),
@@ -197,6 +198,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "kind": kind,
       "has_optimizer": False,
       "model_id": model_id,
@@ -262,6 +264,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "format": "sparse_delta",
       "format_version": SPARSE_DELTA_VERSION,
       "layer_shapes": layer_shapes,
@@ -284,7 +287,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if not ref:
       raise ValueError("save_weights_for_sampler requires path or sampling_session_id")
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
-    local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
+    sampler_tmp = os.getenv("OPEN_RL_SAMPLER_TMP_DIR") or os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+    local_path = os.path.join(sampler_tmp, "sampler_full", rel_path)
     self.save_state(model_id, local_path, False, "sampler")
     return local_path
 
@@ -302,7 +306,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self.base_model_name = base_model
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     target_device = "auto" if num_gpus > 1 else self.device
     self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)
@@ -446,8 +450,21 @@ class FFTTrainingWorker(BaseTrainerWorker):
     temperature: float = 0.0,
     model_id: str | None = None,
     include_prompt_logprobs: bool = False,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    topk_sample_logprobs: int = 0,
   ) -> dict[str, Any]:
-    return super().generate(self.model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+    return super().generate(
+      self.model,
+      prompt_tokens,
+      max_tokens,
+      num_samples,
+      temperature,
+      include_prompt_logprobs,
+      top_p=top_p,
+      top_k=top_k,
+      topk_sample_logprobs=topk_sample_logprobs,
+    )
 
   def sleep(self) -> None:
     """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""

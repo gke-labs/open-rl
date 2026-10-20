@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import chz
+from common.precision import ensure_precision_tags
 from common.tinker_utils import (
   LimitedDatasetBuilder,
   force_rich_log_colors,
@@ -33,6 +34,8 @@ class RunConfig:
   run_dir: Path = chz.field(doc="Attempt artifact directory written by run_attempt.")
   run_name: str = chz.field(doc="Attempt name used for W&B and logs.")
   base_url: str | None = None
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   wandb_project: str | None = None
   attempt_timeout_minutes: float = float(os.getenv("ATTEMPT_TIMEOUT_MINUTES", "5"))
 
@@ -156,6 +159,7 @@ async def run_training(args: RunConfig) -> None:
 def main() -> None:
   force_rich_log_colors()
   args = chz.entrypoint(RunConfig, allow_hyphens=True)
+  ensure_precision_tags(args.dtype)
   try:
     asyncio.run(run_training(args))
   except TimeoutError as exc:
