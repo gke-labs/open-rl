@@ -225,7 +225,10 @@ class Settings(BaseModel):
   )
   sampler_dtype: Dtype | None = Field(
     default=None,
-    description="Required on every model. The precision the vLLM sampler runs in. Must equal openrl.trainer_dtype for now.",
+    description=(
+      "Required on every model. The precision the vLLM sampler runs in (float32 or bfloat16 for full, bfloat16 for lora). "
+      "May differ from openrl.trainer_dtype on full fine-tuning (for example, float32 trainer with bfloat16 sampler)."
+    ),
   )
   # The rest apply to full fine-tuning only.
   weight_sync: Literal["delta", "full"] | None = Field(
@@ -360,6 +363,8 @@ class AsampleRequest(BaseModel):
   num_samples: int = 1
   # The SDK has sent this under both names.
   prompt_logprobs: bool = Field(default=False, validation_alias=AliasChoices("prompt_logprobs", "include_prompt_logprobs"))
+  topk_sample_logprobs: int = Field(default=0, ge=0)
+  topk_prompt_logprobs: int = Field(default=0, ge=0)
   model_id: str | None = None
   sampling_session_id: str | None = None
   seq_id: int | None = None
@@ -402,7 +407,8 @@ def sampler_weights_path(model_id: str, name: str) -> str:
 def resolve_sampler_weights_path(model_id: str) -> str:
   """Resolves a model_id or tinker session reference to a fully-qualified step-specific weights path on disk."""
   rel_path = model_id[len("tinker://") :] if model_id.startswith("tinker://") else model_id.lstrip("/")
-  local_path = os.path.join(TMP_DIR, "sampler_full", rel_path)
+  sampler_tmp = os.getenv("OPEN_RL_SAMPLER_TMP_DIR") or TMP_DIR
+  local_path = os.path.join(sampler_tmp, "sampler_full", rel_path)
   weights_path = local_path
   if not os.path.basename(weights_path).startswith("sampler-"):
     sampler_weights_dir = os.path.join(weights_path, "sampler_weights")
@@ -533,10 +539,17 @@ async def _extract_and_persist_model_metadata(
   )
   if checkpoint_dtype is not None and settings.trainer_dtype != checkpoint_dtype:
     raise ValueError(f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype} does not match the checkpoint, which was saved in {checkpoint_dtype}")
-  if worker_manager is None and settings.trainer_dtype != (static_dtype := deployment_dtype()):
-    raise ValueError(
-      f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype}: this server runs one set of workers in {static_dtype} (OPEN_RL_DTYPE)"
-    )
+  if worker_manager is None:
+    static_trainer_dtype = os.getenv("OPEN_RL_TRAINER_DTYPE") or deployment_dtype()
+    static_sampler_dtype = os.getenv("OPEN_RL_SAMPLER_DTYPE") or deployment_dtype()
+    if settings.trainer_dtype != static_trainer_dtype:
+      raise ValueError(
+        f"{SETTINGS_PREFIX}trainer_dtype={settings.trainer_dtype}: this server runs one set of workers in {static_trainer_dtype} (OPEN_RL_DTYPE)"
+      )
+    if settings.sampler_dtype != static_sampler_dtype:
+      raise ValueError(
+        f"{SETTINGS_PREFIX}sampler_dtype={settings.sampler_dtype}: this server runs one set of workers in {static_sampler_dtype} (OPEN_RL_DTYPE)"
+      )
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
@@ -1302,8 +1315,11 @@ async def asample(req: AsampleRequest):
         prompt_tokens=prompt,
         max_tokens=params.max_tokens,
         temperature=params.temperature,
+        top_p=params.top_p,
+        top_k=params.top_k,
         num_samples=num_samples,
         prompt_logprobs=req.prompt_logprobs,
+        topk_sample_logprobs=req.topk_sample_logprobs,
       )
     )
     return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
@@ -1341,6 +1357,7 @@ async def asample(req: AsampleRequest):
     "lora_path": lora_path,
     "weights_path": weights_path,
     "include_prompt_logprobs": req.prompt_logprobs,
+    "topk_sample_logprobs": req.topk_sample_logprobs,
     "model_id": queue_id,
     "trace_context": carrier,
   }

@@ -157,6 +157,7 @@ class Sampler:
     max_tokens = request.get("max_tokens", 20)
     lora_request = lora_request_for(request)
     stop_strings, stop_token_ids = split_stop(request.get("stop"))
+    topk_sample_logprobs = int(request.get("topk_sample_logprobs") or 0)
     sampling_params = SamplingParams(
       n=request.get("num_samples", 1),
       temperature=request.get("temperature", 1.0),
@@ -165,7 +166,7 @@ class Sampler:
       stop_token_ids=stop_token_ids,
       top_p=request.get("top_p", 1.0),
       top_k=request.get("top_k", -1),
-      logprobs=1,  # return logprobs for TITO RL
+      logprobs=max(1, topk_sample_logprobs),  # return logprobs for TITO RL (and top-k when requested)
       prompt_logprobs=1 if request.get("include_prompt_logprobs", False) else None,
       output_kind=RequestOutputKind.FINAL_ONLY,
     )
@@ -188,6 +189,7 @@ class Sampler:
     for output in outputs:
       generated_token_ids = list(output.token_ids)
       logprobs = []
+      topk_logprobs: list[list[tuple[int, float]]] | None = [] if topk_sample_logprobs > 0 else None
       if output.logprobs:
         for idx, token_logprobs in enumerate(output.logprobs):
           # token_logprobs is a dict of {token_id: Logprob}
@@ -197,7 +199,24 @@ class Sampler:
           else:
             logprob = -9999.0
           logprobs.append(logprob)
-      sequences_out.append({"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason})
+          if topk_logprobs is not None:
+            if token_logprobs:
+              # Sort by descending logprob (breaking ties by rank if present, then token_id)
+              # and take the top K entries.
+              ranked = sorted(
+                token_logprobs.items(),
+                key=lambda item: (getattr(item[1], "rank", None) or 10**9, -float(item[1].logprob), int(item[0])),
+              )[:topk_sample_logprobs]
+              topk_logprobs.append([(int(tid), float(entry.logprob)) for tid, entry in ranked])
+            else:
+              topk_logprobs.append([])
+      elif topk_logprobs is not None:
+        topk_logprobs = [[] for _ in generated_token_ids]
+      seq_entry: dict[str, Any] = {"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason}
+      if topk_logprobs is not None:
+        seq_entry["topk_logprobs"] = topk_logprobs
+        seq_entry["topk_k"] = topk_sample_logprobs
+      sequences_out.append(seq_entry)
 
     prompt_logprobs_out = None
     if final_output and final_output.prompt_logprobs:

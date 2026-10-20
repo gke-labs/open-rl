@@ -12,6 +12,7 @@ from pydantic import BaseModel, model_validator
 
 class TensorData(BaseModel):
   data: list[int] | list[float]
+  shape: list[int] | None = None
 
 
 class Datum(BaseModel):
@@ -24,15 +25,35 @@ class Datum(BaseModel):
   @classmethod
   def flatten_wire_format(cls, raw: Any) -> Any:
     """Accept the Tinker wire datum, whose model_input is a list of token chunks
-    and whose loss_fn_inputs may be bare lists."""
-    if not isinstance(raw, dict) or not isinstance(raw.get("model_input"), dict):
+    and whose loss_fn_inputs may be bare 1D/2D lists or dicts with shape."""
+    if not isinstance(raw, dict):
       return raw
-    tokens: list[int] = []
-    for chunk in raw["model_input"].get("chunks", []):
-      tokens.extend(chunk.get("tokens", []))
-    loss_fn_inputs = {
-      key: value if isinstance(value, dict) and "data" in value else {"data": value} for key, value in raw.get("loss_fn_inputs", {}).items()
-    }
+    if isinstance(raw.get("model_input"), dict):
+      tokens: list[int] = []
+      for chunk in raw["model_input"].get("chunks", []):
+        tokens.extend(chunk.get("tokens", []))
+    else:
+      tokens = raw.get("model_input")
+    raw_inputs = raw.get("loss_fn_inputs")
+    if not isinstance(raw_inputs, dict):
+      return raw
+    loss_fn_inputs: dict[str, Any] = {}
+    for key, value in raw_inputs.items():
+      if isinstance(value, TensorData):
+        loss_fn_inputs[key] = value
+      elif isinstance(value, dict) and "data" in value:
+        data = value["data"]
+        shape = value.get("shape")
+        if isinstance(data, list) and data and isinstance(data[0], list):
+          shape = shape or [len(data), len(data[0])]
+          data = [item for row in data for item in row]
+        loss_fn_inputs[key] = {"data": data, "shape": shape} if shape is not None else {"data": data}
+      elif isinstance(value, list) and value and isinstance(value[0], list):
+        loss_fn_inputs[key] = {"data": [item for row in value for item in row], "shape": [len(value), len(value[0])]}
+      elif isinstance(value, list):
+        loss_fn_inputs[key] = {"data": value}
+      else:
+        loss_fn_inputs[key] = value
     return {"model_input": tokens, "loss_fn_inputs": loss_fn_inputs}
 
 
@@ -92,15 +113,11 @@ def check_dtypes(
   """Raise ValueError unless this trainer/sampler dtype pair is supported.
 
   The LoRA bfloat16 limit is vLLM's; a server sampling with torch in one
-  process (vllm_sampler=False) lifts it for the pytorch trainer."""
+  process (vllm_sampler=False) lifts it for the pytorch trainer, but requires
+  trainer_dtype and sampler_dtype to match because one model serves both."""
   missing = [name for name, value in (("trainer_dtype", trainer_dtype), ("sampler_dtype", sampler_dtype)) if value is None]
   if missing:
     raise ValueError(" and ".join(f"openrl.{name}" for name in missing) + f" must be set ({' or '.join(DTYPES)}); there is no default")
-  if trainer_dtype != sampler_dtype:
-    raise ValueError(
-      f"openrl.trainer_dtype={trainer_dtype} and openrl.sampler_dtype={sampler_dtype} differ: "
-      "precision mismatch between trainer and sampler is not supported yet"
-    )
   supported = SUPPORTED_DTYPES.get((trainer_backend, fine_tuning_type))
   if not vllm_sampler and (trainer_backend, fine_tuning_type) == ("pytorch", "lora"):
     supported = DTYPES
@@ -110,11 +127,17 @@ def check_dtypes(
     # A trainer image checks its own dtype, but the sampler is ours whatever
     # trains, and a LoRA sampler runs in bfloat16 only.
     supported = ("bfloat16",) if fine_tuning_type == "lora" else DTYPES
-  if trainer_dtype not in supported:
-    reason = {
-      ("automodel", "lora"): "the automodel trainer trains in bfloat16 only",
-    }.get((trainer_backend, fine_tuning_type), "vLLM's LoRA kernels support fp16/bf16 only" if fine_tuning_type == "lora" else "unsupported")
+  for field_name, dtype_val in (("trainer_dtype", trainer_dtype), ("sampler_dtype", sampler_dtype)):
+    if dtype_val not in supported:
+      reason = {
+        ("automodel", "lora"): "the automodel trainer trains in bfloat16 only",
+      }.get((trainer_backend, fine_tuning_type), "vLLM's LoRA kernels support fp16/bf16 only" if fine_tuning_type == "lora" else "unsupported")
+      raise ValueError(
+        f"openrl.{field_name}={dtype_val} is not supported for trainer_backend={trainer_backend}, "
+        f"fine_tuning_type={fine_tuning_type} (supported: {', '.join(supported)}): {reason}"
+      )
+  if not vllm_sampler and trainer_dtype != sampler_dtype:
     raise ValueError(
-      f"openrl.trainer_dtype={trainer_dtype} is not supported for trainer_backend={trainer_backend}, "
-      f"fine_tuning_type={fine_tuning_type} (supported: {', '.join(supported)}): {reason}"
+      f"openrl.trainer_dtype={trainer_dtype} and openrl.sampler_dtype={sampler_dtype} differ: "
+      "the in-process torch sampler shares the trainer model and must use the same dtype"
     )

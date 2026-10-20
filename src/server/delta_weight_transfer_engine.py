@@ -67,14 +67,16 @@ DTYPE_NAMES = {torch.float32: "float32", torch.bfloat16: "bfloat16", torch.float
 
 
 def check_weight_dtype(metadata: dict, engine_dtype: torch.dtype) -> None:
-  """Refuse weights the trainer saved in another dtype than the engine runs in.
+  """Validate checkpoint metadata dtype and log when cross-precision casting applies.
   Weights from a trainer that predates the dtype record carry none and pass."""
   saved = metadata.get("dtype")
   if saved is None:
     return
+  if saved not in ("float32", "bfloat16"):
+    raise ValueError(f"Unsupported checkpoint dtype {saved!r}; expected float32 or bfloat16")
   running = DTYPE_NAMES.get(engine_dtype, str(engine_dtype))
   if saved != running:
-    raise ValueError(f"Weights were saved in {saved} but the sampler runs in {running}; trainer/sampler precision mismatch is not supported")
+    logger.info("Cross-precision weight transfer: loading weights saved in %s into sampler running in %s", saved, running)
 
 
 @dataclass

@@ -60,7 +60,10 @@ class Sample(Command):
   max_tokens: int = 20
   num_samples: int = 1
   temperature: float = 1.0
+  top_p: float = 1.0
+  top_k: int = -1
   prompt_logprobs: bool = False
+  topk_sample_logprobs: int = 0
 
 
 class SaveState(Command):

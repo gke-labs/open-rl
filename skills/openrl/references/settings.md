@@ -32,7 +32,7 @@ client = tinker.ServiceClient(
   base_url=...,
   user_metadata={
     "openrl.trainer_dtype": "bfloat16",  # required on every model, no default
-    "openrl.sampler_dtype": "bfloat16",  # required; must equal trainer_dtype for now
+    "openrl.sampler_dtype": "bfloat16",  # required; may differ from trainer_dtype on full fine-tuning
     "openrl.fine_tuning_type": "full",
   },
 )

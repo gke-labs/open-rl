@@ -287,7 +287,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if not ref:
       raise ValueError("save_weights_for_sampler requires path or sampling_session_id")
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
-    local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
+    sampler_tmp = os.getenv("OPEN_RL_SAMPLER_TMP_DIR") or os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+    local_path = os.path.join(sampler_tmp, "sampler_full", rel_path)
     self.save_state(model_id, local_path, False, "sampler")
     return local_path
 
@@ -449,8 +450,21 @@ class FFTTrainingWorker(BaseTrainerWorker):
     temperature: float = 0.0,
     model_id: str | None = None,
     include_prompt_logprobs: bool = False,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    topk_sample_logprobs: int = 0,
   ) -> dict[str, Any]:
-    return super().generate(self.model, prompt_tokens, max_tokens, num_samples, temperature, include_prompt_logprobs)
+    return super().generate(
+      self.model,
+      prompt_tokens,
+      max_tokens,
+      num_samples,
+      temperature,
+      include_prompt_logprobs,
+      top_p=top_p,
+      top_k=top_k,
+      topk_sample_logprobs=topk_sample_logprobs,
+    )
 
   def sleep(self) -> None:
     """Offload GPU tensors to pinned host CPU memory and empty CUDA allocator cache."""

@@ -358,6 +358,9 @@ class TrainingRequestsProcessor:
           command.temperature,
           command.model_id,
           command.prompt_logprobs,
+          top_p=command.top_p,
+          top_k=command.top_k,
+          topk_sample_logprobs=command.topk_sample_logprobs,
         )
         result["type"] = "sample_completed"
         return result

@@ -149,10 +149,36 @@ def decode_forward_backward(body: bytes) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
+_MASK_LOGPROB = -99999.0
+
+
 def _float_or_nan(value: Any) -> float:
   # Samplers emit None for positions without a logprob (the first prompt
   # token). The wire is a flat float32 buffer, so keep the slot as NaN.
   return math.nan if value is None else float(value)
+
+
+def _encode_topk_logprobs(target: pb.TopkLogprobs, rows: Sequence[Any], k: int = 0) -> None:
+  """Populate a ``TopkLogprobs`` message from per-position ``[(token_id, logprob), ...]`` rows."""
+  length = len(rows)
+  inferred_k = k or max((len(row) for row in rows if row), default=0)
+  if length == 0 or inferred_k <= 0:
+    return
+  token_ids: list[int] = []
+  logprobs: list[float] = []
+  for row in rows:
+    entries = list(row or [])[:inferred_k]
+    for tid, lp in entries:
+      token_ids.append(int(tid))
+      logprobs.append(float(lp))
+    pad = inferred_k - len(entries)
+    if pad > 0:
+      token_ids.extend([0] * pad)
+      logprobs.extend([_MASK_LOGPROB] * pad)
+  target.token_ids = _to_bytes(_INT32, token_ids)
+  target.logprobs = _to_bytes(_FLOAT32, logprobs)
+  target.k = inferred_k
+  target.length = length
 
 
 def encode_sample_response(result: dict[str, Any]) -> bytes:
@@ -165,9 +191,15 @@ def encode_sample_response(result: dict[str, Any]) -> bytes:
     logprobs = seq.get("logprobs")
     if logprobs:
       out.logprobs = _to_bytes(_FLOAT32, (_float_or_nan(v) for v in logprobs))
+    topk_logprobs = seq.get("topk_logprobs")
+    if topk_logprobs is not None:
+      _encode_topk_logprobs(out.topk_sampled_logprobs, topk_logprobs, int(seq.get("topk_k") or 0))
   prompt_logprobs = result.get("prompt_logprobs")
   if prompt_logprobs:
     msg.prompt_logprobs = _to_bytes(_FLOAT32, (_float_or_nan(v) for v in prompt_logprobs))
+  topk_prompt_logprobs = result.get("topk_prompt_logprobs")
+  if topk_prompt_logprobs is not None:
+    _encode_topk_logprobs(msg.topk_prompt_logprobs, topk_prompt_logprobs, int(result.get("topk_prompt_k") or 0))
   msg.prompt_cache_hit_tokens = int(result.get("prompt_cache_hit_tokens") or 0)
   return msg.SerializeToString()
 

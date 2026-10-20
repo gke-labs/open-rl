@@ -45,9 +45,11 @@ class SupportMatrixTest(unittest.TestCase):
       with self.subTest(missing=missing), self.assertRaisesRegex(ValueError, f"{missing} must be set"):
         check_dtypes("pytorch", "full", trainer, sampler)
 
-  def test_mismatch_is_unsupported(self) -> None:
-    with self.assertRaisesRegex(ValueError, "precision mismatch between trainer and sampler is not supported yet"):
-      check_dtypes("pytorch", "full", "float32", "bfloat16")
+  def test_cross_precision_full_is_supported_for_vllm(self) -> None:
+    check_dtypes("pytorch", "full", "float32", "bfloat16")
+    check_dtypes("pytorch", "full", "bfloat16", "float32")
+    with self.assertRaisesRegex(ValueError, "in-process torch sampler shares the trainer model"):
+      check_dtypes("pytorch", "full", "float32", "bfloat16", vllm_sampler=False)
 
   def test_fp32_lora_is_refused_for_vllm(self) -> None:
     with self.assertRaisesRegex(ValueError, "vLLM's LoRA kernels support fp16/bf16 only"):
@@ -102,10 +104,12 @@ class ApiPrecisionTest(unittest.TestCase):
     self.assertEqual(response.status_code, 400)
     self.assertIn("openrl.trainer_dtype and openrl.sampler_dtype must be set", response.json()["error"])
 
-  def test_mismatch_is_a_400(self) -> None:
+  def test_cross_precision_full_is_accepted_and_stored(self) -> None:
     response = self.create(**{"openrl.fine_tuning_type": "full"}, **dtypes("float32", "bfloat16"))
-    self.assertEqual(response.status_code, 400)
-    self.assertIn("not supported yet", response.json()["error"])
+    self.assertEqual(response.status_code, 200, response.text)
+    meta = self.metadata(response.json()["request_id"])
+    self.assertEqual((meta["trainer_dtype"], meta["sampler_dtype"]), ("float32", "bfloat16"))
+    self.assertEqual(self.queued()[0]["dtype"], "float32")
 
   def test_unknown_dtype_is_a_400(self) -> None:
     response = self.create(**dtypes("float16", "float16"))
@@ -196,6 +200,7 @@ class StaticRuntimePrecisionTest(ApiPrecisionTest):
 
   # The inherited per-model fp32 cases do not apply to a bf16 static runtime,
   # and a static runtime refuses automodel before looking at its dtype.
+  test_cross_precision_full_is_accepted_and_stored = None
   test_fp32_automodel_is_a_400 = None
   test_fp32_full_is_stored_and_sent_to_the_trainer = None
   test_restore_with_the_checkpoint_dtype = None
@@ -278,13 +283,15 @@ class SamplerPrecisionTest(unittest.TestCase):
     with self.assertRaisesRegex(ValueError, "bfloat16 only"):
       self.kwargs({"OPEN_RL_SAMPLER_DTYPE": "float32"}, fft=False)
 
-  def test_weights_in_another_dtype_are_refused(self) -> None:
+  def test_cross_precision_weights_are_accepted_and_invalid_dtypes_refused(self) -> None:
     from server.delta_weight_transfer_engine import check_weight_dtype
 
     check_weight_dtype({}, torch.bfloat16)  # an older trainer
     check_weight_dtype({"dtype": "bfloat16"}, torch.bfloat16)
-    with self.assertRaisesRegex(ValueError, "saved in float32 but the sampler runs in bfloat16"):
-      check_weight_dtype({"dtype": "float32"}, torch.bfloat16)
+    check_weight_dtype({"dtype": "float32"}, torch.bfloat16)
+    check_weight_dtype({"dtype": "bfloat16"}, torch.float32)
+    with self.assertRaisesRegex(ValueError, "Unsupported checkpoint dtype"):
+      check_weight_dtype({"dtype": "float16"}, torch.bfloat16)
 
 
 if __name__ == "__main__":

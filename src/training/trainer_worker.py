@@ -142,6 +142,8 @@ class BaseTrainerWorker:
       filler = local_data[0] if local_data else data[0]
       local_batches.extend([[(FILLER_DATUM_INDEX, filler)]] * filler_passes)
 
+    off_policy_cfg = losses.parse_off_policy_config(loss_config) if loss_fn in ("importance_sampling", "ppo") else losses.OffPolicyConfig()
+
     total_loss = 0.0
     for batch in local_batches:
       batch_positions = [idx for idx, _ in batch]
@@ -151,7 +153,25 @@ class BaseTrainerWorker:
 
       input_ids, attention_mask, input_lengths = self.pad_model_inputs(batch_data)
       target_token_ids, weights, lengths = self.pad_targets_and_weights(batch_data, input_lengths)
-      target_logprobs = self.compute_target_logprobs(model, input_ids, attention_mask, target_token_ids)
+
+      topk_token_ids: torch.Tensor | None = None
+      sampler_topk_logprobs: torch.Tensor | None = None
+      trainer_topk_logprobs: torch.Tensor | None = None
+      if off_policy_cfg.score_centering:
+        topk_token_ids, sampler_topk_logprobs = self.pad_topk_inputs(batch_data, lengths, weights)
+
+      if off_policy_cfg.uses_logit_replay or off_policy_cfg.score_centering:
+        target_logprobs, trainer_topk_logprobs = self.compute_target_and_topk_logprobs(
+          model,
+          input_ids,
+          attention_mask,
+          target_token_ids,
+          top_p=off_policy_cfg.top_p,
+          temperature=off_policy_cfg.temperature,
+          topk_token_ids=topk_token_ids,
+        )
+      else:
+        target_logprobs = self.compute_target_logprobs(model, input_ids, attention_mask, target_token_ids)
 
       match loss_fn:
         case "cross_entropy":
@@ -164,6 +184,9 @@ class BaseTrainerWorker:
             weights,
             old_logprobs,
             advantages,
+            loss_config,
+            trainer_topk_logprobs=trainer_topk_logprobs,
+            sampler_topk_logprobs=sampler_topk_logprobs,
           )
         case "ppo":
           old_logprobs = self.pad_sequences([datum.loss_fn_inputs["logprobs"].data for datum in batch_data], lengths, torch.float32)
@@ -174,6 +197,8 @@ class BaseTrainerWorker:
             old_logprobs,
             advantages,
             loss_config,
+            trainer_topk_logprobs=trainer_topk_logprobs,
+            sampler_topk_logprobs=sampler_topk_logprobs,
           )
         case _:
           raise NotImplementedError(f"Loss {loss_fn} not supported")
@@ -295,6 +320,72 @@ class BaseTrainerWorker:
 
     return target_token_ids, weights, lengths
 
+  def pad_topk_inputs(
+    self,
+    data: list[Datum],
+    lengths: list[int],
+    weights: torch.Tensor,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return padded top-K token IDs and sampler logprobs with shape ``[batch, max_target_len, K]``.
+
+    Accepts ``topk_token_ids`` and ``topk_logprobs`` either already aligned to
+    ``target_tokens`` (length ``T``) or covering only the generated completion
+    suffix (length ``C < T`` where the leading ``T - C`` prompt positions have
+    ``weights == 0``).
+    """
+    batch_size = len(data)
+    max_len = max(lengths)
+    parsed_rows: list[tuple[torch.Tensor, torch.Tensor, int]] = []
+    max_k = 0
+
+    for row, datum in enumerate(data):
+      if "topk_token_ids" not in datum.loss_fn_inputs or "topk_logprobs" not in datum.loss_fn_inputs:
+        raise ValueError("loss_fn_config['score_centering'] requires 'topk_token_ids' and 'topk_logprobs' in datum.loss_fn_inputs")
+      ids_td = datum.loss_fn_inputs["topk_token_ids"]
+      lps_td = datum.loss_fn_inputs["topk_logprobs"]
+      if len(ids_td.data) != len(lps_td.data) or not ids_td.data:
+        raise ValueError("topk_token_ids and topk_logprobs must be non-empty and have matching element counts")
+
+      length = lengths[row]
+      if ids_td.shape and len(ids_td.shape) == 2:
+        t_rows, k = int(ids_td.shape[0]), int(ids_td.shape[1])
+      elif lps_td.shape and len(lps_td.shape) == 2:
+        t_rows, k = int(lps_td.shape[0]), int(lps_td.shape[1])
+      elif len(ids_td.data) % length == 0:
+        t_rows, k = length, len(ids_td.data) // length
+      else:
+        raise ValueError(
+          f"Cannot infer 2D [T, K] shape for topk_token_ids of length {len(ids_td.data)} (target length {length}); specify shape=[T, K]"
+        )
+
+      if k <= 0 or t_rows * k != len(ids_td.data):
+        raise ValueError(f"Invalid top-K shape [{t_rows}, {k}] for {len(ids_td.data)} elements")
+
+      ids_tensor = torch.tensor(ids_td.data, dtype=torch.long, device=self.device).reshape(t_rows, k).clamp_min(0)
+      lps_tensor = torch.tensor(lps_td.data, dtype=torch.float32, device=self.device).reshape(t_rows, k)
+      parsed_rows.append((ids_tensor, lps_tensor, k))
+      max_k = max(max_k, k)
+
+    padded_ids = torch.zeros((batch_size, max_len, max_k), dtype=torch.long, device=self.device)
+    padded_lps = torch.full((batch_size, max_len, max_k), -99999.0, dtype=torch.float32, device=self.device)
+
+    for row, (ids_tensor, lps_tensor, k) in enumerate(parsed_rows):
+      length = lengths[row]
+      t_rows = ids_tensor.shape[0]
+      if t_rows >= length:
+        padded_ids[row, :length, :k] = ids_tensor[:length, :k]
+        padded_lps[row, :length, :k] = lps_tensor[:length, :k]
+      else:
+        prefix_len = length - t_rows
+        if torch.any(weights[row, :prefix_len] != 0):
+          raise ValueError(
+            f"topk_token_ids has {t_rows} rows for target length {length}, but the leading {prefix_len} positions have non-zero weights"
+          )
+        padded_ids[row, prefix_len:length, :k] = ids_tensor[:, :k]
+        padded_lps[row, prefix_len:length, :k] = lps_tensor[:, :k]
+
+    return padded_ids, padded_lps
+
   def compute_target_logprobs(
     self,
     model: PreTrainedModel,
@@ -303,9 +394,28 @@ class BaseTrainerWorker:
     target_token_ids: torch.Tensor,
   ) -> torch.Tensor:
     """Return selected target logprobs with shape [batch, max_target_len]."""
+    target_logprobs, _ = self.compute_target_and_topk_logprobs(model, input_ids, attention_mask, target_token_ids)
+    return target_logprobs
+
+  def compute_target_and_topk_logprobs(
+    self,
+    model: PreTrainedModel,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    target_token_ids: torch.Tensor,
+    top_p: float = 1.0,
+    temperature: float = 1.0,
+    topk_token_ids: torch.Tensor | None = None,
+  ) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """Return target logprobs ``[batch, seq_len]`` and optional top-K logprobs ``[batch, seq_len, K]``."""
     outputs = model(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True)
     logits = outputs.logits[:, : target_token_ids.shape[1], :]
-    return torch.nn.functional.log_softmax(logits, dim=-1).gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1)
+    if top_p < 1.0 or temperature != 1.0:
+      logits = losses.apply_top_p(logits, top_p=top_p, temperature=temperature)
+    log_probs = torch.nn.functional.log_softmax(logits, dim=-1)
+    target_logprobs = log_probs.gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1)
+    trainer_topk_logprobs = log_probs.gather(dim=-1, index=topk_token_ids) if topk_token_ids is not None else None
+    return target_logprobs, trainer_topk_logprobs
 
   def generate(
     self,
@@ -315,6 +425,9 @@ class BaseTrainerWorker:
     num_samples: int = 1,
     temperature: float = 0.0,
     include_prompt_logprobs: bool = False,
+    top_p: float = 1.0,
+    top_k: int = -1,
+    topk_sample_logprobs: int = 0,
   ) -> dict[str, Any]:
     """Generate completions from model."""
     model.eval()
@@ -332,8 +445,8 @@ class BaseTrainerWorker:
         pad_token_id=self.tokenizer.pad_token_id or self.tokenizer.eos_token_id,
         do_sample=do_sample,
         temperature=temperature if do_sample else None,
-        top_p=None,
-        top_k=None,
+        top_p=top_p if (do_sample and 0.0 < top_p < 1.0) else None,
+        top_k=top_k if (do_sample and top_k > 0) else None,
         num_return_sequences=num_samples,
         output_scores=True,
         return_dict_in_generate=True,
@@ -345,14 +458,23 @@ class BaseTrainerWorker:
       generated_tokens = gen_sequences[len(prompt_tokens) :].cpu().tolist()
 
       logprobs = []
+      topk_logprobs: list[list[tuple[int, float]]] | None = [] if topk_sample_logprobs > 0 else None
       for token_step_idx in range(len(generated_tokens)):
         score_tensor = outputs.scores[token_step_idx]
         logprob_dist = torch.nn.functional.log_softmax(score_tensor[seq_idx], dim=-1)
         token_id = generated_tokens[token_step_idx]
         logprob = logprob_dist[token_id].item()
         logprobs.append(self.sanitize_float(logprob))
+        if topk_logprobs is not None:
+          k = min(int(topk_sample_logprobs), int(logprob_dist.shape[-1]))
+          vals, idxs = torch.topk(logprob_dist, k=k, dim=-1)
+          topk_logprobs.append([(int(tid), self.sanitize_float(float(lp))) for tid, lp in zip(idxs.cpu().tolist(), vals.cpu().tolist(), strict=True)])
 
-      sequences_out.append({"tokens": generated_tokens, "logprobs": logprobs, "stop_reason": "stop"})
+      seq_entry: dict[str, Any] = {"tokens": generated_tokens, "logprobs": logprobs, "stop_reason": "stop"}
+      if topk_logprobs is not None:
+        seq_entry["topk_logprobs"] = topk_logprobs
+        seq_entry["topk_k"] = int(topk_sample_logprobs)
+      sequences_out.append(seq_entry)
 
     result = {"sequences": sequences_out}
     if prompt_logprobs is not None:
