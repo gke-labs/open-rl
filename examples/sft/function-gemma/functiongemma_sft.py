@@ -10,6 +10,7 @@ import chz
 import matplotlib.pyplot as plt
 import requests
 import tinker
+from common.precision import ensure_precision_tags
 from datasets import load_dataset
 from tinker import types
 from transformers.utils.chat_template_utils import get_json_schema
@@ -28,6 +29,8 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 class Config:
   base_model: str = BASE_MODEL
   base_url: str = os.getenv("TINKER_BASE_URL", BASE_URL)
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   dataset: str = DATASET
   epochs: int = 10
   rank: int = 16
@@ -161,6 +164,7 @@ async def run_training(config: Config) -> None:
   print(f"Loaded {len(dataset)} rows from {config.dataset} | train={len(train_examples)} eval={len(eval_examples)}")
 
   # 3. Training setup
+  ensure_precision_tags(config.dtype)
   client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY"), base_url=config.base_url)
   trainer = await client.create_lora_training_client_async(base_model=config.base_model, rank=config.rank)
   tokenizer = trainer.get_tokenizer()

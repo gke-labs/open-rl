@@ -16,6 +16,7 @@ from typing import Any, cast
 
 import chz
 import tinker
+from common.precision import ensure_precision_tags
 from tinker import types
 
 BASE_URL = "http://127.0.0.1:9003"
@@ -28,6 +29,8 @@ os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 class Config:
   base_model: str = "Qwen/Qwen2.5-0.5B"
   base_url: str = os.getenv("TINKER_BASE_URL", os.getenv("BASE_URL", BASE_URL))
+  # Trainer and sampler precision (openrl.trainer_dtype/sampler_dtype); TINKER_TAGS win.
+  dtype: str = "bfloat16"
   log_dir: str = str(Path(__file__).with_name("artifacts") / "tiny_rl")
   prompt: str = "Question: What is 2 + 2?\nAnswer:"
   target: str = "4"
@@ -84,6 +87,7 @@ def main(config: Config) -> None:
   log_dir = Path(config.log_dir)
   reset_log_dir(log_dir, config.behavior_if_log_dir_exists)
 
+  ensure_precision_tags(config.dtype)
   client = tinker.ServiceClient(api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"), base_url=config.base_url)
   trainer = client.create_lora_training_client(
     base_model=config.base_model,

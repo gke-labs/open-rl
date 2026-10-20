@@ -90,6 +90,9 @@ class RunConfig:
   sampler_gpu: str = "1"
   base_url: str = ""
   base_model: str = "Qwen/Qwen2.5-0.5B"
+  # Trainer and sampler precision for every model (openrl.trainer_dtype and
+  # openrl.sampler_dtype), and the server's OPEN_RL_DTYPE.
+  dtype: str = "bfloat16"
   # The other model family for the *-x2-families scenarios; must differ from
   # base_model in vocabulary, not just in size.
   second_base_model: str = "google/gemma-4-e2b"
@@ -252,6 +255,7 @@ def base_env(config: RunConfig) -> dict[str, str]:
     **os.environ,
     "BASE_MODEL": config.base_model,
     "ENABLE_GCP_TRACE": "0",
+    "OPEN_RL_DTYPE": config.dtype,
     "OPEN_RL_TMP_DIR": str(open_rl_tmp_dir(config)),
     "OPEN_RL_TRAIN_TOKEN_BUDGET": str(config.train_token_budget),
     "PYTHONUNBUFFERED": "1",
@@ -359,7 +363,7 @@ def examples_env(config: RunConfig) -> dict[str, str]:
       weight_sync = token.split("=", 1)[1]
   weight_sync = config.weight_sync_strategy or weight_sync
   fine_tuning_type = "full" if config.scenario.startswith("fft") or "fft" in config.scenario else None
-  set_settings(env, fine_tuning_type=fine_tuning_type, weight_sync=weight_sync)
+  set_settings(env, fine_tuning_type=fine_tuning_type, weight_sync=weight_sync, trainer_dtype=config.dtype, sampler_dtype=config.dtype)
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env

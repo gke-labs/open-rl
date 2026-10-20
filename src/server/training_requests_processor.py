@@ -314,6 +314,7 @@ class TrainingRequestsProcessor:
       case commands.CreateModel():
         is_lora = command.fine_tuning_type == "lora"
         config = command.lora_config if is_lora else command.full_config
+        self.worker.check_command_dtype(command.dtype)
         await asyncio.to_thread(self.worker.create_model, command.base_model, command.model_id, config)
         result = {
           "base_model": command.base_model,
@@ -325,6 +326,7 @@ class TrainingRequestsProcessor:
           result["rank"] = command.lora_config.rank
         return result
       case commands.CreateModelFromState():
+        self.worker.check_command_dtype(command.dtype)
         result = await asyncio.to_thread(self.worker.load_from_state, command.model_id, command.state_path, command.restore_optimizer)
         return {
           "base_model": result.get("base_model"),

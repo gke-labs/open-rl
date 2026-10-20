@@ -80,7 +80,11 @@ def parse_and_score_response(text: str) -> float: ...
 
 
 async def rlvr_loop():
-  service_client = tinker.ServiceClient(base_url="http://127.0.0.1:9003")
+  # Every model names its precision; there is no default.
+  service_client = tinker.ServiceClient(
+    base_url="http://127.0.0.1:9003",
+    user_metadata={"openrl.trainer_dtype": "bfloat16", "openrl.sampler_dtype": "bfloat16"},
+  )
 
   # 1. Create Model
   training_client = await service_client.create_lora_training_client_async(base_model="Qwen/Qwen3-4B-Instruct-2507", rank=16)

@@ -79,7 +79,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
 
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
     print("Successfully loaded full fine-tuning model.")
@@ -158,6 +158,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "kind": "weights",
       "model_id": alias,
       "timestamp": time.time(),
@@ -197,6 +198,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "kind": kind,
       "has_optimizer": False,
       "model_id": model_id,
@@ -262,6 +264,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     metadata = {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
+      "dtype": self.dtype_name,
       "format": "sparse_delta",
       "format_version": SPARSE_DELTA_VERSION,
       "layer_shapes": layer_shapes,
@@ -302,7 +305,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self.base_model_name = base_model
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    dtype = self.model_dtype()
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     target_device = "auto" if num_gpus > 1 else self.device
     self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)

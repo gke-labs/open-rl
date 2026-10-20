@@ -27,6 +27,7 @@ from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_fr
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
 from server.store import RequestStore, StateStore, get_state_store, get_store
 from server.vllm_options import gpu_memory_utilization, sampler_batch_limits, split_stop, text_only_engine_kwargs
+from training.types import DTYPES, deployment_dtype
 
 tracer = trace.get_tracer("vllm.inference.worker")
 SHUTDOWN_SENTINEL = "SHUTDOWN_SENTINEL"
@@ -43,8 +44,16 @@ def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
   model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
   if not model_name:
     raise ValueError("BASE_MODEL or VLLM_MODEL is required")
+  # Always explicit: vLLM's "auto" would follow the checkpoint config and, for
+  # an fp32 checkpoint, silently downcast.
+  dtype = os.getenv("OPEN_RL_SAMPLER_DTYPE") or deployment_dtype()
+  if dtype not in DTYPES:
+    raise ValueError(f"OPEN_RL_SAMPLER_DTYPE must be one of {', '.join(DTYPES)}, got {dtype!r}")
+  if dtype != "bfloat16" and not fft_enabled:
+    raise ValueError(f"A LoRA sampler runs in bfloat16 only (vLLM's LoRA kernels), not {dtype}")
   engine_kwargs = {
     "model": model_name,
+    "dtype": dtype,
     "enable_sleep_mode": fft_enabled,
     "enable_lora": not fft_enabled,
     "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),

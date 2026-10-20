@@ -53,7 +53,7 @@ spec:
             - name: TINKER_API_KEY
               value: tml-dummy-key
             - name: TINKER_TAGS
-              value: openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl.trainer_cp=4,openrl.sampler_replicas=4
+              value: openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl.trainer_cp=4,openrl.sampler_replicas=4,openrl.trainer_dtype=bfloat16,openrl.sampler_dtype=bfloat16
             # The GLM judge's OpenAI-compatible endpoint.
             - name: OPENAI_BASE_URL
               value: http://10.142.0.15:8000/v1

@@ -63,6 +63,20 @@ def read_sparse_patches(path: Path, metadata: dict, device: torch.device | str =
   return patches
 
 
+DTYPE_NAMES = {torch.float32: "float32", torch.bfloat16: "bfloat16", torch.float16: "float16"}
+
+
+def check_weight_dtype(metadata: dict, engine_dtype: torch.dtype) -> None:
+  """Refuse weights the trainer saved in another dtype than the engine runs in.
+  Weights from a trainer that predates the dtype record carry none and pass."""
+  saved = metadata.get("dtype")
+  if saved is None:
+    return
+  running = DTYPE_NAMES.get(engine_dtype, str(engine_dtype))
+  if saved != running:
+    raise ValueError(f"Weights were saved in {saved} but the sampler runs in {running}; trainer/sampler precision mismatch is not supported")
+
+
 @dataclass
 class DeltaSnapshotUpdateInfo(WeightTransferUpdateInfo):
   target_weights_path: str
@@ -96,6 +110,7 @@ class DeltaSnapshotWeightTransferEngine(WeightTransferEngine):
     if not path.exists():
       raise ValueError(f"Target weights path does not exist: {path}")
     metadata = read_weight_metadata(path)
+    check_weight_dtype(metadata, self.model_config.dtype)
     if metadata.get("format") == "sparse_delta":
       patches = read_sparse_patches(path, metadata, self.device)
       # The reader verified sorted, unique indices on CPU; skip re-sorting on GPU.
