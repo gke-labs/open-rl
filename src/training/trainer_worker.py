@@ -27,6 +27,10 @@ class BaseTrainerWorker:
 
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
+    # When the model load started and finished, and what the page-cache
+    # prefetch did; the request processor publishes it with the ready key.
+    self.load_phases: dict[str, Any] = {}
+    self.token_budget_logged = False
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda", local_rank())
@@ -104,7 +108,11 @@ class BaseTrainerWorker:
     shard_count = self.shard_count()
     local_indices = shard_datum_indices(len(data), self.shard_rank(), shard_count)
     local_data = [data[idx] for idx in local_indices]
-    local_batches = self.make_training_batches(local_data)
+    token_budget = self.train_token_budget(model)
+    local_batches = self.make_training_batches(local_data, token_budget)
+    if not self.token_budget_logged:
+      print(f"[trainer] token budget per pass: {token_budget or 'one sequence'}; {len(local_data)} sequences in {len(local_batches)} pass(es)")
+      self.token_budget_logged = True
     if shard_count > 1 and self.backward_runs_collectives:
       filler_passes = self.shard_all_reduce_max(len(local_batches)) - len(local_batches)
       filler = local_data[0] if local_data else data[0]
@@ -181,12 +189,50 @@ class BaseTrainerWorker:
       "loss_fn_output_type": "ArrayRecord",
     }
 
-  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
-    """Group examples for the single padded forward/backward path."""
+  def train_token_budget(self, model: PreTrainedModel) -> int:
+    """Padded tokens per forward/backward pass.
+
+    Unset or `auto`: sized from the model's vocabulary and the free device
+    memory, because the logits are what a batch costs. A step of 64 sequences
+    then runs as a few passes instead of 64 (measured on an H100: 20 s to 4 s
+    for a 0.6B model). A number is used as given, but still capped by the
+    same bound, because one number cannot fit every model: 65536 tokens of
+    gemma-4-e2b logits (262k vocabulary) is 22 GiB and does not fit an H100.
+    `0` keeps one sequence per pass.
+    """
+    raw = os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "auto").strip().lower()
+    if raw in ("0", "off"):
+      return 0
+    cap = self.logits_token_cap(model)
+    if raw == "auto" or not raw:
+      return cap
+    return min(int(raw), cap) if cap else int(raw)
+
+  # Bytes a token costs at the output layer: logits in the model dtype, the
+  # log-softmax, and what autograd keeps for backward. Half the free memory
+  # is left for activations and the optimizer.
+  LOGITS_BYTES_PER_VOCAB_ENTRY = 6
+  LOGITS_MEMORY_SHARE = 0.5
+  DEFAULT_TOKEN_CAP = 65536
+
+  def logits_token_cap(self, model: PreTrainedModel) -> int:
+    config = getattr(model, "config", None)
+    text_config = config.get_text_config() if config is not None and hasattr(config, "get_text_config") else config
+    vocab = int(getattr(text_config, "vocab_size", 0) or 0)
+    if vocab <= 0 or self.device.type != "cuda":
+      return self.DEFAULT_TOKEN_CAP
+    free_bytes, _ = torch.cuda.mem_get_info(self.device)
+    return max(1024, int(free_bytes * self.LOGITS_MEMORY_SHARE / (vocab * self.LOGITS_BYTES_PER_VOCAB_ENTRY)))
+
+  def make_training_batches(self, data: list[Datum], token_budget: int | None = None) -> list[list[tuple[int, Datum]]]:
+    """Group examples for the single padded forward/backward path. Without an
+    explicit budget the environment's number applies, 0 meaning one per pass."""
     if len(data) <= 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
 
-    token_budget = int(os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "0"))
+    if token_budget is None:
+      raw = os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "0").strip().lower()
+      token_budget = 0 if raw in ("auto", "off", "") else int(raw)
 
     if token_budget <= 0:
       return [[(idx, datum)] for idx, datum in enumerate(data)]

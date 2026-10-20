@@ -200,6 +200,17 @@ type Request struct {
 	// HostRequestBytes is the pod template's memory request: what this
 	// worker's pod asks the node for, resident or parked.
 	HostRequestBytes int64
+	// MaxSeats is the most workers a shared claim may hold once this one
+	// joins; zero means no limit. A ledger at the limit is not a candidate:
+	// the worker cuts its own claim, and if no device is free it waits. Set
+	// from the controller's flag, not from the spec: it is fleet policy.
+	MaxSeats int
+}
+
+// AtSeatLimit reports whether a claim already holds as many workers as the
+// request allows a shared claim to hold.
+func (r Request) AtSeatLimit(claim *Claim) bool {
+	return r.MaxSeats > 0 && claim.Workers() >= r.MaxSeats
 }
 
 // OwnerKey is the fairness unit the timeslicer serves this worker under; a
@@ -317,6 +328,9 @@ func SelectClaim(req Request, fleet *Fleet) *Claim {
 		if req.Memory > node.DeviceMemoryBytes {
 			continue
 		}
+		if req.AtSeatLimit(claim) {
+			continue
+		}
 		// Node-wide: every pod on the node draws from one allocatable pool.
 		// A node reporting no memory skips the check rather than refusing all.
 		if node.HostMemoryBytes > 0 && hostByNode[node.Name]+req.HostRequestBytes > node.HostMemoryBytes {
@@ -359,6 +373,9 @@ func Explain(req Request, fleet *Fleet, detail string) string {
 	case len(candidateNodes(req, fleet)) > 0:
 		// The hardware exists; it is busy. Retrying is the right move.
 		reason = "WaitingForCapacity: a pool fits this workload but none has a free seat or a free accelerator"
+		if req.MaxSeats > 0 {
+			reason += fmt.Sprintf("; shared claims hold at most %d workers", req.MaxSeats)
+		}
 	default:
 		biggest := pools[0]
 		for _, node := range pools[1:] {

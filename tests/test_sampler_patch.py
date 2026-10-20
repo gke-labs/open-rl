@@ -71,6 +71,25 @@ class SamplerBatchTest(unittest.IsolatedAsyncioTestCase):
     self.engine.sleep.assert_not_called()
     self.engine.wake_up.assert_not_called()
 
+  async def test_kv_cache_wakes_after_the_weight_update(self):
+    # The update stages dense copies of the patched tensors; with the KV cache
+    # still parked that memory is free (gemma-4-e2b needs 11 GiB of it).
+    seen = []
+    self.engine.wake_up.side_effect = lambda tags: seen.append(("wake", tuple(tags)))
+    self.engine.update_weights.side_effect = lambda req: seen.append(("update", req.update_info["target_weights_path"]))
+    await self.sampler.sleep()
+    await self.sampler.wake()
+    await process_batch(self.sampler, self.store, [{"request_id": "1", "weights_path": "a"}])
+    self.assertEqual(seen, [("wake", ("weights",)), ("update", "a"), ("wake", ("kv_cache",))])
+    # A second batch on the same weights neither updates nor wakes again.
+    await process_batch(self.sampler, self.store, [{"request_id": "2", "weights_path": "a"}])
+    self.assertEqual(len(seen), 3)
+    # After the next sleep and wake the KV cache is brought back even with no update to do.
+    await self.sampler.sleep()
+    await self.sampler.wake()
+    await process_batch(self.sampler, self.store, [{"request_id": "3", "weights_path": "a"}])
+    self.assertEqual(seen[3:], [("wake", ("weights",)), ("wake", ("kv_cache",))])
+
   async def test_failed_update_poisons_sampler_without_committing(self):
     self.engine.update_weights.side_effect = RuntimeError("invalid patch")
     await process_batch(self.sampler, self.store, [{"request_id": "bad", "weights_path": "a"}])
@@ -157,7 +176,9 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
     await serve_time_sliced("test", self.store, self.factory)
     self.assertEqual(self.events, ["acquire", "create", "release", "acquire", "release"])
     self.assertEqual(self.engine.sleep.await_count, 2)
-    self.engine.wake_up.assert_awaited_once()
+    # Weights come back when the slot is taken; the KV cache only once the
+    # weights are known to be current, so a weight update has the room.
+    self.assertEqual([c.kwargs["tags"] for c in self.engine.wake_up.await_args_list], [["weights"], ["kv_cache"]])
     self.engine.shutdown.assert_called_once()
     self.slicer.register.assert_awaited_once_with(self.workload)
     self.slicer.unregister.assert_awaited_once_with(self.workload)

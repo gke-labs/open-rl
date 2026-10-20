@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import FFTConfig
 
@@ -77,11 +78,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     target_device = "auto" if num_gpus > 1 else self.device
     print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
+    self.load_phases = {"load_start": time.time()}
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
+    # See training.prefetch: mmap reads over NFS are page-sized and serial.
+    self.load_phases["prefetch"] = prefetch(base_model_name)
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
+    self.load_phases["load_done"] = time.time()
     print("Successfully loaded full fine-tuning model.")
 
   def create_model(self, base_model_name: str, model_id: str | None = None, config: FFTConfig | None = None) -> None:
@@ -301,11 +306,14 @@ class FFTTrainingWorker(BaseTrainerWorker):
       raise ValueError(f"metadata.json at {state_path} missing base_model")
 
     self.base_model_name = base_model
+    self.load_phases = {"load_start": time.time()}
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     target_device = "auto" if num_gpus > 1 else self.device
+    self.load_phases["prefetch"] = prefetch(state_path)
     self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)
+    self.load_phases["load_done"] = time.time()
     self.prepare_model_for_training()
 
     if restore_optimizer and metadata.get("has_optimizer"):

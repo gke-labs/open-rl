@@ -120,12 +120,27 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   }
   # MAX_JOBS caps FlashInfer's JIT build, which otherwise runs one ~3GB
   # compiler per core and blows through the pod's host memory limit.
-  for name in ("VLLM_GPU_MEMORY_UTILIZATION", "VLLM_MAX_MODEL_LEN", "OPEN_RL_TRAIN_TOKEN_BUDGET", "MAX_JOBS"):
+  for name in (
+    "VLLM_GPU_MEMORY_UTILIZATION",
+    "VLLM_MAX_MODEL_LEN",
+    "VLLM_CUDAGRAPH_CAPTURE_SIZES",
+    "VLLM_ENABLE_V1_MULTIPROCESSING",
+    "OPEN_RL_TRAIN_TOKEN_BUDGET",
+    "MAX_JOBS",
+  ):
     if os.getenv(name):
       values[name] = os.environ[name]
   # No other worker shares an exclusive worker's GPUs, so it never parks.
   if worker.exclusive:
     values["OPEN_RL_TIME_SLICING"] = "off"
+  if worker.role == "sampler":
+    # OPEN_RL_VLLM_CACHE_DIR names a directory the worker already sees, such
+    # as one on the shared volume, so a cache can be fleet-wide; otherwise the
+    # node-local hostPath mounted below.
+    if shared := os.getenv("OPEN_RL_VLLM_CACHE_DIR"):
+      values["VLLM_CACHE_ROOT"] = shared
+    elif vllm_cache_hostpath():
+      values["VLLM_CACHE_ROOT"] = VLLM_CACHE_MOUNT
   env: list[dict[str, Any]] = [{"name": name, "value": value} for name, value in values.items()]
   env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
   return env
@@ -177,9 +192,30 @@ def pod_template(worker: Worker) -> dict[str, Any]:
     template["spec"]["containers"][0]["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
     template["spec"]["volumes"].append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
 
-  if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
-    template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy
+  # Explicit, because Kubernetes defaults a :latest tag to Always and every
+  # worker start would then re-pull. The prepull DaemonSet puts the image on
+  # the node ahead of time; IfNotPresent is what makes that count.
+  template["spec"]["containers"][0]["imagePullPolicy"] = os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY", "IfNotPresent")
+  if worker.role == "sampler" and os.getenv("OPEN_RL_VLLM_CACHE_DIR"):
+    pass  # a path inside an existing mount, typically the shared volume; nothing to add
+  elif worker.role == "sampler" and (cache_dir := vllm_cache_hostpath()):
+    # vLLM keeps its torch.compile artifacts and kernel autotune results under
+    # VLLM_CACHE_ROOT, keyed by model, GPU and engine config. In the container
+    # they die with the pod and every sampler start compiles again: measured
+    # 28-37 s on an H100 and 122 s on an L4 for gemma-4-e2b. A directory on
+    # the node's disk keeps them for the next sampler of that model there.
+    template["spec"]["containers"][0]["volumeMounts"].append({"name": "vllm-cache", "mountPath": VLLM_CACHE_MOUNT})
+    template["spec"]["volumes"].append({"name": "vllm-cache", "hostPath": {"path": cache_dir, "type": "DirectoryOrCreate"}})
   return template
+
+
+VLLM_CACHE_MOUNT = "/var/cache/openrl/vllm"
+
+
+def vllm_cache_hostpath() -> str | None:
+  """Where samplers keep vLLM's compile cache on the node, or None when turned off."""
+  value = os.getenv("OPEN_RL_VLLM_CACHE_HOSTPATH", "/var/lib/openrl/vllm-cache").strip()
+  return None if value.lower() in ("", "off", "none") else value
 
 
 def accelerator_spec(worker: Worker) -> dict[str, Any]:

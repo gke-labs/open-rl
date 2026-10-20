@@ -37,6 +37,8 @@ TrainingWorker = FFTTrainingWorker | LoraTrainingWorker
 # The trainer's readiness key, the counterpart of the sampler's. A long-lived
 # shared LoRA trainer outlives the TTL, so the loop refreshes it.
 READY_TTL_SECONDS = 3600
+# When this process started, for the phase record the ready key carries.
+PROCESS_STARTED_AT = time.time()
 READY_REFRESH_SECONDS = 60
 
 
@@ -116,6 +118,7 @@ class TrainingRequestsProcessor:
     self.snapshot_registered = False
     self.state: StateStore | None = None  # opened on first use; tests inject one
     self.ready_announced_at = float("-inf")
+    self.ready_at: float | None = None
 
   async def run(self) -> None:
     print(f"[WORKER] Training requests processor started (model={self.model_id} active_set={self.active_tenant_set_id}).")
@@ -160,8 +163,19 @@ class TrainingRequestsProcessor:
       return
     if self.state is None:
       self.state = get_state_store()
-    await self.state.set_value(key, "1", ttl_seconds=READY_TTL_SECONDS)
+    if self.ready_at is None:
+      self.ready_at = time.time()
+    await self.state.set_value(key, json.dumps(self.ready_record()), ttl_seconds=READY_TTL_SECONDS)
     self.ready_announced_at = time.monotonic()
+
+  def ready_record(self) -> dict[str, Any]:
+    """What the key says: when this worker became ready and how it got there.
+    Timestamps are Unix seconds from the worker's clock; `prefetch` is what
+    training.prefetch did before the load, or null. The model view shows it so a
+    slow start can be attributed without the worker's log."""
+    phases: dict[str, Any] = {"process_start": PROCESS_STARTED_AT}
+    phases.update(getattr(self.worker, "load_phases", None) or {})
+    return {"ready_at": self.ready_at, "phases": phases}
 
   async def withdraw_readiness(self) -> None:
     key = self.ready_key()

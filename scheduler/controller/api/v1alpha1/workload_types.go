@@ -193,6 +193,7 @@ type WorkloadStatus struct {
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Claim",type=string,JSONPath=`.status.claimName`
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.status.nodeName`
+// +kubebuilder:printcolumn:name="Reason",type=string,JSONPath=`.status.reason`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // Workload is the scheduling request for a single worker process. The

@@ -130,6 +130,49 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     # Reusing kind-dev must fetch the rebuilt worker rather than its cached predecessor.
     self.assertEqual(container["imagePullPolicy"], "Always")
 
+  def test_workers_default_to_if_not_present_so_a_prepulled_image_counts(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {}, clear=False):
+      os.environ.pop("OPEN_RL_WORKER_IMAGE_PULL_POLICY", None)
+      self.manager.ensure("job-lora-1", "trainer")
+    container = self.api.created[0]["spec"]["template"]["spec"]["containers"][0]
+    self.assertEqual(container["imagePullPolicy"], "IfNotPresent")
+
+  def test_samplers_keep_vllms_compile_cache_on_the_node(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {}, clear=False):
+      os.environ.pop("OPEN_RL_VLLM_CACHE_HOSTPATH", None)
+      self.manager.ensure("job-lora-1", "sampler")
+      self.manager.ensure("job-lora-1", "trainer")
+    sampler, trainer = (pod["spec"]["template"]["spec"] for pod in self.api.created)
+    env = {e["name"]: e.get("value") for e in sampler["containers"][0]["env"]}
+    self.assertEqual(env["VLLM_CACHE_ROOT"], "/var/cache/openrl/vllm")
+    self.assertIn({"name": "vllm-cache", "mountPath": "/var/cache/openrl/vllm"}, sampler["containers"][0]["volumeMounts"])
+    self.assertIn({"name": "vllm-cache", "hostPath": {"path": "/var/lib/openrl/vllm-cache", "type": "DirectoryOrCreate"}}, sampler["volumes"])
+    # The trainer does not run vLLM and gets nothing.
+    self.assertNotIn("VLLM_CACHE_ROOT", {e["name"] for e in trainer["containers"][0]["env"]})
+    self.assertNotIn("vllm-cache", {v["name"] for v in trainer["volumes"]})
+
+  def test_the_compile_cache_can_live_on_the_shared_volume_instead(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with (
+      patch("server.worker_manager.get_state_store", return_value=s),
+      patch.dict(os.environ, {"OPEN_RL_VLLM_CACHE_DIR": "/mnt/shared/open-rl/vllm-cache"}),
+    ):
+      self.manager.ensure("job-lora-1", "sampler")
+    spec = self.api.created[0]["spec"]["template"]["spec"]
+    env = {e["name"]: e.get("value") for e in spec["containers"][0]["env"]}
+    self.assertEqual(env["VLLM_CACHE_ROOT"], "/mnt/shared/open-rl/vllm-cache")
+    self.assertNotIn("vllm-cache", {v["name"] for v in spec["volumes"]})
+
+  def test_the_compile_cache_can_be_turned_off(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_VLLM_CACHE_HOSTPATH": "off"}):
+      self.manager.ensure("job-lora-1", "sampler")
+    spec = self.api.created[0]["spec"]["template"]["spec"]
+    self.assertNotIn("vllm-cache", {v["name"] for v in spec["volumes"]})
+    self.assertNotIn("VLLM_CACHE_ROOT", {e["name"] for e in spec["containers"][0]["env"]})
+
   def test_workers_get_the_deployment_settings(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     settings = {"VLLM_MAX_MODEL_LEN": "131072", "OPEN_RL_TRAIN_TOKEN_BUDGET": "131072", "MAX_JOBS": "4"}

@@ -123,6 +123,30 @@ func TestRebookingAdoptsTheRecordedSeat(t *testing.T) {
 	}
 }
 
+// The seat limit is enforced inside the ledger's CAS loop, so a joiner
+// selecting from a snapshot that predates the last booking is refused.
+func TestBookingRefusesASeatPastTheLimit(t *testing.T) {
+	r := newReconciler(t, append(enabledNode(), trainerWorker("w-a", "model-a"), trainerWorker("w-b", "model-b"), trainerWorker("w-c", "model-c"))...)
+	r.PlacementStrategy = placement.StrategyBinPack
+	r.MaxSeatsPerClaim = 2
+	settle(t, r, "w-a")
+	claim := claimOf(t, r, "w-a")
+	allocateClaim(t, r, claim)
+	settle(t, r, "w-b")
+	if got := claimOf(t, r, "w-b"); got != claim {
+		t.Fatalf("w-b on %q, want %q", got, claim)
+	}
+	c := getWorker(t, r, "w-c")
+	if _, _, err := r.ensureSeat(context.Background(), claim, newSeat(c, requestFrom(c)), false); err != errBookingContended {
+		t.Fatalf("booking a third seat under a limit of two returned %v, want errBookingContended", err)
+	}
+	// The founder's own re-book is not a join and is never refused.
+	a := getWorker(t, r, "w-a")
+	if _, _, err := r.ensureSeat(context.Background(), claim, newSeat(a, requestFrom(a)), true); err != nil {
+		t.Fatalf("re-booking the founder: %v", err)
+	}
+}
+
 func TestSharingRechecksTheLedgerAfterSelection(t *testing.T) {
 	resident, incoming := trainerWorker("resident", "model-a"), trainerWorker("incoming", "model-b")
 	r := newReconciler(t, append(enabledNode(), resident, incoming)...)

@@ -1,0 +1,44 @@
+# Pulls the worker image onto every node the scheduler may use, at deploy time
+# instead of inside the first job. Measured on GKE (runs/2026-10-15_cold_start):
+# a worker pull is 92 s on an H100 node with local SSD and 169 s on an L4 node
+# with a pd-balanced boot disk, and a cold job pays it twice, trainer and
+# sampler. The container only sleeps; it holds no GPU. The image reference is
+# rewritten by the kustomize images transformer like every other OpenRL image,
+# so a tag bump in the bundle re-pulls on every node as the DaemonSet rolls.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: open-rl-worker-prepull
+  labels:
+    app: open-rl-worker-prepull
+spec:
+  selector:
+    matchLabels:
+      app: open-rl-worker-prepull
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Every node pulls at once; there is nothing to protect by rolling slowly.
+      maxUnavailable: 100%
+  template:
+    metadata:
+      labels:
+        app: open-rl-worker-prepull
+    spec:
+      nodeSelector:
+        openrl.io/enabled: "true"
+      tolerations:
+      - key: "nvidia.com/gpu"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: prepull
+        image: ghcr.io/gke-labs/open-rl/server:latest
+        imagePullPolicy: IfNotPresent
+        command: ["sleep", "infinity"]
+        resources:
+          requests:
+            cpu: "10m"
+            memory: "16Mi"
+          limits:
+            memory: "64Mi"

@@ -687,6 +687,69 @@ func TestReconcileBinPacksOntoExistingClaims(t *testing.T) {
 	}
 }
 
+// With a seat limit, binpack fills a claim to the limit, moves to a free
+// device, and once every device is at the limit the next worker waits on a
+// standing claim of its own until a seat frees. Two devices, limit two: a and
+// b share the first, c and d the second, e stands pending; when b leaves, e
+// takes its seat.
+func TestReconcileStopsPackingAtTheSeatLimit(t *testing.T) {
+	r := newReconciler(t, append(enabledNode(),
+		trainerWorker("w-a", "model-a"), trainerWorker("w-b", "model-b"), trainerWorker("w-c", "model-c"),
+		trainerWorker("w-d", "model-d"), trainerWorker("w-e", "model-e"))...)
+	r.PlacementStrategy = placement.StrategyBinPack
+	r.MaxSeatsPerClaim = 2
+
+	settle(t, r, "w-a")
+	allocateClaim(t, r, claimOf(t, r, "w-a"))
+	settle(t, r, "w-b")
+	first := claimOf(t, r, "w-a")
+	if got := claimOf(t, r, "w-b"); got != first {
+		t.Fatalf("w-b landed on %q, want w-a's claim %q (under the limit)", got, first)
+	}
+
+	settle(t, r, "w-c")
+	second := claimOf(t, r, "w-c")
+	if second == first {
+		t.Fatal("w-c joined a claim at the limit, want a claim of its own")
+	}
+	allocateClaim(t, r, second)
+	settle(t, r, "w-d")
+	if got := claimOf(t, r, "w-d"); got != second {
+		t.Fatalf("w-d landed on %q, want w-c's claim %q (under the limit)", got, second)
+	}
+
+	// Both devices are claimed and both ledgers are full: w-e cuts a claim
+	// that cannot allocate, kube-scheduler declines its pod, and the sharing
+	// fallback finds no ledger under the limit. It stays Pending on its own
+	// claim with the limit in the reason.
+	settle(t, r, "w-e")
+	own := claimOf(t, r, "w-e")
+	if own == first || own == second {
+		t.Fatalf("w-e landed on %q, want a standing claim of its own", own)
+	}
+	fallBackToSharing(t, r, "w-e")
+	if got := claimOf(t, r, "w-e"); got != own {
+		t.Fatalf("w-e moved to %q past the limit, want it waiting on %q", got, own)
+	}
+	w := getWorker(t, r, "w-e")
+	if w.Status.Phase != openrlv1alpha1.PhasePending || !strings.Contains(w.Status.Reason, "at most 2 workers") {
+		t.Fatalf("w-e is %s %q, want Pending with the limit named", w.Status.Phase, w.Status.Reason)
+	}
+
+	// A seat frees: w-b leaves the first claim and the next pass seats w-e.
+	if err := r.releaseSeatAndReclaim(context.Background(), first, "w-b"); err != nil {
+		t.Fatal(err)
+	}
+	fallBackToSharing(t, r, "w-e")
+	if got := claimOf(t, r, "w-e"); got != first {
+		t.Fatalf("w-e is on %q after a seat freed, want %q", got, first)
+	}
+	ledger := getLedger(t, r, ledgerNameFor(first))
+	if len(ledger.Spec.Seats) != 2 {
+		t.Fatalf("first ledger holds %d seats, want 2: %+v", len(ledger.Spec.Seats), ledger.Spec.Seats)
+	}
+}
+
 // A trainer and a sampler on one accelerator, once the devices are contended.
 // Role selects which node pools may host a worker and nothing else -- in
 // particular it does not partition claims -- so on a node labelled for both,

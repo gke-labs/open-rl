@@ -3,6 +3,7 @@ does: a TTL key in the state store, set once a model is loaded, refreshed
 while the loop runs, deleted on exit. The model view turns it into `ready`."""
 
 import asyncio
+import json
 import os
 import unittest
 from unittest.mock import patch
@@ -35,8 +36,13 @@ class TrainerReadyTest(unittest.TestCase):
     asyncio.run(self.proc.announce_readiness())
     self.assertIsNone(self.key(), "no model yet: the view must keep saying starting")
     self.worker.loaded = True
+    self.worker.load_phases = {"load_start": 100.0, "load_done": 160.0, "prefetch": {"bytes": 7, "seconds": 1.5}}
     asyncio.run(self.proc.announce_readiness())
-    self.assertEqual(self.key(), "1")
+    record = json.loads(self.key())
+    self.assertGreater(record["ready_at"], 0)
+    self.assertIn("process_start", record["phases"])
+    self.assertEqual(record["phases"]["load_done"], 160.0)
+    self.assertEqual(record["phases"]["prefetch"]["bytes"], 7)
     asyncio.run(self.proc.withdraw_readiness())
     self.assertIsNone(self.key())
 

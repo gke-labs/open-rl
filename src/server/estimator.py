@@ -41,6 +41,27 @@ MODEL_TO_KV_BYTES_PER_TOKEN: dict[str, int] = {
   "gemma-4-e2b": 7_168,  # 7 of 35 layers are full attention, 1 kv head, head dim 256
   "gemma-4-e4b": 14_336,  # 7 of 42 layers are full attention, 2 kv heads, head dim 256
 }
+# Elements in the largest checkpoint tensor. A full-fine-tuning sampler applies
+# each weight update through vLLM's patch loader, which stages a dense copy of
+# every patched checkpoint tensor on the device, so the sampler must keep that
+# much free on top of what vLLM profiles. Read from the safetensors headers for
+# the models in the cache; the rest are vocab x hidden from config.json. Gemma-4
+# models carry a per-layer input embedding, vocab x (256 x layers), that is far
+# larger than the token embedding.
+MODEL_TO_LARGEST_TENSOR_ELEMENTS: dict[str, int] = {
+  "qwen2.5-0.5b": 136_134_656,  # embed_tokens [151936, 896]
+  "qwen3-0.6b": 155_582_464,  # embed_tokens [151936, 1024]
+  "qwen2.5-1.5b": 233_373_696,  # [151936, 1536]
+  "qwen3-1.7b": 311_164_928,  # [151936, 2048]
+  "qwen3-4b": 388_956_160,  # embed_tokens [151936, 2560]
+  "qwen2.5-7b": 544_997_376,  # [152064, 3584]
+  "qwen3-8b": 622_329_856,  # embed_tokens [151936, 4096]
+  "qwen3.5-9b": 1_017_118_720,  # [248320, 4096]
+  "qwen3.5-27b": 1_271_398_400,  # [248320, 5120]
+  "gemma-3-1b": 301_989_888,  # [262144, 1152]
+  "gemma-4-e2b": 2_348_810_240,  # embed_tokens_per_layer [262144, 8960]
+  "gemma-4-e4b": 2_818_572_288,  # embed_tokens_per_layer [262144, 10752]
+}
 UNKNOWN_MODEL = "qwen3-8b"  # unknown models are sized large, not small
 VARIANT_SUFFIXES = ("-instruct", "-it", "-pt", "-base", "-chat")
 
@@ -78,6 +99,15 @@ SAMPLER_OVERHEAD_BYTES_PER_PARAM = 0.125
 SAMPLER_LORA_SLOT_BYTES = GIB
 SAMPLER_LORA_SLOT_BYTES_PER_PARAM = 0.25
 SAMPLER_KV_TOKENS = 8 * 8192  # eight max-length requests in flight
+# A full-fine-tuning sampler's weight update: vLLM's patch loader stages the
+# largest checkpoint tensor densely in bf16 (2 B/element), and its NaN-masked
+# copy adds a bool mask (1 B) and the merged result (2 B), all live at once;
+# plus the sparse delta and the loader's working set. Measured on gemma-4-e2b's
+# 2.35 B-element per-layer embedding: the update died on an L4 with 1.9 and
+# then 5.7 GiB free, and went through with 10.7 GiB free
+# (runs/2026-10-17_demo_baselines).
+SAMPLER_WEIGHT_UPDATE_BYTES_PER_ELEMENT = 5
+SAMPLER_WEIGHT_UPDATE_MARGIN_BYTES = GIB
 # Parked in host memory: fft trainer 12 B/param + a weight copy in flight;
 # plus process overhead. Measured: 0.5B trainer 28Gi, sampler 20Gi; 8B FFT
 # sampler 39Gi steady; 7B FFT trainer OOM-killed at 110Gi.
@@ -108,12 +138,21 @@ class Footprint:
     return {"requests": {"memory": gib(self.host_request_bytes)}, "limits": {"memory": gib(self.host_limit_bytes)}}
 
 
-def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str) -> int:
+def sampler_device_bytes(params: int, kv_bytes_per_token: int, kind: str, largest_tensor_elements: int = 0) -> int:
   device = params * SAMPLER_WEIGHT_BYTES_PER_PARAM
   device += SAMPLER_OVERHEAD_BYTES + int(params * SAMPLER_OVERHEAD_BYTES_PER_PARAM)
   if kind == "lora":
     device += SAMPLER_LORA_SLOT_BYTES + int(params * SAMPLER_LORA_SLOT_BYTES_PER_PARAM)
+  else:
+    device += weight_update_bytes(largest_tensor_elements)
   return device + kv_bytes_per_token * SAMPLER_KV_TOKENS
+
+
+def weight_update_bytes(largest_tensor_elements: int) -> int:
+  """What a full-fine-tuning sampler keeps free for applying a weight update."""
+  if largest_tensor_elements <= 0:
+    return 0
+  return largest_tensor_elements * SAMPLER_WEIGHT_UPDATE_BYTES_PER_ELEMENT + SAMPLER_WEIGHT_UPDATE_MARGIN_BYTES
 
 
 def footprint(base_model: str, fine_tuning_type: str, role: str) -> Footprint:
@@ -126,6 +165,6 @@ def footprint(base_model: str, fine_tuning_type: str, role: str) -> Footprint:
   if role == "trainer":
     device = params * TRAINER_DEVICE_BYTES_PER_PARAM[kind] + TRAINER_DEVICE_RESERVE_BYTES
   else:
-    device = sampler_device_bytes(params, MODEL_TO_KV_BYTES_PER_TOKEN[model], kind)
+    device = sampler_device_bytes(params, MODEL_TO_KV_BYTES_PER_TOKEN[model], kind, MODEL_TO_LARGEST_TENSOR_ELEMENTS[model])
   host = params * HOST_BYTES_PER_PARAM[(kind, role)] + HOST_OVERHEAD_BYTES[role]
   return Footprint(device, host, int(host * HOST_LIMIT_FACTOR))

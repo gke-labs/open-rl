@@ -184,6 +184,36 @@ func TestSelectClaimPrefersFewestWorkersThenName(t *testing.T) {
 // Tight fit lives in the tier order: the tier wasting the least device
 // memory leads, so small work prefers small devices -- a preference DRA
 // honors when it can, never a survey of what is free.
+func TestSelectClaimSkipsLedgersAtTheSeatLimit(t *testing.T) {
+	// Two shared ledgers on one node: one holds two workers, one holds one.
+	// With a limit of two the full ledger is not a candidate even though it
+	// would otherwise be preferred by name; with no limit it would still lose
+	// to the emptier one, so the test fills both to the limit as well.
+	fleet := NewFleet()
+	fleet.Nodes["n"] = &Node{Name: "n", DeviceCount: 2, DeviceMemoryBytes: 96 << 30, Roles: map[string]bool{"trainer": true}}
+	full := &Claim{Name: "a", Node: "n", DeviceCount: 1}
+	full.Book("w1", "o1", 0, true)
+	full.Book("w2", "o2", 0, true)
+	light := &Claim{Name: "b", Node: "n", DeviceCount: 1}
+	light.Book("w3", "o3", 0, true)
+	fleet.Claims["a"], fleet.Claims["b"] = full, light
+
+	req := Request{Shareable: true, Role: "trainer", Memory: 24 << 30, WorkerID: "w4", MaxSeats: 2}
+	if got := SelectClaim(req, fleet); got == nil || got.Name != "b" {
+		t.Fatalf("selected %v, want the ledger under the limit", got)
+	}
+	light.Book("w4", "o4", 0, true)
+	if got := SelectClaim(req, fleet); got != nil {
+		t.Fatalf("selected %q with every ledger at the limit, want none", got.Name)
+	}
+	if got := SelectClaim(Request{Shareable: true, Role: "trainer", Memory: 24 << 30, WorkerID: "w5"}, fleet); got == nil {
+		t.Fatal("with no limit a full ledger is still joinable")
+	}
+	if reason := Explain(req, fleet, ""); !strings.Contains(reason, "at most 2 workers") {
+		t.Errorf("reason does not name the limit: %q", reason)
+	}
+}
+
 func TestTiersPreferTheTightestFit(t *testing.T) {
 	fleet := NewFleet()
 	fleet.Nodes["l4"] = bigNode("l4", 4, 24, "trainer")

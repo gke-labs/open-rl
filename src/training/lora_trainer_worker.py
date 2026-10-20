@@ -13,6 +13,7 @@ from peft import LoraConfig as PeftLoraConfig
 from peft import PeftModelForCausalLM, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import LoraConfig
 
@@ -46,11 +47,16 @@ class LoraTrainingWorker(BaseTrainerWorker):
       return
 
     print(f"Loading base model {base_model_name} to {self.device}...")
+    self.load_phases = {"load_start": time.time()}
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
+    # from_pretrained memory-maps the shards and reads them a page at a time; on
+    # a network filesystem that is minutes. Stream them into the page cache first.
+    self.load_phases["prefetch"] = prefetch(base_model_name)
     self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
+    self.load_phases["load_done"] = time.time()
     print("Successfully loaded.")
 
   def target_lora_modules(self, config: LoraConfig) -> list[str]:

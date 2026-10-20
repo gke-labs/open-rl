@@ -38,6 +38,9 @@ spec:
     - jsonPath: .status.nodeName
       name: Node
       type: string
+    - jsonPath: .status.reason
+      name: Reason
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date

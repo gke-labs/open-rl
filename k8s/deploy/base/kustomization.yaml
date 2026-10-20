@@ -9,6 +9,7 @@ resources:
   - rbac.yaml
   - redis.yaml
   - api-server.yaml
+  - worker-prepull.yaml
 
 generatorOptions:
   disableNameSuffixHash: true

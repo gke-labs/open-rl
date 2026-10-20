@@ -41,6 +41,7 @@ import torch.utils.checkpoint
 from transformers import AutoConfig, AutoTokenizer
 
 from training.distributed import is_primary
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import FFTConfig, LoraConfig
 
@@ -313,7 +314,9 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     if self.cp_size > 1:
       kwargs["attn_implementation"] = "sdpa"
     # from_pretrained applies LoRA, loads the base weights and freezes all but the adapters.
+    self.load_phases = {"load_start": time.time(), "prefetch": prefetch(base_model_name)}
     self.model = NeMoAutoModelForCausalLM.from_pretrained(base_model_name, distributed_setup=self.build_distributed_setup(), **kwargs)
+    self.load_phases["load_done"] = time.time()
     if RECOMPUTE_NUM_LAYERS > 0:
       install_group_checkpointing(self.model, RECOMPUTE_NUM_LAYERS)
     print(f"Loaded Automodel {base_model_name} with LoRA rank {MAX_LORA_RANK}.")
@@ -409,11 +412,11 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
       self.cp_context.close()
       self.cp_context = None
 
-  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
+  def make_training_batches(self, data: list[Datum], token_budget: int | None = None) -> list[list[tuple[int, Datum]]]:
     # The CP shard takes one unpadded sequence per pass.
     if self.cp_size > 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
-    return super().make_training_batches(data)
+    return super().make_training_batches(data, token_budget)
 
   def compute_target_logprobs(
     self, model: torch.nn.Module, input_ids: torch.Tensor, attention_mask: torch.Tensor, target_token_ids: torch.Tensor

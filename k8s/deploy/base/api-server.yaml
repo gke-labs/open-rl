@@ -53,6 +53,11 @@ spec:
               key: BASE_MODEL
         - name: OPEN_RL_TMP_DIR
           value: "/mnt/shared/open-rl"
+        # vLLM's compile cache, shared by every sampler in the fleet: the first
+        # sampler of a model on a GPU type compiles (about a minute), the rest
+        # load the result in a second. Unset it to keep a per-node hostPath instead.
+        - name: OPEN_RL_VLLM_CACHE_DIR
+          value: "/mnt/shared/open-rl/vllm-cache"
         # vLLM sampling enabled on cluster.
         - name: SAMPLING_BACKEND
           value: "vllm"

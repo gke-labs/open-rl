@@ -97,6 +97,11 @@ func (r *WorkloadReconciler) ensureSeat(ctx context.Context, claimName string, s
 				return nil, nil, errBookingContended
 			}
 		}
+		// The seat limit is re-checked here for the same reason: two joiners
+		// selecting from one snapshot must not both land the last seat.
+		if existing == nil && !createMissing && r.MaxSeatsPerClaim > 0 && len(claimLedger.Spec.Seats) >= r.MaxSeatsPerClaim {
+			return nil, nil, errBookingContended
+		}
 		if existing != nil {
 			*existing = seat
 		} else {

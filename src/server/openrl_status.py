@@ -14,6 +14,7 @@ a tenancy design.
 """
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,6 +34,19 @@ class StatusContext:
   registry: SessionRegistry
   manager: WorkerManager | None
   worker_launcher: str  # as get_server_capabilities reports it
+
+
+def ready_record(raw: str | None) -> dict[str, Any] | None:
+  """The ready key's value: None when the worker has not announced itself, a
+  dict otherwise. Workers before v0.0.8 wrote "1"; the view treats that as
+  announced with no phase record."""
+  if raw is None:
+    return None
+  try:
+    parsed = json.loads(raw)
+  except ValueError:
+    return {}
+  return parsed if isinstance(parsed, dict) else {}
 
 
 def describe_worker(worker: dict[str, Any]) -> str:
@@ -56,10 +70,15 @@ async def workers_of_owner(ctx: StatusContext, owner: str) -> tuple[list[dict[st
     worker = {field: found.get(field) for field in WORKER_FIELDS}
     # The launcher sees a pod run minutes before the model is loaded; each
     # worker announces itself when it can serve (open_rl:<role>_ready:<runtime>).
-    announced = await ctx.state.get_value(f"open_rl:{found['role']}_ready:{found['model_id']}") is not None
-    if worker["state"] == READY and not announced:
+    record = ready_record(await ctx.state.get_value(f"open_rl:{found['role']}_ready:{found['model_id']}"))
+    if worker["state"] == READY and record is None:
       worker["state"] = STARTING
       worker["detail"] = f"{worker['detail']}, loading the model"
+    if record:
+      # When the worker became ready and how it got there (design 016, A6):
+      # process start, prefetch, load start and end, as the worker recorded them.
+      worker["ready_at"] = record.get("ready_at")
+      worker["phases"] = record.get("phases") or {}
     worker["summary"] = describe_worker(worker)
     out.append(worker)
   return out, None

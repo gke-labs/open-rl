@@ -54,6 +54,13 @@ type WorkloadReconciler struct {
 	// PlacementStrategy orders the two placement moves; the zero value reads
 	// as binpack.
 	PlacementStrategy placement.Strategy
+	// MaxSeatsPerClaim caps how many workers share one claim; zero means no
+	// limit. A worker that finds every eligible ledger at the limit cuts its
+	// own claim and, if no device is free, stays Pending until one is added or
+	// a seat frees. It bounds a time-sliced step at the limit times the
+	// single-worker time, and it turns a full fleet into standing claims an
+	// autoscaler can see.
+	MaxSeatsPerClaim int
 	// MaxConcurrentReconciles is how many workers place at once.
 	MaxConcurrentReconciles int
 
@@ -109,7 +116,9 @@ func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, fmt.Errorf("cannot read the fleet, placing nothing this pass: %w", err)
 	}
 
-	return r.place(ctx, &worker, requestFrom(&worker), fleet)
+	request := requestFrom(&worker)
+	request.MaxSeats = r.MaxSeatsPerClaim
+	return r.place(ctx, &worker, request, fleet)
 }
 
 type placementScope struct {
