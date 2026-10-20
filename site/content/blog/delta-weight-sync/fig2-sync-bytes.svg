@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 560" width="100%" font-family="Figtree, 'Avenir Next', 'Segoe UI', system-ui, Helvetica, Arial, sans-serif" role="img" aria-label="Bytes per sync over the run, full checkpoint vs delta">
+<rect width="720" height="560" fill="#F2EEDE"/>
+<rect x="62" y="17" width="12" height="12" fill="#B4470F" fill-opacity="0.85"/>
+<text x="80" y="27" font-size="12" fill="#33312B">Full bf16 checkpoint per sync</text>
+<rect x="282" y="17" width="12" height="12" fill="#0F8A7A"/>
+<text x="300" y="27" font-size="12" fill="#33312B">Delta per sync (mean over the 10-step window)</text>
+<text x="62" y="72" font-size="15" font-weight="600" fill="#1A1A1A">Gemma 4 E4B</text>
+<line x1="62" y1="256.0" x2="700" y2="256.0" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="260.0" font-size="11" fill="#85837A" text-anchor="end">0 GB</text>
+<line x1="62" y1="218.2" x2="700" y2="218.2" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="222.2" font-size="11" fill="#85837A" text-anchor="end">4 GB</text>
+<line x1="62" y1="180.4" x2="700" y2="180.4" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="184.4" font-size="11" fill="#85837A" text-anchor="end">8 GB</text>
+<line x1="62" y1="142.7" x2="700" y2="142.7" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="146.7" font-size="11" fill="#85837A" text-anchor="end">12 GB</text>
+<line x1="62" y1="104.9" x2="700" y2="104.9" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="108.9" font-size="11" fill="#85837A" text-anchor="end">16 GB</text>
+<rect x="71.2" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="94.9" y="248.3" width="21.7" height="7.7" fill="#0F8A7A"/>
+<text x="105.7" y="243.3" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.81</text>
+<text x="93.9" y="272" font-size="11" fill="#85837A" text-anchor="middle">0–9</text>
+<rect x="135.0" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="158.7" y="251.9" width="21.7" height="4.1" fill="#0F8A7A"/>
+<text x="169.5" y="246.9" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.43</text>
+<text x="157.7" y="272" font-size="11" fill="#85837A" text-anchor="middle">10–19</text>
+<rect x="198.8" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="222.5" y="252.8" width="21.7" height="3.2" fill="#0F8A7A"/>
+<text x="233.3" y="247.8" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.34</text>
+<text x="221.5" y="272" font-size="11" fill="#85837A" text-anchor="middle">20–29</text>
+<rect x="262.6" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="286.3" y="252.9" width="21.7" height="3.1" fill="#0F8A7A"/>
+<text x="297.1" y="247.9" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.33</text>
+<text x="285.3" y="272" font-size="11" fill="#85837A" text-anchor="middle">30–39</text>
+<rect x="326.4" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="350.1" y="253.1" width="21.7" height="2.9" fill="#0F8A7A"/>
+<text x="360.9" y="248.1" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.31</text>
+<text x="349.1" y="272" font-size="11" fill="#85837A" text-anchor="middle">40–49</text>
+<rect x="390.2" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="413.9" y="253.1" width="21.7" height="2.9" fill="#0F8A7A"/>
+<text x="424.7" y="248.1" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.30</text>
+<text x="412.9" y="272" font-size="11" fill="#85837A" text-anchor="middle">50–59</text>
+<rect x="454.0" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="477.7" y="253.0" width="21.7" height="3.0" fill="#0F8A7A"/>
+<text x="488.5" y="248.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.32</text>
+<text x="476.7" y="272" font-size="11" fill="#85837A" text-anchor="middle">60–69</text>
+<rect x="517.8" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="541.5" y="253.0" width="21.7" height="3.0" fill="#0F8A7A"/>
+<text x="552.3" y="248.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.32</text>
+<text x="540.5" y="272" font-size="11" fill="#85837A" text-anchor="middle">70–79</text>
+<rect x="581.6" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="605.3" y="253.3" width="21.7" height="2.7" fill="#0F8A7A"/>
+<text x="616.1" y="248.3" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.29</text>
+<text x="604.3" y="272" font-size="11" fill="#85837A" text-anchor="middle">80–89</text>
+<rect x="645.4" y="104.9" width="21.7" height="151.1" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="669.1" y="253.0" width="21.7" height="3.0" fill="#0F8A7A"/>
+<text x="679.9" y="248.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">0.31</text>
+<text x="668.1" y="272" font-size="11" fill="#85837A" text-anchor="middle">90–99</text>
+<line x1="62" y1="256.0" x2="700" y2="256.0" stroke="#33312B" stroke-width="1"/>
+<text x="700" y="72" font-size="12" fill="#85837A" text-anchor="end">over 100 steps: 1.6 TB full vs 38 GB delta (43× less)</text>
+<text x="62" y="318" font-size="15" font-weight="600" fill="#1A1A1A">Qwen3-8B-Base</text>
+<line x1="62" y1="502.0" x2="700" y2="502.0" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="506.0" font-size="11" fill="#85837A" text-anchor="end">0 GB</text>
+<line x1="62" y1="464.2" x2="700" y2="464.2" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="468.2" font-size="11" fill="#85837A" text-anchor="end">4 GB</text>
+<line x1="62" y1="426.4" x2="700" y2="426.4" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="430.4" font-size="11" fill="#85837A" text-anchor="end">8 GB</text>
+<line x1="62" y1="388.7" x2="700" y2="388.7" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="392.7" font-size="11" fill="#85837A" text-anchor="end">12 GB</text>
+<line x1="62" y1="350.9" x2="700" y2="350.9" stroke="#DED9C7" stroke-width="1"/>
+<text x="54" y="354.9" font-size="11" fill="#85837A" text-anchor="end">16 GB</text>
+<rect x="71.2" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="94.9" y="471.0" width="21.7" height="31.0" fill="#0F8A7A"/>
+<text x="105.7" y="466.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">3.3</text>
+<text x="93.9" y="518" font-size="11" fill="#85837A" text-anchor="middle">0–9</text>
+<rect x="135.0" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="158.7" y="486.4" width="21.7" height="15.6" fill="#0F8A7A"/>
+<text x="169.5" y="481.4" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.7</text>
+<text x="157.7" y="518" font-size="11" fill="#85837A" text-anchor="middle">10–19</text>
+<rect x="198.8" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="222.5" y="490.1" width="21.7" height="11.9" fill="#0F8A7A"/>
+<text x="233.3" y="485.1" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.3</text>
+<text x="221.5" y="518" font-size="11" fill="#85837A" text-anchor="middle">20–29</text>
+<rect x="262.6" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="286.3" y="491.9" width="21.7" height="10.1" fill="#0F8A7A"/>
+<text x="297.1" y="486.9" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.1</text>
+<text x="285.3" y="518" font-size="11" fill="#85837A" text-anchor="middle">30–39</text>
+<rect x="326.4" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="350.1" y="492.0" width="21.7" height="10.0" fill="#0F8A7A"/>
+<text x="360.9" y="487.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.1</text>
+<text x="349.1" y="518" font-size="11" fill="#85837A" text-anchor="middle">40–49</text>
+<rect x="390.2" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="413.9" y="491.7" width="21.7" height="10.3" fill="#0F8A7A"/>
+<text x="424.7" y="486.7" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.1</text>
+<text x="412.9" y="518" font-size="11" fill="#85837A" text-anchor="middle">50–59</text>
+<rect x="454.0" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="477.7" y="489.0" width="21.7" height="13.0" fill="#0F8A7A"/>
+<text x="488.5" y="484.0" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.4</text>
+<text x="476.7" y="518" font-size="11" fill="#85837A" text-anchor="middle">60–69</text>
+<rect x="517.8" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="541.5" y="489.1" width="21.7" height="12.9" fill="#0F8A7A"/>
+<text x="552.3" y="484.1" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.4</text>
+<text x="540.5" y="518" font-size="11" fill="#85837A" text-anchor="middle">70–79</text>
+<rect x="581.6" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="605.3" y="488.7" width="21.7" height="13.3" fill="#0F8A7A"/>
+<text x="616.1" y="483.7" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.4</text>
+<text x="604.3" y="518" font-size="11" fill="#85837A" text-anchor="middle">80–89</text>
+<rect x="645.4" y="347.1" width="21.7" height="154.9" fill="#B4470F" fill-opacity="0.85"/>
+<rect x="669.1" y="490.2" width="21.7" height="11.8" fill="#0F8A7A"/>
+<text x="679.9" y="485.2" font-size="10.5" fill="#0F8A7A" text-anchor="middle">1.2</text>
+<text x="668.1" y="518" font-size="11" fill="#85837A" text-anchor="middle">90–99</text>
+<line x1="62" y1="502.0" x2="700" y2="502.0" stroke="#33312B" stroke-width="1"/>
+<text x="700" y="318" font-size="12" fill="#85837A" text-anchor="end">over 100 steps: 1.6 TB full vs 148 GB delta (11× less)</text>
+<text x="381.0" y="556" font-size="11" fill="#85837A" text-anchor="middle">training steps</text>
+</svg>

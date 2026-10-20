@@ -72,8 +72,29 @@ img, svg, canvas { max-width: 100%; }
 .prose code { font-family: var(--mono); font-size: .9em; background: var(--tint); padding: .08em .35em; border-radius: .25em; }
 .prose pre { background: var(--code-bg); color: var(--code-fg); padding: 16px 18px; border-radius: 8px; overflow-x: auto; font-size: .9rem; line-height: 1.5; }
 .prose pre code { background: none; padding: 0; font-size: inherit; color: inherit; }
-.prose table { border-collapse: collapse; width: 100%; font-size: .95rem; }
+.prose table { border-collapse: collapse; width: 100%; font-size: .95rem; margin: 1.4em 0; }
 .prose th, .prose td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+.prose th { color: var(--ink); font-weight: 600; border-bottom: 2px solid var(--grid); }
+.prose a { color: var(--accent); }
+.prose strong { color: var(--ink); font-weight: 600; }
+.prose .lede { font-size: 1.2rem; color: var(--ink); line-height: 1.55; }
+.prose sup a { text-decoration: none; font-size: .8em; }
+.callout { margin: 1.6em 0; padding: 14px 18px; border-left: 4px solid var(--teal); background: var(--teal-2); border-radius: 0 8px 8px 0; color: var(--ink-soft); }
+.callout.warn { border-color: var(--rust); background: var(--rust-2); }
+.callout > * + * { margin-top: .6em; }
+.mermaid { margin: 1.6em 0; padding: 18px; background: var(--tint); border-radius: 10px; text-align: center; }
+.refs { font-size: .95rem; }
+.refs li + li { margin-top: .5em; }
+.steps { list-style: none; padding-left: 0 !important; counter-reset: s; }
+.steps li { position: relative; padding-left: 2.2em; }
+.steps li::before { counter-increment: s; content: counter(s); position: absolute; left: 0; top: .05em; width: 1.5em; height: 1.5em;
+  border-radius: 50%; background: var(--ink); color: var(--paper); font-size: .85em; font-weight: 600; display: grid; place-items: center; }
+details.numbers { margin: -0.6em 0 1.8em; border: 1px solid var(--grid); border-radius: 8px; padding: 0 1em; }
+details.numbers > summary { cursor: pointer; padding: .7em 0; font-weight: 600; font-size: .95rem; color: var(--ink-soft); list-style: none; }
+details.numbers > summary::-webkit-details-marker { display: none; }
+details.numbers > summary::before { content: "▸"; display: inline-block; width: 1.1em; transition: transform .15s; }
+details.numbers[open] > summary::before { transform: rotate(90deg); }
+details.numbers[open] { padding-bottom: .4em; }
 
 /* Chroma classes, coloured like the deck's terminal blocks */
 .chroma { color: var(--code-fg); background: var(--code-bg); }
