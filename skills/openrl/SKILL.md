@@ -1,6 +1,7 @@
 ---
 name: openrl
-description: Use a deployed OpenRL server (a self-hosted, Kubernetes-native Tinker API for LoRA and full fine-tuning) from the client side. Covers only what differs from the hosted Tinker service: connecting to the endpoint, the openrl.* settings, what the cluster is doing while a call blocks, worker lifecycle, OpenRL's own errors, and where the tinker-cookbook skills' hosted-service advice does not apply. Use when a task mentions OpenRL, open-rl, the OpenRL API server, "our Tinker endpoint", TINKER_BASE_URL pointing at a cluster, or debugging a run against one. For how to train (recipes, hyperparameters, evaluation, SDK debugging) use the tinker-cookbook skills; this skill says when to load them.
+description: >-
+  Use a deployed OpenRL server (a self-hosted, Kubernetes-native Tinker API for LoRA and full fine-tuning) from the client side. Covers only what differs from the hosted Tinker service: connecting to the endpoint, the openrl.* settings, what the cluster is doing while a call blocks, worker lifecycle, OpenRL's own errors, and where the tinker-cookbook skills' hosted-service advice does not apply. Use when a task mentions OpenRL, open-rl, the OpenRL API server, "our Tinker endpoint", TINKER_BASE_URL pointing at a cluster, or debugging a run against one. For how to train (recipes, hyperparameters, evaluation, SDK debugging) use the tinker-cookbook skills; this skill says when to load them.
 ---
 
 # OpenRL from the client side
