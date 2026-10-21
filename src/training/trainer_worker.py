@@ -45,7 +45,6 @@ class BaseTrainerWorker:
 
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
-    self.last_token_budget: int | None = None
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda", local_rank())
@@ -123,11 +122,7 @@ class BaseTrainerWorker:
     shard_count = self.shard_count()
     local_indices = shard_datum_indices(len(data), self.shard_rank(), shard_count)
     local_data = [data[idx] for idx in local_indices]
-    token_budget = self.train_token_budget(model)
-    local_batches = self.make_training_batches(local_data, token_budget)
-    if token_budget != self.last_token_budget:
-      print(f"[trainer] token budget per pass: {token_budget or 'one sequence'}; {len(local_data)} sequences in {len(local_batches)} passes")
-      self.last_token_budget = token_budget
+    local_batches = self.make_training_batches(local_data)
     if shard_count > 1 and self.backward_runs_collectives:
       filler_passes = self.shard_all_reduce_max(len(local_batches)) - len(local_batches)
       filler = local_data[0] if local_data else data[0]
@@ -204,45 +199,12 @@ class BaseTrainerWorker:
       "loss_fn_output_type": "ArrayRecord",
     }
 
-  # Upper bound for the automatic budget. Past it, passes stop getting faster
-  # and use more memory.
-  AUTO_TOKEN_BUDGET_CEILING = 16384
-  # Share of the free device memory the automatic budget may fill.
-  AUTO_TOKEN_BUDGET_MEMORY_SHARE = 0.5
-  # Activation bytes per token as a multiple of one hidden vector per layer,
-  # which is what gradient checkpointing keeps. The rest covers the layer being
-  # recomputed in backward, plus a margin.
-  ACTIVATION_BYTES_FACTOR = 6
-
-  def train_token_budget(self, model: PreTrainedModel) -> int:
-    """Padded tokens per forward/backward pass. OPEN_RL_TRAIN_TOKEN_BUDGET is
-    used as given when it is a number (0 = one sequence per pass); unset or
-    `auto` takes the smaller of the ceiling and what fits in free memory."""
-    raw = os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "auto").strip().lower()
-    if raw not in ("", "auto"):
-      return int(raw)
-    return min(self.AUTO_TOKEN_BUDGET_CEILING, self.memory_token_cap(model))
-
-  def memory_token_cap(self, model: PreTrainedModel) -> int:
-    """Tokens whose activations fit in a share of the free device memory.
-
-    Free memory is read at each call: a time-sliced worker holds the device
-    while it trains, and its partner's memory is released by then. Memory the
-    caching allocator holds but does not use counts as free.
-    """
-    if self.device.type != "cuda":
-      return self.AUTO_TOKEN_BUDGET_CEILING
-    text_config = model.config.get_text_config()
-    token_bytes = text_config.num_hidden_layers * text_config.hidden_size * model.dtype.itemsize * self.ACTIVATION_BYTES_FACTOR
-    free_bytes, _ = torch.cuda.mem_get_info(self.device)
-    free_bytes += torch.cuda.memory_reserved(self.device) - torch.cuda.memory_allocated(self.device)
-    return int(free_bytes * self.AUTO_TOKEN_BUDGET_MEMORY_SHARE / token_bytes)
-
-  def make_training_batches(self, data: list[Datum], token_budget: int) -> list[list[tuple[int, Datum]]]:
-    """Group examples for the single padded forward/backward path. A budget of
-    0 runs one example per pass."""
+  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
+    """Group examples for the single padded forward/backward path."""
     if len(data) <= 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
+
+    token_budget = int(os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "0"))
 
     if token_budget <= 0:
       return [[(idx, datum)] for idx, datum in enumerate(data)]

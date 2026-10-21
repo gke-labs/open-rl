@@ -711,7 +711,8 @@ class TestTrainerPaddedBatchingMath(unittest.TestCase):
   def test_token_budget_batches_preserve_examples(self) -> None:
     worker = self._worker()
     data = self._data()
-    batches = worker.make_training_batches(data, 6)
+    with patch.dict(os.environ, {"OPEN_RL_TRAIN_TOKEN_BUDGET": "6"}):
+      batches = worker.make_training_batches(data)
 
     seen = [idx for batch in batches for idx, _datum in batch]
     self.assertCountEqual(seen, range(len(data)))
@@ -742,16 +743,6 @@ class TestTrainerPaddedBatchingMath(unittest.TestCase):
       logprobs = output["logprobs"]
       self.assertEqual(logprobs["shape"], [min(len(datum.model_input), len(datum.loss_fn_inputs["target_tokens"].data))])
 
-  def test_forward_backward_batches_without_a_budget_setting(self) -> None:
-    worker = self._worker()
-    model = _LogitModelStub()
-
-    with patch.dict(os.environ):
-      os.environ.pop("OPEN_RL_TRAIN_TOKEN_BUDGET", None)
-      worker.forward_backward(model, self._data(), "cross_entropy")
-
-    self.assertEqual(len(model.calls), 1)
-
   def test_fft_forward_backward_uses_single_process_model(self) -> None:
     worker = FFTTrainingWorker()
     worker.device = torch.device("cpu")
@@ -763,46 +754,6 @@ class TestTrainerPaddedBatchingMath(unittest.TestCase):
 
     self.assertEqual(len(result["loss_fn_outputs"]), len(data))
     self.assertGreater(len(worker.model.calls), 0)
-
-
-class TestTrainTokenBudget(unittest.TestCase):
-  def setUp(self) -> None:
-    self.worker = BaseTrainerWorker()
-    text_config = types.SimpleNamespace(num_hidden_layers=4, hidden_size=1024)
-    self.model = types.SimpleNamespace(config=types.SimpleNamespace(get_text_config=lambda: text_config), dtype=torch.bfloat16)
-
-  def budget(self, setting: str | None, memory_cap: int = 100_000) -> int:
-    with patch.dict(os.environ), patch.object(BaseTrainerWorker, "memory_token_cap", return_value=memory_cap):
-      os.environ.pop("OPEN_RL_TRAIN_TOKEN_BUDGET", None)
-      if setting is not None:
-        os.environ["OPEN_RL_TRAIN_TOKEN_BUDGET"] = setting
-      return self.worker.train_token_budget(self.model)
-
-  def test_a_number_is_used_as_given(self) -> None:
-    self.assertEqual(self.budget("65536", memory_cap=1000), 65536)
-    self.assertEqual(self.budget("0"), 0)
-
-  def test_auto_takes_the_smaller_of_ceiling_and_memory(self) -> None:
-    ceiling = BaseTrainerWorker.AUTO_TOKEN_BUDGET_CEILING
-    for setting in (None, "", "auto", " AUTO "):
-      self.assertEqual(self.budget(setting), ceiling)
-    self.assertEqual(self.budget(None, memory_cap=3000), 3000)
-
-  def test_memory_cap_counts_free_and_cached_memory(self) -> None:
-    gib = 1024**3
-    self.worker.device = torch.device("cuda", 0)
-    with (
-      patch.object(torch.cuda, "mem_get_info", return_value=(10 * gib, 80 * gib)),
-      patch.object(torch.cuda, "memory_reserved", return_value=5 * gib),
-      patch.object(torch.cuda, "memory_allocated", return_value=3 * gib),
-    ):
-      cap = self.worker.memory_token_cap(self.model)
-    # 4 layers x 1024 hidden x 2 bytes x 6 = 48 KiB per token, half of 12 GiB.
-    self.assertEqual(cap, 6 * gib // (48 * 1024))
-
-  def test_memory_cap_off_cuda_is_the_ceiling(self) -> None:
-    self.worker.device = torch.device("cpu")
-    self.assertEqual(self.worker.memory_token_cap(self.model), BaseTrainerWorker.AUTO_TOKEN_BUDGET_CEILING)
 
 
 if __name__ == "__main__":

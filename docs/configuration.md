@@ -57,7 +57,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. |
-| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `auto` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `auto` uses the smaller of 16384 and the tokens whose activations fit in half of the free device memory, read at each request. A number is used as given; `0` runs one datum per pass. |
+| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `0` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `0` keeps the previous one-datum-at-a-time execution path. |
 | `TRAINER_CUDA_VISIBLE_DEVICES`, `SAMPLER_CUDA_VISIBLE_DEVICES` | unset | GPUs given to the trainer and sampler worker processes the local worker manager launches. |
 
 ## Worker manager

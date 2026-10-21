@@ -409,11 +409,11 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
       self.cp_context.close()
       self.cp_context = None
 
-  def make_training_batches(self, data: list[Datum], token_budget: int) -> list[list[tuple[int, Datum]]]:
+  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
     # The CP shard takes one unpadded sequence per pass.
     if self.cp_size > 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
-    return super().make_training_batches(data, token_budget)
+    return super().make_training_batches(data)
 
   def compute_target_logprobs(
     self, model: torch.nn.Module, input_ids: torch.Tensor, attention_mask: torch.Tensor, target_token_ids: torch.Tensor
