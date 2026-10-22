@@ -89,6 +89,7 @@ def settings_of(meta: TrainingModelMetadata) -> dict[str, Any]:
     "openrl.trainer_backend": meta.trainer_backend,
     "openrl.trainer_gpus": meta.trainer_gpus,
     "openrl.trainer_cp": meta.trainer_cp,
+    "openrl.gpu_types": ",".join(meta.gpu_types),
   }
 
 

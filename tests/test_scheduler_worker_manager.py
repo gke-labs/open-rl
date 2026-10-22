@@ -354,6 +354,25 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.assertEqual(sampler["spec"]["ownerID"], "job-sr")
     self.assertEqual(sorted(self.api.deleted), sorted(names))
 
+  def test_preferred_gpu_types_ride_both_workloads_in_order(self) -> None:
+    meta = {"base_model": "google/gemma-4-E2B", "fine_tuning_type": "lora", "gpu_types": ["nvidia-a100-80gb", "nvidia-l4"]}
+    s = self.store_with("job-gt", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-gt", "trainer")
+      self.manager.ensure("job-gt", "sampler")
+
+    trainer, sampler = self.api.created
+    for worker in (trainer, sampler):
+      self.assertEqual(worker["spec"]["accelerator"]["preferredTypes"], ["nvidia-a100-80gb", "nvidia-l4"])
+    self.assertEqual(trainer["spec"]["accelerator"]["mode"], "SingleGPU")
+
+  def test_no_preferred_gpu_types_leaves_the_accelerator_spec_alone(self) -> None:
+    s = self.store_with("job-fft", {"base_model": "Qwen/Qwen3-8B", "fine_tuning_type": "full"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-fft", "trainer")
+
+    self.assertNotIn("preferredTypes", self.api.created[0]["spec"]["accelerator"])
+
 
 class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
   async def test_lora_and_fft_sessions_launch_their_own_sampler_types(self) -> None:

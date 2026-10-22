@@ -65,7 +65,9 @@ full fine-tuning cannot span devices.
 1. **Prefer a bigger device.** `openrl.exclusive=true` gives the job its own trainer and
    sampler. If the cluster has a larger pool, the scheduler places them where they fit;
    nothing else changes. Ask the platform owner which pools exist; the endpoint does not
-   list them yet.
+   list them yet. The scheduler picks the smallest GPU that fits, which is not always the
+   fastest: `openrl.gpu_types=nvidia-a100-80gb;nvidia-l4` makes the job's workers prefer
+   those types in that order, and still fall back to any GPU that fits when they are busy.
 2. **Then spread the trainer over several GPUs.** When no single device holds the
    trainer, set `openrl.trainer_backend=automodel` and `openrl.trainer_gpus=N` (2 to 8).
    The Automodel trainer shards the model with FSDP2 across `N` GPUs on one node, so each

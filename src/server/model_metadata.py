@@ -48,6 +48,8 @@ class TrainingModelMetadata(BaseModel):
   trainer_backend: str = "pytorch"
   trainer_gpus: int = 1
   trainer_cp: int = 1
+  # Accelerator types the workers prefer, most preferred first.
+  gpu_types: list[str] = Field(default_factory=list)
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None

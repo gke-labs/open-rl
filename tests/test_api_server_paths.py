@@ -570,6 +570,29 @@ class TrainerBackendTest(ApiServerTest):
     self.assertEqual(response.status_code, 400)
     self.assertIn("openrl.sampler_replicas above 1", response.json()["error"])
 
+  def test_gpu_types_are_an_ordered_list_on_the_model(self) -> None:
+    gpu_types = {"openrl.gpu_types": "nvidia-a100-80gb, nvidia-l4"}
+    model_id = self.post("create_model", {"base_model": "m", "user_metadata": gpu_types}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["gpu_types"], ["nvidia-a100-80gb", "nvidia-l4"])
+    # TINKER_TAGS splits on commas, so a tag separates types with semicolons.
+    tagged = {"openrl.gpu_types": "nvidia-a100-80gb;nvidia-l4"}
+    model_id = self.post("create_model", {"base_model": "m", "user_metadata": tagged}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["gpu_types"], ["nvidia-a100-80gb", "nvidia-l4"])
+    model_id = self.post("create_model", {"base_model": "m"}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["gpu_types"], [])
+
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.gpu_types": "nvidia-l4,nvidia-l4"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.gpu_types", response.json()["error"])
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.gpu_types": "nvidia l4"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("not an accelerator type name", response.json()["error"])
+
+    with patch.object(api_server, "worker_manager", object.__new__(LocalWorkerManager)):
+      response = self.post("create_model", {"base_model": "m", "user_metadata": gpu_types})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.gpu_types needs a server that launches workers as pods", response.json()["error"])
+
 
 if __name__ == "__main__":
   unittest.main()

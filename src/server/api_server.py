@@ -22,7 +22,18 @@ from opentelemetry import propagate, trace
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
+from pydantic import (
+  AfterValidator,
+  AliasChoices,
+  BaseModel,
+  BeforeValidator,
+  ConfigDict,
+  Field,
+  ValidationError,
+  ValidationInfo,
+  WithJsonSchema,
+  field_validator,
+)
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import openrl_status, proto_codec
@@ -181,6 +192,23 @@ def parse_trainer_backend(value: str) -> str:
   return value
 
 
+# A Kubernetes label value, what a node's accelerator type label holds.
+LABEL_VALUE = re.compile(r"[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?")
+
+
+def parse_gpu_types(value: Any) -> list[str]:
+  # TINKER_TAGS splits on commas, so a tag lists types with semicolons.
+  names = [name.strip() for name in re.split(r"[,;]", value)] if isinstance(value, str) else value
+  if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+    raise ValueError(f"must be a list of accelerator types separated by ; or ,, got {value!r}")
+  names = [name for name in names if name]
+  if bad := [name for name in names if not LABEL_VALUE.fullmatch(name)]:
+    raise ValueError(f"{bad[0]!r} is not an accelerator type name like nvidia-a100-80gb")
+  if len(set(names)) != len(names):
+    raise ValueError(f"lists an accelerator type twice: {value!r}")
+  return names
+
+
 class Settings(BaseModel):
   """The descriptions are what get_server_capabilities and the skill show, so
   they are written for the client choosing a value. Each field's wire name is
@@ -210,6 +238,14 @@ class Settings(BaseModel):
     ge=1,
     le=8,
     description="Trainer GPUs that share one sequence, as context parallelism. The rest of trainer_gpus is data parallel.",
+  )
+  gpu_types: Annotated[list[str], BeforeValidator(parse_gpu_types), WithJsonSchema({"type": "string"})] = Field(
+    default_factory=list,
+    description=(
+      "Accelerator types the model's workers prefer, most preferred first, separated by semicolons: nvidia-a100-80gb;nvidia-l4. "
+      "A preference, not a requirement: a worker still lands on any GPU that fits when those are busy. "
+      "Unset, workers prefer the smallest GPU that fits."
+    ),
   )
   fine_tuning_type: FineTuningType | None = Field(
     default=None,
@@ -498,6 +534,8 @@ async def _extract_and_persist_model_metadata(
     raise ValueError("openrl.exclusive needs a server that launches workers per model")
   if settings.sampler_replicas > 1 and isinstance(worker_manager, LocalWorkerManager):
     raise ValueError("openrl.sampler_replicas above 1 needs a server that launches workers as pods")
+  if settings.gpu_types and (worker_manager is None or isinstance(worker_manager, LocalWorkerManager)):
+    raise ValueError("openrl.gpu_types needs a server that launches workers as pods")
   if settings.trainer_backend != "pytorch" and worker_manager is None:
     raise ValueError(f"openrl.trainer_backend={settings.trainer_backend} needs a server that launches workers per model")
   if settings.trainer_backend not in TRAINER_BACKENDS and isinstance(worker_manager, LocalWorkerManager):
@@ -523,6 +561,7 @@ async def _extract_and_persist_model_metadata(
     trainer_backend=settings.trainer_backend,
     trainer_gpus=settings.trainer_gpus,
     trainer_cp=settings.trainer_cp,
+    gpu_types=settings.gpu_types,
   )
   await persist_model_metadata(state, model_id, meta_obj)
 

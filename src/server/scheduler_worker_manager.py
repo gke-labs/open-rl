@@ -185,8 +185,14 @@ def pod_template(worker: Worker) -> dict[str, Any]:
 def accelerator_spec(worker: Worker) -> dict[str, Any]:
   """A torchrun group asks for its devices, each sized for a whole replica."""
   if worker.devices > 1:
-    return {"mode": "MultiGPU", "devices": worker.devices, "memory": worker.footprint.accelerator}
-  return {"mode": "SingleGPU", "memory": worker.footprint.accelerator}
+    spec = {"mode": "MultiGPU", "devices": worker.devices, "memory": worker.footprint.accelerator}
+  else:
+    spec = {"mode": "SingleGPU", "memory": worker.footprint.accelerator}
+  # A shared LoRA runtime's Workloads carry the preference of the job whose
+  # request created them; later jobs reuse them as they are.
+  if worker.meta.gpu_types:
+    spec["preferredTypes"] = list(worker.meta.gpu_types)
+  return spec
 
 
 def workload_body(worker: Worker) -> dict[str, Any]:
