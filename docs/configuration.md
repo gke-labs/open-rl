@@ -68,6 +68,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | `OPEN_RL_ACCEL_TIMESLICER_SOCKET` | `/tmp/open-rl/accel-timeslicer.sock` | Unix socket path for a local accelerator time-slicer. Used when `OPEN_RL_ACCEL_TIMESLICER_HOST` is unset. |
 | `OPEN_RL_ACCEL_TIMESLICER_HOST` | unset | Node-local accelerator time-slicer host for Kubernetes workers. When set, the worker uses TCP instead of the Unix socket; Kubernetes sets this from `status.hostIP`. |
 | `OPEN_RL_ACCEL_TIMESLICER_PORT` | `9753` | Node-local accelerator time-slicer TCP port for Kubernetes workers. |
+| `OPEN_RL_LORA_JOBS_PER_RUNTIME` | unset | Most LoRA jobs one shared trainer and sampler serve. The next job on the same base model starts another runtime with its own GPUs, so step time stops growing with the job count. Unset or `0` puts every LoRA job on a base model on one runtime. |
 
 For local FFT subprocess mode, start `python -m accel_timeslicer.serve` before the
 workers run. The local launcher tags each worker with a time-slice job id and
