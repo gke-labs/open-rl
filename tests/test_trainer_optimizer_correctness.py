@@ -365,7 +365,8 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     worker.adapter_states = {
       "adapter-a": {"trainable_params": lora_trainer_worker_module.active_adapter_parameters(worker.peft_model, "adapter-a"), "optimizer": None}
     }
-    worker.save_adapter = lambda *_args, **_kwargs: None
+    saves = []
+    worker.save_adapter = lambda *args, **_kwargs: saves.append(args)
 
     result = worker.optim_step(
       {
@@ -385,6 +386,8 @@ class TestTrainerOptimizerCorrectness(unittest.TestCase):
     if active_param.grad is not None:
       self.assertTrue(torch.allclose(active_param.grad, torch.zeros_like(active_param.grad)))
     self.assertIsNotNone(other_param.grad)
+    # The adapter is written once per step, by save_for_sampler.
+    self.assertEqual(saves, [])
 
   def test_fft_optim_step_updates_full_model_trainable_params(self) -> None:
     trainable_param = torch.nn.Parameter(torch.tensor([1.0]))

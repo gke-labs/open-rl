@@ -328,8 +328,8 @@ class LoraTrainingWorker(BaseTrainerWorker):
     optimizer.step()
     optimizer.zero_grad()
 
-    self.save_adapter(model_id)
-
+    # No save here: the sampler reads the adapter only after save_for_sampler,
+    # which writes it, and checkpoints go through save_state.
     return {
       "metrics": {
         "grad_norm:mean": self.sanitize_float(total_norm.item()),
