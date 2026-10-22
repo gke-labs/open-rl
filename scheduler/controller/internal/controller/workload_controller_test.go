@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1113,6 +1114,73 @@ func TestPodPrefersTheSmallestAdequateNode(t *testing.T) {
 	}
 	if terms[0].Weight != 100 || terms[0].Preference.MatchFields[0].Values[0] != nodeName {
 		t.Errorf("term = %+v, want %s at weight 100", terms[0], nodeName)
+	}
+}
+
+// A job naming accelerator types swaps the tight-fit terms for one term per
+// type, weighted by list position; naming none leaves the tight-fit terms.
+func TestPodPrefersTheNamedAcceleratorTypes(t *testing.T) {
+	r := newReconciler(t)
+	prefs := []placement.NodePreference{{Weight: 100, Nodes: []string{"node-l4"}}, {Weight: 50, Nodes: []string{"node-a100"}}}
+
+	plain := trainerWorker("w-a", "model-a")
+	pod, err := r.renderPod(plain, "orw-w-a", "claim-a", prefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution, preferredTerms(prefs); !reflect.DeepEqual(got, want) {
+		t.Fatalf("without preferred types terms = %+v, want the tight-fit terms %+v", got, want)
+	}
+	required := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution
+
+	typed := trainerWorker("w-b", "model-b")
+	typed.Spec.Accelerator.PreferredTypes = []string{"nvidia-a100-80gb", "nvidia-l4"}
+	pod, err = r.renderPod(typed, "orw-w-b", "claim-b", prefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution, required) {
+		t.Errorf("required affinity changed with preferred types: %+v", pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution)
+	}
+	terms := pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution
+	if len(terms) != 2 {
+		t.Fatalf("preferred terms = %+v, want one per type", terms)
+	}
+	for i, want := range []struct {
+		weight int32
+		value  string
+	}{{100, "nvidia-a100-80gb"}, {90, "nvidia-l4"}} {
+		term := terms[i]
+		if len(term.Preference.MatchFields) != 0 || len(term.Preference.MatchExpressions) != 1 {
+			t.Fatalf("term %d = %+v, want one type expression and no node names", i, term)
+		}
+		expr := term.Preference.MatchExpressions[0]
+		if term.Weight != want.weight || expr.Key != DefaultAcceleratorTypeLabel || expr.Operator != corev1.NodeSelectorOpIn ||
+			!reflect.DeepEqual(expr.Values, []string{want.value}) {
+			t.Errorf("term %d = %+v, want %s=%s at weight %d", i, term, DefaultAcceleratorTypeLabel, want.value, want.weight)
+		}
+	}
+
+	r.AcceleratorTypeLabel = "example.com/accelerator"
+	pod, err = r.renderPod(typed, "orw-w-b", "claim-b", prefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, term := range pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution {
+		if key := term.Preference.MatchExpressions[0].Key; key != "example.com/accelerator" {
+			t.Errorf("term keyed on %q, want the overridden label", key)
+		}
+	}
+}
+
+func TestTypeTermWeightsFloorAtOne(t *testing.T) {
+	types := make([]string, 12)
+	for i := range types {
+		types[i] = fmt.Sprintf("type-%d", i)
+	}
+	terms := typeTerms(DefaultAcceleratorTypeLabel, types)
+	if terms[9].Weight != 10 || terms[10].Weight != 1 || terms[11].Weight != 1 {
+		t.Errorf("weights %d, %d, %d at positions 9-11, want 10, 1, 1", terms[9].Weight, terms[10].Weight, terms[11].Weight)
 	}
 }
 

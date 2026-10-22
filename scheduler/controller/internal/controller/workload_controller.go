@@ -54,6 +54,9 @@ type WorkloadReconciler struct {
 	// PlacementStrategy orders the two placement moves; the zero value reads
 	// as binpack.
 	PlacementStrategy placement.Strategy
+	// AcceleratorTypeLabel is the node label a Workload's PreferredTypes
+	// match; empty reads as DefaultAcceleratorTypeLabel.
+	AcceleratorTypeLabel string
 	// MaxConcurrentReconciles is how many workers place at once.
 	MaxConcurrentReconciles int
 

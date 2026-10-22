@@ -47,6 +47,7 @@ func main() {
 		retryInterval    time.Duration
 		placementTimeout time.Duration
 		strategy         string
+		typeLabel        string
 		maxConcurrent    int
 	)
 
@@ -62,6 +63,8 @@ func main() {
 		"How long a worker may go unplaced before the request is declared unsatisfiable. 0 waits forever.")
 	flag.StringVar(&strategy, "placement-strategy", env("OPEN_RL_PLACEMENT_STRATEGY", string(placement.StrategyBinPack)),
 		"binpack shares eligible FFT claims first; spread requests a GPU first, then falls back to FFT sharing. LoRA never shares.")
+	flag.StringVar(&typeLabel, "accelerator-type-label", env("OPEN_RL_ACCELERATOR_TYPE_LABEL", controller.DefaultAcceleratorTypeLabel),
+		"Node label naming a node's accelerator type. A Workload's preferredTypes are matched against its values.")
 	flag.IntVar(&maxConcurrent, "max-concurrent-reconciles", envInt("OPEN_RL_MAX_CONCURRENT_RECONCILES", 4),
 		"How many workers place at once. Seat booking is CAS-arbitrated, so concurrency risks only transient over-cut claims, which the sharing fallback drains.")
 
@@ -116,6 +119,7 @@ func main() {
 		RetryInterval:           retryInterval,
 		PlacementTimeout:        placementTimeout,
 		PlacementStrategy:       parsedStrategy,
+		AcceleratorTypeLabel:    typeLabel,
 		MaxConcurrentReconciles: maxConcurrent,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {

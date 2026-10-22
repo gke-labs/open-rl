@@ -36,6 +36,10 @@ const (
 	NodeLabelSampler = "openrl.io/sampler"
 )
 
+// DefaultAcceleratorTypeLabel is the node label naming a node's accelerator
+// type, the one a Workload's PreferredTypes match unless overridden.
+const DefaultAcceleratorTypeLabel = "cloud.google.com/gke-accelerator"
+
 var nodeRoleLabel = map[openrlv1alpha1.WorkerRole]string{
 	openrlv1alpha1.RoleTrainer: NodeLabelTrainer,
 	openrlv1alpha1.RoleSampler: NodeLabelSampler,

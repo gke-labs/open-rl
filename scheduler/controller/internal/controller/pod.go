@@ -231,6 +231,10 @@ func (r *WorkloadReconciler) renderPod(worker *openrlv1alpha1.Workload, podName,
 		// requires exactly one value, hence one term per node.
 		PreferredDuringSchedulingIgnoredDuringExecution: preferredTerms(prefs),
 	}}
+	// A job naming accelerator types ranks nodes by type instead of by size.
+	if types := worker.Spec.Accelerator.PreferredTypes; len(types) > 0 {
+		pod.Spec.Affinity.NodeAffinity.PreferredDuringSchedulingIgnoredDuringExecution = typeTerms(r.acceleratorTypeLabel(), types)
+	}
 
 	if err := controllerutil.SetControllerReference(worker, pod, r.Scheme()); err != nil {
 		return nil, fmt.Errorf("set owner of pod %s: %w", podName, err)
@@ -254,6 +258,31 @@ func preferredTerms(prefs []placement.NodePreference) []corev1.PreferredScheduli
 		}
 	}
 	return terms
+}
+
+// typeTerms renders preferred accelerator types as weighted scheduling
+// terms, 100 for the first and 10 less per position, never below 1.
+func typeTerms(label string, types []string) []corev1.PreferredSchedulingTerm {
+	terms := make([]corev1.PreferredSchedulingTerm, 0, len(types))
+	for i, name := range types {
+		terms = append(terms, corev1.PreferredSchedulingTerm{
+			Weight: int32(max(100-10*i, 1)),
+			Preference: corev1.NodeSelectorTerm{
+				MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key: label, Operator: corev1.NodeSelectorOpIn, Values: []string{name},
+				}},
+			},
+		})
+	}
+	return terms
+}
+
+// acceleratorTypeLabel is the node label PreferredTypes match against.
+func (r *WorkloadReconciler) acceleratorTypeLabel() string {
+	if r.AcceleratorTypeLabel != "" {
+		return r.AcceleratorTypeLabel
+	}
+	return DefaultAcceleratorTypeLabel
 }
 
 // setEnv merges one variable by name, overwriting whatever the template had.
