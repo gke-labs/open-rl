@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import FFTConfig
 
@@ -86,6 +87,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
+    # mmap reads over NFS are page-sized and serial; see training.prefetch.
+    prefetch(base_model_name)
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
     print("Successfully loaded full fine-tuning model.")
 
@@ -315,6 +318,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
     target_device = "auto" if num_gpus > 1 else self.device
+    # mmap reads over NFS are page-sized and serial; see training.prefetch.
+    prefetch(state_path)
     self.model = AutoModelForCausalLM.from_pretrained(state_path, dtype=dtype, device_map=target_device)
     self.prepare_model_for_training()
     # No sampler save holds the loaded weights.
