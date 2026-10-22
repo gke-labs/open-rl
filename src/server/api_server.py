@@ -562,12 +562,16 @@ async def enqueue(command: Command) -> str:
 
 
 async def launch_worker_and_enqueue(command: Command) -> str:
-  """Ensure the model's dedicated trainer worker exists, then enqueue onto its queue.
+  """Ensure the model's trainer and sampler workers exist, then enqueue onto its queue.
 
   The launcher is idempotent per model_id, and Kubernetes (or the local process
   table) owns the worker's lifecycle from here; there is no separate launch
   queue. Launch failures resolve the future immediately so clients don't long-poll
   a request that can never be served.
+
+  The sampler starts here rather than at the client's first save or sampling
+  call, so its engine build overlaps the trainer's start-up and the client's
+  dataset loading.
   """
   assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
   request_id = command.request_id
@@ -577,6 +581,7 @@ async def launch_worker_and_enqueue(command: Command) -> str:
     traceback.print_exc()
     await store.set_result(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
     return request_id
+  await ensure_sampler_launched(command.model_id)
   return await enqueue(command)
 
 

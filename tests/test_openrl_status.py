@@ -106,10 +106,12 @@ class StatusViewsTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(body["settings"]["openrl.weight_sync"], "delta")
     self.assertFalse(body["shares_workers"])
     self.assertTrue(body["session_live"])
-    (worker,) = body["workers"]
-    self.assertEqual((worker["role"], worker["state"], worker["node"]), ("trainer", "ready", "node-a"))
+    # create_model starts the sampler alongside the trainer.
+    self.assertEqual(sorted(w["role"] for w in body["workers"]), ["sampler", "trainer"])
+    worker = next(w for w in body["workers"] if w["role"] == "trainer")
+    self.assertEqual((worker["state"], worker["node"]), ("ready", "node-a"))
     self.assertEqual(worker["summary"], f"trainer ready: fake-{model_id}-trainer on node-a, 5s")
-    self.assertEqual(body["summary"], worker["summary"])
+    self.assertIn(worker["summary"], body["summary"])
 
   async def test_the_view_exposes_only_the_models_own_facts(self):
     _, model_id = await self.create_model()
@@ -158,11 +160,13 @@ class StatusViewsTest(unittest.IsolatedAsyncioTestCase):
 
   async def test_a_trainer_is_starting_until_it_announces_itself(self):
     _, model_id = await self.create_model(trainer_ready=False)
-    (trainer,) = (await self.get(f"openrl/models/{model_id}")).json()["workers"]
+    workers = (await self.get(f"openrl/models/{model_id}")).json()["workers"]
+    trainer = next(w for w in workers if w["role"] == "trainer")
     self.assertEqual(trainer["state"], "starting")
     self.assertTrue(trainer["detail"].endswith("loading the model"))
     await self.state.set_value("open_rl:trainer_ready:test-base", "1")
-    (trainer,) = (await self.get(f"openrl/models/{model_id}")).json()["workers"]
+    workers = (await self.get(f"openrl/models/{model_id}")).json()["workers"]
+    trainer = next(w for w in workers if w["role"] == "trainer")
     self.assertEqual(trainer["state"], "ready")
 
   async def test_a_sampler_is_starting_until_it_announces_itself(self):

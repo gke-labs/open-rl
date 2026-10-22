@@ -82,7 +82,8 @@ class SessionLifecycleTest(unittest.IsolatedAsyncioTestCase):
     await self.state.set_value("open_rl:sampler_ready:test-base", "1")
     sampling = (await self.post("create_session", {}))["session_id"]
     await self.post("create_sampling_session", {"model_path": f"tinker://{adapter}/sampler_weights/test", "session_id": sampling})
-    self.assertEqual(self.manager.ensured, [(adapter, "trainer"), (fft_model, "trainer"), (adapter, "sampler")])
+    expected = [(adapter, "trainer"), (adapter, "sampler"), (fft_model, "trainer"), (fft_model, "sampler"), (adapter, "sampler")]
+    self.assertEqual(self.manager.ensured, expected)
 
     await self.expire(training)
     await self.reap()
