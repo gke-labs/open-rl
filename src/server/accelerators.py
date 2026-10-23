@@ -53,15 +53,16 @@ class PodSpec:
   volume_mounts: list[dict[str, Any]] = field(default_factory=list)
 
 
-def pod_spec(accelerator: Accelerator, role: str) -> PodSpec:
+def pod_spec(accelerator: Accelerator, role: str, is_lora: bool) -> PodSpec:
   if accelerator == "gpu":
     return PodSpec("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest", "nvidia.com/gpu", None, "OPEN_RL_GPU_WORKER_ENV_CONFIGMAP")
   # GKE taints TPU nodes with google.com/tpu.
   if role == "trainer":
     return PodSpec("OPEN_RL_TPU_TRAINER_IMAGE", None, "google.com/tpu", "TPU", "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP", env={"OPEN_RL_DEVICE": "tpu"})
-  # vllm-tpu needs more shared memory than a container's default /dev/shm.
+  # vLLM on TPU needs more shared memory than a container's default /dev/shm.
+  # The LoRA sampler image can't reload a full checkpoint, so FFT samplers get their own image.
   return PodSpec(
-    "OPEN_RL_TPU_SAMPLER_IMAGE",
+    "OPEN_RL_TPU_SAMPLER_IMAGE" if is_lora else "OPEN_RL_TPU_FFT_SAMPLER_IMAGE",
     None,
     "google.com/tpu",
     "TPU",
