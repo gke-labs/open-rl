@@ -85,18 +85,13 @@ class TrainingModelMetadata(BaseModel):
     return f"{self.trainer_backend}-{self.base_model}"
 
   def pool(self, model_id: str) -> str:
-    """The sampling pool that serves this job. A runtime named after a base model
-    (shared LoRA, or a bare base-model session) needs a name from
-    OPEN_RL_SAMPLER_POOLS, because base model names are not valid Kubernetes names."""
+    """The sampling pool that serves this job's runtime. Base model names are not
+    valid Kubernetes names, so those runtimes get a slug and a hash."""
     runtime = self.runtime(model_id)
-    name = json.loads(os.getenv("OPEN_RL_SAMPLER_POOLS", "{}")).get(runtime)
-    if name is None and not self.shares_runtime():
-      name = f"sampler-{model_id}"
-    if name is None:
-      raise ValueError(f"OPEN_RL_SAMPLER_POOLS has no pool for {runtime}")
-    if not POOL_NAME.fullmatch(name):
-      raise ValueError(f"Pool name {name!r} is not a DNS-1123 label of at most 63 characters")
-    return name
+    if POOL_NAME.fullmatch(name := f"sampler-{runtime}"):
+      return name
+    slug = re.sub(r"[^a-z0-9]+", "-", runtime.lower()).strip("-")[:40]
+    return f"sampler-{slug}-{hashlib.sha256(runtime.encode()).hexdigest()[:8]}"
 
 
 def decode_model_metadata(raw: str | None) -> TrainingModelMetadata | None:

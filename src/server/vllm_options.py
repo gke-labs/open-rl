@@ -1,4 +1,4 @@
-"""Engine and sampling options shared by the two vLLM sampler workers."""
+"""Engine and sampling options for the vLLM samplers."""
 
 import json
 import os
@@ -95,6 +95,19 @@ def detected_device_memory_bytes() -> int:
   except Exception:
     pass
   return 0
+
+
+def sample_params(r: Mapping[str, Any]) -> dict[str, Any]:
+  """vLLM sampling params for a pool record, asking for the logprobs every result carries."""
+  return {**r["sampling_params"], "logprobs": 0, "prompt_logprobs": 0 if r["include_prompt_logprobs"] else None}
+
+
+def sample_result(sequences: list[tuple[list[int], list[float], str]], prompt_logprobs: list[float | None] | None) -> dict[str, Any]:
+  """The result a pool saves for a record, from each sequence's tokens, logprobs and stop reason."""
+  result: dict[str, Any] = {"type": "sample", "sequences": [{"tokens": t, "logprobs": lp, "stop_reason": s} for t, lp, s in sequences]}
+  if prompt_logprobs is not None:
+    result["prompt_logprobs"] = prompt_logprobs
+  return result
 
 
 def engine_args(base_model: str, is_lora: bool, env: Mapping[str, str | None], sleep_mode: bool = False) -> dict[str, Any]:

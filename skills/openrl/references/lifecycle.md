@@ -20,14 +20,17 @@ The workers that serve one job appear together in the job's model view,
 Each worker in the model view has a `state`, the same five values on every server, and a
 `detail` in the scheduler's own words (Workload phase and reason, node). Branch on `state`;
 show `detail` to a human. `kubectl -n openrl-system get workloads` shows the same facts
-`detail` quotes; the pods behind them are the scheduler's and the view does not read them.
+`detail` quotes. The pods behind them are the scheduler's; the view reads only whether a
+running sampler's pod is Ready, and names the reason when its container is waiting, for
+example `CrashLoopBackOff`. A sampler is also `starting` while its pool's dispatcher has no
+pod available, since no sample is sent without it.
 
 | State | Meaning | What `detail` says | Normal duration |
 |---|---|---|---|
 | `waiting_for_placement` | no accelerator assigned yet | `Pending (NoCapacity: ...)`: nothing in the cluster fits; `Pending (WaitingForCapacity)`: something fits but is busy | seconds; longer only when the cluster is full |
 | `starting` | placed on a node; pulling the image, mounting volumes, or loading the model | `Placing (PodCreated) on <node>` is the image pull and volume mount; `Running ..., loading the model` is the trainer loading the base model or vLLM starting | under a minute on a warm node; 5 to 10 minutes on a cold node. Trainer: `ready` about 2 minutes after `create_model`; sampler: 3 to 4 minutes more while vLLM starts |
 | `ready` | serving requests: the worker has its model loaded and is draining its queue | node name | |
-| `failed` | the process exited with an error, or the request cannot be satisfied | the scheduler's reason, for example `Failed (PodFailed)`. A container that cannot pull its image or crash-loops is not reported as failed yet; it stays `starting` or `ready` past the normal duration, see the runbook | |
+| `failed` | the process exited with an error, or the request cannot be satisfied | the scheduler's reason, for example `Failed (PodFailed)`. A container that cannot pull its image or crash-loops is not reported as failed yet; it stays `starting` or `ready` past the normal duration (a crash-looping sampler is `starting` with the reason in `detail`), see the runbook | |
 | `stopped` | exited normally, or being released | `being released; ...` while the reaper or `delete_model` tears it down | |
 
 While a call blocks, ask the server about the model from another shell; the examples

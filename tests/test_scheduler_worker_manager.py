@@ -1,6 +1,8 @@
 import json
 import os
+import tempfile
 import unittest
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
@@ -54,11 +56,38 @@ class FakeCustomObjectsApi:
     return {"items": items}
 
 
+class FakeApi:
+  def __init__(self):
+    self.objects: dict[tuple[str, str], dict] = {}
+
+  def __getattr__(self, method: str):
+    verb, kind = method.split("_namespaced_")
+
+    def call(*args, **kwargs):
+      if verb == "list":
+        key, _, value = kwargs["label_selector"].partition("=")
+        found = [name for (k, name), body in self.objects.items() if k == kind and body["metadata"].get("labels", {}).get(key) == value]
+        return SimpleNamespace(items=[SimpleNamespace(metadata=SimpleNamespace(name=name)) for name in found])
+      if verb in ("delete", "read") and (kind, args[0]) not in self.objects:
+        raise ApiError(404)
+      if verb == "delete":
+        return self.objects.pop((kind, args[0]))
+      if verb == "read":
+        return SimpleNamespace(metadata=SimpleNamespace(deletion_timestamp=None))
+      if (kind, args[1]["metadata"]["name"]) in self.objects:
+        raise ApiError(409)
+      self.objects[(kind, args[1]["metadata"]["name"])] = args[1]
+
+    return call
+
+
 class SchedulerWorkerManagerTest(unittest.TestCase):
   def setUp(self) -> None:
-    self.enterContext(patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}))
-    self.api = FakeCustomObjectsApi()
-    self.manager = SchedulerWorkerManager(custom_api=self.api)
+    # The API server Deployment sets OPEN_RL_TMP_DIR to the shared volume every worker pod mounts. A temp dir stands in for it.
+    self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+    self.enterContext(patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_TMP_DIR": self.tmp}))
+    self.api, self.k8s = FakeCustomObjectsApi(), FakeApi()
+    self.manager = SchedulerWorkerManager(custom_api=self.api, apps_api=self.k8s, networking_api=self.k8s)
 
   def store_with(self, model_id: str, meta: dict) -> InMemoryStore:
     s = InMemoryStateStore()
@@ -83,7 +112,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     t_container = trainer["spec"]["template"]["spec"]["containers"][0]
     s_container = sampler["spec"]["template"]["spec"]["containers"][0]
     self.assertEqual(t_container["command"][-1], "server.training_requests_processor")
-    self.assertEqual(s_container["command"][-1], "server.vllm_sampler")
+    self.assertEqual(s_container["command"], ["uv", "run", "vllm", "serve"])
     self.assertIn("--active-tenant-set-id", t_container["args"])
 
   def test_an_exclusive_fft_worker_is_placed_alone_and_never_time_sliced(self) -> None:
@@ -255,7 +284,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(t_container["args"], ["--model-id", runtime, "--active-tenant-set-id", f"{runtime}-1"])
     self.assertEqual({e["name"]: e.get("value") for e in t_container["env"]}["OPEN_RL_TRAINER_BACKEND"], "automodel")
     self.assertNotEqual(s_container["image"], "am:1")
-    self.assertEqual({e["name"]: e.get("value") for e in s_container["env"]}["OPEN_RL_MODEL_ID"], runtime)
+    self.assertEqual(s_container["command"], ["uv", "run", "vllm", "serve"])
     # Like any shared LoRA runtime, deleting one job leaves it up.
     self.assertEqual(self.api.deleted, [])
 
@@ -387,6 +416,34 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.assertEqual(sampler["spec"]["ownerID"], "job-sr")
     self.assertEqual(sorted(self.api.deleted), sorted(names))
 
+  def test_a_pool_of_one_replica_serves_itself_with_no_router(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora", "exclusive": True})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+    (sampler,) = self.api.created
+    container = sampler["spec"]["template"]["spec"]["containers"][0]
+    self.assertEqual((container["command"][-1], container["args"]), ("server.vllm_sampler", ["--pool", "sampler-job-lora-1"]))
+    self.assertEqual({e["name"]: e.get("value") for e in container["env"]}["OPEN_RL_TIME_SLICING"], "off")
+    self.assertEqual(self.k8s.objects, {})
+
+  def test_a_shared_lora_pool_is_routed_and_grows_to_the_most_replicas_any_job_asks_for(self) -> None:
+    for first, second in ((1, 2), (2, 1)):
+      with self.subTest(first=first, second=second):
+        api, k8s = FakeCustomObjectsApi(), FakeApi()
+        manager = SchedulerWorkerManager(custom_api=api, apps_api=k8s, networking_api=k8s)
+        s = InMemoryStateStore()
+        for model_id, replicas in (("job-a", first), ("job-b", second)):
+          meta = {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora", "sampler_replicas": replicas}
+          s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps(meta)
+        with patch("server.worker_manager.get_state_store", return_value=s):
+          manager.ensure("job-a", "sampler")
+          manager.ensure("job-b", "sampler")
+        commands = {w["metadata"]["name"]: w["spec"]["template"]["spec"]["containers"][0]["command"] for w in api.created}
+        serve = ["uv", "run", "vllm", "serve"]
+        self.assertEqual(commands, {"lora-qwen-qwen2-5-0-5b-0-sampler": serve, "lora-qwen-qwen2-5-0-5b-1-sampler": serve})
+        pools = {w["metadata"]["labels"]["app.kubernetes.io/instance"] for w in api.created}
+        self.assertEqual([name for kind, name in k8s.objects if kind == "deployment"], list(pools))
+
 
 class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
   async def test_lora_and_fft_sessions_launch_their_own_sampler_types(self) -> None:
@@ -394,14 +451,15 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     state = InMemoryStateStore()
     for model_id, kind in (("lora-a", "lora"), ("lora-b", "lora"), ("fft-a", "full")):
       await state.set_value(f"open_rl:model_meta:{model_id}", json.dumps({"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": kind}))
-    api = FakeCustomObjectsApi()
+    api, tmp = FakeCustomObjectsApi(), self.enterContext(tempfile.TemporaryDirectory())
+    env = {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm", "OPEN_RL_TMP_DIR": tmp}
     with (
-      patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}),
+      patch.dict(os.environ, env),
       patch("server.worker_manager.get_state_store", return_value=state),
       patch.object(api_server, "store", store),
       patch.object(api_server, "state", state),
       patch.object(api_server, "get_store", return_value=store),
-      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api)),
+      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api, apps_api=FakeApi(), networking_api=FakeApi())),
     ):
       async with asgi_client() as client:
         for model_id in ("lora-a", "fft-a", "lora-b"):
@@ -410,7 +468,7 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(len(api.created), 2, "LoRA sessions should reuse one sampler while FFT gets its own")
     lora, fft = api.created
     self.assertEqual(lora["spec"]["trainingKind"], "lora")
-    self.assertEqual(lora["spec"]["template"]["spec"]["containers"][0]["command"][-1], "server.vllm_sampler")
+    self.assertEqual(lora["spec"]["template"]["spec"]["containers"][0]["command"], ["uv", "run", "vllm", "serve"])
     self.assertEqual(fft["spec"]["trainingKind"], "fft")
     self.assertEqual(fft["metadata"]["name"], "fft-fft-a-sampler")
 

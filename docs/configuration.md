@@ -48,7 +48,7 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `BASE_MODEL` | unset | Hugging Face model id loaded by the trainer and, when using vLLM, by the sampler. |
-| `SAMPLING_BACKEND` | `torch` in one process, `vllm` when `REDIS_URL` is set | Sampling backend selector. `torch` samples in the training process. `vllm` queues sampling requests for a vLLM sampler worker and needs `REDIS_URL`. |
+| `SAMPLING_BACKEND` | `torch` in one process, `vllm` when `REDIS_URL` is set | Sampling backend selector. `torch` samples in the training process. `vllm` samples through the sampling pools described below and needs `REDIS_URL`. |
 | `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
 | `OPEN_RL_FUTURE_TTL_S` | `300` | How long resolved request results stay readable by `retrieve_future` after a worker resolves them. |
 
@@ -100,3 +100,24 @@ On Kubernetes the release bundles set these variables. The API server runs with
 each trainer and sampler, and the OpenRL scheduler starts their pods. The API
 server writes each worker's environment into the `Workload`'s pod template, so
 there are no worker deployments to configure by hand.
+
+## Sampling pools
+
+Sampling goes through sampling pools. A pool serves one FFT job, one exclusive
+LoRA job, or every shared LoRA job on one base model. Pending requests stay in a
+Redis stream until a result is saved, so the Redis in `k8s/deploy/base` keeps an
+append-only file on a persistent volume and never evicts keys.
+
+A pool that one job owns runs vLLM in the sampler's own process when it has one
+replica. A pool with two or more replicas (`openrl.sampler_replicas`), and every
+pool that shared LoRA jobs use, runs `vllm serve` Workloads behind one CPU
+Deployment, named after the pool, that runs the dispatcher, Envoy and the llm-d
+endpoint picker (configured by the `open-rl-sampler-router` ConfigMap in
+`k8s/deploy/base`). A shared pool grows to the most replicas any of its jobs asks
+for. On one machine every pool has one replica, in process. See
+[the sampling pools design](designs/017-sampling-pools.md).
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_DISPATCH_CONCURRENCY` | `256` | Requests one pool keeps in flight. |
+| `OPEN_RL_DISPATCHER_IMAGE` | the worker image | Image for each pool's dispatcher container. The release sets it to the API-server image, which carries the dispatcher without the GPU stack and pulls in seconds. |

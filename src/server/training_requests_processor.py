@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import json
 import os
 import shutil
 import threading
@@ -19,8 +18,10 @@ from opentelemetry import propagate, trace
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
+from server.lora_snapshots import freeze_adapter
 from server.model_metadata import get_model_metadata
-from server.store import RequestStore, StateStore, get_state_store, get_store
+from server.sampling_store import SamplingStore
+from server.store import RedisStore, RequestStore, StateStore, get_state_store, get_store
 from training import commands
 from training.commands import parse_command
 from training.distributed import broadcast_object, is_distributed, is_primary, local_rank
@@ -108,6 +109,8 @@ class TrainingRequestsProcessor:
       raise RuntimeError("A dedicated trainer worker requires REDIS_URL so it can share queues and futures with the API server")
 
     self.store = store
+    # Sampling pools live in Redis, so the in-process trainer's in-memory store has none.
+    self.sampling = SamplingStore(store.redis) if isinstance(store, RedisStore) else None
     self.worker = worker
     self.model_id = model_id
     self.active_tenant_set_id = active_tenant_set_id
@@ -369,7 +372,10 @@ class TrainingRequestsProcessor:
         ref = command.path or command.sampling_session_id
         checkpoint = await asyncio.to_thread(self.worker.save_for_sampler, command.model_id, command.alias, ref)
         if checkpoint:
-          await self.publish_checkpoint(command.model_id, checkpoint)
+          await self.drop_old_checkpoints(command.model_id, checkpoint)
+        elif is_primary() and ref:
+          # A sampler serves a LoRA save by its reference, so the adapter is frozen under that name.
+          await asyncio.to_thread(freeze_adapter, command.model_id, self.worker.base_model_name, command.path, command.sampling_session_id)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)
@@ -379,14 +385,15 @@ class TrainingRequestsProcessor:
       case _:
         raise NotImplementedError(f"Training request op {command.op!r} is not supported")
 
-  async def publish_checkpoint(self, model_id: str, local_path: str) -> None:
-    """Tell the samplers about a new checkpoint and drop the versions they no longer need."""
+  async def drop_old_checkpoints(self, model_id: str, local_path: str) -> None:
+    """Drop sampler versions beyond the newest few, except ones pending requests still name."""
     if not is_primary():
       return
-    if hasattr(self.store, "redis"):
-      num_subs = await self.store.redis.publish(f"open_rl:weight_update:{model_id}", json.dumps({"weights_path": local_path}))
-      print(f"[Trainer] Published weight update signal to {num_subs} subscribers for version path: {local_path}")
     older = older_versions(local_path, SAMPLER_VERSIONS_KEPT)
+    if self.sampling is not None:
+      meta = await get_model_metadata(get_state_store(), model_id)
+      pinned = await self.sampling.pinned_revisions(meta.pool(model_id))
+      older = [path for path in older if path not in pinned]
     for path in older:
       shutil.rmtree(path, ignore_errors=True)
     if older:

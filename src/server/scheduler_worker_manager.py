@@ -19,6 +19,7 @@ The Workload name is what the pod label and the time-slicer call job_id.
 
 import dataclasses
 import datetime
+import json
 import logging
 import os
 import time
@@ -28,6 +29,9 @@ from typing import Any
 from kubernetes import client, config
 
 from server.estimator import Footprint, footprint
+from server.lora_snapshots import snapshot_root
+from server.sampling_dispatcher import revision_file, tmp_root
+from server.vllm_options import serve_args
 from server.worker_manager import (
   FAILED,
   READY,
@@ -47,6 +51,12 @@ logger = logging.getLogger(__name__)
 GROUP = "openrl.io"
 VERSION = "v1alpha1"
 PLURAL = "workloads"
+
+EPP_IMAGE = "ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.11.0"
+ENVOY_IMAGE = "docker.io/envoyproxy/envoy:distroless-v1.33.2"
+ROUTER_CONFIG = "/etc/sampler-router"
+# On a pool's Deployment and NetworkPolicy, so release_owner finds them after the pool's Workloads are gone.
+OWNER_LABEL = "openrl.io/owner"
 
 
 def workload_name(role: str, owner: str, is_lora: bool, index: int = 0) -> str:
@@ -75,6 +85,22 @@ class Worker:
   # Which replica of its role this is.
   index: int = 0
 
+  # The sampling pool a sampler serves.
+  pool: str | None = None
+
+  @property
+  def replicas(self) -> int:
+    # A sampler on its trainer's GPU is its pool's only replica, since only one fits beside the trainer.
+    if self.role != "sampler" or self.meta.shares_gpu():
+      return 1
+    return self.meta.sampler_replicas
+
+  @property
+  def routed(self) -> bool:
+    # A pool several jobs share is always routed, so a job that asks for more replicas only adds them. A pool of one
+    # replica that a job owns alone has nothing to route, so that replica serves the pool itself.
+    return self.role == "sampler" and (self.replicas > 1 or self.meta.shares_runtime())
+
   @property
   def owner(self) -> str:
     return owner_id(self.runtime)
@@ -84,30 +110,30 @@ class Worker:
     return workload_name(self.role, self.owner, self.is_lora, self.index)
 
 
-def replicas_of(model_id: str, role: str) -> int:
-  """How many workers of this role the model asked for. Each sampler replica
-  is its own Workload draining the shared sampling queue."""
-  if role != "sampler":
-    return 1
-  meta, _, _ = runtime_of(model_id)
-  return meta.sampler_replicas
+def pool_labels(component: str, pool: str) -> dict[str, str]:
+  return {"app.kubernetes.io/component": component, "app.kubernetes.io/instance": pool}
+
+
+def downward(name: str, path: str) -> dict[str, Any]:
+  return {"name": name, "valueFrom": {"fieldRef": {"fieldPath": path}}}
 
 
 def describe_worker(model_id: str, role: str) -> Worker:
   meta, runtime, is_lora = runtime_of(model_id)
   base_model = base_model_of(meta, runtime)
+  pool = meta.pool(runtime) if role == "sampler" else None
   exclusive = not meta.shares_gpu()
   devices = meta.trainer_gpus if role == "trainer" else 1
   size = footprint(base_model, meta.fine_tuning_type, role)
   # Each torchrun rank is its own process with its own host memory.
   size = replace(size, host_request_bytes=size.host_request_bytes * devices, host_limit_bytes=size.host_limit_bytes * devices)
-  return Worker(role, runtime, base_model, is_lora, exclusive, meta, size, devices)
+  return Worker(role, runtime, base_model, is_lora, exclusive, meta, size, devices, pool=pool)
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
   """The shared worker env plus what only the cluster knows. The time-slice
   group is placement's and the scheduler stamps it."""
-  tmp_dir = os.getenv("OPEN_RL_TMP_DIR", "/mnt/shared/open-rl")
+  tmp_dir = tmp_root()
   values = {
     "REDIS_URL": os.environ["REDIS_URL"],
     "OPEN_RL_TMP_DIR": tmp_dir,
@@ -133,7 +159,9 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   if worker.exclusive:
     values["OPEN_RL_TIME_SLICING"] = "off"
   env: list[dict[str, Any]] = [{"name": name, "value": value} for name, value in values.items()]
-  env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
+  env.append(downward("OPEN_RL_ACCEL_TIMESLICER_HOST", "status.hostIP"))
+  if worker.pool:
+    env.append(downward("POD_IP", "status.podIP"))
   return env
 
 
@@ -183,9 +211,116 @@ def pod_template(worker: Worker) -> dict[str, Any]:
     template["spec"]["containers"][0]["volumeMounts"].append({"name": "dshm", "mountPath": "/dev/shm"})
     template["spec"]["volumes"].append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
 
+  container = template["spec"]["containers"][0]
+  if worker.pool and not worker.routed:
+    container["command"] = ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
+    container["args"] = ["--pool", worker.pool]
+    container["readinessProbe"] = {"exec": {"command": ["test", "-f", "/tmp/open-rl-sampler-ready"]}, "periodSeconds": 2}
+    template["metadata"] = {"labels": pool_labels("sampler", worker.pool)}
+  # A pool sampler is plain `vllm serve`, ready only while it serves the version the pool's dispatcher expects.
+  elif worker.pool:
+    container["command"] = ["uv", "run", "vllm", "serve"]
+    # The pool's EPP subscribes to these events at llm-d's default port and topic prefix; the topic names the pod and the served model.
+    kv_events = {"enable_kv_cache_events": True, "publisher": "zmq", "endpoint": "tcp://*:5557", "topic": f"kv@$(POD_IP):8000@{worker.base_model}"}
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    container["args"] = [*serve_args(worker.base_model, worker.is_lora, env), "--kv-events-config", json.dumps(kv_events)]
+    if worker.is_lora:
+      # vLLM loads each frozen adapter snapshot by name from this directory.
+      container["env"] += [
+        {"name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING", "value": "true"},
+        {"name": "VLLM_LORA_RESOLVER_CACHE_DIR", "value": str(snapshot_root())},
+      ]
+    probe = (
+      "import json, sys, urllib.request\n"
+      'version = json.load(urllib.request.urlopen("http://127.0.0.1:8000/weight_info", timeout=1))["weight_version"]\n'
+      f"sys.exit(version != open({str(revision_file(worker.pool))!r}).read())"
+    )
+    container["readinessProbe"] = {"exec": {"command": ["/app/.venv/bin/python", "-c", probe]}, "periodSeconds": 2, "timeoutSeconds": 2}
+    template["metadata"] = {"labels": pool_labels("sampler", worker.pool)}
+
   if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
     template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy
   return template
+
+
+def dispatcher_body(pool: str, owner: str) -> dict[str, Any]:
+  """The pool's CPU pod, named after the pool: the dispatcher, Envoy and the llm-d
+  EPP. Recreate stops the old pod before the new one starts, so two dispatchers
+  never send for one pool."""
+  labels = pool_labels("dispatcher", pool)
+  env = [
+    {"name": "REDIS_URL", "value": os.environ["REDIS_URL"]},
+    {"name": "OPEN_RL_TMP_DIR", "value": tmp_root()},
+    {"name": "OPEN_RL_SAMPLER_POOL", "value": pool},
+    downward("OPEN_RL_WORKER_NAMESPACE", "metadata.namespace"),
+  ]
+  if concurrency := os.getenv("OPEN_RL_DISPATCH_CONCURRENCY"):
+    env.append({"name": "OPEN_RL_DISPATCH_CONCURRENCY", "value": concurrency})
+  dispatcher = {
+    "name": "dispatcher",
+    # The dispatcher is a small CPU process; the API-server image carries it without the GPU stack.
+    "image": os.getenv("OPEN_RL_DISPATCHER_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"),
+    "command": ["uv", "run", "python", "-u", "-m", "server.sampling_dispatcher"],
+    "env": env,
+    "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],
+    "resources": {"requests": {"cpu": "250m", "memory": "512Mi"}, "limits": {"memory": "2Gi"}},
+  }
+  if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
+    dispatcher["imagePullPolicy"] = pull_policy
+  envoy = {
+    "name": "envoy",
+    "image": ENVOY_IMAGE,
+    "args": ["-c", f"{ROUTER_CONFIG}/envoy.yaml", "--log-level", "warn"],
+    "volumeMounts": [{"name": "router", "mountPath": ROUTER_CONFIG}],
+    "resources": {"requests": {"cpu": "250m", "memory": "256Mi"}, "limits": {"memory": "1Gi"}},
+  }
+  epp = {
+    "name": "epp",
+    "image": EPP_IMAGE,
+    "args": [
+      *("--endpoint-selector", f"app.kubernetes.io/component=sampler,app.kubernetes.io/instance={pool}", "--endpoint-target-ports", "8000"),
+      *("--config-file", f"{ROUTER_CONFIG}/epp.yaml", "--metrics-endpoint-auth=false"),
+    ],
+    "env": [downward("POD_NAME", "metadata.name"), downward("NAMESPACE", "metadata.namespace")],
+    "livenessProbe": {"grpc": {"port": 9003, "service": "liveness"}, "periodSeconds": 10},
+    "resources": {"requests": {"cpu": "500m", "memory": "1Gi"}, "limits": {"memory": "4Gi"}},
+    "volumeMounts": [{"name": "router", "mountPath": ROUTER_CONFIG}],
+  }
+  return {
+    "apiVersion": "apps/v1",
+    "kind": "Deployment",
+    "metadata": {"name": pool, "labels": {**labels, "app.kubernetes.io/managed-by": "open-rl-api-server", OWNER_LABEL: owner}},
+    "spec": {
+      "replicas": 1,
+      "strategy": {"type": "Recreate"},
+      "selector": {"matchLabels": labels},
+      "template": {
+        "metadata": {"labels": labels},
+        "spec": {
+          "serviceAccountName": "open-rl-sampler-dispatcher",
+          "containers": [dispatcher, envoy, epp],
+          "volumes": [
+            {"name": "router", "configMap": {"name": "open-rl-sampler-router"}},
+            {"name": "shared-storage", "persistentVolumeClaim": {"claimName": os.getenv("OPEN_RL_SHARED_PVC", "open-rl-shared-pvc")}},
+          ],
+        },
+      },
+    },
+  }
+
+
+def network_policy_body(pool: str, owner: str) -> dict[str, Any]:
+  """Only the pool's CPU pod reaches its samplers, for inference and KV events."""
+  return {
+    "apiVersion": "networking.k8s.io/v1",
+    "kind": "NetworkPolicy",
+    "metadata": {"name": pool, "labels": {"app.kubernetes.io/managed-by": "open-rl-api-server", OWNER_LABEL: owner}},
+    "spec": {
+      "podSelector": {"matchLabels": pool_labels("sampler", pool)},
+      "policyTypes": ["Ingress"],
+      "ingress": [{"from": [{"podSelector": {"matchLabels": pool_labels("dispatcher", pool)}}], "ports": [{"port": 8000}, {"port": 5557}]}],
+    },
+  }
 
 
 def accelerator_spec(worker: Worker) -> dict[str, Any]:
@@ -196,10 +331,12 @@ def accelerator_spec(worker: Worker) -> dict[str, Any]:
 
 
 def workload_body(worker: Worker) -> dict[str, Any]:
+  # A pool label marks a Workload whose pool has a dispatcher, which release_owner deletes with it.
+  labels = {"app.kubernetes.io/managed-by": "open-rl-api-server", **(pool_labels("sampler", worker.pool) if worker.routed else {})}
   return {
     "apiVersion": f"{GROUP}/{VERSION}",
     "kind": "Workload",
-    "metadata": {"name": worker.name, "labels": {"app.kubernetes.io/managed-by": "open-rl-api-server"}},
+    "metadata": {"name": worker.name, "labels": labels},
     "spec": {
       "role": worker.role,
       "trainingKind": "lora" if worker.is_lora else "fft",
@@ -216,21 +353,62 @@ def workload_body(worker: Worker) -> dict[str, Any]:
 class SchedulerWorkerManager:
   """Runs trainer and sampler workers by creating Workload objects."""
 
-  def __init__(self, custom_api: Any = None):
+  def __init__(self, custom_api: Any = None, apps_api: Any = None, networking_api: Any = None, core_api: Any = None):
     if not os.getenv("REDIS_URL"):
       raise RuntimeError("OPEN_RL_ENABLE_FFT=true requires REDIS_URL so launched workers can share queues and futures")
     self.namespace = os.getenv("OPEN_RL_WORKER_NAMESPACE", "openrl-system")
     if custom_api is None:
       config.load_incluster_config()
       custom_api = client.CustomObjectsApi()
+      apps_api, networking_api, core_api = client.AppsV1Api(), client.NetworkingV1Api(), client.CoreV1Api()
     self.custom_api = custom_api
+    self.apps_api, self.networking_api, self.core_api = apps_api, networking_api, core_api
     # The model view may be polled; one read per few seconds is plenty.
     self._workers_cache: tuple[float, list[dict[str, Any]]] | None = None
     self.view_cache_seconds = 5.0
 
   def ensure(self, model_id: str, role: str) -> None:
-    for index in range(replicas_of(model_id, role)):
-      self.ensure_workload(dataclasses.replace(describe_worker(model_id, role), index=index))
+    worker = describe_worker(model_id, role)
+    if worker.routed and worker.is_lora:
+      # vLLM's filesystem LoRA resolver exits at startup without its directory, and no adapter may be frozen yet.
+      # The API server mounts the shared volume the replicas read it from.
+      snapshot_root().mkdir(parents=True, exist_ok=True)
+    for index in range(worker.replicas):
+      self.ensure_workload(dataclasses.replace(worker, index=index))
+    if worker.routed:
+      self.ensure_dispatcher(worker.pool, worker.owner)
+
+  def ensure_dispatcher(self, pool: str, owner: str) -> None:
+    # A released pool's Deployment stays until its pod is gone, so waiting
+    # here keeps an old and a new dispatcher from overlapping. The
+    # NetworkPolicy of a released pool is gone long before that.
+    started, waited = time.monotonic(), False
+    while not self.create_once(self.apps_api.create_namespaced_deployment, dispatcher_body(pool, owner)):
+      try:
+        if not self.apps_api.read_namespaced_deployment(pool, self.namespace).metadata.deletion_timestamp:
+          break
+      except Exception as exc:
+        if getattr(exc, "status", None) != 404:
+          raise
+      if time.monotonic() > started + 180:
+        raise RuntimeError(f"dispatcher {pool} has been terminating for over three minutes")
+      if not waited:
+        # A warning, because the API server configures no logging and drops info lines.
+        logger.warning("Dispatcher %s of a released pool is still terminating, so this sampling session waits up to 180s for it", pool)
+        waited = True
+      time.sleep(2)
+    if waited:
+      logger.warning("Waited %.0fs for the old dispatcher %s to terminate", time.monotonic() - started, pool)
+    self.create_once(self.networking_api.create_namespaced_network_policy, network_policy_body(pool, owner))
+
+  def create_once(self, create: Any, body: dict[str, Any]) -> bool:
+    try:
+      create(self.namespace, body)
+      return True
+    except Exception as exc:
+      if getattr(exc, "status", None) != 409:
+        raise
+      return False
 
   def ensure_workload(self, worker: Worker) -> None:
     role = worker.role
@@ -270,10 +448,22 @@ class SchedulerWorkerManager:
     self.release_owner(owner_id(runtime))
 
   def release_owner(self, owner: str) -> set[str]:
-    """Delete the owner's workloads. The scheduler's finalizer frees the seats."""
+    """Delete the owner's workloads. The scheduler's finalizer frees the seats.
+    A pool's CPU pod goes first. It is found through the samplers, or by its owner label once they are gone."""
     selector = "app.kubernetes.io/managed-by=open-rl-api-server"
     found = self.custom_api.list_namespaced_custom_object(GROUP, VERSION, self.namespace, PLURAL, label_selector=selector)
     ours = [item for item in found["items"] if item["spec"]["ownerID"] == owner]
+    pools = {item["metadata"]["labels"].get("app.kubernetes.io/instance") for item in ours} - {None}
+    owned = f"{OWNER_LABEL}={owner}"
+    pools |= {d.metadata.name for d in self.apps_api.list_namespaced_deployment(self.namespace, label_selector=owned).items}
+    pools |= {p.metadata.name for p in self.networking_api.list_namespaced_network_policy(self.namespace, label_selector=owned).items}
+    for pool in pools:
+      for delete in (self.networking_api.delete_namespaced_network_policy, self.apps_api.delete_namespaced_deployment):
+        try:
+          delete(pool, self.namespace, propagation_policy="Foreground")
+        except Exception as exc:
+          if getattr(exc, "status", None) != 404:
+            raise
     for item in ours:
       self.delete_workload(item["metadata"]["name"])
     return {item["spec"]["modelID"] for item in ours}
@@ -304,11 +494,14 @@ class SchedulerWorkerManager:
   def load_workers(self) -> list[dict[str, Any]]:
     """Our Workloads, one entry per worker, in the client vocabulary. The pod
     is the scheduler's; what the API server knows about it is what the
-    scheduler wrote into Workload status."""
+    scheduler wrote into Workload status, plus whether a running sampler's
+    pod is Ready and its pool's dispatcher has a pod available."""
     selector = "app.kubernetes.io/managed-by=open-rl-api-server"
     found = self.custom_api.list_namespaced_custom_object(GROUP, VERSION, self.namespace, PLURAL, label_selector=selector)
     now = time.time()
     workers = []
+    sampler_pods = None
+    dispatchers: dict[str, bool] = {}
     for item in found["items"]:
       spec, status, meta = item["spec"], item.get("status") or {}, item["metadata"]
       state, detail = worker_state(
@@ -317,6 +510,17 @@ class SchedulerWorkerManager:
         node=status.get("nodeName"),
         deleting=bool(meta.get("deletionTimestamp")),
       )
+      if state == READY and spec["role"] == "sampler":
+        if sampler_pods is None:
+          pods = self.core_api.list_namespaced_pod(self.namespace, label_selector="app.kubernetes.io/component=sampler", _request_timeout=10)
+          sampler_pods = {pod.metadata.name: pod for pod in pods.items}
+        state, detail = sampler_state(detail, sampler_pods.get(status.get("podName")))
+      # The readiness probe reads a revision file that outlives the pool's dispatcher, and without the dispatcher no sample is sent.
+      if state == READY and spec["role"] == "sampler" and (pool := meta.get("labels", {}).get("app.kubernetes.io/instance")):
+        if pool not in dispatchers:
+          dispatchers[pool] = self.dispatcher_available(pool)
+        if not dispatchers[pool]:
+          state, detail = STARTING, f"{detail}, dispatcher {pool} has no available pod"
       workers.append(
         {
           "workload": meta["name"],
@@ -331,12 +535,36 @@ class SchedulerWorkerManager:
       )
     return workers
 
+  def dispatcher_available(self, pool: str) -> bool:
+    try:
+      deployment = self.apps_api.read_namespaced_deployment(pool, self.namespace)
+    except Exception as exc:
+      if getattr(exc, "status", None) != 404:
+        raise
+      return False
+    return bool(deployment.status and deployment.status.available_replicas)
+
+
+def sampler_state(detail: str, pod: Any) -> tuple[str, str]:
+  """A pool sampler's Workload is Running as soon as its container starts, and
+  stays Running while the container crash-loops. Its readiness probe passes only
+  while vLLM serves the weights the pool expects, so the pod's Ready condition is
+  what makes it ready."""
+  status = getattr(pod, "status", None)
+  if any(c.type == "Ready" and c.status == "True" for c in getattr(status, "conditions", None) or []):
+    return READY, detail
+  for container in getattr(status, "container_statuses", None) or []:
+    waiting = container.state.waiting if container.state else None
+    if waiting and waiting.reason:
+      return STARTING, f"{detail}, {waiting.reason}, restart count {container.restart_count}"
+  return STARTING, f"{detail}, loading the model"
+
 
 def worker_state(phase: str, reason: str, node: str | None, deleting: bool) -> tuple[str, str]:
   """Map a Workload's status onto the client vocabulary. The raw facts go
   into `detail`, for a human; `state` is what a client branches on. A node
   assignment is the placement boundary; phase Running is the readiness
-  boundary (the model view refines it for samplers)."""
+  boundary (sampler_state refines it for samplers)."""
   facts = phase + (f" ({reason})" if reason else "")
   if node:
     facts += f" on {node}"

@@ -13,9 +13,11 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
-from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+from accel_timeslicer.time_slicer import time_slicing_enabled
+from accel_timeslicer.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.estimator import footprint
 from server.model_metadata import TrainingModelMetadata, decode_model_metadata
+from server.sampling_dispatcher import tmp_root
 from server.store import get_state_store
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
@@ -108,9 +110,13 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
     if meta.trainer_cp > 1:
       env["OPEN_RL_AUTOMODEL_CP"] = str(meta.trainer_cp)
   else:
-    env["OPEN_RL_MODEL_ID"] = runtime
     env["VLLM_SERVER_DEV_MODE"] = "1"
     env["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
+    # Triton kernels persist on the shared volume, so later replicas skip compiling them,
+    # and Triton renames each kernel into place from a unique temp dir, so concurrent
+    # writers are safe. vLLM's compile cache is not shared, because vLLM names its AOT
+    # temp file by PID alone and replicas in different pods can run the same PID.
+    env["TRITON_CACHE_DIR"] = str(Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "cache", "triton"))
     # The text-only class skips the multimodal front end vLLM otherwise builds
     # at start-up (about 45 s); OpenRL only sends token ids. LoRA adapters
     # trained on the full model apply to it unchanged. VLLM_ENABLE_MULTIMODAL=1
@@ -122,7 +128,7 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
 
 
 def worker_module(role: str) -> str:
-  return "server.training_requests_processor" if role == "trainer" else "server.vllm_sampler"
+  return "server.training_requests_processor"
 
 
 def worker_args(runtime: str, role: str, is_lora: bool) -> list[str]:
@@ -182,20 +188,30 @@ class LocalWorkerManager:
         return
       base_model = base_model_of(meta, runtime)
       env = {**os.environ, **worker_env(meta, base_model, runtime, is_lora, role)}
-      env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
-      env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP if role == "trainer" else SAMPLER_TIME_SLICE_GROUP
       gpus = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES" if role == "trainer" else "SAMPLER_CUDA_VISIBLE_DEVICES")
       if gpus:
         env["CUDA_VISIBLE_DEVICES"] = gpus
-      extras = ["gpu"] if role == "trainer" else ["gpu", "vllm"]
-      command = python_command(extras, worker_module(role), worker_args(runtime, role, is_lora))
-      log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
-      log_dir.mkdir(parents=True, exist_ok=True)
-      with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:
-        self.processes[(role, runtime)] = subprocess.Popen(
-          command, cwd=self.project_dir, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
-        )
-        self.started[(role, runtime)] = time.time()
+      if role == "trainer":
+        env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
+        env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP
+        self.spawn(role, runtime, python_command(["gpu"], worker_module(role), worker_args(runtime, role, is_lora)), env)
+        return
+      env["OPEN_RL_TMP_DIR"] = tmp_root()
+      if meta.shares_gpu() and time_slicing_enabled():
+        # The sampler takes turns on the one GPU with its trainer, so it is in the trainer's claim.
+        env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
+        env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP
+      else:
+        env["OPEN_RL_TIME_SLICING"] = "off"
+      self.spawn(role, runtime, python_command(["gpu", "vllm"], "server.vllm_sampler", ["--pool", meta.pool(runtime)]), env)
+
+  def spawn(self, role: str, runtime: str, command: list[str], env: dict[str, str]) -> None:
+    log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:
+      process = subprocess.Popen(command, cwd=self.project_dir, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    self.processes[(role, runtime)] = process
+    self.started[(role, runtime)] = time.time()
 
   def release(self, model_id: str) -> None:
     try:

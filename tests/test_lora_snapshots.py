@@ -17,6 +17,8 @@ class LoraSnapshotTest(unittest.TestCase):
     (live / "adapter_model.safetensors").write_bytes(b"version-one")
     ref = "tinker://job/sampler_weights/sampler-1"
     freeze_adapter("job", "Qwen/Qwen2.5-0.5B", ref)
+    # The same weights saved under the same name again, with no training between, are already frozen.
+    freeze_adapter("job", "Qwen/Qwen2.5-0.5B", ref)
     (live / "adapter_model.safetensors").write_bytes(b"version-two")
     with self.assertRaisesRegex(FileExistsError, "new name or sequence ID"):
       freeze_adapter("job", "Qwen/Qwen2.5-0.5B", ref)

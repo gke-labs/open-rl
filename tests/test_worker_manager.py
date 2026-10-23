@@ -1,5 +1,8 @@
 import json
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from server import api_server
@@ -201,20 +204,15 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "trainer-Model_A.1")
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "trainers")
 
-  async def test_local_sampler_launch_stamps_workload_tags_and_process_group(self) -> None:
+  async def test_a_local_fft_sampler_on_the_trainers_gpu_serves_its_pool_itself_in_the_trainers_claim(self) -> None:
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm", "OPEN_RL_ENABLE_FFT": "true"}, clear=True),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
-      manager = LocalWorkerManager()
-      manager.ensure("Model_A.1", "sampler")
-
-    _, kwargs = popen.call_args
-    self.assertTrue(kwargs["start_new_session"])
-    self.assertEqual(kwargs["env"]["OPEN_RL_ENABLE_FFT"], "true")
-    self.assertEqual(kwargs["env"]["OPEN_RL_MODEL_ID"], "Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "sampler-Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "samplers")
+      LocalWorkerManager().ensure("fft-job", "sampler")
+    ((command, kwargs),) = [(c[0][0], c[1]) for c in popen.call_args_list]
+    self.assertEqual(command[command.index("-m") + 1 :], ["server.vllm_sampler", "--pool", "sampler-fft-job"])
+    self.assertEqual((kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"]), ("sampler-fft-job", "trainers"))
 
   async def test_launch_fetches_metadata_from_store(self) -> None:
     import json
@@ -349,11 +347,12 @@ class ApiServerFutureTranslationTest(unittest.TestCase):
 
 class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
   def setUp(self) -> None:
-    from pathlib import Path
 
     with patch.dict("os.environ", {"REDIS_URL": "redis://127.0.0.1:6379"}):
       self.manager = LocalWorkerManager(project_dir=Path("/tmp"))
     self.store = StoreStub()
+    # A LoRA launch creates its snapshot directory under OPEN_RL_TMP_DIR.
+    self.enterContext(patch.dict("os.environ", {"OPEN_RL_TMP_DIR": self.enterContext(tempfile.TemporaryDirectory())}))
 
   @patch("server.worker_manager.metadata_for")
   @patch("subprocess.Popen")
@@ -370,14 +369,15 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
       fine_tuning_type="lora",
     )
 
-    # Launch for first LoRA model ID
     self.manager.ensure("model-lora-1", "sampler")
-    self.assertIn(("sampler", "Qwen/Qwen2.5-0.5B"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("Qwen/Qwen2.5-0.5B", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "Qwen/Qwen2.5-0.5B")})
+    ((command, serve_kwargs),) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    self.assertEqual((command[-2], command[-1].startswith("sampler-qwen-qwen2-5-0-5b-")), ("--pool", True))
+    self.assertEqual((serve_kwargs["env"]["BASE_MODEL"], serve_kwargs["env"]["OPEN_RL_FINE_TUNING_TYPE"]), ("Qwen/Qwen2.5-0.5B", "lora"))
+    # Triton kernels live under OPEN_RL_TMP_DIR; vLLM's own compile cache stays where vLLM puts it.
+    tmp = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
+    self.assertEqual(serve_kwargs["env"]["TRITON_CACHE_DIR"], f"{tmp}/cache/triton")
+    self.assertEqual(serve_kwargs["env"].get("VLLM_CACHE_ROOT"), os.environ.get("VLLM_CACHE_ROOT"))
 
     # Launch for second LoRA model ID sharing the same base model
     self.manager.ensure("model-lora-2", "sampler")
@@ -397,15 +397,14 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
       base_model="Qwen/Qwen2.5-0.5B",
       created_at=100.0,
       fine_tuning_type="full",
+      exclusive=True,
     )
 
     self.manager.ensure("model-fft-1", "sampler")
-    self.assertIn(("sampler", "model-fft-1"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("model-fft-1", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "model-fft-1")})
+    ((command, kwargs),) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    self.assertEqual(command[-2:], ["--pool", "sampler-model-fft-1"])
+    self.assertEqual((kwargs["env"]["BASE_MODEL"], kwargs["env"]["OPEN_RL_FINE_TUNING_TYPE"]), ("Qwen/Qwen2.5-0.5B", "full"))
 
 
 if __name__ == "__main__":
