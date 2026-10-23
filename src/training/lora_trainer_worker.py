@@ -13,6 +13,7 @@ from peft import LoraConfig as PeftLoraConfig
 from peft import PeftModelForCausalLM, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import LoraConfig
 
@@ -50,6 +51,8 @@ class LoraTrainingWorker(BaseTrainerWorker):
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
     dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
 
+    # mmap reads over NFS are page-sized and serial; see training.prefetch.
+    prefetch(base_model_name)
     self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=self.device)
     print("Successfully loaded.")
 
