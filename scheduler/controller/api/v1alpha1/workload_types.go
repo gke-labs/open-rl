@@ -81,6 +81,12 @@ type AcceleratorSpec struct {
 	// +kubebuilder:validation:Minimum=2
 	// +optional
 	Devices int32 `json:"devices,omitempty"`
+
+	// PreferredTypes lists accelerator types, most preferred first, as values
+	// of the controller's accelerator type node label. When set they replace
+	// the tight-fit node preference; a soft preference, never a constraint.
+	// +optional
+	PreferredTypes []string `json:"preferredTypes,omitempty"`
 }
 
 // WorkloadSpec is one worker process's scheduling request. Memory arrives

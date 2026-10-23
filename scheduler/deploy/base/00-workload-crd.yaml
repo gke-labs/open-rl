@@ -100,6 +100,14 @@ spec:
                     - SingleGPU
                     - MultiGPU
                     type: string
+                  preferredTypes:
+                    description: |-
+                      PreferredTypes lists accelerator types, most preferred first, as values
+                      of the controller's accelerator type node label. When set they replace
+                      the tight-fit node preference; a soft preference, never a constraint.
+                    items:
+                      type: string
+                    type: array
                 required:
                 - memory
                 type: object

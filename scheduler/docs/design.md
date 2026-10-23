@@ -700,6 +700,17 @@ among nodes that can already host the pod. This stays survey-less: the
 preferences are compiled from which shapes live where, a static hardware
 fact, never from what is free.
 
+A workload can override that order with `accelerator.preferredTypes`, an
+ordered list of accelerator type names (the API server sets it from the
+job's `openrl.gpu_types`). Smallest-fit is the wrong choice for a job that
+runs several times faster on a bigger device. When the list is set, the
+tight-fit terms are replaced by one term per type, matching the node label
+`--accelerator-type-label` (`OPEN_RL_ACCELERATOR_TYPE_LABEL`, default
+`cloud.google.com/gke-accelerator`), weighted 100 for the first type and 10
+less per position, floored at 1. These terms are preferences as well: with
+the named types busy or absent, the pod lands on any device that fits. The
+claim's tiers are unchanged, and joining a shared ledger ignores the list.
+
 The tiers are rendered as DRA's prioritized list (`firstAvailable` in the
 claim's device request); the allocator tries them in list order and takes the
 first that fits on the node under consideration. Concretely, the claim the controller cuts looks like:
