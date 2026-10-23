@@ -1,10 +1,12 @@
 # LoRA trainer worker lifecycle and adapter management.
 
+import copy
 import json
 import math
 import os
 import time
 import traceback
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
 from typing import Any
 
@@ -27,6 +29,19 @@ def active_adapter_parameters(model: PeftModelForCausalLM, adapter_id: str) -> l
   return params
 
 
+def write_adapter(save_path: str, adapter_id: str, state: dict[str, torch.Tensor], config: PeftLoraConfig, metadata: dict[str, Any]) -> None:
+  """Write the files PeftModel.save_pretrained writes for one named adapter: <save_path>/<adapter_id>/."""
+  from safetensors.torch import save_file
+
+  output_dir = os.path.join(save_path, adapter_id)
+  os.makedirs(output_dir, exist_ok=True)
+  save_file(state, os.path.join(output_dir, "adapter_model.safetensors"), metadata={"format": "pt"})
+  config.save_pretrained(output_dir)
+  with open(os.path.join(save_path, "metadata.json"), "w") as f:
+    json.dump(metadata, f)
+  print(f"Saved adapter '{adapter_id}' to {save_path} in the background")
+
+
 class LoraTrainingWorker(BaseTrainerWorker):
   def __init__(self):
     super().__init__()
@@ -35,6 +50,8 @@ class LoraTrainingWorker(BaseTrainerWorker):
     self.base_model_name: str | None = None
     self.adapter_states: dict[str, dict[str, Any]] = {}
     self.lora_target_modules: dict[tuple[bool, bool, bool], list[str]] = {}
+    # One writer, so an adapter's saves land on disk in the order they were taken.
+    self.adapter_writer = ThreadPoolExecutor(max_workers=1, thread_name_prefix="adapter-save")
 
   def is_ready(self) -> bool:
     return self.base_model is not None
@@ -211,6 +228,33 @@ class LoraTrainingWorker(BaseTrainerWorker):
     """The sampler hot-loads the adapter from its directory, so there is no checkpoint to announce."""
     self.save_adapter(model_id, alias)
     return None
+
+  def start_save_for_sampler(self, model_id: str, alias: str | None) -> Future:
+    """Copy the adapter to host memory now and write it on a background thread.
+
+    The write to shared storage takes seconds, and on a shared runtime the
+    other jobs' requests wait behind it. The copy is taken here, between
+    requests, so later training can't change what gets written. The returned
+    future completes once the files are on disk, which is when the sampler may
+    read them.
+    """
+    assert self.peft_model is not None, "Model must be loaded first."
+    from peft.utils import get_peft_model_state_dict
+
+    state = {
+      name: tensor.detach().to("cpu", copy=True).contiguous()
+      for name, tensor in get_peft_model_state_dict(self.peft_model, adapter_name=model_id).items()
+    }
+    config = copy.deepcopy(self.peft_model.peft_config[model_id])
+    # What PeftModel.save_pretrained records for a saved adapter.
+    config.inference_mode = True
+    if config.base_model_name_or_path is None:
+      config.base_model_name_or_path = self.base_model_name
+    metadata = {"model_id": model_id, "created_at": datetime.now().isoformat(), "timestamp": time.time()}
+    if alias is not None:
+      metadata["alias"] = alias
+    save_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "peft", model_id)
+    return self.adapter_writer.submit(write_adapter, save_path, model_id, state, config, metadata)
 
   def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
     """Create an adapter from a saved state directory.

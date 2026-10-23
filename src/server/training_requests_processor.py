@@ -8,7 +8,7 @@ import shutil
 import threading
 import time
 import traceback
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any
 
 import torch
@@ -116,6 +116,10 @@ class TrainingRequestsProcessor:
     self.snapshot_registered = False
     self.state: StateStore | None = None  # opened on first use; tests inject one
     self.ready_announced_at = float("-inf")
+    # Sampler saves still being written, by request id, and the tasks that
+    # answer them once written.
+    self.pending_saves: dict[str, Future] = {}
+    self.save_answers: set[asyncio.Task] = set()
 
   async def run(self) -> None:
     print(f"[WORKER] Training requests processor started (model={self.model_id} active_set={self.active_tenant_set_id}).")
@@ -170,6 +174,8 @@ class TrainingRequestsProcessor:
 
   async def exit_gracefully(self, unregister: bool = True) -> None:
     print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
+    if self.save_answers:
+      await asyncio.gather(*self.save_answers, return_exceptions=True)
     if unregister and self.snapshot_registered:
       try:
         await self.time_slicer.unregister(self.workload)
@@ -282,9 +288,27 @@ class TrainingRequestsProcessor:
       async with self.time_slicer.acquire(self.workload):
         for request in save_reqs:
           results.append(await self.handle_request(request))
+    # Answers here go out together after the batch, so wait for the writes.
+    for request_id, _ in results:
+      if (pending := self.pending_saves.pop(request_id, None)) is not None:
+        await asyncio.wrap_future(pending)
 
   async def process_request(self, raw_request: dict[str, Any]) -> None:
     request_id, result = await self.handle_request(raw_request)
+    if (pending := self.pending_saves.pop(request_id, None)) is not None:
+      # The next request starts now; this one is answered once its files are written.
+      task = asyncio.create_task(self.answer_when_written(request_id, result, pending))
+      self.save_answers.add(task)
+      task.add_done_callback(self.save_answers.discard)
+      return
+    await self.publish_result(request_id, result)
+
+  async def answer_when_written(self, request_id: str, result: dict[str, Any], pending: Future) -> None:
+    try:
+      await asyncio.wrap_future(pending)
+    except Exception as exc:
+      traceback.print_exc()
+      result = {"type": "RequestFailedResponse", "error_message": f"Trainer worker error: {exc}"}
     await self.publish_result(request_id, result)
 
   async def handle_request(self, raw_request: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
@@ -367,9 +391,12 @@ class TrainingRequestsProcessor:
         return {"path": command.state_path, "type": "weights_loaded"}
       case commands.SaveWeightsForSampler():
         ref = command.path or command.sampling_session_id
-        checkpoint = await asyncio.to_thread(self.worker.save_for_sampler, command.model_id, command.alias, ref)
-        if checkpoint:
-          await self.publish_checkpoint(command.model_id, checkpoint)
+        if hasattr(self.worker, "start_save_for_sampler") and is_primary():
+          self.pending_saves[command.request_id] = await asyncio.to_thread(self.worker.start_save_for_sampler, command.model_id, command.alias)
+        else:
+          checkpoint = await asyncio.to_thread(self.worker.save_for_sampler, command.model_id, command.alias, ref)
+          if checkpoint:
+            await self.publish_checkpoint(command.model_id, checkpoint)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)
