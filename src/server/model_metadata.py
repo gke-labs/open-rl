@@ -48,6 +48,9 @@ class TrainingModelMetadata(BaseModel):
   trainer_backend: str = "pytorch"
   trainer_gpus: int = 1
   trainer_cp: int = 1
+  # Which of the base model's shared LoRA runtimes serves this job. The API
+  # server fills runtimes up to OPEN_RL_LORA_JOBS_PER_RUNTIME jobs each.
+  runtime_slot: int = 0
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
@@ -78,11 +81,13 @@ class TrainingModelMetadata(BaseModel):
     if not self.shares_runtime():
       return model_id
     if self.trainer_backend == "pytorch":
-      return self.base_model
-    if image := self.trainer_image():
+      shared = self.base_model
+    elif image := self.trainer_image():
       # An image ref is not label safe, so a hash of it keeps images apart.
-      return f"image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
-    return f"{self.trainer_backend}-{self.base_model}"
+      shared = f"image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
+    else:
+      shared = f"{self.trainer_backend}-{self.base_model}"
+    return shared if self.runtime_slot == 0 else f"{shared}#slot{self.runtime_slot}"
 
   def pool(self, model_id: str) -> str:
     """The sampling pool that serves this job. A runtime named after a base model

@@ -52,6 +52,7 @@ SESSION_REAP_INTERVAL_SEC = 30
 # session cannot attach between the reaper deciding an owner is unused and
 # deleting its workers. In-process, which is why there is one API server replica.
 owner_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+runtime_slot_lock = asyncio.Lock()
 
 
 async def bind_session(session_id: str | None, model_id: str) -> None:
@@ -75,8 +76,52 @@ async def reap_owner(owner: str) -> None:
       return
     print(f"[API_SERVER] No live session uses {owner}; tearing its workers down")
     for model in await asyncio.to_thread(worker_manager.release_owner, owner):
-      await state.delete_values(f"open_rl:sampler_ready:{model}", f"open_rl:trainer_ready:{model}")
+      await state.delete_values(f"open_rl:sampler_ready:{model}", f"open_rl:trainer_ready:{model}", runtime_jobs_key(model))
     await session_registry.forget(owner)
+
+
+def runtime_jobs_key(runtime: str) -> str:
+  return f"open_rl:runtime_jobs:{runtime}"
+
+
+async def live_runtime_jobs(runtime: str) -> int:
+  """How many jobs a shared runtime serves. A job stops counting once it is
+  deleted or every session it was bound to has expired."""
+  count = 0
+  for job in await state.set_members(runtime_jobs_key(runtime)):
+    meta = await get_model_metadata(state, job)
+    sessions = meta.session_ids if meta is not None else []
+    gone = meta is None or meta.status != "active"
+    if not gone and sessions:
+      gone = True
+      for session_id in sessions:
+        if await session_registry.live(session_id):
+          gone = False
+          break
+    if gone:
+      await state.remove_from_set(runtime_jobs_key(runtime), job)
+    else:
+      count += 1
+  return count
+
+
+async def assign_runtime_slot(model_id: str, meta: TrainingModelMetadata) -> None:
+  """Put a shared LoRA job on the base model's first runtime that has room.
+
+  Every LoRA job on a base model otherwise shares one trainer and one sampler,
+  and the trainer takes the jobs one at a time, so step time grows with each
+  job. OPEN_RL_LORA_JOBS_PER_RUNTIME caps the jobs per runtime; the next job
+  starts another one, with its own GPUs. Unset or 0 keeps a single runtime.
+  """
+  cap = int(os.getenv("OPEN_RL_LORA_JOBS_PER_RUNTIME", "0") or 0)
+  if cap <= 0 or worker_manager is None or not meta.shares_runtime():
+    return
+  async with runtime_slot_lock:
+    slot = 0
+    while await live_runtime_jobs(meta.model_copy(update={"runtime_slot": slot}).runtime(model_id)) >= cap:
+      slot += 1
+    meta.runtime_slot = slot
+    await state.add_to_set(runtime_jobs_key(meta.runtime(model_id)), model_id)
 
 
 provider = TracerProvider()
@@ -524,6 +569,7 @@ async def _extract_and_persist_model_metadata(
     trainer_gpus=settings.trainer_gpus,
     trainer_cp=settings.trainer_cp,
   )
+  await assign_runtime_slot(model_id, meta_obj)
   await persist_model_metadata(state, model_id, meta_obj)
 
   return model_id, meta_obj
@@ -904,6 +950,7 @@ async def delete_model(req: ModelRequest):
     # the job's queued work.
     delete = commands.DeleteModel(request_id=str(uuid.uuid4()), model_id=model_id)
     await store.put_request(commands.wire(delete), active_set_id=await _resolve_active_set_id(model_id))
+    await state.remove_from_set(runtime_jobs_key(meta.runtime(model_id)), model_id)
   elif worker_manager is not None:
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)), active_set_id=await _resolve_active_set_id(model_id))
