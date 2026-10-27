@@ -15,3 +15,5 @@ __pycache__
 huggingface
 *.log
 .system_generated
+
+**/node_modules

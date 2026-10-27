@@ -1,0 +1,48 @@
+# The dashboard lists pods and Workloads in the namespace and nodes cluster-wide. It runs as the API server's account,
+# so an API server with OPEN_RL_INSPECTION_API=true needs this applied too; base grants no node reads.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-rl-dashboard
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["list"]
+- apiGroups: ["openrl.io"]
+  resources: ["workloads"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-rl-dashboard
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sa
+roleRef:
+  kind: Role
+  name: open-rl-dashboard
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: open-rl-dashboard
+rules:
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: open-rl-dashboard
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sa
+  # A cluster binding's subject needs its namespace; kustomize does not fill it in.
+  namespace: openrl-system
+roleRef:
+  kind: ClusterRole
+  name: open-rl-dashboard
+  apiGroup: rbac.authorization.k8s.io

@@ -15,6 +15,13 @@ POOL_NAME = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 SPARSE_DELTA_VERSION = 2
 
 
+def display_metadata(value: dict[str, Any]) -> dict[str, str]:
+  """Only bounded, explicitly supplied labels become run display metadata."""
+  return {
+    key: value[key].strip()[:1024] for key in ("name", "run_name", "recipe_name", "git_rev") if isinstance(value.get(key), str) and value[key].strip()
+  }
+
+
 @dataclass
 class WeightSyncConfig:
   """How the trainer publishes weights each step: sparse deltas or full checkpoints.

@@ -1,0 +1,351 @@
+:root { color-scheme: light dark; /* A scrollbar appearing as content loads would otherwise narrow and reflow the page. */ scrollbar-gutter: stable; }
+body { margin: 0; background: light-dark(#ffffff, #131519); }
+#app { --ink: light-dark(#202328, #e6e8ed); --dim: light-dark(#626874, #a0a6b1); --ground: light-dark(#ffffff, #131519); --paper: light-dark(#f7f8fa, #191c21); --line: light-dark(#e3e6eb, #2a2e35); --hover: light-dark(#eff1f4, #20242b); --selected: light-dark(#e8ebf0, #282d35); --control-border: light-dark(#c9ced7, #424954); --accent: light-dark(#416bc3, #83a9ff); --hue-0: var(--accent); --hue-1: light-dark(#357e70, #76b3a2); --hue-2: light-dark(#7a60bb, #ad98dc); --hue-3: light-dark(#a87434, #c3a072); --hue-4: light-dark(#a8496b, #cd8ca5); --hue-5: light-dark(#2f8a9a, #7cb3bd); --hue-6: light-dark(#858533, #b5b579); --hue-7: light-dark(#b85538, #e39a7f); --status-success: light-dark(#27725c, #83baa5); --status-warning: light-dark(#895e1e, #ccb079); --status-error: light-dark(#ab4249, #da949a); --status-complete: light-dark(#496a97, #9bb0ce); --radius: 5px; --gutter: 22px; --node-label-width: 200px; --gpu-index-width: 38px; --gpu-index-gap: 6px; --sans: Inter, ui-sans-serif, system-ui, sans-serif; --mono: "SFMono-Regular", Consolas, monospace; color: var(--ink); background: var(--ground); width: 100%; min-height: 100dvh; font: 13px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+#app * { box-sizing: border-box; }
+#app :is(h1, h2, p, figure) { margin: 0; }
+#app a { color: inherit; text-decoration: none; }
+#app a:hover { text-decoration: underline; text-underline-offset: 3px; }
+#app button { cursor: pointer; font: inherit; color: inherit; }
+#app :where(input, select, .chip, .time-shift) { min-height: 32px; max-width: 100%; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius); background-color: var(--paper); color: var(--ink); font: inherit; line-height: 20px; box-shadow: none; }
+#app select { appearance: none; padding-right: 30px; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m1 1.5 5 5 5-5' fill='none' stroke='%23878d98' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 10px center; }
+#app input::placeholder { color: var(--dim); opacity: 1; }
+#app :is(input, select):hover, #app .chip:hover:not(:disabled) { border-color: var(--control-border); }
+#app .chip:hover:not(:disabled) { background-color: var(--hover); }
+#app .chip[aria-pressed="true"] { background: var(--selected); border-color: var(--control-border); }
+#app button:disabled { cursor: default; opacity: 0.5; }
+#app :is(a, button, input, select):focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+#app :is(input, select):focus { border-color: var(--control-border); box-shadow: none; }
+#app :is(input, select):focus:not(:focus-visible) { outline: none; }
+#app .appbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 28px; padding: 14px var(--gutter); border-bottom: 1px solid var(--line); }
+#app nav { display: flex; flex-wrap: wrap; gap: 20px; }
+#app nav a { display: inline-flex; align-items: center; min-height: 32px; color: var(--dim); }
+#app nav a:hover { color: var(--ink); text-decoration: none; }
+#app nav [aria-current="page"] { color: var(--ink); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 8px; }
+#app .brand { font-size: 16px; font-weight: 500; }
+#app #connection { margin-left: auto; color: var(--dim); font-size: 12px; }
+#app .pad { padding: 22px var(--gutter); }
+#app .heading { margin-bottom: 16px; font-size: 22px; font-weight: 500; line-height: 1.3; overflow-wrap: anywhere; }
+#app .mono { font-family: var(--mono); }
+#app .muted { color: var(--dim); }
+#app .micro { font-size: 11px; }
+#app .empty-state { padding: 16px 0; color: var(--dim); }
+/* Jobs, processes and health share the same table rhythm. */
+#app :is(.job-list-head, .job-list-row) { display: grid; grid-template-columns: minmax(0, 1fr) 112px 100px 112px 100px; align-items: center; gap: 16px; padding: 12px 0; }
+#app .job-list-head { color: var(--dim); font-size: 12px; }
+#app .job-list-row { border-top: 1px solid var(--line); }
+#app .job-list-row > * { min-width: 0; overflow-wrap: anywhere; }
+#app .job-list-row:hover { text-decoration: none; }
+#app .job-list-row:hover .job-identity > span:first-child { text-decoration: underline; text-underline-offset: 3px; }
+#app .job-identity { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+#app .job-identity .micro { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app :is(.job-list-head, .job-list-row) > :nth-child(n + 4) { text-align: right; font-variant-numeric: tabular-nums; }
+/* Overview: search and status chips above the run list. */
+#app .overview-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-bottom: 14px; }
+#app #run-search { flex: 1 1 280px; max-width: 420px; }
+#app .run-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+#app .metric-filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; } #app .metric-filters input { width: 28ch; }
+#app .run-filter-count { margin-left: 4px; color: var(--dim); font-variant-numeric: tabular-nums; }
+#app :is(.job-list-head, .job-list-row).run-row { position: relative; grid-template-columns: minmax(0, 1fr) 120px 72px 88px 160px; gap: 24px; }
+/* The run link covers its row. */
+#app .run-row .job-identity a::after { content: ""; position: absolute; inset: 0; }
+#app .run-row:hover .job-identity a { text-decoration: underline; text-underline-offset: 3px; }
+#app :is(.job-list-head, .job-list-row).run-row > :is(:nth-child(3), :nth-child(4)) { text-align: right; font-variant-numeric: tabular-nums; }
+#app .run-row > .run-session, #app .job-list-head.run-row > :nth-child(5) { text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Sessions group the run rows; a session's runs are indented under its header. */
+#app .state { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+#app :is(.state-dot, .health-dot) { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+#app .state-running { color: var(--status-success); }
+#app .state-pending { color: var(--status-warning); }
+#app .state-failed { color: var(--status-error); }
+#app .state-completed { color: var(--status-complete); }
+#app .state-neutral { color: var(--dim); }
+#app :is(.run-table, .scheduler-table) { width: 100%; border-collapse: collapse; }
+#app :is(.run-table, .scheduler-table) :is(th, td) { padding: 12px 12px 12px 0; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
+#app :is(.run-table, .scheduler-table) :is(th, td):last-child { padding-right: 0; }
+#app :is(.run-table, .scheduler-table) th { color: var(--dim); font-weight: 500; }
+#app .run-table { table-layout: fixed; min-width: 720px; }
+#app .run-table th:first-child { width: 38%; }
+#app .run-table :is(th, td):last-child { text-align: right; }
+#app .health-status { --health-tone: var(--status-warning); display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; padding: 4px 8px; border-radius: var(--radius); color: var(--health-tone); background: color-mix(in srgb, var(--health-tone) 9%, var(--ground)); }
+#app .health-error { --health-tone: var(--status-error); }
+#app .health-success { --health-tone: var(--status-success); }
+#app .health-message { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 12px; margin: 12px 0; overflow-wrap: anywhere; }
+/* Nodes: the header, GPU lanes and duty values use one column grid. */
+#app .nodes-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px 16px; margin-bottom: 18px; }
+#app :is(.nodes-heading, .run-heading) .heading { margin: 0; }
+#app .time-control { position: relative; display: grid; grid-template-columns: 32px minmax(0, 1fr) 32px 80px; width: 424px; max-width: 100%; align-items: center; gap: 8px; color: var(--dim); font-size: 12px; }
+#app .time-picker { min-width: 0; color: var(--ink); }
+#app .time-summary { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: 32px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); list-style: none; cursor: pointer; line-height: 20px; white-space: nowrap; }
+#app .time-summary::-webkit-details-marker { display: none; }
+#app .time-summary > span { overflow: hidden; text-overflow: ellipsis; }
+#app .time-chevron { display: block; flex: none; width: 16px; height: 16px; fill: none; stroke: var(--dim); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+#app .time-summary:hover, #app .time-picker[open] .time-summary { border-color: var(--control-border); }
+#app .time-summary:focus-visible { outline: 1px solid var(--accent); outline-offset: 3px; }
+#app .time-shift { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; line-height: 20px; }
+#app .time-popover { position: absolute; z-index: 5; top: 38px; left: 0; right: 88px; display: grid; gap: 12px; padding: 14px; border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--ground); }
+#app .time-popover label { display: grid; align-items: center; grid-template-columns: 70px minmax(0, 1fr); gap: 8px; }
+#app .time-popover :is(input, select) { width: 100%; height: 32px; }
+#app .time-control input { min-width: 0; }
+#app :is(.node-lane, .node-time-header) { display: grid; grid-template-columns: var(--node-label-width) minmax(0, 1fr) 48px; align-items: start; gap: 12px; }
+#app .node-lane { padding: 10px 0; border-bottom: 1px solid var(--line); }
+#app .node-time-header { padding-bottom: 8px; color: var(--dim); font-size: 11px; }
+#app .node-axis { position: relative; display: flex; justify-content: space-between; margin-left: calc(var(--gpu-index-width) + var(--gpu-index-gap)); font-variant-numeric: tabular-nums; }
+#app .node-axis span:nth-child(2) { position: absolute; left: 33.333333%; }
+#app .node-axis span:nth-child(3) { position: absolute; left: 66.666667%; }
+#app .node-axis span:not(:first-child):not(:last-child) { transform: translateX(-50%); }
+#app .node-duty { text-align: right; font-variant-numeric: tabular-nums; line-height: 26px; }
+#app .node-time-header .node-duty { line-height: inherit; }
+#app .node-lane-label { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 26px; padding: 0; border: 0; background: transparent; text-align: left; white-space: nowrap; }
+#app .node-lane-label:hover .node-accelerator { text-decoration: underline; text-underline-offset: 3px; }
+#app .node-accelerator { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#app .unavailable-selection { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; color: var(--status-warning); }
+#app .claim-label { flex: none; padding: 1px 5px; border-radius: 3px; background: var(--paper); color: var(--dim); font-size: 11px; line-height: 18px; white-space: nowrap; }
+#app .gpu-capacity { display: grid; grid-template-columns: var(--gpu-index-width) minmax(0, 1fr); gap: var(--gpu-index-gap); min-width: 0; }
+#app .gpu-lane-ids { display: grid; align-items: center; color: var(--dim); font: 11px var(--mono); }
+#app .gpu-lane-ids span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app .capacity-track { position: relative; min-width: 0; background: repeating-linear-gradient( to bottom, transparent 0 calc(var(--gpu-lane-height) - 1px), color-mix(in srgb, var(--line) 70%, transparent) calc(var(--gpu-lane-height) - 1px) var(--gpu-lane-height) ); }
+#app :is(.capacity-track, .node-axis, .activity-track, .activity-axis, .allocation-expansion .chart-plot svg, .allocation-expansion .chart-empty) { touch-action: pan-y; cursor: grab; }
+#app.node-navigating :is(.capacity-track, .node-axis, .activity-track, .activity-axis, .allocation-expansion .chart-plot svg, .allocation-expansion .chart-empty) { cursor: grabbing; user-select: none; }
+#app .capacity-track::before { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient( to right, transparent 0 calc(33.333333% - 1px), color-mix(in srgb, var(--line) 45%, transparent) calc(33.333333% - 1px) 33.333333% ); }
+#app .hue-0 { --allocation-color: var(--hue-0); }
+#app .hue-1 { --allocation-color: var(--hue-1); }
+#app .hue-2 { --allocation-color: var(--hue-2); }
+#app .hue-3 { --allocation-color: var(--hue-3); }
+#app .hue-4 { --allocation-color: var(--hue-4); }
+#app .hue-5 { --allocation-color: var(--hue-5); }
+#app .hue-6 { --allocation-color: var(--hue-6); }
+#app .hue-7 { --allocation-color: var(--hue-7); }
+#app .capacity-allocation { container: allocation / inline-size; position: absolute; overflow: hidden; display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding: 0; border: 0; border-radius: 2px; background: color-mix( in srgb, var(--allocation-color, var(--accent)) 19%, var(--ground) ); text-align: left; }
+#app .capacity-allocation:hover { background: color-mix( in srgb, var(--allocation-color, var(--accent)) 27%, var(--ground) ); }
+#app .capacity-allocation.selected:not(.held) { z-index: 1; background: color-mix( in srgb, var(--allocation-color, var(--accent)) 27%, var(--ground) ); outline: 1px solid color-mix(in srgb, var(--allocation-color, var(--accent)) 70%, var(--line)); }
+#app .capacity-allocation.ended { --allocation-color: var(--dim); color: var(--dim); }
+#app .capacity-allocation.held { overflow: hidden; background: color-mix(in srgb, var(--line) 45%, var(--ground)); }
+#app :is(.allocation-name, .allocation-count) { position: relative; z-index: 1; }
+#app .capacity-allocation.unknown-mapping { position: relative; width: 100%; height: 26px; margin-block: 3px; }
+#app .allocation-name { margin-left: 7px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app .allocation-count { margin-right: 7px; flex: none; margin-left: auto; color: var(--dim); font-size: 11px; white-space: nowrap; }
+@container allocation (max-width: 160px) {
+  #app :is(.allocation-name, .allocation-count) { display: none; }
+}
+#app .hold { position: absolute; top: 0; bottom: 0; background: color-mix(in srgb, var(--allocation-color) 35%, var(--ground)); pointer-events: auto; }
+#app .hold:is(:hover, .selected) { background: color-mix(in srgb, var(--allocation-color) 65%, var(--ground)); }
+#app .allocation-expansion { --activity-label-width: clamp(160px, 25vw, 240px); display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; margin: 0 calc(-1 * var(--gutter)); padding: 16px var(--gutter); border-bottom: 1px solid var(--line); }
+#app .allocation-expansion > div { min-width: 0; }
+#app .node-gpu-detail { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; border-top: 1px solid var(--line); padding-top: 16px; }
+#app .allocation-detail-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+#app .allocation-detail-head h2 { font-size: 15px; font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+#app .detail-close { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 1px solid transparent; border-radius: var(--radius); color: var(--dim); background: transparent; font-size: 22px; line-height: 1; }
+#app .detail-close:hover { border-color: var(--line); background: var(--paper); color: var(--ink); }
+#app .allocation-device-picker { display: flex; flex-wrap: wrap; gap: 4px; }
+#app .allocation-device-picker .chip { border-color: transparent; background: transparent; color: var(--dim); }
+#app .allocation-device-picker .chip:not([data-device="all"]) { min-width: 10ch; /* Fits "7 · 100%", so arriving and updating values never resize the chips. */ font-variant-numeric: tabular-nums; /* Equal-width digits: a new value of the same length doesn't move the text. */ text-align: center; } #app .allocation-device-picker .chip[aria-pressed="true"], #app .allocation-device-picker .chip:hover { border-color: var(--line); background: var(--paper); color: var(--ink); } #app .allocation-memory { color: var(--dim); font-size: 12px; } #app .allocation-memory strong { display: inline-block; min-width: 10ch; /* Fits "1536.0 GiB", so the label doesn't slide when the value arrives. */ margin-left: 8px; color: var(--ink); font-size: 15px; font-weight: 500; text-align: right; }
+#app .allocation-detail-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; color: var(--dim); font-size: 11px; }
+#app :is(.activity-header, .activity-row) { display: grid; grid-template-columns: var(--activity-label-width) minmax(0, 1fr); column-gap: 12px; align-items: center; }
+#app .activity-header { padding-block: 4px 10px; }
+#app .activity-header h3 { margin: 0; font-size: 13px; font-weight: 500; }
+#app .activity-axis { display: flex; justify-content: space-between; color: var(--dim); font: 11px var(--mono); }
+#app .activity-row { min-height: 46px; border-top: 1px solid var(--line); }
+#app .activity-label { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 8px; border: 1px solid transparent; border-radius: var(--radius); background: none; text-align: left; font-size: 12px; }
+#app a.activity-label:hover { background: var(--hover); }
+#app .activity-row[data-selected="true"] .activity-label { border-color: var(--line); background: var(--paper); }
+#app .activity-swatch { flex: none; width: 9px; height: 9px; border-radius: 2px; background: color-mix(in srgb, var(--allocation-color) 65%, var(--ground)); }
+#app .activity-label-text { min-width: 0; }
+#app .activity-name { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#app .activity-meta { display: block; margin-top: 2px; color: var(--dim); font-size: 11px; }
+#app .activity-track { position: relative; min-width: 0; height: 46px; display: flex; align-items: center; background: repeating-linear-gradient(to right, var(--line) 0 1px, transparent 1px 25%); box-shadow: inset -1px 0 var(--line); }
+#app .activity-track svg { display: block; width: 100%; height: 24px; }
+#app .activity-block { fill: color-mix(in srgb, var(--allocation-color) 35%, var(--ground)); cursor: default; }
+#app .activity-block[data-placement] { cursor: pointer; }
+#app .activity-block[data-selected="true"], #app .activity-block:hover { fill: color-mix(in srgb, var(--allocation-color) 65%, var(--ground)); }
+#app .activity-block[data-selected="true"] { stroke: var(--allocation-color); stroke-width: 1px; }
+/* A native SVG outline spans the gaps between intervals; stroke each interval instead. */
+#app .activity-block:focus { outline: none; }
+#app .activity-block:focus-visible { stroke: var(--accent); stroke-width: 2px; }
+/* Worker-recorded ops inside a GPU turn. The turn underneath stays visible
+   where no op was recorded. */
+#app [data-op] { --op-color: #2a9d8f; }
+#app [data-op="forward_backward"] { --op-color: #3366cc; }
+#app [data-op="forward"] { --op-color: #6fa8dc; }
+#app [data-op="optim_step"] { --op-color: #8e44ad; }
+#app [data-op="sample"] { --op-color: #2e9e5b; }
+#app [data-op="weight_sync"] { --op-color: #e67e22; }
+#app [data-op="wake_up"], #app [data-op="sleep"] { --op-color: #95a5a6; }
+#app [data-op="init"] { --op-color: #5d6d7e; }
+#app .activity-block.op { fill: var(--op-color); }
+#app .activity-block.op:hover { fill: color-mix(in srgb, var(--op-color) 75%, var(--ink, #000)); }
+#app .op-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 8px 0 0 calc(var(--activity-label-width, 0px) + 12px); font-size: 12px; color: var(--muted, inherit); }
+#app .op-legend > span { display: inline-flex; align-items: center; gap: 5px; }
+#app .op-swatch { width: 10px; height: 10px; border-radius: 2px; background: var(--op-color); }
+#app .op-swatch.turn { background: color-mix(in srgb, currentColor 25%, transparent); }
+#app .cross-node-activity { --activity-label-width: clamp(160px, 25vw, 240px); border-top: 1px solid var(--line); padding-top: 16px; }
+#app .cross-node-activity .activity-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The Run timeline has no pan gesture; a click opens the logs at that time. */
+#app section.cross-node-activity .activity-track { cursor: pointer; }
+#app [data-crosshair] :is(.activity-track, .capacity-track)::after { content: ""; position: absolute; pointer-events: none; inset-block: 0; left: var(--crosshair); border-left: 1px dashed var(--dim); }
+#app .activity-tooltip { position: fixed; z-index: 10; pointer-events: none; max-width: min(360px, calc(100vw - 16px)); max-height: calc(100dvh - 16px); overflow: hidden; overflow-wrap: anywhere; padding: 9px 12px; border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--paper); font-size: 12px; }
+#app .activity-tooltip-label { display: block; margin-bottom: 4px; }
+#app :is(.activity-tooltip-time, .activity-tooltip-detail) { color: var(--dim); }
+#app .activity-status { position: absolute; left: 8px; max-width: calc(100% - 16px); padding: 2px 4px; color: var(--dim); background: var(--ground); font-size: 11px; }
+#app .activity-status.unavailable { color: var(--status-warning); }
+/* Chart layout stays separate from the SVG gridlines. */
+#app div.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 24px 20px; margin-top: 16px; }
+#app .chart { --metric-stroke: var(--dim); --plot-height: 160px; min-width: 0; min-height: calc(var(--plot-height) + 82px); }
+#app .chart > .chart-empty { display: grid; place-items: center; height: var(--plot-height); margin: 0; }
+#app .chart[data-tone="accent"] { --metric-stroke: color-mix(in srgb, var(--accent) 75%, var(--dim)); }
+#app .allocation-expansion .chart { --plot-height: 100px; min-height: calc(var(--plot-height) + 82px); }
+#app .allocation-expansion .chart-plot { grid-template-columns: var(--activity-label-width) minmax(0, 1fr); column-gap: 12px; }
+#app .allocation-expansion .chart-empty { margin-left: calc(var(--activity-label-width) + 12px); }
+#app .allocation-expansion .chart-line { stroke-width: 1.5; }
+#app .chart-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 5px 16px; margin-bottom: 12px; }
+#app .chart-head h2 { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+#app .chart-latest { display: flex; align-items: baseline; gap: 7px; color: var(--dim); font-size: 11px; white-space: nowrap; }
+#app .chart-latest strong { color: var(--ink); font: 500 15px var(--mono); }
+#app .chart-plot { position: relative; display: grid; grid-template-columns: 44px minmax(0, 1fr); grid-template-rows: var(--plot-height) auto; column-gap: 8px; min-width: 0; }
+#app .chart-y { margin-block: -6px; display: flex; flex-direction: column; justify-content: space-between; text-align: right; color: var(--dim); font: 11px var(--mono); }
+#app .chart-plot:focus-visible { outline: 1px solid var(--control-border); outline-offset: 4px; }
+#app .chart-plot svg { display: block; width: 100%; height: 100%; overflow: visible; border-bottom: 1px solid var(--line); }
+#app .chart-x { grid-column: 2; position: relative; display: flex; justify-content: space-between; padding-top: 8px; color: var(--dim); font: 11px var(--mono); }
+#app svg .chart-grid { stroke: var(--line); stroke-width: 1; }
+#app .chart-line { fill: none; stroke: var(--metric-stroke); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+#app .chart-area { fill: var(--metric-stroke); fill-opacity: 0.07; }
+#app .chart-band { fill: var(--allocation-color); fill-opacity: 0.55; }
+#app .activity-block.wait { fill: var(--dim); fill-opacity: 0.16; }
+#app .op-swatch.wait { background: var(--dim); opacity: 0.3; }
+#app .chart-band.sampler { fill-opacity: 0.28; }
+#app .chart-band-swatch { display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 2px; background: var(--allocation-color); opacity: 0.55; vertical-align: -1px; }
+#app .chart-band-key.sampler .chart-band-swatch { opacity: 0.28; }
+#app .chart-dot { stroke: var(--metric-stroke); stroke-width: 5; stroke-linecap: round; }
+#app .chart-hover { width: 0; position: absolute; top: 0; height: var(--plot-height); pointer-events: none; z-index: 2; }
+#app .chart-hover[hidden] { display: none; }
+#app .chart-cursor { position: absolute; inset: 0 auto 0 0; border-left: 1px dashed var(--control-border); }
+#app .chart-crosshair { stroke: var(--control-border); stroke-dasharray: 3 3; }
+#app .chart-tip { position: absolute; top: 6px; left: 8px; padding: 5px 8px; border: 1px solid var(--control-border); border-radius: var(--radius); background: var(--paper); color: var(--ink); font: 11px/1.5 var(--mono); white-space: nowrap; }
+#app .chart-point { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--metric-stroke); transform: translate(-50%, -50%); }
+#app .chart-summary { display: flex; flex-wrap: wrap; gap: 5px 18px; margin-top: 10px; color: var(--dim); font-size: 11px; }
+#app .chart-summary strong { margin-left: 4px; color: var(--ink); font-family: var(--mono); font-weight: 400; }
+#app .chart-note { color: var(--status-warning); }
+#app .chart-empty { min-height: var(--plot-height); display: flex; align-items: center; color: var(--dim); }
+/* Run details and logs. */
+#app .overview-back { margin-bottom: 16px; color: var(--dim); }
+#app .run-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+#app .run-description { margin-top: 4px; color: var(--dim); overflow-wrap: anywhere; }
+#app .run-state { margin-top: 12px; overflow-wrap: anywhere; }
+#app .run-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; margin: 16px 0; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+#app .run-time-controls label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+#app .run-time-controls :is(label, a) { color: var(--dim); font-size: 12px; }
+#app .run-incidents { display: grid; gap: 8px; margin-bottom: 16px; }
+#app .run-incident { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; }
+#app .incident-time { color: var(--dim); font-family: var(--mono); }
+#app .incident-error .incident-label { color: var(--status-error); }
+#app .incident-warning .incident-label { color: var(--status-warning); }
+#app .incident-context { color: var(--dim); overflow-wrap: anywhere; }
+#app .run-incident a { color: var(--dim); white-space: nowrap; }
+#app .run-metric-summary { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 16px; }
+#app .run-activity { border-top: 0; padding-top: 0; }
+#app .run-activity .activity-title { margin-top: 8px; margin-bottom: 4px; }
+#app .run-activity .activity-intro { margin: 0 0 12px; font-size: 12px; }
+#app .run-activity :is(.activity-header, .activity-row) { grid-template-columns: var(--activity-label-width) 88px minmax(0, 1fr) 48px; }
+#app .run-activity .activity-gpu { color: var(--dim); font: 11px var(--mono); overflow-wrap: anywhere; }
+#app .activity-gpu-toggle { padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
+#app .activity-gpu-toggle:hover { color: var(--ink); }
+#app .activity-chevron { display: inline-block; width: 12px; }
+#app .activity-duty { padding: 10px 0 14px; border-top: 1px solid var(--line); }
+#app :is(.activity-mode, .chart-mode) { display: inline-flex; gap: 4px; }
+#app .activity-mode { margin: 0 0 12px; }
+#app .chart-mode { margin-left: 12px; margin-right: auto; }
+#app .activity-duty .chart { --plot-height: 100px; min-height: calc(var(--plot-height) + 82px); }
+/* The plot lines up with the lane tracks: past the label and GPU columns, short of the duty column. */
+#app .activity-duty .chart-plot { grid-template-columns: calc(var(--activity-label-width) + 100px) minmax(0, 1fr); column-gap: 12px; margin-right: 60px; }
+#app .run-activity .activity-row[data-continued] { min-height: 30px; border-top-color: transparent; }
+#app .run-activity .activity-row[data-continued] .activity-track { height: 30px; }
+#app .run-activity .activity-row[data-lead] { min-height: 30px; }
+#app .run-activity .activity-row[data-lead] .activity-track { height: 30px; }
+/* A group's label overhangs the empty label cells of its later rows, so every GPU row keeps one pitch. */
+#app .run-activity .activity-row[data-lead] .activity-label { align-self: start; align-items: flex-start; height: 30px; overflow: visible; }
+#app .activity-source { margin-top: 12px; color: var(--dim); font-size: 11px; }
+#app .run-metrics { margin-top: 8px; }
+#app .time-control.run-time-controls { grid-template-columns: 32px minmax(0, 1fr) 32px auto auto; width: 520px; }
+#app .log-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+#app #run-panel > p + .log-toolbar { margin-top: 8px; }
+#app .log-toolbar input { flex: 1; min-width: 100px; }
+#app .log-toolbar select { max-width: min(100%, 340px); }
+#app .log-toolbar .log-scope { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; white-space: nowrap; }
+#app .log-toolbar .log-scope input { flex: none; min-width: 0; margin: 0; }
+/* Fits "Jump to latest", so pausing by scrolling doesn't shift the toolbar. */
+#app .log-toolbar button { min-width: 8.75em; }
+#app #log-status { display: grid; gap: 6px; color: var(--dim); font-size: 12px; }
+#app #log-status:not(:empty) { margin-bottom: 12px; }
+#app .source-error { margin: 8px 0; color: var(--status-warning); font-size: 12px; overflow-wrap: anywhere; }
+#app .snapshot-error:not([hidden]) { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; margin: 16px var(--gutter) 0; padding: 12px; border: 1px solid color-mix(in srgb, var(--status-warning) 35%, var(--line)); border-radius: var(--radius); color: var(--status-warning); background: var(--paper); overflow-wrap: anywhere; }
+#app .snapshot-error button { flex: none; }
+#app pre, #app .workspace-logrow { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.65 var(--mono); }
+/* At the bottom of the page the tabs, toolbar and lines fill the window; at the box's ends the wheel scrolls the page. */
+#app #log-lines { max-height: calc(100svh - 170px); overflow: auto; overflow-anchor: none; scrollbar-gutter: stable; }
+#app .workspace-logrow { display: grid; grid-template-columns: 12ch var(--tag-width) minmax(0, 1fr); gap: 10px; padding: 1px 6px; border-left: 2px solid transparent; line-height: 1.5; }
+#app .workspace-logrow[data-severity="error"] { border-left-color: var(--status-error); background: color-mix(in srgb, var(--status-error) 7%, transparent); }
+#app .workspace-logrow[data-severity="warning"] { border-left-color: var(--status-warning); background: color-mix(in srgb, var(--status-warning) 7%, transparent); }
+#app .log-time { color: var(--dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#app .log-pod { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--allocation-color, var(--dim)); }
+#app .log-message { min-width: 0; margin: 0; font: inherit; }
+#app .log-message mark { border-radius: 2px; background: color-mix(in srgb, var(--hue-3) 30%, transparent); color: inherit; }
+#app .log-older { margin: 0 0 8px; }
+#app .log-error { color: var(--status-error); }
+#app .log-time-scope { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 16px; margin-bottom: 12px; color: var(--dim); font-size: 12px; }
+#app .log-time-scope a { color: var(--ink); }
+#app .run-json-link { margin-top: 20px; color: var(--dim); font-size: 12px; }
+/* Section titles and wide tables on the Run and Health pages. */
+#app .scheduler-title { margin: 24px 0 12px; font-size: 15px; font-weight: 500; line-height: 1.4; }
+#app :is(.scheduler-table-wrap, .table-scroll) { overflow-x: auto; }
+#app .scheduler-table { min-width: 650px; }
+/* Health: only the evidence wraps, so pod names and links stay whole. */
+#app .scheduler-table :is(th, td):not(:nth-child(3)) { white-space: nowrap; }
+/* Keep the identity readable before switching to compact rows. */
+@media (min-width: 761px) and (max-width: 1100px) {
+  #app :is(.job-list-head, .job-list-row).run-row { grid-template-columns: minmax(0, 1fr) 112px 56px 72px 140px; gap: 16px; }
+}
+@media (max-width: 760px) {
+  #app :is(.job-list-head, .job-list-row).run-row { grid-template-columns: minmax(0, 1fr) minmax(100px, auto); gap: 6px 12px; }
+  #app .job-list-head.run-row > :nth-child(n + 3) { display: none; }
+  #app .run-row > :nth-child(2) { justify-self: end; }
+  #app .run-row > :nth-child(n + 3) { color: var(--dim); font-size: 12px; }
+  #app .run-row > :nth-child(3) { grid-column: 1; text-align: left; }
+  #app .run-row > :nth-child(4) { grid-column: 2; text-align: right; }
+  #app .job-list-row.run-row > :nth-child(3)::after { content: " steps"; }
+  #app .job-list-row.run-row > :nth-child(4)::before { content: "Elapsed "; }
+  #app .job-list-row.run-row > .run-session { grid-column: 1 / -1; text-align: left; }
+}
+@media (max-width: 580px) {
+  #app .time-control { width: 100%; }
+  #app { --gutter: 14px; --gpu-index-width: 24px; --gpu-index-gap: 4px; }
+  #app .appbar { padding-block: 12px; gap: 8px 16px; }
+  #app .appbar > nav { order: 3; width: 100%; flex-wrap: nowrap; gap: 16px; overflow-x: auto; white-space: nowrap; font-size: 12px; }
+  #app #run-search { max-width: none; }
+  #app .pad { padding-block: 16px; }
+  #app .heading { font-size: 20px; }
+  #app :is(.node-lane, .node-time-header) { grid-template-columns: minmax(0, 1fr) 36px; gap: 6px 8px; }
+  #app .node-time-header > span:first-child { display: none; }
+  #app .node-lane-label { grid-column: 1 / -1; min-height: 20px; gap: 6px; font-size: 12px; }
+  #app .time-control { grid-template-columns: 32px minmax(0, 1fr) 32px; }
+  #app .time-control > [data-copy-view] { grid-column: 1 / -1; justify-self: end; }
+  #app .time-popover { right: 0; }
+  #app .claim-label { padding-inline: 3px; font-size: 10px; }
+  #app .node-axis span:not(:first-child):not(:last-child), #app .chart-x span:not(:first-child):not(:last-child) { display: none; }
+  #app .capacity-track::before { background: none; border-right: 1px solid var(--line); }
+  #app :is(.allocation-expansion, .cross-node-activity) { --activity-label-width: 40px; }
+  #app :is(.activity-header, .activity-row) { grid-template-columns: minmax(0, 1fr); }
+  #app .activity-header h3 { display: none; }
+  #app .activity-label { margin-top: 4px; }
+  #app .activity-track { height: 34px; }
+  #app .op-legend { margin-left: 0; }
+  #app .activity-axis span:not(:first-child):not(:last-child) { display: none; }
+  #app .run-activity :is(.activity-header, .activity-row) { grid-template-columns: 64px minmax(0, 1fr) 36px; }
+  #app .run-activity .activity-label { grid-column: 1 / -1; }
+  #app .run-activity .activity-axis { grid-column: 2; }
+  #app .run-activity .activity-row > span:empty { display: none; }
+  #app .chart-tip { max-width: 230px; white-space: normal; width: max-content; }
+  #app .run-toolbar { align-items: flex-start; }
+  #app .run-time-controls { width: 100%; justify-content: space-between; }
+  #app .log-toolbar > :is(input, select) { flex: 1 1 100%; width: 100%; min-width: 0; max-width: 100%; }
+  #app .workspace-logrow { grid-template-columns: auto minmax(0, 1fr); gap: 0 10px; padding-block: 4px; }
+  #app .log-message { grid-column: 1 / -1; }
+}

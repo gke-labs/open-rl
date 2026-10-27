@@ -9,6 +9,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 from accel_timeslicer.workload import WorkloadRef
+from server import telemetry
+from server.store import InMemoryStateStore
 from server.vllm_sampler import SHUTDOWN_SENTINEL, Sampler, process_batch, serve, serve_time_sliced
 
 
@@ -135,7 +137,9 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
       patch("server.vllm_sampler.workload_from_env", return_value=self.workload),
       patch("server.vllm_sampler.get_state_store", return_value=self.store),
       patch("server.vllm_sampler.ENGINE_POLL_SECONDS", 0.01),
+      patch.object(telemetry, "get_state_store", return_value=(state := InMemoryStateStore())),
     ]
+    self.state = state
     for p in self.patches:
       p.start()
       self.addCleanup(p.stop)
@@ -216,10 +220,11 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
       await asyncio.Event().wait()
 
     self.engine.generate.side_effect = make_engine(hang).generate
-    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1"}]
+    self.store.get_sampling_requests_for_model.return_value = [{"request_id": "1", "model_id": "run"}]
     with self.assertRaisesRegex(RuntimeError, "engine is dead"):
       await serve_time_sliced("test", self.store, self.factory)
     self.assertIn("engine died", self.results()["1"]["error_message"])
+    self.assertEqual(await self.recorded(), [("1", "failed", "EngineDied")])
     self.engine.shutdown.assert_called_once()
     self.slicer.unregister.assert_awaited_once()
 
@@ -239,6 +244,14 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
     self.slicer.unregister.assert_not_called()
     self.slicer.close.assert_awaited_once()
 
+  async def test_failed_weight_update_keeps_a_failed_record(self):
+    self.engine.update_weights.side_effect = RuntimeError("CUDA out of memory")
+    request = {"request_id": "1", "model_id": "run", "weights_path": "a"}
+    self.store.get_sampling_requests_for_model.side_effect = [[request, {"request_id": SHUTDOWN_SENTINEL}]]
+    await serve_time_sliced("test", self.store, self.factory)
+    self.assertIn("out of memory", self.results()["1"]["error_message"])
+    self.assertEqual(await self.recorded(), [("1", "failed", "RuntimeError")])
+
   async def test_loop_errors_fail_unserved_requests_and_retry(self):
     self.store.get_sampling_requests_for_model.side_effect = [
       RuntimeError("redis down"),
@@ -250,6 +263,11 @@ class SamplerLifecycleTest(unittest.IsolatedAsyncioTestCase):
     self.assertIn("wake failed", self.results()["1"]["error_message"])
     self.assertEqual(self.results()["2"]["type"], "sample")
     self.slicer.unregister.assert_awaited_once()
+
+  async def recorded(self) -> list[tuple[str, str, str]]:
+    """Every failed answer a client gets has one sample record."""
+    await asyncio.gather(*list(telemetry.writes))
+    return [(r["request_id"], r["status"], r["error_type"]) for r in await self.state.read_samples(telemetry.key("operations", "run", "samples"))]
 
 
 if __name__ == "__main__":

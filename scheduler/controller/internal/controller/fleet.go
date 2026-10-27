@@ -3,11 +3,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"path"
 	"sort"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	resourcev1 "k8s.io/api/resource/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -248,6 +251,43 @@ func latestCompletePools(ctx context.Context, slices []resourcev1.ResourceSlice,
 	}
 	sort.Ints(keep)
 	return keep
+}
+
+// gpuUUIDs resolves the devices allocated to a claim to the UUIDs their
+// ResourceSlices publish, in allocation order. A device without a UUID
+// attribute is left out; an empty result is retried on a later reconcile.
+func (r *WorkloadReconciler) gpuUUIDs(ctx context.Context, claimName string) ([]string, error) {
+	var claim resourcev1.ResourceClaim
+	if err := r.Get(ctx, types.NamespacedName{Namespace: r.Namespace, Name: claimName}, &claim); err != nil {
+		return nil, client.IgnoreNotFound(err)
+	}
+	if claim.Status.Allocation == nil {
+		return nil, nil
+	}
+	var slices resourcev1.ResourceSliceList
+	if err := r.List(ctx, &slices); err != nil {
+		return nil, fmt.Errorf("list resourceslices: %w", err)
+	}
+	type deviceKey struct{ driver, pool, device string }
+	published := map[deviceKey]string{}
+	for _, i := range latestCompletePools(ctx, slices.Items, r.DeviceDriver) {
+		spec := slices.Items[i].Spec
+		for _, device := range spec.Devices {
+			for name, attr := range device.Attributes {
+				// NVIDIA's driver publishes "uuid"; match any domain and case.
+				if attr.StringValue != nil && strings.EqualFold(path.Base(string(name)), "uuid") {
+					published[deviceKey{spec.Driver, spec.Pool.Name, device.Name}] = *attr.StringValue
+				}
+			}
+		}
+	}
+	var uuids []string
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if uuid, ok := published[deviceKey{result.Driver, result.Pool, result.Device}]; ok {
+			uuids = append(uuids, uuid)
+		}
+	}
+	return uuids, nil
 }
 
 // claimFrom reads a managed claim back into the fleet: identity from

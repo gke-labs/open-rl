@@ -30,6 +30,10 @@ data:
     DCGM_FI_DEV_FB_FREE, gauge, Framebuffer memory free (in MiB).
     # FieldID 252
     DCGM_FI_DEV_FB_USED, gauge, Framebuffer memory used (in MiB).
+
+    # Profiling metrics, averaged over the collection interval,,
+    # FieldID 1001
+    DCGM_FI_PROF_GR_ENGINE_ACTIVE, gauge, Ratio of time the graphics engine is active.
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -78,6 +82,9 @@ spec:
           value: ":9400"
         - name: DISABLE_STARTUP_VALIDATE
           value: "true"
+        # A reading every 10 s, as often as it is scraped; the 30 s default left two of every three scrapes repeating it.
+        - name: DCGM_EXPORTER_INTERVAL
+          value: "10000"
         - name: LD_LIBRARY_PATH
           value: "/usr/local/nvidia/lib64"
         resources:

@@ -72,3 +72,7 @@ site/.hugo_build.lock
 
 # The site serves this on purpose (design 016).
 !site/static/llms.txt
+
+# Dashboard build
+node_modules/
+src/server/dashboard/static/app.js

@@ -160,6 +160,10 @@ class WorkerManager(Protocol):
     `age_seconds` where the launcher knows them."""
     ...
 
+  def workloads(self) -> list[dict[str, Any]]:
+    """The scheduler Workload objects this manager created; none for a launcher without a scheduler."""
+    ...
+
 
 class LocalWorkerManager:
   """Runs each runtime as a subprocess of the API server, for development."""
@@ -250,6 +254,9 @@ class LocalWorkerManager:
           }
         )
       return workers
+
+  def workloads(self) -> list[dict[str, Any]]:
+    return []
 
 
 def python_command(extras: list[str], module: str, args: list[str]) -> list[str]:

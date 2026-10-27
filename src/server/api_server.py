@@ -30,12 +30,14 @@ from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
   TrainingModelMetadata,
   WeightSyncConfig,
+  display_metadata,
   get_model_metadata,
   persist_model_metadata,
 )
 from server.sampling_store import SamplingStore
 from server.session_registry import SessionRegistry
 from server.store import RedisStateStore, get_state_store, get_store
+from server.telemetry import ingest_sdk_events, record, record_placements, write
 from server.vllm_options import split_stop
 from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, default_metadata, owner_of
 from training import commands
@@ -64,9 +66,26 @@ async def bind_session(session_id: str | None, model_id: str) -> None:
     if meta is not None and session_id not in meta.session_ids:
       meta.session_ids.append(session_id)
       await persist_model_metadata(state, model_id, meta)
+    # A sampling session on a bare base model names no run.
+    if meta is not None:
+      session_registry.note(session_id, model_id=model_id)
     # On the owner, for the reaper: workers stay while any attached session lives.
     if worker_manager is not None:
       await session_registry.attach(session_id, owner)
+
+
+async def sweep_placements() -> None:
+  """Placement records from the scheduler's Workloads, also taken before a release deletes them. A failed sweep is retried."""
+  try:
+    workloads = await asyncio.wait_for(asyncio.to_thread(worker_manager.workloads), timeout=5)
+  except Exception as exc:
+    print(f"[API_SERVER] Placement sweep skipped: {exc!r}")
+    return
+  try:
+    terminations = await asyncio.wait_for(asyncio.to_thread(worker_manager.pod_terminations), timeout=5)
+  except Exception:  # placements stand without their pods' exit reasons
+    terminations = {}
+  write(record_placements(state, workloads, terminations), timeout=SESSION_REAP_INTERVAL_SEC)
 
 
 async def reap_owner(owner: str) -> None:
@@ -74,6 +93,7 @@ async def reap_owner(owner: str) -> None:
     if await session_registry.in_use(owner):
       return
     print(f"[API_SERVER] No live session uses {owner}; tearing its workers down")
+    await sweep_placements()
     for model in await asyncio.to_thread(worker_manager.release_owner, owner):
       await state.delete_values(f"open_rl:sampler_ready:{model}", f"open_rl:trainer_ready:{model}")
     await session_registry.forget(owner)
@@ -485,7 +505,8 @@ async def _extract_and_persist_model_metadata(
   lora_config = req.lora_config.model_dump()
 
   # The model's own user_metadata wins over what the session was opened with.
-  settings = resolve_settings(req.user_metadata or {}, await session_registry.user_metadata(req.session_id))
+  session_meta = await session_registry.user_metadata(req.session_id)
+  settings = resolve_settings(req.user_metadata or {}, session_meta)
   if checkpoint_kind is not None and settings.fine_tuning_type not in (None, checkpoint_kind):
     raise ValueError(f"{SETTINGS_PREFIX}fine_tuning_type={settings.fine_tuning_type} does not match the {checkpoint_kind} checkpoint")
   fine_tuning_type = settings.fine_tuning_type or checkpoint_kind or "lora"
@@ -529,6 +550,7 @@ async def _extract_and_persist_model_metadata(
     trainer_gpus=settings.trainer_gpus,
     trainer_cp=settings.trainer_cp,
     recipe=settings.recipe,
+    **display_metadata({**session_meta, **(req.user_metadata or {})}),
   )
   await persist_model_metadata(state, model_id, meta_obj)
 
@@ -561,9 +583,8 @@ async def enqueue(command: Command) -> str:
 
   active_set_id = await _resolve_active_set_id(command.model_id)
   await store.put_request(commands.wire(command.model_copy(update={"trace_context": carrier})), active_set_id=active_set_id)
-  # One line per training request so a request that never reaches a worker can
-  # be traced end to end (the workers log the same id when they pop it).
-  print(f"[API_SERVER] enqueued op={command.op} request_id={command.request_id} model_id={command.model_id} active_set={active_set_id}")
+  # Its log line lets a request that never reaches a worker be traced by its id, which the worker logs when it pops it.
+  record(command.model_id, "enqueued", request_id=command.request_id, op=command.op, active_set=active_set_id)
   return command.request_id
 
 
@@ -652,6 +673,7 @@ async def reap_dead_sessions():
   while True:
     await asyncio.sleep(SESSION_REAP_INTERVAL_SEC)
     # Nothing in a sweep may end the loop. A failed call is retried next sweep.
+    await sweep_placements()
     try:
       owners = await session_registry.owners()
     except Exception:
@@ -735,6 +757,11 @@ def openapi_with_settings() -> dict[str, Any]:
 
 
 app.openapi = openapi_with_settings
+# Fleet inspection belongs on the operator dashboard, not the model-capability API.
+if os.getenv("OPEN_RL_INSPECTION_API", "").lower() == "true":
+  from server.dashboard.router import router as dashboard_router
+
+  app.include_router(dashboard_router)
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
 
 
@@ -921,6 +948,7 @@ async def delete_model(req: ModelRequest):
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)), active_set_id=await _resolve_active_set_id(model_id))
     await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
+    await sweep_placements()
     await asyncio.to_thread(worker_manager.release, model_id)
   now = time.time()
   meta.status = "completed"
@@ -1319,6 +1347,8 @@ async def asample(req: AsampleRequest):
     "weights_path": weights_path,
     "include_prompt_logprobs": req.prompt_logprobs,
     "model_id": queue_id,
+    # The queue may be a shared runtime's; the run is the model the client samples.
+    "logical_run_id": lookup_id,
     "trace_context": carrier,
   }
 
@@ -1356,5 +1386,6 @@ async def list_adapters():
 
 
 @app.post("/api/v1/telemetry")
-async def telemetry(_: dict):
+async def telemetry(body: dict):
+  ingest_sdk_events(state, body)
   return {"status": "accepted"}
