@@ -721,6 +721,8 @@ def translate_future_result(result: dict) -> dict:
     response["type"] = public_type_by_internal_type[result_type]
     if result_type == "state_saved" and isinstance(response.get("path"), str):
       response["path"] = tinker_state_path(response["path"])
+    if result_type in ("state_saved", "sampler_weights_saved", "weights_saved"):
+      response.pop("metrics", None)  # recorded by telemetry on the worker; not part of the SDK's save responses
     return response
 
   return result

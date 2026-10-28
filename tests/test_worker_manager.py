@@ -390,6 +390,17 @@ class ApiServerFutureTranslationTest(unittest.TestCase):
           {"type": public_type, "path": "/tmp/x"},
         )
 
+  def test_save_results_keep_delta_metrics_out_of_the_client_response(self) -> None:
+    """The worker's delta metrics ride on the result for the op record; the SDK's save responses do not carry them."""
+    metrics = {"delta/density_pct": 6.97, "delta/total_elements": 494032768.0}
+    for internal_type in ("state_saved", "sampler_weights_saved", "weights_saved"):
+      with self.subTest(internal_type=internal_type):
+        translated = api_server.translate_future_result({"type": internal_type, "path": "/tmp/x", "metrics": metrics})
+        self.assertNotIn("metrics", translated)
+    # forward_backward keeps its metrics: the client reads them
+    translated = api_server.translate_future_result({"type": "forward_backward_completed", "metrics": {"loss:mean": 1.0}})
+    self.assertEqual(translated["metrics"], {"loss:mean": 1.0})
+
 
 class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
   def setUp(self) -> None:

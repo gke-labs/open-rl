@@ -213,6 +213,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
       json.dump(metadata, f)
 
+    self.last_save_metrics = {}
     print(f"Saved full fine-tuning state to {state_path}")
     return {"path": state_path}
 
@@ -287,6 +288,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
       json.dump(metadata, f)
 
+    # The op record keeps these, so the share of the model that moved each step is a step metric.
+    self.last_save_metrics = {
+      "delta/density_pct": metadata["density_pct"],
+      "delta/changed_elements": float(total_changed),
+      "delta/total_elements": float(total_elements),
+      "delta/layers": float(len(layer_names_list)),
+      "time/delta_collect": collect_time,
+      "time/delta_write": save_file_time,
+    }
     print(f"Saved sparse delta ({metadata['density_pct']}% changed elements, {total_changed}/{total_elements}) to {state_path}")
     return {"path": state_path, "density_pct": metadata["density_pct"]}
 
