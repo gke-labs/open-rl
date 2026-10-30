@@ -63,12 +63,14 @@ vllm = [
     # fresh pod, ~30 minutes at MAX_JOBS=4.
     "flashinfer-jit-cache==0.6.18.post1; sys_platform == 'linux'",
 ]
-# TPU trainer. torch_tpu is installed separately and pairs with torch 2.11.0.
+# TPU trainer. torch-tpu pairs with CPU torch; 2.13.0 is the torch the TPU
+# vLLM release pins, so both TPU images resolve one torch.
 tpu = [
     "datasets",
     "numpy",
     "peft",
-    "torch==2.11.0",
+    "torch==2.13.0",
+    "torch-tpu==0.2.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
     "transformers>=5.5.4",
 ]
 # TPU sampler. torch and torchvision are listed so they come from the CPU index.
