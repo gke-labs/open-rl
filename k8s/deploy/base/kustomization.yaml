@@ -10,6 +10,7 @@ resources:
   - sampler-router.yaml
   - redis.yaml
   - api-server.yaml
+  - worker-prepull.yaml
 
 generatorOptions:
   disableNameSuffixHash: true
