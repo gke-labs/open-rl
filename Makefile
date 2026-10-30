@@ -1,5 +1,5 @@
 .PHONY: server test lint fmt help render release-bundle push-vm pull-vm cluster-eval perf-compare \
-	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer cloud-build-tpu-sampler cloud-build-tpu-fft-sampler \
+	cloud-build-api-server cloud-build-server cloud-build-client cloud-build-tpu-trainer cloud-build-tpu-sampler \
 	cloud-deploy-api-server cloud-deploy-server \
 	cloud-rollout-api-server cloud-rollout-server cloud-rollout \
 	kind-host-setup kind-create kind-api-server kind-deploy \
@@ -141,14 +141,14 @@ build-images: require-gcp-project
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG) -f src/server/Dockerfile .
 	DOCKER_BUILDKIT=1 docker build --build-arg OPEN_RL_VERSION=$(IMAGE_TAG) -t $(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG) -f src/server/Dockerfile.api_server .
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-client:$(IMAGE_TAG) -f src/server/Dockerfile.client .
-	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG) -f src/server/Dockerfile.tpu_sampler .
+	$(if $(TPU_SAMPLER_BASE_IMAGE),DOCKER_BUILDKIT=1 docker build --build-arg BASE_IMAGE=$(TPU_SAMPLER_BASE_IMAGE) -t $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG) -f src/server/Dockerfile.tpu_sampler .)
 	DOCKER_BUILDKIT=1 docker build -t $(CLOUD_REGISTRY)/open-rl-tpu-trainer:$(IMAGE_TAG) -f src/server/Dockerfile.tpu .
 
 push-images: require-gcp-project
 	docker push $(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG)
 	docker push $(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG)
 	docker push $(CLOUD_REGISTRY)/open-rl-client:$(IMAGE_TAG)
-	docker push $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG)
+	$(if $(TPU_SAMPLER_BASE_IMAGE),docker push $(CLOUD_REGISTRY)/open-rl-tpu-sampler:$(IMAGE_TAG))
 	docker push $(CLOUD_REGISTRY)/open-rl-tpu-trainer:$(IMAGE_TAG)
 	kubectl set image deployment/open-rl-api-server api-server=$(CLOUD_REGISTRY)/open-rl-api-server:$(IMAGE_TAG) 2>/dev/null || true
 	kubectl set image daemonset/open-rl-accel-timeslicer accel-timeslicer=$(CLOUD_REGISTRY)/open-rl-server:$(IMAGE_TAG) 2>/dev/null || true
@@ -165,8 +165,7 @@ push-images: require-gcp-project
 #   make cloud-rollout-server    # CUDA worker image, ~20-40 min
 #   make cloud-rollout           # both, plus the client image
 #   make cloud-build-tpu-trainer # TPU trainer image
-#   make cloud-build-tpu-sampler # TPU sampler image (vllm-tpu)
-#   make cloud-build-tpu-fft-sampler # TPU FFT sampler image; needs TPU_FFT_SAMPLER_BASE_IMAGE
+#   make cloud-build-tpu-sampler # TPU sampler image; needs TPU_SAMPLER_BASE_IMAGE
 #
 # Tag for cloud-built images. A dirty tree gets a unique -dev<stamp> suffix so
 # uncommitted work never reuses the committed sha's tag, and so the kubelet is
@@ -199,13 +198,11 @@ cloud-build-client: require-gcp-project
 cloud-build-tpu-trainer: require-gcp-project
 	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-trainer,_DOCKERFILE=src/server/Dockerfile.tpu,_TAG=$(CLOUD_IMAGE_TAG) .
 
+# TPU_SAMPLER_BASE_IMAGE: the base image with vLLM for TPU (see the Dockerfile).
+# build-images and push-images skip the sampler image without it.
 cloud-build-tpu-sampler: require-gcp-project
-	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_sampler,_TAG=$(CLOUD_IMAGE_TAG) .
-
-# TPU_FFT_SAMPLER_BASE_IMAGE: the base image with vLLM for TPU (see the Dockerfile).
-cloud-build-tpu-fft-sampler: require-gcp-project
-	@test -n "$(TPU_FFT_SAMPLER_BASE_IMAGE)" || { echo "Set TPU_FFT_SAMPLER_BASE_IMAGE to the base image with vLLM for TPU (see src/server/Dockerfile.tpu_fft_sampler)"; exit 2; }
-	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-fft-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_fft_sampler,_TAG=$(CLOUD_IMAGE_TAG),_BASE_IMAGE=$(TPU_FFT_SAMPLER_BASE_IMAGE) .
+	@test -n "$(TPU_SAMPLER_BASE_IMAGE)" || { echo "Set TPU_SAMPLER_BASE_IMAGE to the base image with vLLM for TPU (see src/server/Dockerfile.tpu_sampler)"; exit 2; }
+	$(CLOUD_BUILD) --substitutions=_IMAGE=$(CLOUD_REGISTRY)/open-rl-tpu-sampler,_DOCKERFILE=src/server/Dockerfile.tpu_sampler,_TAG=$(CLOUD_IMAGE_TAG),_BASE_IMAGE=$(TPU_SAMPLER_BASE_IMAGE) .
 
 # Point the running workloads at the freshly built tag. Split from the build
 # steps so a tag built earlier can be re-deployed with
