@@ -285,7 +285,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     # The GPU trainer still went out; the TPU sampler never did.
     self.assertEqual([w["spec"]["role"] for w in self.api.created], ["trainer"])
 
-  def test_an_fft_tpu_sampler_pod_uses_the_fft_sampler_image(self) -> None:
+  def test_an_fft_tpu_sampler_pod_uses_the_tpu_sampler_image(self) -> None:
     meta = {
       "base_model": "Qwen/Qwen3-0.6B",
       "fine_tuning_type": "full",
@@ -294,28 +294,13 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       "sampler_accel_prefs": ["tpu"],
     }
     s = self.store_with("job-fft", meta)
-    images = {
-      "OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1",
-      "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1",
-      "OPEN_RL_TPU_FFT_SAMPLER_IMAGE": "tpu-fft-sampler:1",
-    }
+    images = {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1"}
     with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, images):
       self.manager.ensure("job-fft", "trainer")
       self.manager.ensure("job-fft", "sampler")
     trainer, sampler = self.api.created
     self.assertEqual(trainer["spec"]["template"]["spec"]["containers"][0]["image"], "tpu-trainer:1")
-    self.assertEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "tpu-fft-sampler:1")
-
-  def test_an_fft_tpu_sampler_without_its_image_fails_naming_the_variable(self) -> None:
-    s = self.store_with("job-fft", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "full", "exclusive": True, "sampler_accel_prefs": ["tpu"]})
-    env = {k: v for k, v in os.environ.items() if k != "OPEN_RL_TPU_FFT_SAMPLER_IMAGE"}
-    env["OPEN_RL_TPU_SAMPLER_IMAGE"] = "tpu-sampler:1"
-    with (
-      patch("server.worker_manager.get_state_store", return_value=s),
-      patch.dict(os.environ, env, clear=True),
-      self.assertRaisesRegex(RuntimeError, "OPEN_RL_TPU_FFT_SAMPLER_IMAGE"),
-    ):
-      self.manager.ensure("job-fft", "sampler")
+    self.assertEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "tpu-sampler:1")
 
   def test_mutable_worker_images_use_the_requested_pull_policy(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})

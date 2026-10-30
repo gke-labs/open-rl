@@ -1,3 +1,0 @@
-images:
-  - path: data/tpu-fft-sampler
-    kind: ConfigMap

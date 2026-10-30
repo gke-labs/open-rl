@@ -8,18 +8,5 @@ namespace: openrl-system
 resources:
   - ../lora-tpu
 
-# Point the placeholder at your build, e.g.
-# `kustomize edit set image TPU-FFT-SAMPLER-IMAGE=<image>`.
-generatorOptions:
-  disableNameSuffixHash: true
-configMapGenerator:
-  - name: open-rl-images
-    behavior: merge
-    literals:
-      - tpu-fft-sampler=TPU-FFT-SAMPLER-IMAGE
-
-configurations:
-  - images.yaml
-
 patches:
   - path: api-server.yaml

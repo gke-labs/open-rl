@@ -135,7 +135,7 @@ def describe_worker(model_id: str, role: str) -> Worker:
   size = footprint(base_model, meta.fine_tuning_type, role, accelerator)
   # Each torchrun rank is its own process with its own host memory.
   size = replace(size, host_request_bytes=size.host_request_bytes * devices, host_limit_bytes=size.host_limit_bytes * devices)
-  return Worker(role, runtime, base_model, is_lora, exclusive, meta, size, pod_spec(accelerator, role, is_lora), devices, pool=pool)
+  return Worker(role, runtime, base_model, is_lora, exclusive, meta, size, pod_spec(accelerator, role), devices, pool=pool)
 
 
 def pod_env(worker: Worker) -> list[dict[str, Any]]:
