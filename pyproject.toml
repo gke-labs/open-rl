@@ -44,7 +44,7 @@ cpu = [
 ]
 gpu = [
     "datasets",
-    "flash-linear-attention==0.5.1",
+    "flash-linear-attention==0.5.2",
     "numpy",
     "peft",
     "tilelang>=0.1.9; sys_platform == 'linux'",
@@ -57,7 +57,7 @@ vllm = [
     "torchaudio; sys_platform == 'linux'",
     "torchvision; sys_platform == 'linux'",
     "torch-c-dlpack-ext; sys_platform == 'linux'",
-    "vllm==0.30.0; sys_platform == 'linux'",
+    "vllm==0.32.0; sys_platform == 'linux'",
     # Prebuilt FlashInfer kernels, pinned to the flashinfer-python vLLM brings.
     # Without it a sampler JIT-builds kernels such as gdn_prefill_sm90 on every
     # fresh pod, ~30 minutes at MAX_JOBS=4.
