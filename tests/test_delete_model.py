@@ -38,7 +38,7 @@ class DeleteModelTest(unittest.IsolatedAsyncioTestCase):
     results = []
     for step in steps:
       await processor.process_request(commands.wire(step))
-      result = await processor.store.get_future(step.request_id, timeout=5)
+      result = await processor.store.get_result(step.request_id, timeout=5)
       self.assertNotEqual(result.get("type"), "RequestFailedResponse", f"{step.request_id}: {result}")
       results.append(result)
     return results

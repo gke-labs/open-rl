@@ -3,21 +3,13 @@ import unittest
 from dataclasses import asdict
 from unittest.mock import MagicMock
 
-from server.model_metadata import TrainingModelMetadata, WeightSyncConfig, decode_model_metadata, extract_weight_sync_config
+from server.model_metadata import TrainingModelMetadata, WeightSyncConfig, decode_model_metadata
 from server.worker_manager import metadata_for
 
 
 class TestWeightSyncConfig(unittest.TestCase):
-  def test_header_parsing_defaults_case_and_invalid_values(self):
-    self.assertEqual(extract_weight_sync_config({}).strategy, "delta")
-    self.assertEqual(extract_weight_sync_config(None).strategy, "delta")
-    self.assertEqual(extract_weight_sync_config({"x-open-rl-weight-sync-strategy": "FULL"}).strategy, "full")
-    self.assertEqual(extract_weight_sync_config({"x-open-rl-weight-sync-strategy": "invalid_mode"}).strategy, "delta")
-
   def test_legacy_fields_are_ignored(self):
-    """Old clients and stored metadata may still carry delta_format and delta_apply_method."""
-    cfg = extract_weight_sync_config({"x-open-rl-weight-sync-delta-format": "vllm_fused", "x-open-rl-weight-sync-delta-apply-method": "full_replace"})
-    self.assertEqual(cfg, WeightSyncConfig(strategy="delta"))
+    """Stored metadata may still carry delta_format and delta_apply_method."""
     legacy = {"strategy": "full", "delta_format": "vllm_fused", "delta_apply_method": "patch_in_place"}
     meta = decode_model_metadata(json.dumps({"base_model": "m", "created_at": 1.0, "weight_sync_config": legacy}))
     self.assertEqual(meta.weight_sync_config, WeightSyncConfig(strategy="full"))
@@ -27,7 +19,7 @@ class TestWeightSyncConfig(unittest.TestCase):
       base_model="Qwen/Qwen3-8B",
       created_at=123456789.0,
       fine_tuning_type="full",
-      weight_sync_config=asdict(extract_weight_sync_config({"x-open-rl-weight-sync-strategy": "delta"})),
+      weight_sync_config=asdict(WeightSyncConfig(strategy="delta")),
     )
     mock_store = MagicMock()
     mock_store.get_value_sync.return_value = meta.model_dump_json()

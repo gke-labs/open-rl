@@ -14,11 +14,25 @@ from training.types import Datum
 
 # Position marker for a filler pass, see _run_batches.
 FILLER_DATUM_INDEX = -1
+# Largest share of a training pass that may be padding. Every sequence in a
+# pass is padded to the longest one, so a long sequence added to short ones
+# multiplies the work.
+MAX_PADDING_SHARE = 0.25
 
 
 def shard_datum_indices(count: int, shard_rank: int, shard_count: int) -> list[int]:
   """Round-robin datum ownership for one data-parallel rank."""
   return list(range(shard_rank, count, shard_count))
+
+
+def chunk_target_logprobs(head: torch.nn.Module, softcap: float | None, hidden: torch.Tensor, target_token_ids: torch.Tensor) -> torch.Tensor:
+  """logit[target] - logsumexp(logits) for one chunk of positions."""
+  logits = head(hidden)
+  if softcap is not None:
+    logits = torch.tanh(logits / softcap) * softcap
+  # fp32 for an accurate logsumexp over a large vocab; this copy is only chunk-sized.
+  logits = logits.float()
+  return logits.gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1) - torch.logsumexp(logits, dim=-1)
 
 
 class BaseTrainerWorker:
@@ -34,6 +48,13 @@ class BaseTrainerWorker:
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
     self.device = resolve_device()
+    self.last_token_budget: int | None = None
+
+  def is_ready(self) -> bool:
+    """Whether a model is loaded and the worker can serve requests. The
+    request processor announces this to the API server, which shows it to
+    clients as the worker's state."""
+    return False
 
   def forward_backward(
     self,
@@ -98,7 +119,11 @@ class BaseTrainerWorker:
     shard_count = self.shard_count()
     local_indices = shard_datum_indices(len(data), self.shard_rank(), shard_count)
     local_data = [data[idx] for idx in local_indices]
-    local_batches = self.make_training_batches(local_data)
+    token_budget = self.train_token_budget(model)
+    local_batches = self.make_training_batches(local_data, token_budget)
+    if token_budget != self.last_token_budget:
+      print(f"[trainer] token budget per pass: {token_budget or 'one sequence'}; {len(local_data)} sequences in {len(local_batches)} passes")
+      self.last_token_budget = token_budget
     if shard_count > 1 and self.backward_runs_collectives:
       filler_passes = self.shard_all_reduce_max(len(local_batches)) - len(local_batches)
       filler = local_data[0] if local_data else data[0]
@@ -178,12 +203,45 @@ class BaseTrainerWorker:
       "loss_fn_output_type": "ArrayRecord",
     }
 
-  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
-    """Group examples for the single padded forward/backward path."""
+  # Upper bound for the automatic budget. Past it, passes stop getting faster
+  # and use more memory.
+  AUTO_TOKEN_BUDGET_CEILING = 16384
+  # Share of the free device memory the automatic budget may fill.
+  AUTO_TOKEN_BUDGET_MEMORY_SHARE = 0.5
+  # Activation bytes per token as a multiple of one hidden vector per layer,
+  # which is what gradient checkpointing keeps. The rest covers the layer being
+  # recomputed in backward, plus a margin.
+  ACTIVATION_BYTES_FACTOR = 6
+
+  def train_token_budget(self, model: PreTrainedModel) -> int:
+    """Padded tokens per forward/backward pass. OPEN_RL_TRAIN_TOKEN_BUDGET is
+    used as given when it is a number (0 = one sequence per pass); unset or
+    `auto` takes the smaller of the ceiling and what fits in free memory."""
+    raw = os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "auto").strip().lower()
+    if raw not in ("", "auto"):
+      return int(raw)
+    return min(self.AUTO_TOKEN_BUDGET_CEILING, self.memory_token_cap(model))
+
+  def memory_token_cap(self, model: PreTrainedModel) -> int:
+    """Tokens whose activations fit in a share of the free device memory.
+
+    Free memory is read at each call: a time-sliced worker holds the device
+    while it trains, and its partner's memory is released by then. Memory the
+    caching allocator holds but does not use counts as free.
+    """
+    if self.device.type != "cuda":
+      return self.AUTO_TOKEN_BUDGET_CEILING
+    text_config = model.config.get_text_config()
+    token_bytes = text_config.num_hidden_layers * text_config.hidden_size * model.dtype.itemsize * self.ACTIVATION_BYTES_FACTOR
+    free_bytes, _ = torch.cuda.mem_get_info(self.device)
+    free_bytes += torch.cuda.memory_reserved(self.device) - torch.cuda.memory_allocated(self.device)
+    return int(free_bytes * self.AUTO_TOKEN_BUDGET_MEMORY_SHARE / token_bytes)
+
+  def make_training_batches(self, data: list[Datum], token_budget: int) -> list[list[tuple[int, Datum]]]:
+    """Group examples for the single padded forward/backward path. A budget of
+    0 runs one example per pass."""
     if len(data) <= 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
-
-    token_budget = int(os.getenv("OPEN_RL_TRAIN_TOKEN_BUDGET", "0"))
 
     if token_budget <= 0:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
@@ -192,25 +250,30 @@ class BaseTrainerWorker:
     batches: list[list[tuple[int, Datum]]] = []
     batch: list[tuple[int, Datum]] = []
     batch_max_len = 0
+    batch_tokens = 0
     bucketing = self.shape_bucketing_enabled()
 
     for item in ordered_data:
       length = len(item[1].model_input)
       next_max_len = max(batch_max_len, length)
       next_size = len(batch) + 1
+      next_padded_tokens = next_max_len * next_size
+      # The padding share is judged on the real shape; bucketing pads on top of it.
+      over_padding = next_padded_tokens - (batch_tokens + length) > MAX_PADDING_SHARE * next_padded_tokens
       if bucketing:
         # Cost the padded shape the batch will run at.
-        next_max_len = self.bucket_size(next_max_len, self.MIN_LENGTH_BUCKET)
-        next_size = self.bucket_size(next_size)
-      over_token_budget = next_max_len * next_size > token_budget
+        next_padded_tokens = self.bucket_size(next_max_len, self.MIN_LENGTH_BUCKET) * self.bucket_size(next_size)
+      over_token_budget = next_padded_tokens > token_budget
 
-      if batch and over_token_budget:
+      if batch and (over_token_budget or over_padding):
         batches.append(batch)
         batch = []
         batch_max_len = 0
+        batch_tokens = 0
 
       batch.append(item)
       batch_max_len = max(batch_max_len, length)
+      batch_tokens += length
 
     if batch:
       batches.append(batch)
@@ -302,58 +365,25 @@ class BaseTrainerWorker:
   ) -> torch.Tensor:
     """Return selected target logprobs with shape [batch, max_target_len].
 
-    The decoder body runs once. The output head and logsumexp then run on
-    LOGPROB_CHUNK_TOKENS rows (batch x positions) at a time under activation
-    checkpointing, so the full [tokens x vocab] logits are never built and loss
-    memory scales with the chunk size instead of the batch.
+    The model returns its final hidden states instead of logits for every
+    position. The output head and logsumexp then run on LOGPROB_CHUNK_TOKENS
+    positions at a time under activation checkpointing, so the full
+    [tokens x vocab] logits are never held at once and loss memory scales with
+    the chunk size instead of the batch.
     """
     batch_size, target_len = target_token_ids.shape
-    parts = self.split_causal_lm(model)
-    if parts is None:
-      # No body/head split: the model builds the full logits, and the chunks below only bound the fp32 copy.
-      hidden = model(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True).logits
-      head, softcap = torch.nn.Identity(), None
-    else:
-      body, head, softcap = parts
-      hidden = body(input_ids, attention_mask=attention_mask, use_cache=False, return_dict=True).last_hidden_state
-    hidden = hidden[:, :target_len].reshape(batch_size * target_len, -1)
+    outputs = model(input_ids, attention_mask=attention_mask, use_cache=False, logits_to_keep=1, output_hidden_states=True, return_dict=True)
+    hidden = outputs.hidden_states[-1][:, :target_len].reshape(batch_size * target_len, -1)
     targets = target_token_ids.reshape(-1)
+    head = model.get_output_embeddings()
+    # Gemma caps its logits after the output head; other models leave this unset.
+    softcap = getattr(model.config.get_text_config(), "final_logit_softcapping", None)
     size = self.LOGPROB_CHUNK_TOKENS
     chunks = [
-      checkpoint(self.chunk_target_logprobs, head, softcap, hidden[start : start + size], targets[start : start + size], use_reentrant=False)
+      checkpoint(chunk_target_logprobs, head, softcap, hidden[start : start + size], targets[start : start + size], use_reentrant=False)
       for start in range(0, hidden.shape[0], size)
     ]
     return torch.cat(chunks).reshape(batch_size, target_len)
-
-  @staticmethod
-  def chunk_target_logprobs(head: torch.nn.Module, softcap: float | None, hidden: torch.Tensor, target_token_ids: torch.Tensor) -> torch.Tensor:
-    logits = head(hidden)
-    if softcap is not None:
-      # Gemma's final_logit_softcapping, which the CausalLM forward would apply.
-      logits = torch.tanh(logits / softcap) * softcap
-    # fp32 for an accurate logsumexp over a large vocab; this copy is only chunk-sized.
-    logits = logits.float()
-    return logits.gather(dim=-1, index=target_token_ids.unsqueeze(-1)).squeeze(-1) - torch.logsumexp(logits, dim=-1)
-
-  @staticmethod
-  def split_causal_lm(model: Any) -> tuple[torch.nn.Module, torch.nn.Module, float | None] | None:
-    """Return (decoder body, output head, final logit softcap) of an HF causal LM.
-
-    Returns None for models without that split and for models that rescale
-    logits after the head (Cohere's logit_scale, Granite's logits_scaling).
-    PEFT is unwrapped first, because its attribute forwarding would return the
-    whole causal LM as the body. LoRA layers are injected in place, so the body
-    still carries the adapters.
-    """
-    hf_model = model.get_base_model() if hasattr(model, "get_base_model") else model
-    if not hasattr(hf_model, "get_output_embeddings"):
-      return None
-    body = getattr(hf_model, hf_model.base_model_prefix, None)
-    head = hf_model.get_output_embeddings()
-    config = hf_model.config.get_text_config()
-    if body is None or head is None or hasattr(config, "logit_scale") or hasattr(config, "logits_scaling"):
-      return None
-    return body, head, getattr(config, "final_logit_softcapping", None)
 
   def generate(
     self,

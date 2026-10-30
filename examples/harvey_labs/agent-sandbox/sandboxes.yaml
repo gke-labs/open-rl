@@ -1,0 +1,125 @@
+# LAB episode sandboxes on the sandbox cluster; README.md has the setup.
+# The pod range and image below are this deployment's: replace them.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-sandboxes
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxTemplate
+metadata:
+  name: lab-sandbox
+  namespace: lab-sandboxes
+spec:
+  # LAB runs its sandbox with --network=none. The only traffic allowed is the
+  # driver reaching sandboxd from the training cluster's pod range.
+  networkPolicy:
+    ingress:
+    - from:
+      - ipBlock:
+          cidr: 10.112.0.0/14
+      ports:
+      - port: 8080
+      - port: 9090
+    egress: []
+  podTemplate:
+    spec:
+      automountServiceAccountToken: false
+      runtimeClassName: gvisor
+      nodeSelector:
+        sandbox.gke.io/runtime: gvisor
+      tolerations:
+      - key: sandbox.gke.io/runtime
+        operator: Equal
+        value: gvisor
+        effect: NoSchedule
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+      - name: sandbox
+        image: us-central1-docker.pkg.dev/open-rl-2-sandbox-102433/open-rl/lab-sandbox-asb:v2
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        # Same shape as the Substrate workers this replaces.
+        resources:
+          requests:
+            cpu: 200m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 3Gi
+        ports:
+        - containerPort: 8080
+        - containerPort: 9090
+        readinessProbe:
+          httpGet:
+            path: /v1/health
+            port: 8080
+---
+apiVersion: extensions.agents.x-k8s.io/v1beta1
+kind: SandboxWarmPool
+metadata:
+  name: lab-sandbox
+  namespace: lab-sandboxes
+spec:
+  replicas: 120
+  # Replace warm sandboxes when the template changes.
+  updateStrategy:
+    type: Recreate
+  sandboxTemplateRef:
+    name: lab-sandbox
+---
+# The harvey driver in the training cluster claims sandboxes as this account.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harvey-driver
+  namespace: lab-sandboxes
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: harvey-driver-token
+  namespace: lab-sandboxes
+  annotations:
+    kubernetes.io/service-account.name: harvey-driver
+type: kubernetes.io/service-account-token
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: harvey-driver
+  namespace: lab-sandboxes
+rules:
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxclaims]
+  # patch renews a claim's lease.
+  verbs: [create, get, list, watch, patch, delete]
+- apiGroups: [extensions.agents.x-k8s.io]
+  resources: [sandboxwarmpools, sandboxtemplates]
+  verbs: [get, list]
+- apiGroups: [agents.x-k8s.io]
+  resources: [sandboxes]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [pods]
+  verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: harvey-driver
+  namespace: lab-sandboxes
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: harvey-driver
+subjects:
+- kind: ServiceAccount
+  name: harvey-driver
+  namespace: lab-sandboxes

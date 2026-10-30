@@ -79,6 +79,7 @@ tpu-sampler = [
 ]
 # Kubernetes cluster mode: the k8s API client used to launch FFT worker pods.
 cluster = [
+    "google-auth",
     "kubernetes>=29",
     # Kept in step with the snapshot-agent image deployed in
     # docs/setup/gke-fft-timeslice.md: both come from this upstream release.

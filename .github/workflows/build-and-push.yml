@@ -61,11 +61,13 @@ jobs:
           images: ghcr.io/gke-labs/open-rl/${{ matrix.image_name }}
           # Tags every push `sha-<short>`, the default branch `latest`, and a
           # `v*` tag push `v<x.y.z>`. The literal `v` keeps the image tag equal
-          # to the git tag, which the bundle pins to.
+          # to the git tag, which the bundle pins to. The sha outranks `latest`
+          # so the `version` output (OPEN_RL_VERSION below) is the tag on a
+          # release and `sha-<short>` on every other push, never `latest`.
           flavor: |
             latest=false
           tags: |
-            type=sha
+            type=sha,priority=300
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern=v{{version}}
 
@@ -77,6 +79,9 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The API server reports this as its version: v<x.y.z> on a tag, sha-<short> otherwise.
+          build-args: |
+            OPEN_RL_VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

@@ -190,6 +190,13 @@ curl http://127.0.0.1:9003/api/v1/healthz
 curl http://127.0.0.1:9003/api/v1/get_server_capabilities
 ```
 
+The `openrl` section of the second response names the release, how the
+server runs workers, and where the settings are described: every `openrl.*`
+setting, with its type, default and description, is in `/openapi.json`
+under `components.schemas.OpenRLSettings`, rendered at `/docs`. Any
+Hugging Face model works as a base model; `supported_models` only lists the
+configured default.
+
 ## 3. Get the examples
 
 ```bash
@@ -197,6 +204,45 @@ git clone https://github.com/gke-labs/open-rl.git
 cd open-rl
 uv --project examples sync
 ```
+
+`openrl-doctor` checks the deployment from where you sit: the endpoint, the
+release and its settings; with `--train`, a three-step round trip that proves
+a worker can start. It needs no `kubectl` and takes a few seconds:
+
+```bash
+uv --project examples run openrl-doctor
+```
+
+If an AI coding agent is doing the work, give it two skills. The
+[OpenRL skill](../skills/openrl/SKILL.md) covers this deployment: connecting,
+the `openrl.*` settings, what the cluster is doing while a call waits, and
+OpenRL's own errors. The [tinker-cookbook skills](https://github.com/thinking-machines-lab/tinker-cookbook/tree/main/skills)
+(`research`, `debug`) cover how to train: recipes, hyperparameters,
+evaluation, and SDK debugging. The OpenRL skill says when to use which, and
+where the cookbook's hosted-service advice does not apply here.
+
+Both are plain directories with a `SKILL.md` and a `references/` folder,
+the format most coding agents load. The OpenRL skill is `skills/openrl/`
+in this clone and ships with each release as `openrl-skill.tar.gz`, stamped
+with the version it describes; a running server names the matching asset
+as `openrl.skill_url` in `get_server_capabilities`. The cookbook skills are
+`skills/` in a clone of tinker-cookbook.
+
+How to install them depends on the agent:
+
+- **Any agent that loads skill directories:** unpack `openrl-skill.tar.gz`
+  (it unpacks to `openrl/`) and copy tinker-cookbook's `skills/research`
+  and `skills/debug` into the directory your agent reads skills from. An
+  agent without a skills directory can be pointed at the `SKILL.md` files
+  directly; each one links its references by relative path.
+- **Claude Code:** both repositories publish a plugin marketplace.
+  ```
+  /plugin marketplace add gke-labs/open-rl
+  /plugin install openrl@open-rl
+  /plugin marketplace add thinking-machines-lab/tinker-cookbook
+  /plugin install tinker@tinker-skills
+  ```
+  The cookbook skills then answer to `/tinker:research` and `/tinker:debug`.
 
 The examples talk to `http://127.0.0.1:9003` by default.
 
@@ -281,9 +327,13 @@ Any Tinker SDK client works against OpenRL, so the larger examples carry over:
 ## Troubleshooting
 
 - **A step hangs before the first loss line.** The cluster is starting a
-  worker. `kubectl -n openrl-system get workloads,pods` shows its progress. A
-  Workload stuck with `NoCapacity` means no labeled node has a free GPU large
-  enough; `WaitingForCapacity` means one exists but is busy.
+  worker. Ask the server about the model from another shell: the examples
+  print the model id and the command right after `create_model`, and for
+  any client `curl http://127.0.0.1:9003/api/v1/openrl/models/<model_id>`
+  shows the model's workers, each with a `state` and a `detail`, without
+  `kubectl`. `kubectl -n openrl-system get workloads` shows the whole
+  cluster. A Workload stuck with `NoCapacity` means no labeled node has a
+  free GPU large enough; `WaitingForCapacity` means one exists but is busy.
 - **A worker pod stays Pending.** `kubectl -n openrl-system describe pod <pod>`
   shows why: image pulls, volume attach limits, taints, or host memory.
 - **The client gets an error back.** The API server log has the details:

@@ -1,0 +1,50 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 290" width="100%" font-family="Figtree, 'Avenir Next', 'Segoe UI', system-ui, Helvetica, Arial, sans-serif" role="img" aria-label="Time per RL step, full-checkpoint sync vs delta sync">
+<rect width="720" height="290" fill="#F2EEDE"/>
+<rect x="24" y="15" width="12" height="12" fill="#B4470F"/>
+<text x="42" y="25" font-size="12" fill="#33312B">Trainer writes weights</text>
+<rect x="206.6" y="15" width="12" height="12" fill="#E0A24A"/>
+<text x="224.6" y="25" font-size="12" fill="#33312B">Sampler pauses to load them</text>
+<rect x="420.7" y="15" width="12" height="12" fill="#C9C4B2"/>
+<text x="438.7" y="25" font-size="12" fill="#33312B">Rollouts and training</text>
+<line x1="132.0" y1="74" x2="132.0" y2="252" stroke="#DED9C7" stroke-width="1"/>
+<line x1="244.1" y1="74" x2="244.1" y2="252" stroke="#DED9C7" stroke-width="1"/>
+<line x1="356.3" y1="74" x2="356.3" y2="252" stroke="#DED9C7" stroke-width="1"/>
+<line x1="468.4" y1="74" x2="468.4" y2="252" stroke="#DED9C7" stroke-width="1"/>
+<line x1="580.5" y1="74" x2="580.5" y2="252" stroke="#DED9C7" stroke-width="1"/>
+<text x="132" y="68" font-size="15" font-weight="600" fill="#1A1A1A">Gemma 4 E4B</text>
+<text x="122" y="95.0" font-size="12" fill="#33312B" text-anchor="end">Full checkpoint</text>
+<rect x="132.0" y="78" width="152.3" height="26" fill="#B4470F"/>
+<text x="208.1" y="95.0" font-size="11" fill="#FFFFFF" text-anchor="middle">68 s</text>
+<rect x="284.3" y="78" width="203.6" height="26" fill="#E0A24A"/>
+<text x="386.1" y="95.0" font-size="11" fill="#FFFFFF" text-anchor="middle">91 s</text>
+<rect x="487.9" y="78" width="72.2" height="26" fill="#C9C4B2"/>
+<text x="524.0" y="95.0" font-size="11" fill="#33312B" text-anchor="middle">32 s</text>
+<text x="568.1" y="95.0" font-size="12" fill="#1A1A1A"><tspan font-weight="600">191 s</tspan><tspan fill="#85837A"> · 83% syncing</tspan></text>
+<text x="122" y="131.0" font-size="12" fill="#33312B" text-anchor="end">Delta</text>
+<rect x="132.0" y="114" width="4.9" height="26" fill="#B4470F"/>
+<rect x="136.9" y="114" width="5.4" height="26" fill="#E0A24A"/>
+<rect x="142.3" y="114" width="60.6" height="26" fill="#C9C4B2"/>
+<text x="172.6" y="131.0" font-size="11" fill="#33312B" text-anchor="middle">27 s</text>
+<text x="210.9" y="131.0" font-size="12" fill="#1A1A1A"><tspan font-weight="600">32 s</tspan><tspan fill="#85837A"> · 15% syncing · 6.0× faster step</tspan></text>
+<text x="132" y="174" font-size="15" font-weight="600" fill="#1A1A1A">Qwen3-8B-Base</text>
+<text x="122" y="201.0" font-size="12" fill="#33312B" text-anchor="end">Full checkpoint</text>
+<rect x="132.0" y="184" width="152.9" height="26" fill="#B4470F"/>
+<text x="208.5" y="201.0" font-size="11" fill="#FFFFFF" text-anchor="middle">68 s</text>
+<rect x="284.9" y="184" width="223.4" height="26" fill="#E0A24A"/>
+<text x="396.6" y="201.0" font-size="11" fill="#FFFFFF" text-anchor="middle">100 s</text>
+<rect x="508.3" y="184" width="46.9" height="26" fill="#C9C4B2"/>
+<text x="531.8" y="201.0" font-size="11" fill="#33312B" text-anchor="middle">21 s</text>
+<text x="563.2" y="201.0" font-size="12" fill="#1A1A1A"><tspan font-weight="600">189 s</tspan><tspan fill="#85837A"> · 89% syncing</tspan></text>
+<text x="122" y="237.0" font-size="12" fill="#33312B" text-anchor="end">Delta</text>
+<rect x="132.0" y="220" width="16.1" height="26" fill="#B4470F"/>
+<rect x="148.1" y="220" width="20.2" height="26" fill="#E0A24A"/>
+<rect x="168.3" y="220" width="43.7" height="26" fill="#C9C4B2"/>
+<text x="190.2" y="237.0" font-size="11" fill="#33312B" text-anchor="middle">20 s</text>
+<text x="220.1" y="237.0" font-size="12" fill="#1A1A1A"><tspan font-weight="600">36 s</tspan><tspan fill="#85837A"> · 45% syncing · 5.3× faster step</tspan></text>
+<text x="132.0" y="266" font-size="11" fill="#85837A" text-anchor="middle">0 s</text>
+<text x="244.1" y="266" font-size="11" fill="#85837A" text-anchor="middle">50 s</text>
+<text x="356.3" y="266" font-size="11" fill="#85837A" text-anchor="middle">100 s</text>
+<text x="468.4" y="266" font-size="11" fill="#85837A" text-anchor="middle">150 s</text>
+<text x="580.5" y="266" font-size="11" fill="#85837A" text-anchor="middle">200 s</text>
+<text x="406.0" y="286" font-size="11" fill="#85837A" text-anchor="middle">median time per RL step</text>
+</svg>

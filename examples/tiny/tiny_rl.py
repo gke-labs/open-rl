@@ -16,7 +16,6 @@ from typing import Any, cast
 
 import chz
 import tinker
-from common.tinker_utils import patch_tinker_default_headers
 from tinker import types
 
 BASE_URL = "http://127.0.0.1:9003"
@@ -97,6 +96,10 @@ def main(config: Config) -> None:
     train_unembed=False,
   )
 
+  # Progress and diagnosis live on the server. While a call below blocks, this
+  # tells you what the cluster is doing for this model.
+  print(f"[tiny-rl] model_id={trainer.model_id}")
+  print(f"[tiny-rl] status: curl -s {config.base_url}/api/v1/openrl/models/{trainer.model_id} | jq .summary")
   try:
     tokenizer = trainer.get_tokenizer()
     # The API server names this tokenizer; a wrong one turns every sample below into token soup.
@@ -164,8 +167,4 @@ def main(config: Config) -> None:
 
 
 if __name__ == "__main__":
-  # Turns OPEN_RL_FINE_TUNING_TYPE into the header the API server reads. Without
-  # it a "fft" scenario silently trains a LoRA adapter: the harness sets the
-  # env, but nothing puts it on the wire.
-  patch_tinker_default_headers()
   chz.nested_entrypoint(main, allow_hyphens=True)

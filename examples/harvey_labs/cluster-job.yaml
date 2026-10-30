@@ -1,0 +1,80 @@
+# One Harvey LAB training run as a Job. The RL loop is a client of the
+# platform, so it runs in its own namespace (default, or one of yours), not
+# in openrl-system. Sandboxes run on Agent Sandbox in a separate cluster
+# (agent-sandbox/README.md) and logs land on the namespace's shared volume.
+# Set the image, the judge endpoint, and RUN, then kubectl apply -f.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: harvey-labs
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      # Without the training cluster's token the sandbox client falls back to
+      # KUBECONFIG, which points at the sandbox cluster.
+      automountServiceAccountToken: false
+      # Accelerator pools carry this taint; tolerating it lets the driver use
+      # their spare CPU when no general-purpose pool has room.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: driver
+          # Your build of examples/harvey_labs/Dockerfile.
+          image: us-central1-docker.pkg.dev/open-rl-2-sandbox-102433/open-rl/harvey-labs-client:latest
+          args:
+            - base_url=http://open-rl-gateway-service.openrl-system.svc:8000
+            - sandbox_warmpool=lab-sandbox
+            - log_path=/mnt/shared/harvey-labs/$(RUN)
+            # The longest sequence a CP4 trainer fits on 80 GB H100s; the gateway's
+            # VLLM_MAX_MODEL_LEN and OPEN_RL_TRAIN_TOKEN_BUDGET must match.
+            - max_trajectory_tokens=196608
+            # The rest matches the reference Qwen3.5-9B run.
+            - max_tokens=32768
+            - max_tool_result_tokens=16384
+            - max_turns=40
+            - learning_rate=2e-4
+            - stream_minibatches=True
+            - max_steps=35
+            - eval_every=5
+            - save_every=5
+            - train_split_seed=242
+            # 48 rollouts a step keep all four samplers busy.
+            - batch_size=8
+            - rollouts_per_example=6
+            # One attempt per eval task; four made the step-0 eval take ~100 min.
+            - eval_rollouts_per_task=1
+          env:
+            - name: RUN
+              value: harvey-asb-6
+            - name: TINKER_API_KEY
+              value: tml-dummy-key
+            - name: TINKER_TAGS
+              value: openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl.trainer_cp=4,openrl.sampler_replicas=4
+            # The GLM judge's OpenAI-compatible endpoint.
+            - name: OPENAI_BASE_URL
+              value: http://10.142.0.15:8000/v1
+            - name: OPENAI_API_KEY
+              value: unused
+            - name: KUBECONFIG
+              value: /etc/sandbox-cluster/kubeconfig
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+          volumeMounts:
+            - name: shared-storage
+              mountPath: /mnt/shared
+            - name: sandbox-cluster
+              mountPath: /etc/sandbox-cluster
+              readOnly: true
+      volumes:
+        - name: sandbox-cluster
+          secret:
+            secretName: sandbox-cluster-kubeconfig
+        - name: shared-storage
+          persistentVolumeClaim:
+            claimName: open-rl-shared-pvc

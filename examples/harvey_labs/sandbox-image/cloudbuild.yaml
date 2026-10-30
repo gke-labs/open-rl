@@ -1,0 +1,18 @@
+# Build the Agent Sandbox image for LAB episodes:
+#   gcloud builds submit --config examples/harvey_labs/sandbox-image/cloudbuild.yaml \
+#     --substitutions=_IMAGE=<registry>/lab-sandbox-asb,_TAG=<tag> examples/harvey_labs/sandbox-image
+substitutions:
+  _LAB_REPO: https://github.com/ShubyM/harvey-labs
+  _LAB_REF: 401bf7f0448044cb112556d26492652d56e8c317
+steps:
+- name: gcr.io/cloud-builders/git
+  args: ["clone", "--filter=blob:none", "${_LAB_REPO}", "lab"]
+- name: gcr.io/cloud-builders/git
+  args: ["-C", "lab", "checkout", "${_LAB_REF}"]
+- name: gcr.io/cloud-builders/docker
+  args: ["build", "-t", "lab-sandbox-base", "lab/sandbox"]
+- name: gcr.io/cloud-builders/docker
+  args: ["build", "--build-arg", "BASE=lab-sandbox-base", "-t", "${_IMAGE}:${_TAG}", "."]
+images: ["${_IMAGE}:${_TAG}"]
+options:
+  machineType: E2_HIGHCPU_8

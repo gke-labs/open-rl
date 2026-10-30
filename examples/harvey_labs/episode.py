@@ -1,4 +1,5 @@
-"""Count failed episodes in the rubric denominator and normalize terminal flags."""
+"""Count failed episodes in the rubric denominator, normalize terminal flags,
+and grade episodes the cookbook would otherwise end ungraded."""
 
 from dataclasses import replace
 
@@ -8,6 +9,12 @@ from tinker_cookbook.rl.types import Env, InitialObservationOverflow
 # ordinary transitions so these flags measure rates rather than presence.
 # The denominator is transitions, not episodes.
 _TERMINAL_FLAG_METRICS = ("context_overflow", "parse_error", "max_tokens_reached")
+# The cookbook ends an episode that hits the per-turn max_tokens cap or the
+# trajectory budget without calling the grader and pays the flat overflow
+# penalty. The reference LAB harness grades whatever the agent produced when
+# it stops for any reason (run49's step-0 eval lost 27 of 50 episodes to the
+# cap that way), so these two terminals are graded here.
+_BUDGET_LIMIT_METRICS = ("context_overflow", "max_tokens_reached")
 
 
 class LabEpisodeEnv(Env):
@@ -45,5 +52,16 @@ class LabEpisodeEnv(Env):
 
   async def step(self, action, *, extra=None):
     result = await self.env.step(action, extra=extra)
+    if result.episode_done and self.ended_on_budget(result.metrics):
+      result = await self.grade_budget_terminal(result)
     metrics = self._metrics(result.metrics, result.episode_done)
     return replace(result, metrics=metrics)
+
+  def ended_on_budget(self, metrics) -> bool:
+    metrics = metrics or {}
+    return "lab/criteria_total" not in metrics and any(metrics.get(key) for key in _BUDGET_LIMIT_METRICS)
+
+  async def grade_budget_terminal(self, result):
+    message_env = self.env.message_env
+    reward, rubric = await message_env.reward_fn(message_env.history)
+    return replace(result, reward=reward, metrics={**(result.metrics or {}), **rubric})

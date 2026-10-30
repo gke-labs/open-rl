@@ -112,7 +112,7 @@ Open-RL segregates operations into a **Control Plane** (infrastructure provision
 API Server Control Queue (open_rl:worker_launch_queue) ---> WorkerLaunchProcessor (launches/gracefully stops PIDs)
 
 [Data Plane Operations]
-API Server Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers (runs steps/computes tokens)
+API Server Data Queues (queue:<model_id>, sampling:<pool>) ---> Workers (runs steps/computes tokens)
 ```
 
 ### Queue Division & Protocols
@@ -124,16 +124,16 @@ API Server Data Queues (queue:<model_id>, sampler_queue:<model_id>) ---> Workers
 | **Control Plane** | `create_sampling_session` | Registry Metadata Key (Redis) | API Server |
 | **Data Plane** | `forward_backward`, `optim_step` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer Worker |
 | **Data Plane** | `save_weights_for_sampler` | `open_rl:queue:<model_id>` (Isolated) | PyTorch Trainer Worker |
-| **Data Plane** | `sample`, `asample` | `open_rl:sampler_queue:<model_id>` (Isolated) | vLLM Sampler Worker |
+| **Data Plane** | `sample`, `asample` | `open_rl:sampling:<pool>` (Redis stream, one per pool) | The pool's dispatcher |
 
 ### Provisioning & Activation Mechanics
 * **Trainer Provisioning:** When `/api/v1/create_model` is invoked, the API Server enqueues a launch command. `WorkerLaunchProcessor` pops the request and invokes `FFTWorkerManager.launch_trainer(model_id)` to provision the pod or subprocess.
-* **Sampler Provisioning:** When `/api/v1/create_sampling_session` is invoked, `WorkerLaunchProcessor` invokes `FFTWorkerManager.launch_sampler(model_id)`. The sampler compiles CUDA graphs and posts `open_rl:sampler_ready:<model_id> = "1"` to Redis. The API Server polls this key, blocking session return until physical readiness is verified.
+* **Sampler Provisioning:** When `/api/v1/create_sampling_session` is invoked, the API Server makes sure the model's sampling pool exists and returns at once. Samples wait in the pool's Redis stream until a sampler is up to serve them.
 
 ### Graceful Queue-Based Teardown (Sentinel Pattern)
 To prevent dropping in-flight rollouts during de-provisioning, teardown uses the **Sentinel Pattern**:
 1. When `/api/v1/delete_model` is invoked, the API Server enqueues a `shutdown_workers` command to `open_rl:worker_launch_queue`.
-2. `WorkerLaunchProcessor` enqueues a **Shutdown Sentinel (Poison Pill)** (`{"request_id": "SHUTDOWN_SENTINEL"}`) to the tails of both the trainer (`queue:<model_id>`) and sampler (`sampler_queue:<model_id>`) FIFO data queues.
+2. `WorkerLaunchProcessor` enqueues a **Shutdown Sentinel (Poison Pill)** (`{"request_id": "SHUTDOWN_SENTINEL"}`) to the tail of the trainer's FIFO data queue (`queue:<model_id>`). The job's pending samples fail at once with `<model_id> was deleted`.
 3. Workers continue popping and processing pending tasks. Upon popping the sentinel, they halt polling, complete active asyncio tasks, unregister from the time-slicer daemon, and exit gracefully.
 
 ---

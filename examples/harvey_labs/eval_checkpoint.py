@@ -8,7 +8,7 @@ import chz
 from .config import RunConfig
 from .results import eval_result, format_eval
 from .reward import preflight_grading
-from .sandbox import SandboxFactory, podman_sandbox_factory
+from .sandbox import SandboxFactory, configured_sandbox_factory, podman_sandbox_factory
 from .train import build_train_config, evaluate
 
 
@@ -29,7 +29,8 @@ async def run(config: EvalConfig, *, sandbox_factory: SandboxFactory = podman_sa
 
 
 def main() -> None:
-  asyncio.run(run(chz.entrypoint(EvalConfig, allow_hyphens=True)))
+  config = chz.entrypoint(EvalConfig, allow_hyphens=True)
+  asyncio.run(run(config, sandbox_factory=configured_sandbox_factory(config.sandbox_warmpool, config.sandbox_namespace)))
 
 
 if __name__ == "__main__":

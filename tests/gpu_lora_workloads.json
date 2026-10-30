@@ -1,0 +1,328 @@
+{
+  "trainer": {
+    "apiVersion": "openrl.io/v1alpha1",
+    "kind": "Workload",
+    "metadata": {
+      "name": "lora-qwen-qwen3-0-6b-fb68f5a6-0-trainer",
+      "labels": {
+        "app.kubernetes.io/managed-by": "open-rl-api-server"
+      }
+    },
+    "spec": {
+      "role": "trainer",
+      "trainingKind": "lora",
+      "exclusive": true,
+      "modelID": "Qwen/Qwen3-0.6B",
+      "ownerID": "qwen-qwen3-0-6b-fb68f5a6",
+      "accelerator": {
+        "mode": "SingleGPU",
+        "memory": "6Gi"
+      },
+      "workerContainerName": "worker",
+      "template": {
+        "spec": {
+          "restartPolicy": "OnFailure",
+          "containers": [
+            {
+              "name": "worker",
+              "image": "ghcr.io/gke-labs/open-rl/server:latest",
+              "command": [
+                "uv",
+                "run",
+                "python",
+                "-u",
+                "-m",
+                "server.training_requests_processor"
+              ],
+              "args": [
+                "--model-id",
+                "Qwen/Qwen3-0.6B",
+                "--active-tenant-set-id",
+                "Qwen/Qwen3-0.6B-1"
+              ],
+              "env": [
+                {
+                  "name": "REDIS_URL",
+                  "value": "redis://localhost:6379"
+                },
+                {
+                  "name": "OPEN_RL_TMP_DIR",
+                  "value": "$OPEN_RL_TMP_DIR"
+                },
+                {
+                  "name": "HF_HOME",
+                  "value": "$OPEN_RL_TMP_DIR/huggingface"
+                },
+                {
+                  "name": "BASE_MODEL",
+                  "value": "Qwen/Qwen3-0.6B"
+                },
+                {
+                  "name": "OPEN_RL_BASE_MODEL",
+                  "value": "Qwen/Qwen3-0.6B"
+                },
+                {
+                  "name": "OPEN_RL_ENABLE_FFT",
+                  "value": "false"
+                },
+                {
+                  "name": "OPEN_RL_FINE_TUNING_TYPE",
+                  "value": "lora"
+                },
+                {
+                  "name": "OPEN_RL_ACCELERATOR_MEMORY",
+                  "value": "5487067136"
+                },
+                {
+                  "name": "OPEN_RL_WEIGHT_SYNC_STRATEGY",
+                  "value": "delta"
+                },
+                {
+                  "name": "PYTORCH_CUDA_ALLOC_CONF",
+                  "value": "expandable_segments:True"
+                },
+                {
+                  "name": "OPEN_RL_WORKLOAD_ID",
+                  "value": "lora-qwen-qwen3-0-6b-fb68f5a6-0-trainer"
+                },
+                {
+                  "name": "OPEN_RL_TIME_SLICE_JOB_ID",
+                  "value": "lora-qwen-qwen3-0-6b-fb68f5a6-0-trainer"
+                },
+                {
+                  "name": "OPEN_RL_ACCEL_TIMESLICER_PORT",
+                  "value": "9753"
+                },
+                {
+                  "name": "OPEN_RL_TIME_SLICING",
+                  "value": "off"
+                },
+                {
+                  "name": "OPEN_RL_ACCEL_TIMESLICER_HOST",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "status.hostIP"
+                    }
+                  }
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "memory": "22Gi"
+                },
+                "limits": {
+                  "memory": "22Gi"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "name": "shared-storage",
+                  "mountPath": "/mnt/shared"
+                }
+              ]
+            }
+          ],
+          "volumes": [
+            {
+              "name": "shared-storage",
+              "persistentVolumeClaim": {
+                "claimName": "open-rl-shared-pvc"
+              }
+            }
+          ],
+          "tolerations": [
+            {
+              "key": "nvidia.com/gpu",
+              "operator": "Exists",
+              "effect": "NoSchedule"
+            }
+          ]
+        }
+      }
+    }
+  },
+  "sampler": {
+    "apiVersion": "openrl.io/v1alpha1",
+    "kind": "Workload",
+    "metadata": {
+      "name": "lora-qwen-qwen3-0-6b-fb68f5a6-0-sampler",
+      "labels": {
+        "app.kubernetes.io/managed-by": "open-rl-api-server",
+        "app.kubernetes.io/component": "sampler",
+        "app.kubernetes.io/instance": "sampler-qwen-qwen3-0-6b-fb68f5a6"
+      }
+    },
+    "spec": {
+      "role": "sampler",
+      "trainingKind": "lora",
+      "exclusive": true,
+      "modelID": "Qwen/Qwen3-0.6B",
+      "ownerID": "qwen-qwen3-0-6b-fb68f5a6",
+      "accelerator": {
+        "mode": "SingleGPU",
+        "memory": "10Gi"
+      },
+      "workerContainerName": "worker",
+      "template": {
+        "spec": {
+          "restartPolicy": "OnFailure",
+          "containers": [
+            {
+              "name": "worker",
+              "image": "ghcr.io/gke-labs/open-rl/server:latest",
+              "command": [
+                "uv",
+                "run",
+                "python",
+                "-u",
+                "-m",
+                "server.vllm_serve"
+              ],
+              "args": [],
+              "env": [
+                {
+                  "name": "REDIS_URL",
+                  "value": "redis://localhost:6379"
+                },
+                {
+                  "name": "OPEN_RL_TMP_DIR",
+                  "value": "$OPEN_RL_TMP_DIR"
+                },
+                {
+                  "name": "HF_HOME",
+                  "value": "$OPEN_RL_TMP_DIR/huggingface"
+                },
+                {
+                  "name": "BASE_MODEL",
+                  "value": "Qwen/Qwen3-0.6B"
+                },
+                {
+                  "name": "OPEN_RL_BASE_MODEL",
+                  "value": "Qwen/Qwen3-0.6B"
+                },
+                {
+                  "name": "OPEN_RL_ENABLE_FFT",
+                  "value": "false"
+                },
+                {
+                  "name": "OPEN_RL_FINE_TUNING_TYPE",
+                  "value": "lora"
+                },
+                {
+                  "name": "OPEN_RL_ACCELERATOR_MEMORY",
+                  "value": "10542424064"
+                },
+                {
+                  "name": "OPEN_RL_WEIGHT_SYNC_STRATEGY",
+                  "value": "delta"
+                },
+                {
+                  "name": "VLLM_SERVER_DEV_MODE",
+                  "value": "1"
+                },
+                {
+                  "name": "VLLM_ALLOW_INSECURE_SERIALIZATION",
+                  "value": "1"
+                },
+                {
+                  "name": "OPEN_RL_WORKLOAD_ID",
+                  "value": "lora-qwen-qwen3-0-6b-fb68f5a6-0-sampler"
+                },
+                {
+                  "name": "OPEN_RL_TIME_SLICE_JOB_ID",
+                  "value": "lora-qwen-qwen3-0-6b-fb68f5a6-0-sampler"
+                },
+                {
+                  "name": "OPEN_RL_ACCEL_TIMESLICER_PORT",
+                  "value": "9753"
+                },
+                {
+                  "name": "VLLM_CACHE_ROOT",
+                  "value": "$OPEN_RL_TMP_DIR/vllm-cache"
+                },
+                {
+                  "name": "TRITON_CACHE_DIR",
+                  "value": "$OPEN_RL_TMP_DIR/vllm-cache/triton"
+                },
+                {
+                  "name": "OPEN_RL_TIME_SLICING",
+                  "value": "off"
+                },
+                {
+                  "name": "OPEN_RL_ACCEL_TIMESLICER_HOST",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "status.hostIP"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_IP",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "status.podIP"
+                    }
+                  }
+                },
+                {
+                  "name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
+                  "value": "true"
+                },
+                {
+                  "name": "VLLM_LORA_RESOLVER_CACHE_DIR",
+                  "value": "$OPEN_RL_TMP_DIR/sampler_lora"
+                }
+              ],
+              "resources": {
+                "requests": {
+                  "memory": "26Gi"
+                },
+                "limits": {
+                  "memory": "26Gi"
+                }
+              },
+              "volumeMounts": [
+                {
+                  "name": "shared-storage",
+                  "mountPath": "/mnt/shared"
+                }
+              ],
+              "readinessProbe": {
+                "exec": {
+                  "command": [
+                    "/app/.venv/bin/python",
+                    "-c",
+                    "import json, sys, urllib.request\nversion = json.load(urllib.request.urlopen(\"http://127.0.0.1:8000/weight_info\", timeout=1))[\"weight_version\"]\nsys.exit(version != open('$OPEN_RL_TMP_DIR/sampling/sampler-qwen-qwen3-0-6b-fb68f5a6/revision').read())"
+                  ]
+                },
+                "periodSeconds": 2,
+                "timeoutSeconds": 2
+              }
+            }
+          ],
+          "volumes": [
+            {
+              "name": "shared-storage",
+              "persistentVolumeClaim": {
+                "claimName": "open-rl-shared-pvc"
+              }
+            }
+          ],
+          "tolerations": [
+            {
+              "key": "nvidia.com/gpu",
+              "operator": "Exists",
+              "effect": "NoSchedule"
+            }
+          ]
+        },
+        "metadata": {
+          "labels": {
+            "app.kubernetes.io/component": "sampler",
+            "app.kubernetes.io/instance": "sampler-qwen-qwen3-0-6b-fb68f5a6"
+          }
+        }
+      }
+    }
+  }
+}

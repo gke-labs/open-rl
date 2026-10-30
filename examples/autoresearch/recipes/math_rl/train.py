@@ -13,7 +13,6 @@ import chz
 from common.tinker_utils import (
   LimitedDatasetBuilder,
   force_rich_log_colors,
-  patch_tinker_default_headers,
   resolve_base_url,
 )
 from tinker_cookbook import model_info
@@ -155,7 +154,6 @@ async def run_training(args: RunConfig) -> None:
 
 
 def main() -> None:
-  patch_tinker_default_headers()
   force_rich_log_colors()
   args = chz.entrypoint(RunConfig, allow_hyphens=True)
   try:

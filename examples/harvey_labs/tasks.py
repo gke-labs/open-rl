@@ -96,13 +96,19 @@ def task_family(name: str) -> str:
 
 
 def random_task_split(
-  lab_root: Path, num_train: int, num_eval: int, seed: int, eval_slice_offset: int = EVAL_SLICE_OFFSET
+  lab_root: Path,
+  num_train: int,
+  num_eval: int,
+  seed: int,
+  eval_slice_offset: int = EVAL_SLICE_OFFSET,
+  train_seed: int | None = None,
 ) -> tuple[list[str], list[str]]:
   """Seeded train/eval split whose eval set depends only on the seed.
 
   Eval is shuffle(seed)[eval_slice_offset : eval_slice_offset + num_eval], so it
   never moves with num_train. Train draws the family-disjoint remainder, so a
-  scenario sibling of an eval task never leaks into training.
+  scenario sibling of an eval task never leaks into training. A train_seed
+  redraws that remainder in its own order, as the reference runs did.
   """
   names, skipped = discover_lab_tasks(lab_root)
   shuffled = list(names)
@@ -115,11 +121,14 @@ def random_task_split(
   eval_names = shuffled[eval_slice_offset : eval_slice_offset + num_eval]
   eval_families = {task_family(name) for name in eval_names}
   train_pool = [name for name in shuffled if task_family(name) not in eval_families]
+  if train_seed is not None:
+    train_pool = [name for name in names if task_family(name) not in eval_families]
+    random.Random(train_seed).shuffle(train_pool)
   if num_train > len(train_pool):
     raise ValueError(f"Requested {num_train} train tasks but only {len(train_pool)} sit outside eval's {len(eval_families)} scenario families")
   train_names = train_pool[:num_train]
   print(
-    f"[tasks] split seed={seed}: {len(train_names)} train / {num_eval} eval from {len(names)} "
+    f"[tasks] split seed={seed} train_seed={train_seed}: {len(train_names)} train / {num_eval} eval from {len(names)} "
     f"runnable tasks, eval slice [{eval_slice_offset}:{eval_slice_offset + num_eval}] "
     f"({skipped} skipped as broken)"
   )

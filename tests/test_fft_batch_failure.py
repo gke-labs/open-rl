@@ -45,7 +45,7 @@ class BatchStore(InMemoryStore):
     batch, self.batch = self.batch, []
     return batch
 
-  async def set_future(self, request_id, result):
+  async def set_result(self, request_id, result):
     self.futures[request_id] = result
 
 

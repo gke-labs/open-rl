@@ -18,7 +18,3 @@ spec:
             configMapKeyRef:
               name: open-rl-images
               key: tpu-sampler
-        # A sampler on a fresh TPU node waits for the node, the image pull and
-        # vLLM's startup compile.
-        - name: OPEN_RL_SAMPLER_READY_TIMEOUT_S
-          value: "1800"

@@ -7,6 +7,7 @@ namespace: openrl-system
 resources:
   - ../../../scheduler/deploy/base
   - rbac.yaml
+  - sampler-router.yaml
   - redis.yaml
   - api-server.yaml
 
@@ -20,6 +21,7 @@ configMapGenerator:
   - name: open-rl-images
     literals:
       - worker=ghcr.io/gke-labs/open-rl/server:latest
+      - dispatcher=ghcr.io/gke-labs/open-rl/api-server:latest
 
 # Dynamic worker images receive the same image transformations as containers.
 configurations:

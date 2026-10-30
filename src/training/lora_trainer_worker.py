@@ -14,6 +14,7 @@ from peft import PeftModelForCausalLM, get_peft_model
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
 from training.device import model_dtype
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import LoraConfig
 
@@ -37,6 +38,9 @@ class LoraTrainingWorker(BaseTrainerWorker):
     self.adapter_states: dict[str, dict[str, Any]] = {}
     self.lora_target_modules: dict[tuple[bool, bool, bool], list[str]] = {}
 
+  def is_ready(self) -> bool:
+    return self.base_model is not None
+
   def load_base_model(self, base_model_name: str) -> None:
     """Eagerly load the massive base model tensors into VRAM."""
     if self.base_model is not None and self.base_model_name == base_model_name:
@@ -46,6 +50,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
     print(f"Loading base model {base_model_name} to {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    prefetch(base_model_name)
     self.base_model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=model_dtype(self.device), device_map=self.device)
     print("Successfully loaded.")
 

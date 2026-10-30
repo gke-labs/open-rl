@@ -84,6 +84,12 @@ kubectl delete pods -l timeslice.io/group=trainers --ignore-not-found
 kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ```
 
+### Performance Before/After Comparison
+To check that a change does not slow OpenRL down, build images for the version without and with the change, then run `scripts/perf_compare.py`. It swaps the images on a cluster where OpenRL is already deployed, launches the job mix in `k8s/perf/workload.conf` (23 GSM8K GRPO jobs on 8 GPUs) for each version, and writes a report with total time, time to the first and last step, step time (sampling, training, weight sync) and peak GPU memory:
+```bash
+make perf-compare PERF_BEFORE=api-server=<img>,worker=<img> PERF_AFTER=api-server=<img>,worker=<img>
+```
+
 ### Option B: Local Port-Forward Execution (`Alternative / Local Dev`)
 If running a client script on a local machine against a remote Kubernetes cluster, use port-forwarding:
 ```bash

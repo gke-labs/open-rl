@@ -1,13 +1,20 @@
 import json
 import os
+import tempfile
+import threading
+import time
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from server import api_server
 from server.estimator import footprint
+from server.model_metadata import TrainingModelMetadata
 from server.scheduler_worker_manager import GROUP, PLURAL, VERSION, SchedulerWorkerManager
 from server.store import InMemoryStateStore, InMemoryStore
+from server.worker_manager import owner_id
 from tests.api_client import asgi_client, post_json
 
 
@@ -54,70 +61,54 @@ class FakeCustomObjectsApi:
     return {"items": items}
 
 
-def gpu_golden(role: str) -> dict[str, Any]:
-  """A GPU LoRA worker's Workload for Qwen/Qwen3-0.6B, as it was before TPU workers."""
-  fp = footprint("Qwen/Qwen3-0.6B", "lora", role)
-  name = f"lora-qwen-qwen3-0-6b-0-{role}"
-  values = {
-    "REDIS_URL": "redis://localhost:6379",
-    "OPEN_RL_TMP_DIR": "/mnt/shared/open-rl",
-    "HF_HOME": "/mnt/shared/open-rl/huggingface",
-    "BASE_MODEL": "Qwen/Qwen3-0.6B",
-    "OPEN_RL_BASE_MODEL": "Qwen/Qwen3-0.6B",
-    "OPEN_RL_ENABLE_FFT": "false",
-    "OPEN_RL_FINE_TUNING_TYPE": "lora",
-    "OPEN_RL_ACCELERATOR_MEMORY": str(fp.accelerator_bytes),
-    "OPEN_RL_WEIGHT_SYNC_STRATEGY": "delta",
-  }
-  if role == "trainer":
-    values["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    module, args = "server.training_requests_processor", ["--model-id", "Qwen/Qwen3-0.6B", "--active-tenant-set-id", "Qwen/Qwen3-0.6B-1"]
-  else:
-    values.update({"OPEN_RL_MODEL_ID": "Qwen/Qwen3-0.6B", "VLLM_SERVER_DEV_MODE": "1", "VLLM_ALLOW_INSECURE_SERIALIZATION": "1"})
-    module, args = "server.vllm_sampler", ["--model-id", "Qwen/Qwen3-0.6B"]
-  values.update({"OPEN_RL_WORKLOAD_ID": name, "OPEN_RL_TIME_SLICE_JOB_ID": name})
-  values.update({"OPEN_RL_ACCEL_TIMESLICER_PORT": "9753", "OPEN_RL_TIME_SLICING": "off"})
-  env: list[dict[str, Any]] = [{"name": k, "value": v} for k, v in values.items()]
-  env.append({"name": "OPEN_RL_ACCEL_TIMESLICER_HOST", "valueFrom": {"fieldRef": {"fieldPath": "status.hostIP"}}})
-  return {
-    "apiVersion": "openrl.io/v1alpha1",
-    "kind": "Workload",
-    "metadata": {"name": name, "labels": {"app.kubernetes.io/managed-by": "open-rl-api-server"}},
-    "spec": {
-      "role": role,
-      "trainingKind": "lora",
-      "exclusive": True,
-      "modelID": "Qwen/Qwen3-0.6B",
-      "ownerID": "qwen-qwen3-0-6b",
-      "accelerator": {"mode": "SingleGPU", "memory": fp.accelerator},
-      "workerContainerName": "worker",
-      "template": {
-        "spec": {
-          "restartPolicy": "OnFailure",
-          "containers": [
-            {
-              "name": "worker",
-              "image": "ghcr.io/gke-labs/open-rl/server:latest",
-              "command": ["uv", "run", "python", "-u", "-m", module],
-              "args": args,
-              "env": env,
-              "resources": fp.resources,
-              "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],
-            }
-          ],
-          "volumes": [{"name": "shared-storage", "persistentVolumeClaim": {"claimName": "open-rl-shared-pvc"}}],
-          "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
-        }
-      },
-    },
-  }
+def gpu_golden(role: str, tmp_dir: str) -> str:
+  """A GPU LoRA worker's Workload for Qwen/Qwen3-0.6B as JSON, captured before TPU workers existed."""
+  with open(Path(__file__).with_name("gpu_lora_workloads.json")) as f:
+    return json.dumps(json.load(f)[role]).replace("$OPEN_RL_TMP_DIR", tmp_dir)
+
+
+class FakeApi:
+  def __init__(self):
+    self.objects: dict[tuple[str, str], dict] = {}
+
+  def __getattr__(self, method: str):
+    verb, kind = method.split("_namespaced_")
+
+    def call(*args, **kwargs):
+      if verb == "list":
+        key, _, value = kwargs["label_selector"].partition("=")
+        found = [name for (k, name), body in self.objects.items() if k == kind and body["metadata"].get("labels", {}).get(key) == value]
+        return SimpleNamespace(items=[SimpleNamespace(metadata=SimpleNamespace(name=name)) for name in found])
+      if verb in ("delete", "read") and (kind, args[0]) not in self.objects:
+        raise ApiError(404)
+      if verb == "delete":
+        return self.objects.pop((kind, args[0]))
+      if verb == "read":
+        return SimpleNamespace(metadata=SimpleNamespace(deletion_timestamp=None))
+      if (kind, args[1]["metadata"]["name"]) in self.objects:
+        raise ApiError(409)
+      self.objects[(kind, args[1]["metadata"]["name"])] = args[1]
+
+    return call
+
+
+class HistoryStore(InMemoryStateStore):
+  def __init__(self):
+    super().__init__()
+    self.pushed = threading.Event()
+
+  def push_recent_sync(self, *args) -> None:
+    super().push_recent_sync(*args)
+    self.pushed.set()
 
 
 class SchedulerWorkerManagerTest(unittest.TestCase):
   def setUp(self) -> None:
-    self.enterContext(patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379"}))
-    self.api = FakeCustomObjectsApi()
-    self.manager = SchedulerWorkerManager(custom_api=self.api)
+    # The API server Deployment sets OPEN_RL_TMP_DIR to the shared volume every worker pod mounts. A temp dir stands in for it.
+    self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+    self.enterContext(patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_TMP_DIR": self.tmp}))
+    self.api, self.k8s = FakeCustomObjectsApi(), FakeApi()
+    self.manager = SchedulerWorkerManager(custom_api=self.api, apps_api=self.k8s, networking_api=self.k8s)
 
   def store_with(self, model_id: str, meta: dict) -> InMemoryStore:
     s = InMemoryStateStore()
@@ -131,10 +122,11 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.ensure("job-lora-1", "sampler")
 
     trainer, sampler = self.api.created
-    self.assertEqual(trainer["metadata"]["name"], "lora-qwen-qwen2-5-0-5b-0-trainer")
-    self.assertEqual(sampler["metadata"]["name"], "lora-qwen-qwen2-5-0-5b-0-sampler")
+    owner = owner_id("Qwen/Qwen2.5-0.5B")
+    self.assertEqual(trainer["metadata"]["name"], f"lora-{owner}-0-trainer")
+    self.assertEqual(sampler["metadata"]["name"], f"lora-{owner}-0-sampler")
     # Same owner: one turn for the pair, and they hold the devices together.
-    self.assertEqual(trainer["spec"]["ownerID"], "qwen-qwen2-5-0-5b")
+    self.assertEqual(trainer["spec"]["ownerID"], owner)
     self.assertEqual(trainer["spec"]["ownerID"], sampler["spec"]["ownerID"])
     self.assertEqual(trainer["spec"]["trainingKind"], "lora")
     self.assertTrue(trainer["spec"]["exclusive"])
@@ -142,7 +134,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     t_container = trainer["spec"]["template"]["spec"]["containers"][0]
     s_container = sampler["spec"]["template"]["spec"]["containers"][0]
     self.assertEqual(t_container["command"][-1], "server.training_requests_processor")
-    self.assertEqual(s_container["command"][-1], "server.vllm_sampler")
+    self.assertEqual(s_container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_serve"])
     self.assertIn("--active-tenant-set-id", t_container["args"])
 
   def test_an_exclusive_fft_worker_is_placed_alone_and_never_time_sliced(self) -> None:
@@ -165,8 +157,8 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(worker["spec"]["role"], "trainer")
     # An FFT job is its own owner: its trainer (and sampler, if launched)
     # share one turn, and no other job ever matches this ID.
-    self.assertEqual(worker["metadata"]["name"], "fft-model-a-1-trainer")
-    self.assertEqual(worker["spec"]["ownerID"], "model-a-1")
+    self.assertEqual(worker["metadata"]["name"], f"fft-{owner_id('Model_A.1')}-trainer")
+    self.assertEqual(worker["spec"]["ownerID"], owner_id("Model_A.1"))
     self.assertEqual(worker["spec"]["trainingKind"], "fft")
     self.assertFalse(worker["spec"]["exclusive"])
     self.assertEqual(worker["spec"]["accelerator"]["memory"], footprint("Qwen/Qwen3-8B", "full", "trainer").accelerator)
@@ -210,8 +202,8 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
     trainer, sampler = self.api.created
     # Compared as JSON so key order counts too.
-    self.assertEqual(json.dumps(trainer), json.dumps(gpu_golden("trainer")))
-    self.assertEqual(json.dumps(sampler), json.dumps(gpu_golden("sampler")))
+    self.assertEqual(json.dumps(trainer), gpu_golden("trainer", self.tmp))
+    self.assertEqual(json.dumps(sampler), gpu_golden("sampler", self.tmp))
 
   def tpu_workloads(self, env: dict[str, str] | None = None) -> tuple[dict, dict]:
     meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["tpu", "gpu"]}
@@ -247,7 +239,8 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     container = template_spec["containers"][0]
     env = {e["name"]: e.get("value") for e in container["env"]}
     self.assertEqual(container["image"], "tpu-sampler:1")
-    self.assertEqual(container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"])
+    # A shared LoRA sampler is a routed pool replica, as on GPU.
+    self.assertEqual(container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_serve"])
     # OPEN_RL_DEVICE picks the trainer's device; the sampler image carries vllm-tpu.
     self.assertNotIn("OPEN_RL_DEVICE", env)
     self.assertEqual(container["resources"], fp.resources)
@@ -336,12 +329,83 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     # Reusing kind-dev must fetch the rebuilt worker rather than its cached predecessor.
     self.assertEqual(container["imagePullPolicy"], "Always")
 
+  def test_workers_get_the_deployment_settings(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    settings = {"VLLM_MAX_MODEL_LEN": "131072", "VLLM_ENABLE_MULTIMODAL": "1", "OPEN_RL_TRAIN_TOKEN_BUDGET": "131072", "MAX_JOBS": "4"}
+    with patch.dict(os.environ, settings), patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+      self.manager.ensure("job-lora-1", "trainer")
+
+    self.assertEqual(len(self.api.created), 2)
+    for pod in self.api.created:
+      env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+      self.assertEqual({k: env.get(k) for k in settings}, settings)
+
+  def test_samplers_keep_the_vllm_compile_cache_on_the_shared_volume(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+      self.manager.ensure("job-lora-1", "trainer")
+
+    envs = {}
+    for pod in self.api.created:
+      envs[pod["spec"]["role"]] = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+    self.assertEqual(envs["sampler"]["VLLM_CACHE_ROOT"], f"{self.tmp}/vllm-cache")
+    self.assertEqual(envs["sampler"]["TRITON_CACHE_DIR"], f"{self.tmp}/vllm-cache/triton")
+    self.assertNotIn("VLLM_CACHE_ROOT", envs["trainer"])
+
+  def test_a_bare_base_model_sampler_on_an_fft_deployment_is_fft_with_a_pool_apart_from_the_shared_lora_pool(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}), patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+      self.manager.ensure("Qwen/Qwen2.5-0.5B", "sampler")
+    self.assertEqual([w["spec"]["trainingKind"] for w in self.api.created], ["lora", "fft"])
+    shared, bare = self.api.created
+    self.assertNotEqual(bare["spec"]["ownerID"], shared["spec"]["ownerID"])
+    pools = [w["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/instance"] for w in (shared, bare)]
+    self.assertNotEqual(pools[0], pools[1])
+
+  def test_both_sampler_shapes_get_every_engine_setting_the_api_server_has(self) -> None:
+    # A replica and an engine in the sampler's process compute their settings on their own pods, from these values.
+    settings = {"VLLM_MAX_LORAS": "16", "VLLM_MAX_NUM_SEQS": "512", "OPEN_RL_ENABLE_FFT": "true"}
+    for model_id, meta in (("job-lora-1", {"fine_tuning_type": "lora"}), ("job-fft-1", {"fine_tuning_type": "full"})):
+      s = self.store_with(model_id, {"base_model": "Qwen/Qwen2.5-0.5B", **meta})
+      with patch.dict(os.environ, settings), patch("server.worker_manager.get_state_store", return_value=s):
+        self.manager.ensure(model_id, "sampler")
+    samplers = [pod for pod in self.api.created if pod["spec"]["role"] == "sampler"]
+    commands = {pod["spec"]["template"]["spec"]["containers"][0]["command"][-1] for pod in samplers}
+    self.assertEqual(commands, {"server.vllm_serve", "server.vllm_sampler"})
+    for pod in samplers:
+      env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+      self.assertEqual((env.get("VLLM_MAX_LORAS"), env.get("VLLM_MAX_NUM_SEQS")), ("16", "512"))
+
   def test_launch_is_idempotent(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-lora-1", "trainer")
       self.manager.ensure("job-lora-1", "trainer")
     self.assertEqual(len(self.api.created), 1)
+
+  def test_gemma_4_samplers_load_the_text_only_model(self) -> None:
+    for model_id, tuning in (("job-lora-1", "lora"), ("job-fft-1", "full")):
+      s = self.store_with(model_id, {"base_model": "google/gemma-4-E2B", "fine_tuning_type": tuning})
+      with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}), patch("server.worker_manager.get_state_store", return_value=s):
+        self.manager.ensure(model_id, "sampler")
+
+    self.assertEqual(len(self.api.created), 2)
+    for pod in self.api.created:
+      env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+      self.assertEqual(env.get("VLLM_ARCHITECTURE_OVERRIDE"), "Gemma4ForCausalLM")
+
+  def test_multimodal_gemma_4_samplers_keep_the_full_model(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "google/gemma-4-E2B", "fine_tuning_type": "lora"})
+    with patch.dict(os.environ, {"VLLM_ENABLE_MULTIMODAL": "1"}), patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+
+    (pod,) = self.api.created
+    env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+    self.assertNotIn("VLLM_ARCHITECTURE_OVERRIDE", env)
+    self.assertEqual(env.get("VLLM_ENABLE_MULTIMODAL"), "1")
 
   def test_placement_knowledge_stays_out_of_the_template(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
@@ -367,7 +431,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.release("Model_A.1")
       self.manager.release("Model_A.1")
 
-    self.assertEqual(self.api.deleted, ["fft-model-a-1-trainer"])
+    self.assertEqual(self.api.deleted, [f"fft-{owner_id('Model_A.1')}-trainer"])
 
   def test_release_leaves_a_shared_lora_runtime_alone(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
@@ -405,8 +469,8 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     # The second Automodel job's create found the first one's trainer, so only
     # three workloads exist.
     am_trainer, am_sampler, pt_trainer = self.api.created
-    self.assertEqual(am_trainer["metadata"]["name"], "lora-automodel-qwen-qwen3-0-6b-0-trainer")
-    self.assertEqual(pt_trainer["metadata"]["name"], "lora-qwen-qwen3-0-6b-0-trainer")
+    self.assertEqual(am_trainer["metadata"]["name"], f"lora-{owner_id('automodel-Qwen/Qwen3-0.6B')}-0-trainer")
+    self.assertEqual(pt_trainer["metadata"]["name"], f"lora-{owner_id('Qwen/Qwen3-0.6B')}-0-trainer")
     runtime = am_trainer["spec"]["modelID"]
     self.assertEqual(am_sampler["spec"]["ownerID"], am_trainer["spec"]["ownerID"])
     t_container = am_trainer["spec"]["template"]["spec"]["containers"][0]
@@ -416,7 +480,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(t_container["args"], ["--model-id", runtime, "--active-tenant-set-id", f"{runtime}-1"])
     self.assertEqual({e["name"]: e.get("value") for e in t_container["env"]}["OPEN_RL_TRAINER_BACKEND"], "automodel")
     self.assertNotEqual(s_container["image"], "am:1")
-    self.assertEqual({e["name"]: e.get("value") for e in s_container["env"]}["OPEN_RL_MODEL_ID"], runtime)
+    self.assertEqual(s_container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_serve"])
     # Like any shared LoRA runtime, deleting one job leaves it up.
     self.assertEqual(self.api.deleted, [])
 
@@ -432,6 +496,42 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(trainer["spec"]["template"]["spec"]["containers"][0]["image"], "am:1")
     self.assertEqual(self.api.deleted, ["lora-job-am-0-trainer"])
 
+  def test_a_multi_gpu_automodel_trainer_is_one_torchrun_group(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "automodel", "trainer_gpus": 4}
+    s = self.store_with("job-dp", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_AUTOMODEL_IMAGE": "am:1"}):
+      self.manager.ensure("job-dp", "trainer")
+      self.manager.ensure("job-dp", "sampler")
+
+    trainer, sampler = self.api.created
+    self.assertEqual(trainer["metadata"]["name"], "lora-job-dp-0-trainer")
+    self.assertTrue(trainer["spec"]["exclusive"])
+    one = footprint("Qwen/Qwen3-0.6B", "lora", "trainer")
+    self.assertEqual(trainer["spec"]["accelerator"], {"mode": "MultiGPU", "devices": 4, "memory": one.accelerator})
+    pod = trainer["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    self.assertEqual(container["command"][:6], ["python", "-u", "-m", "torch.distributed.run", "--standalone", "--nproc-per-node=4"])
+    env = {e["name"]: e.get("value") for e in container["env"]}
+    self.assertEqual(env["OPEN_RL_CONTROL_BACKEND"], "cpu:gloo,cuda:nccl")
+    self.assertEqual(env["OPEN_RL_TIME_SLICING"], "off")
+    self.assertNotIn("OPEN_RL_AUTOMODEL_CP", env)
+    self.assertIn({"name": "dshm", "mountPath": "/dev/shm"}, container["volumeMounts"])
+    self.assertEqual(container["resources"]["requests"]["memory"], f"{-(-one.host_request_bytes * 4 // 2**30)}Gi")
+    # The sampler is the usual single-GPU one, alone with this job.
+    self.assertEqual(sampler["metadata"]["name"], "lora-job-dp-0-sampler")
+    self.assertEqual(sampler["spec"]["accelerator"]["mode"], "SingleGPU")
+    self.assertTrue(sampler["spec"]["exclusive"])
+
+  def test_a_context_parallel_trainer_gets_its_cp_size(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "automodel", "trainer_gpus": 4, "trainer_cp": 4}
+    s = self.store_with("job-cp", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_AUTOMODEL_IMAGE": "am:1"}):
+      self.manager.ensure("job-cp", "trainer")
+
+    (trainer,) = self.api.created
+    env = {e["name"]: e.get("value") for e in trainer["spec"]["template"]["spec"]["containers"][0]["env"]}
+    self.assertEqual(env["OPEN_RL_AUTOMODEL_CP"], "4")
+
   def test_a_job_that_names_an_image_runs_its_trainer_from_it(self) -> None:
     meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1"}
     s = self.store_with("job-img", meta)
@@ -440,7 +540,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.ensure("job-img", "sampler")
 
     trainer, sampler = self.api.created
-    self.assertRegex(trainer["metadata"]["name"], r"^lora-image-[0-9a-f]{10}-qwen-qwen3-0-6b-0-trainer$")
+    self.assertRegex(trainer["metadata"]["name"], r"^lora-image-[0-9a-f]{10}-qwen-qwen3-0-6b-[0-9a-f]{8}-0-trainer$")
     t_container = trainer["spec"]["template"]["spec"]["containers"][0]
     self.assertEqual(t_container["image"], "ghcr.io/org/trainer:1")
     self.assertEqual(t_container["command"], ["python", "-u", "-m", "server.training_requests_processor"])
@@ -469,11 +569,12 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.ensure("adapter", "trainer")
       self.manager.ensure("adapter", "sampler")
       self.manager.ensure("other", "trainer")
-    self.assertEqual(self.manager.release_owner("qwen-qwen2-5-0-5b"), {"Qwen/Qwen2.5-0.5B"})
-    self.assertEqual(self.manager.release_owner("qwen-qwen2-5-0-5b"), set())
+    owner = owner_id("Qwen/Qwen2.5-0.5B")
+    self.assertEqual(self.manager.release_owner(owner), {"Qwen/Qwen2.5-0.5B"})
+    self.assertEqual(self.manager.release_owner(owner), set())
 
-    self.assertEqual(self.api.deleted, ["lora-qwen-qwen2-5-0-5b-0-sampler", "lora-qwen-qwen2-5-0-5b-0-trainer"])
-    self.assertEqual(list(self.api.existing), ["lora-qwen-qwen3-0-6b-0-trainer"])
+    self.assertEqual(self.api.deleted, [f"lora-{owner}-0-sampler", f"lora-{owner}-0-trainer"])
+    self.assertEqual(list(self.api.existing), [f"lora-{owner_id('Qwen/Qwen3-0.6B')}-0-trainer"])
 
   def test_release_owner_finds_workloads_by_their_spec_not_their_labels(self) -> None:
     # A workload from before this API server carries only the managed-by label.
@@ -483,6 +584,47 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     }
     self.assertEqual(self.manager.release_owner("old"), {"old"})
     self.assertEqual(self.api.deleted, ["fft-old-trainer"])
+
+  def place_lora_pair_and_other(self) -> str:
+    s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
+    s.kv_store["open_rl:model_meta:other"] = json.dumps({"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("adapter", "trainer")
+      self.manager.ensure("adapter", "sampler")
+      self.manager.ensure("other", "trainer")
+    for name, body in self.api.existing.items():
+      body["status"] = {"nodeName": "n1", "podName": f"orw-{name}", "gpuUUIDs": [f"GPU-{name}"], "placedAt": "2026-10-29T12:00:00Z"}
+    return owner_id("Qwen/Qwen2.5-0.5B")
+
+  def test_release_records_the_final_placement_of_each_released_workload(self) -> None:
+    owner, store = self.place_lora_pair_and_other(), HistoryStore()
+    with patch("server.scheduler_worker_manager.get_state_store", return_value=store):
+      self.manager.release_owner(owner)
+    self.assertTrue(store.pushed.wait(5))
+
+    self.assertEqual(list(store.lists), ["open_rl:placements:Qwen/Qwen2.5-0.5B"])
+    records = [json.loads(r) for r in store.lists["open_rl:placements:Qwen/Qwen2.5-0.5B"]]
+    self.assertEqual(
+      sorted((r["name"], r["role"], r["node"], r["gpu_uuids"][0]) for r in records),
+      [
+        (f"lora-{owner}-0-sampler", "sampler", "n1", f"GPU-lora-{owner}-0-sampler"),
+        (f"lora-{owner}-0-trainer", "trainer", "n1", f"GPU-lora-{owner}-0-trainer"),
+      ],
+    )
+    self.assertTrue(all(r["training_kind"] == "lora" and r["released_at"] > r["placed_at"] for r in records), records)
+
+  def test_a_failing_or_hanging_history_store_does_not_hold_up_the_release(self) -> None:
+    unblock = threading.Event()
+    self.addCleanup(unblock.set)
+    for push in (RuntimeError("redis down"), lambda *args: unblock.wait(5)):
+      self.api.deleted.clear()
+      owner = self.place_lora_pair_and_other()
+      store = SimpleNamespace(push_recent_sync=Mock(side_effect=push))
+      with patch("server.scheduler_worker_manager.get_state_store", return_value=store):
+        started = time.monotonic()
+        self.assertEqual(self.manager.release_owner(owner), {"Qwen/Qwen2.5-0.5B"})
+      self.assertLess(time.monotonic() - started, 1)
+      self.assertEqual(len(self.api.deleted), 2)
 
   def test_ensure_waits_for_a_terminating_workload_before_recreating_it(self) -> None:
     s = self.store_with("adapter", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
@@ -511,6 +653,67 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       create_worker_manager()
       manager_cls.assert_called_once()
 
+  def test_sampler_replicas_are_single_gpu_workloads_released_together(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "exclusive": True, "sampler_replicas": 3}
+    s = self.store_with("job-sr", meta)
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-sr", "trainer")
+      self.manager.ensure("job-sr", "sampler")
+      self.manager.release("job-sr")
+
+    names = [w["metadata"]["name"] for w in self.api.created]
+    self.assertEqual(names, ["lora-job-sr-0-trainer", "lora-job-sr-0-sampler", "lora-job-sr-1-sampler", "lora-job-sr-2-sampler"])
+    for sampler in self.api.created[1:]:
+      self.assertEqual(sampler["spec"]["accelerator"]["mode"], "SingleGPU")
+      self.assertEqual(sampler["spec"]["ownerID"], "job-sr")
+    self.assertEqual(sorted(self.api.deleted), sorted(names))
+
+  def test_a_pool_of_one_replica_serves_itself_with_no_router(self) -> None:
+    s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora", "exclusive": True})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-lora-1", "sampler")
+    (sampler,) = self.api.created
+    container = sampler["spec"]["template"]["spec"]["containers"][0]
+    self.assertEqual((container["command"][-1], container["args"]), ("server.vllm_sampler", ["--pool", "sampler-job-lora-1"]))
+    self.assertEqual({e["name"]: e.get("value") for e in container["env"]}["OPEN_RL_TIME_SLICING"], "off")
+    self.assertEqual(self.k8s.objects, {})
+
+  def test_a_shared_lora_pool_is_routed_and_grows_to_the_most_replicas_any_job_asks_for(self) -> None:
+    for first, second in ((1, 2), (2, 1)):
+      with self.subTest(first=first, second=second):
+        api, k8s = FakeCustomObjectsApi(), FakeApi()
+        manager = SchedulerWorkerManager(custom_api=api, apps_api=k8s, networking_api=k8s)
+        s = InMemoryStateStore()
+        for model_id, replicas in (("job-a", first), ("job-b", second)):
+          meta = {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora", "sampler_replicas": replicas}
+          s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps(meta)
+        with patch("server.worker_manager.get_state_store", return_value=s):
+          manager.ensure("job-a", "sampler")
+          manager.ensure("job-b", "sampler")
+        commands = {w["metadata"]["name"]: w["spec"]["template"]["spec"]["containers"][0]["command"] for w in api.created}
+        serve = ["uv", "run", "python", "-u", "-m", "server.vllm_serve"]
+        owner = owner_id("Qwen/Qwen2.5-0.5B")
+        self.assertEqual(commands, {f"lora-{owner}-0-sampler": serve, f"lora-{owner}-1-sampler": serve})
+        pools = {w["metadata"]["labels"]["app.kubernetes.io/instance"] for w in api.created}
+        self.assertEqual([name for kind, name in k8s.objects if kind == "deployment"], list(pools))
+
+  def test_base_models_that_clean_to_one_name_get_workers_of_their_own(self) -> None:
+    long = "org/" + "m" * 70
+    for first, second in (("Qwen/Qwen3-0.6B", "qwen/qwen3-0.6b"), (f"{long}-a", f"{long}-b")):
+      with self.subTest(first=first, second=second):
+        api = FakeCustomObjectsApi()
+        manager = SchedulerWorkerManager(custom_api=api, apps_api=FakeApi(), networking_api=FakeApi())
+        s = InMemoryStateStore()
+        for model_id, base_model in (("job-a", first), ("job-b", second)):
+          s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps({"base_model": base_model, "fine_tuning_type": "lora"})
+        with patch("server.worker_manager.get_state_store", return_value=s):
+          for model_id in ("job-a", "job-b"):
+            manager.ensure(model_id, "trainer")
+            manager.ensure(model_id, "sampler")
+        self.assertEqual(len({w["spec"]["ownerID"] for w in api.created}), 2)
+        served = {w["metadata"]["labels"]["app.kubernetes.io/instance"] for w in api.created if w["spec"]["role"] == "sampler"}
+        self.assertEqual(served, {TrainingModelMetadata(base_model=b).pool("job") for b in (first, second)})
+
 
 class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
   async def test_lora_and_fft_sessions_launch_their_own_sampler_types(self) -> None:
@@ -518,14 +721,15 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     state = InMemoryStateStore()
     for model_id, kind in (("lora-a", "lora"), ("lora-b", "lora"), ("fft-a", "full")):
       await state.set_value(f"open_rl:model_meta:{model_id}", json.dumps({"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": kind}))
-    api = FakeCustomObjectsApi()
+    api, tmp = FakeCustomObjectsApi(), self.enterContext(tempfile.TemporaryDirectory())
+    env = {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm", "OPEN_RL_TMP_DIR": tmp}
     with (
-      patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}),
+      patch.dict(os.environ, env),
       patch("server.worker_manager.get_state_store", return_value=state),
       patch.object(api_server, "store", store),
       patch.object(api_server, "state", state),
       patch.object(api_server, "get_store", return_value=store),
-      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api)),
+      patch.object(api_server, "worker_manager", SchedulerWorkerManager(custom_api=api, apps_api=FakeApi(), networking_api=FakeApi())),
     ):
       async with asgi_client() as client:
         for model_id in ("lora-a", "fft-a", "lora-b"):
@@ -534,7 +738,7 @@ class MixedSamplingSessionTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(len(api.created), 2, "LoRA sessions should reuse one sampler while FFT gets its own")
     lora, fft = api.created
     self.assertEqual(lora["spec"]["trainingKind"], "lora")
-    self.assertEqual(lora["spec"]["template"]["spec"]["containers"][0]["command"][-1], "server.vllm_sampler")
+    self.assertEqual(lora["spec"]["template"]["spec"]["containers"][0]["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_serve"])
     self.assertEqual(fft["spec"]["trainingKind"], "fft")
     self.assertEqual(fft["metadata"]["name"], "fft-fft-a-sampler")
 
@@ -545,7 +749,7 @@ class SchedulerModeTpuModelTest(unittest.IsolatedAsyncioTestCase):
     state = InMemoryStateStore()
     api = FakeCustomObjectsApi()
     with (
-      patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", **env}),
+      patch.dict(os.environ, {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_TMP_DIR": tempfile.mkdtemp(), **env}),
       patch("server.worker_manager.get_state_store", return_value=state),
       patch.object(api_server, "store", store),
       patch.object(api_server, "state", state),

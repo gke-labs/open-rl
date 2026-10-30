@@ -1,6 +1,8 @@
 """Automodel worker checks that run on CPU without nemo-automodel."""
 
+import json
 import os
+import tempfile
 import unittest
 from dataclasses import dataclass
 from unittest.mock import patch
@@ -143,6 +145,30 @@ def datums(rows: list[list[int]]) -> list[Datum]:
   ]
 
 
+class FileCheckpointer:
+  """Writes the files load_from_state reads, in the layout Automodel's
+  Checkpointer leaves after publish_staged, with torch.save for the tensors."""
+
+  def save_model(self, model, weights_path, peft_config, tokenizer):
+    model_dir = os.path.join(weights_path, "model")
+    os.makedirs(model_dir)
+    adapter = {name: param.detach().clone() for name, param in model.named_parameters() if param.requires_grad}
+    torch.save(adapter, os.path.join(model_dir, "adapter.pt"))
+    with open(os.path.join(model_dir, "adapter_config.json"), "w") as f:
+      json.dump({"r": peft_config.dim, "lora_alpha": peft_config.alpha}, f)
+    with open(os.path.join(model_dir, "automodel_peft_config.json"), "w") as f:
+      json.dump({"dropout": peft_config.dropout}, f)
+
+  def save_optimizer(self, optimizer, model, weights_path):
+    torch.save(optimizer.state_dict(), os.path.join(weights_path, "optim.pt"))
+
+  def load_model(self, model, model_path):
+    model.load_state_dict(torch.load(os.path.join(model_path, "adapter.pt")), strict=False)
+
+  def load_optimizer(self, optimizer, model, weights_path):
+    optimizer.load_state_dict(torch.load(os.path.join(weights_path, "optim.pt")))
+
+
 @patch.object(automodel_worker, "MAX_LORA_RANK", 4)
 class MultiAdapterTest(unittest.TestCase):
   """Adapters of any shape sharing one trainer train exactly as they would alone."""
@@ -164,6 +190,7 @@ class MultiAdapterTest(unittest.TestCase):
 
     worker.load_model = load_model
     worker.build_peft_config = lambda config: PeftConfig(dim=config.rank, alpha=config.lora_alpha)
+    worker.checkpointer = FileCheckpointer()
     return worker
 
   def create(self, worker: AutomodelTrainingWorker, model_id: str, seed: int) -> None:
@@ -232,6 +259,39 @@ class MultiAdapterTest(unittest.TestCase):
     saved = worker.saved_peft_config(self.CONFIGS["a"])
     self.assertEqual(saved.dim, 4)
     self.assertEqual(saved.alpha / saved.dim, 8 / 2)
+
+  def test_a_resumed_adapter_trains_on_as_if_never_saved(self) -> None:
+    worker = self.make_worker()
+    self.create(worker, "a", seed=1)
+    self.step(worker, "a")
+    self.step(worker, "a")
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, "ckpt")
+      worker.save_state("a", path, include_optimizer=True)
+      resumed = self.make_worker()
+      resumed.load_from_state("a", path, restore_optimizer=True)
+    self.assertIsNotNone(resumed.adapters["a"].optimizer)
+    for _, module in resumed.lora_modules():
+      self.assertEqual(module.scale, 4.0)
+    self.step(worker, "a")
+    self.step(resumed, "a")
+    for actual, expected in zip(self.weights(resumed, "a"), self.weights(worker, "a"), strict=True):
+      torch.testing.assert_close(actual, expected)
+
+  def test_weights_only_checkpoint_starts_a_fresh_optimizer(self) -> None:
+    worker = self.make_worker()
+    self.create(worker, "a", seed=1)
+    self.step(worker, "a")
+    with tempfile.TemporaryDirectory() as tmp:
+      path = os.path.join(tmp, "ckpt")
+      worker.save_state("a", path)
+      with open(os.path.join(path, "metadata.json")) as f:
+        self.assertFalse(json.load(f)["has_optimizer"])
+      resumed = self.make_worker()
+      resumed.load_from_state("a", path, restore_optimizer=True)
+    self.assertIsNone(resumed.adapters["a"].optimizer)
+    for actual, expected in zip(self.weights(resumed, "a"), self.weights(worker, "a"), strict=True):
+      torch.testing.assert_close(actual, expected)
 
   def test_too_large_a_rank_or_another_base_is_refused(self) -> None:
     worker = self.make_worker()

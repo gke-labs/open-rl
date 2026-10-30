@@ -1,0 +1,51 @@
+<svg viewBox="0 0 1200 664" class="arch" role="img" aria-labelledby="at" xmlns="http://www.w3.org/2000/svg"><title id="at">Now: a routed sampling pool</title>
+<style>.arch{width:100%;height:auto;display:block;background:#fbfcfd}
+.box rect{fill:#fff;stroke:#9aa3ae;stroke-width:1.2}.box.store rect{fill:#f3f5f8}.box.gpu rect{fill:#eef4fb;stroke:#7d9cc4}.box.accent rect{fill:#efedfa;stroke:#2f2a8a;stroke-width:1.6}
+.box.label rect{fill:#fffbea;stroke:#d8c27a}
+.group{fill:none;stroke:#b9c0c8;stroke-width:1.2;stroke-dasharray:5 4}.sub{fill:#f7f8fa;stroke:#d6dbe1}.cluster{fill:none;stroke:#7a828d;stroke-width:1.4}
+.bt{font-size:14px;font-weight:600;fill:#16191d;text-anchor:middle}.bs{font-size:12px;fill:#4d5560;text-anchor:middle}.mono{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;fill:#2f2a8a;text-anchor:middle}
+.gt{font-size:13px;font-weight:600;fill:#4d5560}.ct{font-size:15px;font-weight:650;fill:#16191d}
+.flow{fill:none;stroke:#16191d;stroke-width:1.4}.side{fill:none;stroke:#8a929c;stroke-width:1.3;stroke-dasharray:4 3}.find{fill:none;stroke:#b08a1a;stroke-width:1.4;stroke-dasharray:5 3}
+.ahead{fill:#16191d}.lbl{font-size:11.5px;fill:#4d5560;paint-order:stroke;stroke:#fbfcfd;stroke-width:4px;stroke-linejoin:round}.lblf{font-size:11.5px;fill:#8a6a10;paint-order:stroke;stroke:#fbfcfd;stroke-width:4px;stroke-linejoin:round}
+text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}</style>
+<defs><marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ahead"/></marker>
+<marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b08a1a"/></marker></defs>
+
+<g class="box"><rect x="16" y="200" width="130" height="70" rx="6"/><text x="81" y="228" class="bt">Training loop</text><text x="81" y="246" class="bs">tinker SDK</text></g>
+<rect x="176" y="16" width="1008" height="632" rx="12" class="cluster"/><text x="196" y="44" class="ct">GKE cluster</text>
+
+<g class="box accent"><rect x="200" y="190" width="170" height="90" rx="6"/><text x="285" y="214" class="bt">API server</text><text x="285" y="236" class="bs">ensure(model, "sampler")</text><text x="285" y="252" class="bs">on the first save or</text><text x="285" y="268" class="bs">sampling session</text></g>
+
+<g class="box"><rect x="420" y="64" width="200" height="64" rx="6"/><text x="520" y="88" class="bt">Sampler Workloads × N</text><text x="520" y="108" class="bs">openrl.sampler_replicas</text></g>
+<g class="box"><rect x="680" y="64" width="190" height="64" rx="6"/><text x="775" y="88" class="bt">OpenRL scheduler</text><text x="775" y="108" class="bs">DRA claim, then pod</text></g>
+
+<g class="box"><rect x="420" y="176" width="200" height="64" rx="6"/><text x="520" y="200" class="bt">Deployment &lt;pool&gt;</text><text x="520" y="220" class="bs">+ NetworkPolicy &lt;pool&gt;</text></g>
+<g class="box"><rect x="680" y="176" width="190" height="64" rx="6"/><text x="775" y="200" class="bt">Kubernetes</text><text x="775" y="220" class="bs">Deployment controller</text></g>
+
+<g class="box store"><rect x="200" y="470" width="170" height="92" rx="6"/><text x="285" y="494" class="bt">Redis</text><text x="285" y="514" class="mono">open_rl:sampling:&lt;pool&gt;</text><text x="285" y="532" class="bs">read without removal</text><text x="285" y="550" class="mono">open_rl:future:&lt;id&gt;</text></g>
+
+<rect x="420" y="296" width="450" height="300" rx="10" class="group"/><text x="436" y="318" class="gt">Dispatcher pod (CPU), one per pool</text>
+<g class="box"><rect x="440" y="334" width="200" height="72" rx="6"/><text x="540" y="358" class="bt">dispatcher</text><text x="540" y="376" class="bs">HttpSampler</text><text x="540" y="392" class="bs">writes the revision file</text></g>
+<g class="box"><rect x="440" y="440" width="200" height="56" rx="6"/><text x="540" y="464" class="bt">Envoy</text><text x="540" y="482" class="bs">127.0.0.1:8081</text></g>
+<g class="box"><rect x="660" y="440" width="190" height="56" rx="6"/><text x="755" y="464" class="bt">llm-d EPP</text><text x="755" y="482" class="bs">prefix cache and load</text></g>
+<g class="box label"><rect x="660" y="514" width="190" height="66" rx="6"/><text x="755" y="534" class="bs">--endpoint-selector</text><text x="755" y="552" class="mono">component=sampler,</text><text x="755" y="568" class="mono">instance=&lt;pool&gt;</text></g>
+
+<rect x="912" y="160" width="260" height="436" rx="10" class="group"/><text x="1156" y="182" class="gt" style="text-anchor:end">GPU nodes</text>
+<g class="box gpu"><rect x="936" y="208" width="220" height="96" rx="6"/><rect x="932" y="204" width="220" height="96" rx="6"/><rect x="928" y="200" width="220" height="96" rx="6"/><text x="1038" y="226" class="bt">Replica pods × N</text><text x="1038" y="246" class="mono">vllm serve</text><text x="1038" y="266" class="bs">ready when /weight_info</text><text x="1038" y="282" class="bs">equals the revision file</text></g>
+<g class="box label"><rect x="928" y="320" width="236" height="60" rx="6"/><text x="1046" y="340" class="bs">pod labels the scheduler sets</text><text x="1046" y="356" class="mono" style="font-size:10.5px">app.kubernetes.io/component=sampler</text><text x="1046" y="371" class="mono" style="font-size:10.5px">app.kubernetes.io/instance=&lt;pool&gt;</text></g>
+<g class="box store"><rect x="928" y="420" width="236" height="56" rx="6"/><text x="1046" y="444" class="bt">Shared volume</text><text x="1046" y="462" class="bs">weights, revision file</text></g>
+
+<path d="M146,235 H200" class="flow" marker-end="url(#a1)"/><text x="173" y="227" class="lbl" text-anchor="middle">asample</text>
+<path d="M370,205 H394 V96 H420" class="flow" marker-end="url(#a1)"/><text x="394" y="150" class="lbl" text-anchor="middle">creates</text>
+<path d="M370,225 H394 V208 H420" class="flow" marker-end="url(#a1)"/>
+<path d="M620,96 H680" class="flow" marker-end="url(#a1)"/><text x="650" y="88" class="lbl" text-anchor="middle">reads</text>
+<path d="M870,96 H1042 V200" class="flow" marker-end="url(#a1)"/><text x="956" y="88" class="lbl" text-anchor="middle">creates pods</text>
+<path d="M620,208 H680" class="flow" marker-end="url(#a1)"/><text x="650" y="200" class="lbl" text-anchor="middle">reads</text>
+<path d="M775,240 V296" class="flow" marker-end="url(#a1)"/><text x="783" y="272" class="lbl">creates pod</text>
+<path d="M285,280 V470" class="flow" marker-end="url(#a1)"/><text x="293" y="380" class="lbl">XADD</text>
+<path d="M370,516 H404 V370 H440" class="flow" marker-start="url(#a1)" marker-end="url(#a1)"/><text x="404" y="424" class="lbl" text-anchor="middle">read, set_result</text>
+<path d="M540,406 V440" class="flow" marker-end="url(#a1)"/><text x="548" y="428" class="lbl">generate</text>
+<path d="M640,468 H660" class="flow" marker-start="url(#a1)" marker-end="url(#a1)"/>
+<path d="M540,496 V622 H900 V250 H928" class="flow" marker-end="url(#a1)"/><text x="720" y="626" class="lbl" text-anchor="middle">to the replica the EPP picked</text>
+<path d="M850,547 H888 V350 H928" class="find" marker-end="url(#a2)"/><text x="879" y="455" class="lblf" text-anchor="middle" transform="rotate(-90 879 455)">finds replicas by label</text>
+</svg>

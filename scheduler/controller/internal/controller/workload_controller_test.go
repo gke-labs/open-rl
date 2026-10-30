@@ -81,10 +81,12 @@ func enabledNode() []client.Object {
 	nodeName := testNode
 	product := "NVIDIA RTX PRO 6000 Blackwell"
 	device := func(name string) resourcev1.Device {
+		uuid := "GPU-" + name
 		return resourcev1.Device{
 			Name: name,
 			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
 				"productName": {StringValue: &product},
+				"uuid":        {StringValue: &uuid},
 			},
 			Capacity: map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{
 				"memory": {Value: resource.MustParse("96Gi")},
@@ -1522,5 +1524,37 @@ func TestTPUClaimCapacityTier(t *testing.T) {
 	sub := r.buildClaim("c", openrlv1alpha1.AcceleratorTypeTPU, []placement.Tier{sized}).Spec.Devices.Requests[0].FirstAvailable[0]
 	if cel := sub.Selectors[0].CEL.Expression; !strings.HasPrefix(cel, `device.capacity["tpu.google.com"].memory`) || strings.Contains(cel, "tpuGen") {
 		t.Errorf("CEL = %s, want capacity bounds", sub.Selectors[0].CEL.Expression)
+	}
+}
+
+func TestWorkerStatusRecordsItsPlacementInterval(t *testing.T) {
+	r := newReconciler(t, append(enabledNode(), trainerWorker("w-a", "model-a"))...)
+	settle(t, r, "w-a")
+	allocateClaim(t, r, claimOf(t, r, "w-a"))
+	runReconcile(t, r, "w-a")
+
+	placed := getWorker(t, r, "w-a").Status
+	if placed.NodeName != testNode || placed.PlacedAt == nil || placed.ReleasedAt != nil {
+		t.Fatalf("status = %+v, want placed on %s and not released", placed, testNode)
+	}
+	if got := placed.GPUUUIDs; len(got) != 1 || got[0] != "GPU-gpu-0" {
+		t.Fatalf("gpuUUIDs = %v, want the allocated device's UUID", got)
+	}
+
+	// A second finalizer keeps the worker readable after teardown lets go.
+	held := getWorker(t, r, "w-a")
+	held.Finalizers = append(held.Finalizers, "test.openrl.io/hold")
+	if err := r.Update(context.Background(), held); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Delete(context.Background(), held); err != nil {
+		t.Fatal(err)
+	}
+	runReconcile(t, r, "w-a")
+	runReconcile(t, r, "w-a")
+
+	released := getWorker(t, r, "w-a").Status
+	if released.ReleasedAt == nil || !released.PlacedAt.Equal(placed.PlacedAt) {
+		t.Fatalf("status = %+v, want releasedAt stamped and placedAt kept", released)
 	}
 }

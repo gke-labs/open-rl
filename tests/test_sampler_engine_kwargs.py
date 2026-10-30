@@ -1,52 +1,51 @@
-"""Engine settings the vLLM sampler derives from its environment."""
+"""Engine settings that differ on the TPU platform."""
 
 import os
+import sys
+import types
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from server.vllm_sampler import engine_kwargs_from_env, on_tpu_platform
+from server.vllm_options import engine_args, on_tpu_platform
 
-BASE_ENV = {"BASE_MODEL": "Qwen/Qwen3-0.6B"}
 EXTENSION = "server.tpu_worker_extension.TPUWeightTransferExtension"
 
 
-def kwargs(fft_enabled: bool, on_tpu: bool = False, **env: str) -> dict:
-  with patch.dict(os.environ, {**BASE_ENV, **env}, clear=True), patch("server.vllm_sampler.on_tpu_platform", return_value=on_tpu):
-    return engine_kwargs_from_env(fft_enabled)
+def args(is_lora: bool, on_tpu: bool) -> dict:
+  with patch.dict(os.environ, {}, clear=True), patch("server.vllm_options.on_tpu_platform", return_value=on_tpu):
+    return engine_args(is_lora)
 
 
-class SleepModeTest(unittest.TestCase):
-  def test_a_time_sliced_fft_sampler_can_sleep(self) -> None:
-    self.assertTrue(kwargs(True)["enable_sleep_mode"])
-
-  def test_an_exclusive_fft_sampler_cannot(self) -> None:
-    self.assertFalse(kwargs(True, OPEN_RL_TIME_SLICING="off")["enable_sleep_mode"])
-
-  def test_a_lora_sampler_cannot(self) -> None:
-    for env in ({}, {"OPEN_RL_TIME_SLICING": "off"}):
-      with self.subTest(env=env):
-        self.assertFalse(kwargs(False, **env)["enable_sleep_mode"])
+def platform(out_of_tree: bool, device_type: str) -> dict[str, types.ModuleType]:
+  """A fake vllm.platforms, since the unit tests run without vLLM."""
+  modules = {name: types.ModuleType(name) for name in ("vllm", "vllm.platforms")}
+  modules["vllm.platforms"].current_platform = SimpleNamespace(is_out_of_tree=lambda: out_of_tree, device_type=device_type)
+  return modules
 
 
-def platform(out_of_tree: bool, device_type: str) -> SimpleNamespace:
-  return SimpleNamespace(is_out_of_tree=lambda: out_of_tree, device_type=device_type)
-
-
-class WorkerExtensionTest(unittest.TestCase):
+class TpuEngineArgsTest(unittest.TestCase):
   def test_an_fft_sampler_on_tpu_gets_the_weight_transfer_extension(self) -> None:
-    self.assertEqual(kwargs(True, on_tpu=True)["worker_extension_cls"], EXTENSION)
+    self.assertEqual(args(False, on_tpu=True)["worker_extension_cls"], EXTENSION)
 
   def test_other_samplers_keep_vllms_worker(self) -> None:
-    for fft_enabled, on_tpu in ((True, False), (False, True), (False, False)):
-      with self.subTest(fft_enabled=fft_enabled, on_tpu=on_tpu):
-        self.assertNotIn("worker_extension_cls", kwargs(fft_enabled, on_tpu=on_tpu))
+    for is_lora, on_tpu in ((False, False), (True, True), (True, False)):
+      with self.subTest(is_lora=is_lora, on_tpu=on_tpu):
+        self.assertNotIn("worker_extension_cls", args(is_lora, on_tpu))
+
+  def test_the_tpu_platform_captures_no_cuda_graphs(self) -> None:
+    self.assertNotIn("compilation_config", args(False, on_tpu=True))
+    self.assertIn("compilation_config", args(False, on_tpu=False))
 
   def test_the_tpu_platform_is_out_of_tree_with_tpu_devices(self) -> None:
-    cases = ((platform(True, "tpu"), True), (platform(True, "cuda"), False), (platform(False, "tpu"), False), (platform(False, "cuda"), False))
-    for current, expected in cases:
-      with self.subTest(out_of_tree=current.is_out_of_tree(), device_type=current.device_type), patch("vllm.platforms.current_platform", current):
+    cases = (((True, "tpu"), True), ((True, "cuda"), False), ((False, "tpu"), False), ((False, "cuda"), False))
+    for (out_of_tree, device_type), expected in cases:
+      with self.subTest(out_of_tree=out_of_tree, device_type=device_type), patch.dict(sys.modules, platform(out_of_tree, device_type)):
         self.assertEqual(on_tpu_platform(), expected)
+
+  def test_without_vllm_the_platform_is_not_tpu(self) -> None:
+    with patch.dict(sys.modules, {"vllm": None, "vllm.platforms": None}):
+      self.assertFalse(on_tpu_platform())
 
 
 if __name__ == "__main__":

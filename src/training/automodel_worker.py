@@ -288,6 +288,9 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
       use_triton=False,
     )
 
+  def is_ready(self) -> bool:
+    return self.model is not None
+
   def load_base_model(self, base_model_name: str) -> None:
     """The processor preloads BASE_MODEL before any create_model arrives. Automodel
     applies LoRA at load, so the load itself waits for the client's LoraConfig;
@@ -406,11 +409,11 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
       self.cp_context.close()
       self.cp_context = None
 
-  def make_training_batches(self, data: list[Datum]) -> list[list[tuple[int, Datum]]]:
+  def make_training_batches(self, data: list[Datum], token_budget: int) -> list[list[tuple[int, Datum]]]:
     # The CP shard takes one unpadded sequence per pass.
     if self.cp_size > 1:
       return [[(idx, datum)] for idx, datum in enumerate(data)]
-    return super().make_training_batches(data)
+    return super().make_training_batches(data, token_budget)
 
   def compute_target_logprobs(
     self, model: torch.nn.Module, input_ids: torch.Tensor, attention_mask: torch.Tensor, target_token_ids: torch.Tensor
@@ -474,13 +477,7 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     # Each adapter's optimizer keys its moments by the shared LoRA parameters,
     # so its state only ever sees that adapter's weights.
     if state.optimizer is None:
-      state.optimizer = torch.optim.AdamW(
-        self.trainable_params,
-        lr=adam_params.get("learning_rate", 1e-4),
-        betas=(adam_params.get("beta1", 0.9), adam_params.get("beta2", 0.95)),
-        eps=adam_params.get("eps", 1e-12),
-        weight_decay=adam_params.get("weight_decay", 0.0),
-      )
+      state.optimizer = self.new_optimizer(adam_params)
     if adam_params.get("learning_rate") is not None:
       for param_group in state.optimizer.param_groups:
         param_group["lr"] = adam_params["learning_rate"]
@@ -490,6 +487,15 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     state.optimizer.step()
     state.optimizer.zero_grad(set_to_none=True)
     return {"metrics": {"grad_norm:mean": self.sanitize_float(total_norm)}}
+
+  def new_optimizer(self, adam_params: dict[str, Any]) -> torch.optim.Optimizer:
+    return torch.optim.AdamW(
+      self.trainable_params,
+      lr=adam_params.get("learning_rate", 1e-4),
+      betas=(adam_params.get("beta1", 0.9), adam_params.get("beta2", 0.95)),
+      eps=adam_params.get("eps", 1e-12),
+      weight_decay=adam_params.get("weight_decay", 0.0),
+    )
 
   def clip_gradients(self, max_grad_norm: float) -> float:
     """Global grad norm over the trainable parameters, DTensors or not."""
@@ -537,17 +543,21 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     vLLM's alpha / r is still the adapter's own scale."""
     return replace(self.peft_config, alpha=config.lora_alpha * MAX_LORA_RANK / config.rank, dropout=config.lora_dropout)
 
-  def write_staged(self, path: str, peft_config: Any, metadata: dict[str, Any] | None = None) -> None:
+  def write_staged(self, path: str, peft_config: Any, metadata: dict[str, Any] | None = None, optimizer: torch.optim.Optimizer | None = None) -> None:
     """Write the adapter into a staging dir and rename it over path, so a reader
     never sees a half-written directory. The checkpointer nests its output
-    under model/, which is lifted into the staging dir. Every rank joins the
-    save's gather and rank 0 writes and moves the files."""
+    under model/, which is lifted into the staging dir. An optimizer goes to
+    optim/ as a sharded DCP checkpoint. Every rank joins the save's gather and
+    rank 0 writes and moves the files."""
     staging, previous = f"{path}.staging", f"{path}.previous"
     if is_primary():
       shutil.rmtree(staging, ignore_errors=True)
       os.makedirs(staging)
     barrier()
-    self.get_checkpointer().save_model(self.model, weights_path=staging, peft_config=peft_config, tokenizer=self.tokenizer)
+    checkpointer = self.get_checkpointer()
+    checkpointer.save_model(self.model, weights_path=staging, peft_config=peft_config, tokenizer=self.tokenizer)
+    if optimizer is not None:
+      checkpointer.save_optimizer(optimizer, self.model, staging)
     if is_primary():
       self.publish_staged(staging, path, previous, metadata)
     barrier()
@@ -568,12 +578,38 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
     state = self.activate(model_id)
-    # Weights only for now; the optimizer state is not saved.
-    self.write_staged(state_path, self.saved_peft_config(state.config), self.metadata(model_id, kind))
+    optimizer = state.optimizer if include_optimizer else None
+    metadata = self.metadata(model_id, kind, has_optimizer=optimizer is not None)
+    self.write_staged(state_path, self.saved_peft_config(state.config), metadata, optimizer)
     return {"path": state_path}
 
-  def load_from_state(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-    raise NotImplementedError("The Automodel trainer does not load checkpoints yet.")
+  def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
+    """Load a saved adapter, and its optimizer if asked and saved. The adapter
+    was saved at MAX_LORA_RANK with alpha scaled to match, so it comes back as
+    a max-rank adapter with the same scale. Its unused rows and modules are
+    zero in the file and stay zero."""
+    with open(os.path.join(state_path, "metadata.json")) as f:
+      metadata = json.load(f)
+    with open(os.path.join(state_path, "adapter_config.json")) as f:
+      adapter_config = json.load(f)
+    with open(os.path.join(state_path, "automodel_peft_config.json")) as f:
+      dropout = json.load(f).get("dropout", 0.0)
+    if adapter_config["r"] != MAX_LORA_RANK:
+      raise ValueError(f"{state_path} was saved at rank {adapter_config['r']}, not this trainer's {MAX_LORA_RANK}.")
+    base_model = metadata["base_model"]
+    config = LoraConfig(rank=MAX_LORA_RANK, lora_alpha=adapter_config["lora_alpha"], lora_dropout=dropout)
+    self.create_model(base_model, model_id, config)
+    checkpointer = self.get_checkpointer()
+    checkpointer.load_model(self.model, state_path)
+    state = self.adapters[model_id]
+    if restore_optimizer and metadata.get("has_optimizer"):
+      # The saved param groups bring back lr, betas, eps and weight decay.
+      state.optimizer = self.new_optimizer({})
+      checkpointer.load_optimizer(state.optimizer, self.model, state_path)
+      print(f"Automodel adapter '{model_id}' loaded from {state_path} with its optimizer.")
+    else:
+      print(f"Automodel adapter '{model_id}' loaded from {state_path}; the optimizer starts fresh.")
+    return {"model_id": model_id, "is_lora": True, "base_model": base_model}
 
   def save_for_sampler(self, model_id: str, alias: str | None, ref: str | None) -> str | None:
     """Write the adapter where the LoRA sampler hot-loads it, peft/<id>/<id>,
@@ -583,12 +619,12 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
     self.write_staged(os.path.join(TMP_DIR, "peft", model_id, model_id), self.saved_peft_config(state.config))
     return None
 
-  def metadata(self, model_id: str, kind: str) -> dict[str, Any]:
+  def metadata(self, model_id: str, kind: str, has_optimizer: bool = False) -> dict[str, Any]:
     return {
       "base_model": self.base_model_name,
       "created_at": datetime.now().isoformat(),
       "kind": kind,
-      "has_optimizer": False,
+      "has_optimizer": has_optimizer,
       "model_id": model_id,
       "timestamp": time.time(),
     }

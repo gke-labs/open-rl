@@ -5,7 +5,6 @@ from typing import Any, cast
 
 import chz
 import tinker
-from common.tinker_utils import patch_tinker_default_headers
 from datasets import load_dataset
 from tinker import types
 from tinker_cookbook import checkpoint_utils, cli_utils
@@ -99,7 +98,4 @@ def main(config: Config) -> None:
 
 
 if __name__ == "__main__":
-  # Turns OPEN_RL_FINE_TUNING_TYPE into the header the API server reads. Without
-  # it the fft-gsm8k scenario silently trains a LoRA adapter.
-  patch_tinker_default_headers()
   chz.nested_entrypoint(main, allow_hyphens=True)

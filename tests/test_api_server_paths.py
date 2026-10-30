@@ -143,8 +143,7 @@ class AccelPrefsTest(ApiServerTest):
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
       response = self.post(
         "create_model",
-        {"base_model": "m", "user_metadata": {"openrl.sampler_accel_prefs": "tpu"}},
-        headers={"X-Open-RL-Fine-Tuning-Type": "full"},
+        {"base_model": "m", "user_metadata": {"openrl.fine_tuning_type": "full", "openrl.sampler_accel_prefs": "tpu"}},
       )
     self.assertEqual(response.status_code, 400)
     self.assertIn("needs openrl.exclusive=true", response.json()["error"])
@@ -294,11 +293,11 @@ class ProtobufWireTest(unittest.TestCase):
     from server.proto import tinker_public_pb2 as pb
 
     asyncio.run(
-      api_server.store.set_future(
+      api_server.store.set_result(
         "samp-1", {"type": "sample_completed", "sequences": [{"tokens": [1, 2], "logprobs": [-0.5, -1.0], "stop_reason": "stop"}]}
       )
     )
-    asyncio.run(api_server.store.set_future("optim-1", {"type": "optim_step_completed", "metrics": {"grad_norm:mean": 0.0}}))
+    asyncio.run(api_server.store.set_result("optim-1", {"type": "optim_step_completed", "metrics": {"grad_norm:mean": 0.0}}))
 
     as_json = self.client.post("/api/v1/retrieve_future", json={"request_id": "samp-1"})
     self.assertEqual(as_json.status_code, 200)
@@ -377,6 +376,62 @@ class RestoreRoutingTest(ApiServerTest):
         metadata = json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
         self.assertEqual((metadata["base_model"], metadata["fine_tuning_type"]), ("checkpoint-base", kind))
         self.assertEqual(self.queued()[0]["payload"]["fine_tuning_type"], kind)
+
+  def test_restore_refuses_a_fine_tuning_type_the_checkpoint_does_not_have(self):
+    with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      with open(os.path.join(directory, "metadata.json"), "w") as f:
+        json.dump({"base_model": "checkpoint-base"}, f)
+      with open(os.path.join(directory, "adapter_config.json"), "w") as f:
+        json.dump({"r": 8}, f)
+      response = self.post("create_model_from_state", {"state_path": directory, "user_metadata": {"openrl.fine_tuning_type": "full"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("does not match the lora checkpoint", response.json()["error"])
+
+
+class FineTuningSettingsTest(ApiServerTest):
+  """Full fine-tuning and its options are openrl. settings, from TINKER_TAGS or user_metadata."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    self.enterContext(patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}))
+
+  def metadata(self, model_id: str) -> dict:
+    return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{model_id}"))
+
+  def test_tags_choose_full_fine_tuning_and_its_weight_sync(self) -> None:
+    tags = ["openrl.fine_tuning_type=full", "openrl.weight_sync=full", "openrl.fft_cpu_offload=false"]
+    session_id = self.post("create_session", {"tags": tags}).json()["session_id"]
+    meta = self.metadata(self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"])
+    self.assertEqual(meta["fine_tuning_type"], "full")
+    self.assertEqual(meta["weight_sync_config"]["strategy"], "full")
+    self.assertEqual(meta["full_config"], {"seed": None, "cpu_offload": False, "weight_sync_strategy": "full"})
+
+  def test_the_client_log_id_tag_lands_on_the_model(self) -> None:
+    session_id = self.post("create_session", {"tags": ["openrl.client_log_id=gsm8k-7"]}).json()["session_id"]
+    meta = self.metadata(self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"])
+    self.assertEqual(meta["client_log_id"], "gsm8k-7")
+
+  def test_lora_is_the_default(self) -> None:
+    meta = self.metadata(self.post("create_model", {"base_model": "m"}).json()["request_id"])
+    self.assertEqual(meta["fine_tuning_type"], "lora")
+
+  def test_full_fine_tuning_options_on_a_lora_model_are_refused(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.weight_sync": "full"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.weight_sync applies to fine_tuning_type=full only", response.json()["error"])
+
+  def test_bad_values_are_refused(self) -> None:
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.fine_tuning_type": "qlora"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.fine_tuning_type", response.json()["error"])
+
+  def test_the_removed_header_and_full_config_point_at_the_settings(self) -> None:
+    response = self.post("create_model", {"base_model": "m"}, headers={"x-open-rl-fine-tuning-type": "full"})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("set openrl.fine_tuning_type", response.json()["error"])
+    response = self.post("create_model", {"base_model": "m", "full_config": {"seed": 1}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.fft_seed", response.json()["error"])
 
 
 class ExclusiveMetadataTest(ApiServerTest):
@@ -458,8 +513,7 @@ class ExclusiveMetadataTest(ApiServerTest):
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
       response = self.post(
         "create_model",
-        {"base_model": "m", "user_metadata": {"openrl.exclusive": "true", **user_metadata}},
-        headers={"X-Open-RL-Fine-Tuning-Type": "full"},
+        {"base_model": "m", "user_metadata": {"openrl.fine_tuning_type": "full", "openrl.exclusive": "true", **user_metadata}},
       )
     self.assertEqual(response.status_code, 200, response.text)
     return self.metadata(response.json()["request_id"])
@@ -520,8 +574,7 @@ class TrainerBackendTest(ApiServerTest):
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
       response = self.post(
         "create_model",
-        {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel"}},
-        headers={"x-open-rl-fine-tuning-type": "full"},
+        {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel", "openrl.fine_tuning_type": "full"}},
       )
     self.assertEqual(response.status_code, 400)
     self.assertIn("LoRA only", response.json()["error"])
@@ -548,58 +601,46 @@ class TrainerBackendTest(ApiServerTest):
     self.assertEqual(response.status_code, 400)
     self.assertIn("pods", response.json()["error"])
 
+  def test_a_multi_gpu_trainer_is_automodel_only_and_never_shared(self) -> None:
+    session_id = self.post("create_session", {"tags": ["openrl.trainer_backend=automodel", "openrl.trainer_gpus=4"]}).json()["session_id"]
+    model_id = self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["trainer_gpus"], 4)
+    self.assertNotEqual(self.active_set(model_id), "automodel-m-1")
+
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_gpus": "4"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.trainer_backend=automodel", response.json()["error"])
+
+  def test_trainer_cp_must_divide_the_trainer_gpus(self) -> None:
+    tags = {"openrl.trainer_backend": "automodel", "openrl.trainer_gpus": "4"}
+    model_id = self.post("create_model", {"base_model": "m", "user_metadata": {**tags, "openrl.trainer_cp": "4"}}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["trainer_cp"], 4)
+
+    response = self.post("create_model", {"base_model": "m", "user_metadata": {**tags, "openrl.trainer_cp": "3"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.trainer_cp=3 must divide", response.json()["error"])
+
   def test_a_server_without_a_worker_manager_refuses_automodel(self) -> None:
     with patch.object(api_server, "worker_manager", None):
       response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "automodel"}})
     self.assertEqual(response.status_code, 400)
     self.assertIn("launches workers", response.json()["error"])
 
+  def test_sampler_replicas_need_a_server_that_launches_pods(self) -> None:
+    model_id = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.sampler_replicas": "4"}}).json()["request_id"]
+    self.assertEqual(self.metadata(model_id)["sampler_replicas"], 4)
 
-class SamplerReadyTimeoutTest(ApiServerTest):
-  """create_sampling_session waits for the sampler up to OPEN_RL_SAMPLER_READY_TIMEOUT_S."""
+    with patch.object(api_server, "worker_manager", object.__new__(LocalWorkerManager)):
+      response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.sampler_replicas": "4"}})
+    self.assertEqual(response.status_code, 400)
+    self.assertIn("openrl.sampler_replicas above 1", response.json()["error"])
 
-  def setUp(self) -> None:
-    super().setUp()
-    self.now = 0.0
-
-    async def fake_sleep(seconds: float) -> None:
-      self.now += seconds
-
-    # The wait only runs against Redis state; the in-memory store stands in for it.
-    self.enterContext(patch.object(api_server, "RedisStateStore", InMemoryStateStore))
-    self.enterContext(patch.object(api_server, "worker_manager", None))
-    self.enterContext(patch.object(api_server, "get_sampler_backend", return_value="vllm"))
-    self.enterContext(patch.object(api_server.time, "monotonic", lambda: self.now))
-    self.enterContext(patch.object(api_server.asyncio, "sleep", fake_sleep))
-
-  def open_session(self) -> dict:
-    return asyncio.run(api_server.create_sampling_session(api_server.CreateSamplingSessionRequest(base_model="m")))
-
-  def test_the_default_is_900_seconds(self) -> None:
-    with patch.dict(os.environ, {}, clear=True):
-      self.assertEqual(api_server.sampler_ready_timeout_s(), 900)
-      with self.assertRaises(TimeoutError):
-        self.open_session()
-    self.assertGreater(self.now, 900)
-    self.assertLessEqual(self.now, 901)
-
-  def test_the_env_value_wins(self) -> None:
-    with patch.dict(os.environ, {"OPEN_RL_SAMPLER_READY_TIMEOUT_S": "1800"}):
-      self.assertEqual(api_server.sampler_ready_timeout_s(), 1800)
-      with self.assertRaises(TimeoutError):
-        self.open_session()
-    self.assertGreater(self.now, 1800)
-    self.assertLessEqual(self.now, 1801)
-
-  def test_a_sampler_that_becomes_ready_in_time_opens_the_session(self) -> None:
-    async def ready_after(seconds: float) -> None:
-      self.now += seconds
-      if self.now >= 600:
-        await api_server.state.set_value("open_rl:sampler_ready:m", "1")
-
-    with patch.dict(os.environ, {}, clear=True), patch.object(api_server.asyncio, "sleep", ready_after):
-      self.assertEqual(self.open_session()["sampling_session_id"], "m")
-    self.assertEqual(self.now, 600)
+  def test_an_fft_job_sharing_its_trainers_gpu_cannot_ask_for_more_samplers(self) -> None:
+    fft = {"openrl.fine_tuning_type": "full", "openrl.sampler_replicas": "4"}
+    with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
+      self.assertEqual(self.post("create_model", {"base_model": "m", "user_metadata": fft}).status_code, 400)
+      exclusive = self.post("create_model", {"base_model": "m", "user_metadata": {**fft, "openrl.exclusive": "true"}})
+    self.assertEqual(self.metadata(exclusive.json()["request_id"])["sampler_replicas"], 4)
 
 
 if __name__ == "__main__":

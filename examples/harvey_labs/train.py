@@ -19,7 +19,7 @@ from .env import LabDatasetBuilder
 from .plot_run import write_report
 from .results import eval_result, format_eval, format_summary, read_results
 from .reward import preflight_grading
-from .sandbox import SandboxFactory, podman_sandbox_factory
+from .sandbox import SandboxFactory, configured_sandbox_factory, podman_sandbox_factory
 
 
 def build_train_config(config: RunConfig, sandbox_factory: SandboxFactory = podman_sandbox_factory) -> rl_train.Config:
@@ -106,7 +106,7 @@ async def run(config: RunConfig, *, sandbox_factory: SandboxFactory = podman_san
 def main() -> None:
   force_rich_log_colors()
   config = chz.entrypoint(RunConfig, allow_hyphens=True)
-  asyncio.run(run(config))
+  asyncio.run(run(config, sandbox_factory=configured_sandbox_factory(config.sandbox_warmpool, config.sandbox_namespace)))
 
 
 if __name__ == "__main__":

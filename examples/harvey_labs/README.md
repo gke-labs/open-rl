@@ -32,10 +32,11 @@ TINKER_API_KEY=tml-dummy-key uv run harvey-train \
   log_path=artifacts/harvey-labs/my-run
 ```
 
+- The defaults are the Qwen3.5-9B recipe that raised held-out reward from 0.57 to 0.72-0.74 in 30 steps: 48 rollouts a step, 32k tokens a turn in a 192k window, LoRA at lr 2e-4. That window needs the gateway's `VLLM_MAX_MODEL_LEN` and `OPEN_RL_TRAIN_TOKEN_BUDGET` at 196608 and a trainer that fits it, such as `TINKER_TAGS=openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl.trainer_cp=4`.
 - `model_name` selects the model. The sampler's context window must support `max_trajectory_tokens`.
 - `task=<name>` selects one training task. Otherwise, the seeded split defaults to 300 train / 50 eval tasks and excludes eval scenario families from training.
-- Cookbook evaluates at step 0 when evaluation is enabled. `final_eval=True` is the default; `eval_rollouts_per_task=4` controls repeats per eval task.
-- `stream_minibatches=True` overlaps sampling and training. Gradient clipping, SDK request sizing, and console logging use upstream defaults.
+- Cookbook evaluates at step 0 when evaluation is enabled. `final_eval=True` is the default; `eval_rollouts_per_task` (default 1) sets repeats per eval task.
+- `stream_minibatches=True` (the default) overlaps sampling and training. Gradient clipping, SDK request sizing, and console logging use upstream defaults.
 
 Evaluate a saved sampler checkpoint using its `sampler_path` from `checkpoints.jsonl`:
 

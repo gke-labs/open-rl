@@ -14,7 +14,7 @@ resources:
   - ../base
   - ../fft-runtime
   - 01-shared-pvc.yaml
-  - 10-dcgm-monitoring.yaml
+  - ../dcgm
 
 generatorOptions:
   disableNameSuffixHash: true

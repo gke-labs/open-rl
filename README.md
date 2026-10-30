@@ -4,6 +4,9 @@
 
 OpenRL implements [Tinker](https://tinker-docs.thinkingmachines.ai/) compatible API for fine-tuning language models that you can run on your own infrastructure (machine or a kubernetes cluster). You can use the Tinker SDK to orchestrate RL training loops by writing imperative Python code directly from your local machine.
 
+🤖 Using an AI coding agent? Point it at the [OpenRL skill](skills/openrl/SKILL.md): how to connect,
+the `openrl.*` settings, what the cluster is doing while a call waits, and what each error means.
+
 📖 For the full story behind why we built OpenRL, read our introductory blog post:
 [Introducing OpenRL: A self-hosted post-training API for fine-tuning LLMs](https://opensource.googleblog.com/2026/06/introducing-openrl-a-self-hosted-post-training-api-for-fine-tuning-llms.html)
 (Google Open Source Blog, June 2026).
@@ -119,6 +122,7 @@ asyncio.run(rlvr_loop())
 Detailed guides and runnable examples are structured under `docs/` and `examples/`:
 
 - **Getting started:** [deploy OpenRL and run your first SFT and RL jobs](docs/getting-started.md)
+- **For AI coding agents:** [the OpenRL skill](skills/openrl/SKILL.md), also attached to every release as `openrl-skill.tar.gz`
 - **Guides:**
   - Supervised finetuning:
     - [Pig Latin SFT Notebook](examples/sft/pig-latin/piglatin_sft_notebook.ipynb) & [script guide](examples/sft/pig-latin/README.md)

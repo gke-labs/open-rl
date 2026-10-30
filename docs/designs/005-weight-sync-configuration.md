@@ -1,5 +1,7 @@
 # Design Doc 005: Unified Weight Synchronization Configuration & Header Extraction Architecture
 
+> **Update:** the `x-open-rl-weight-sync-*` headers were removed. Clients choose the strategy with the `openrl.weight_sync` setting (TINKER_TAGS or user_metadata), next to `openrl.fine_tuning_type=full`.
+
 **Author:** Open-RL Engineering Team  
 **Status:** Proposed Design (`v0.5.0`)  
 **Target Component:** API server Server, Worker Managers (Local & K8s), Trainer Engine, Sampler Engine, Client HTTP API  

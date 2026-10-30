@@ -1,13 +1,23 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import HTTPException
 
 from server import api_server
 from server.session_registry import SessionRegistry
+from server.store import InMemoryStateStore
 from server.worker_manager import LocalWorkerManager
 from tests.api_client import asgi_client, post_json
+
+
+def fft_job(model_id: str) -> InMemoryStateStore:
+  """A state store that knows `model_id` as an FFT job."""
+  s = InMemoryStateStore()
+  s.kv_store[f"open_rl:model_meta:{model_id}"] = json.dumps({"base_model": "base-model-a", "fine_tuning_type": "full"})
+  return s
 
 
 class StoreStub:
@@ -19,7 +29,7 @@ class StoreStub:
   async def put_request(self, req_data: dict, active_set_id: str | None = None) -> None:
     self.forwarded_requests.append(req_data)
 
-  async def set_future(self, req_id: str, result: dict) -> None:
+  async def set_result(self, req_id: str, result: dict) -> None:
     self.futures[req_id] = result
 
   async def set_value(self, key: str, value: str, ttl_seconds: float | None = None) -> None:
@@ -92,7 +102,7 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
       result = await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id})
 
     model_id = result["request_id"]
-    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
+    self.assertEqual(self.worker_manager.launched_trainer_model_ids, [model_id])
     self.assertEqual(len(self.store.forwarded_requests), 1)
     request = self.store.forwarded_requests[0]
     self.assertEqual(request["op"], "create_model")
@@ -108,7 +118,7 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
       result = await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id})
 
     model_id = result["request_id"]
-    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
+    self.assertEqual(self.worker_manager.launched_trainer_model_ids, [model_id])
     self.assertEqual(self.store.forwarded_requests, [])
     self.assertEqual(self.store.futures[model_id], {"type": "RequestFailedResponse", "error_message": "boom"})
 
@@ -123,13 +133,12 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
           "session_id": self.session_id,
           "state_path": "/tmp/checkpoint",
           "base_model": "restored-base",
-          "full_config": {"weight_sync_strategy": "delta"},
           "restore_optimizer": True,
         },
       )
 
     model_id = result["request_id"]
-    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
+    self.assertEqual(self.worker_manager.launched_trainer_model_ids, [model_id])
     self.assertEqual(len(self.store.forwarded_requests), 1)
     req_forwarded = self.store.forwarded_requests[0]
     self.assertEqual(req_forwarded["op"], "create_model_from_state")
@@ -174,12 +183,37 @@ class ApiServerInlineWorkerLaunchTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(caught.exception.status_code, 500)
     self.assertIn("OPEN_RL_TPU_SAMPLER_IMAGE is not set", caught.exception.detail)
 
+  async def test_an_rl_job_starts_the_sampler_with_the_trainer(self) -> None:
+    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}):
+      result = await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id, "user_metadata": {"openrl.recipe": "rl"}})
+
+    model_id = result["request_id"]
+    self.assertEqual(self.worker_manager.launched_trainer_model_ids, [model_id])
+    self.assertEqual(self.worker_manager.launched_sampler_model_ids, [model_id])
+    self.assertEqual(len(self.store.forwarded_requests), 1)
+
+  async def test_without_the_rl_recipe_the_sampler_waits_for_its_first_use(self) -> None:
+    for user_metadata in ({}, {"openrl.recipe": "sft"}):
+      with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}):
+        await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id, "user_metadata": user_metadata})
+
+    self.assertEqual(len(self.worker_manager.launched_trainer_model_ids), 2)
+    self.assertEqual(self.worker_manager.launched_sampler_model_ids, [])
+
+  async def test_a_failed_trainer_launch_starts_no_sampler(self) -> None:
+    self.worker_manager.error = RuntimeError("boom")
+
+    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true", "SAMPLING_BACKEND": "vllm"}), patch("server.api_server.traceback.print_exc"):
+      await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id, "user_metadata": {"openrl.recipe": "rl"}})
+
+    self.assertEqual(self.worker_manager.launched_sampler_model_ids, [])
+
   async def test_create_model_launches_trainer_when_worker_manager_present(self) -> None:
     with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "false"}):
       result = await self.post("create_model", {"base_model": "base-model", "session_id": self.session_id})
 
     model_id = result["request_id"]
-    self.assertEqual(self.worker_manager.launched_model_ids, [model_id])
+    self.assertEqual(self.worker_manager.launched_trainer_model_ids, [model_id])
     self.assertEqual(len(self.store.forwarded_requests), 1)
 
 
@@ -206,6 +240,7 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
   async def test_local_launch_stamps_workload_tags_and_process_group(self) -> None:
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "OPEN_RL_ENABLE_FFT": "true"}, clear=True),
+      patch("server.worker_manager.get_state_store", return_value=fft_job("Model_A.1")),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
       manager = LocalWorkerManager()
@@ -217,20 +252,28 @@ class LocalWorkerManagerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "trainer-Model_A.1")
     self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "trainers")
 
-  async def test_local_sampler_launch_stamps_workload_tags_and_process_group(self) -> None:
+  async def test_a_local_fft_sampler_on_the_trainers_gpu_serves_its_pool_itself_in_the_trainers_claim(self) -> None:
     with (
       patch.dict("os.environ", {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm", "OPEN_RL_ENABLE_FFT": "true"}, clear=True),
+      patch("server.worker_manager.get_state_store", return_value=fft_job("fft-job")),
       patch("server.worker_manager.subprocess.Popen") as popen,
     ):
-      manager = LocalWorkerManager()
-      manager.ensure("Model_A.1", "sampler")
+      LocalWorkerManager().ensure("fft-job", "sampler")
+    ((command, kwargs),) = [(c[0][0], c[1]) for c in popen.call_args_list]
+    self.assertEqual(command[command.index("-m") + 1 :], ["server.vllm_sampler", "--pool", "sampler-fft-job"])
+    self.assertEqual((kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"]), ("sampler-fft-job", "trainers"))
 
-    _, kwargs = popen.call_args
-    self.assertTrue(kwargs["start_new_session"])
-    self.assertEqual(kwargs["env"]["OPEN_RL_ENABLE_FFT"], "true")
-    self.assertEqual(kwargs["env"]["OPEN_RL_MODEL_ID"], "Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_JOB_ID"], "sampler-Model_A.1")
-    self.assertEqual(kwargs["env"]["OPEN_RL_TIME_SLICE_GROUP"], "samplers")
+  async def test_a_local_fft_sampler_on_its_own_gpu_never_waits_for_the_trainer(self) -> None:
+    env = {"REDIS_URL": "redis://localhost:6379", "SAMPLING_BACKEND": "vllm", "OPEN_RL_ENABLE_FFT": "true"}
+    env |= {"TRAINER_CUDA_VISIBLE_DEVICES": "0", "SAMPLER_CUDA_VISIBLE_DEVICES": "1"}
+    with (
+      patch.dict("os.environ", env, clear=True),
+      patch("server.worker_manager.get_state_store", return_value=fft_job("fft-job")),
+      patch("server.worker_manager.subprocess.Popen") as popen,
+    ):
+      LocalWorkerManager().ensure("fft-job", "sampler")
+    ((_, kwargs),) = [(c[0][0], c[1]) for c in popen.call_args_list]
+    self.assertEqual((kwargs["env"]["CUDA_VISIBLE_DEVICES"], kwargs["env"]["OPEN_RL_TIME_SLICING"]), ("1", "off"))
 
   async def test_launch_fetches_metadata_from_store(self) -> None:
     import json
@@ -269,31 +312,20 @@ class ApiServerMetadataExtractionTest(unittest.IsolatedAsyncioTestCase):
     self.enterContext(patch.object(api_server, "store", self.store))
     self.enterContext(patch.object(api_server, "state", self.store))
 
-  async def test_extract_and_persist_metadata_from_headers(self) -> None:
+  async def test_extract_and_persist_metadata_from_settings(self) -> None:
     import json
 
-    from fastapi import Request
+    user_metadata = {"openrl.fine_tuning_type": "full", "openrl.weight_sync": "full", "openrl.fft_seed": "7"}
+    with patch.dict("os.environ", {"OPEN_RL_ENABLE_FFT": "true"}):
+      model_id, _ = await api_server._extract_and_persist_model_metadata(
+        api_server.CreateModelRequest(base_model="Qwen/Qwen2.5-0.5B", user_metadata=user_metadata)
+      )
 
-    scope = {
-      "type": "http",
-      "headers": [
-        (b"x-open-rl-weight-sync-strategy", b"delta"),
-        (b"x-open-rl-fine-tuning-type", b"lora"),
-      ],
-    }
-    request = Request(scope)
-    model_id, _ = await api_server._extract_and_persist_model_metadata(
-      api_server.CreateModelRequest(base_model="Qwen/Qwen2.5-0.5B"),
-      request,
-      default_fine_tuning_type="full",
-    )
-
-    meta_val = self.store.kv_store.get(f"open_rl:model_meta:{model_id}")
-    self.assertIsNotNone(meta_val)
-    meta_dict = json.loads(meta_val)
+    meta_dict = json.loads(self.store.kv_store.get(f"open_rl:model_meta:{model_id}"))
     self.assertEqual(meta_dict["base_model"], "Qwen/Qwen2.5-0.5B")
-    self.assertEqual(meta_dict["fine_tuning_type"], "lora")
-    self.assertEqual(meta_dict["weight_sync_config"]["strategy"], "delta")
+    self.assertEqual(meta_dict["fine_tuning_type"], "full")
+    self.assertEqual(meta_dict["weight_sync_config"]["strategy"], "full")
+    self.assertEqual(meta_dict["full_config"], {"seed": 7, "cpu_offload": True, "weight_sync_strategy": "full"})
 
 
 class ApiServerFutureTranslationTest(unittest.TestCase):
@@ -376,11 +408,12 @@ class ApiServerFutureTranslationTest(unittest.TestCase):
 
 class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
   def setUp(self) -> None:
-    from pathlib import Path
 
     with patch.dict("os.environ", {"REDIS_URL": "redis://127.0.0.1:6379"}):
       self.manager = LocalWorkerManager(project_dir=Path("/tmp"))
     self.store = StoreStub()
+    # A LoRA launch creates its snapshot directory under OPEN_RL_TMP_DIR.
+    self.enterContext(patch.dict("os.environ", {"OPEN_RL_TMP_DIR": self.enterContext(tempfile.TemporaryDirectory())}))
 
   @patch("server.worker_manager.metadata_for")
   @patch("subprocess.Popen")
@@ -397,14 +430,11 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
       fine_tuning_type="lora",
     )
 
-    # Launch for first LoRA model ID
     self.manager.ensure("model-lora-1", "sampler")
-    self.assertIn(("sampler", "Qwen/Qwen2.5-0.5B"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("Qwen/Qwen2.5-0.5B", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "Qwen/Qwen2.5-0.5B")})
+    ((command, serve_kwargs),) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    self.assertEqual((command[-2], command[-1].startswith("sampler-qwen-qwen2-5-0-5b-")), ("--pool", True))
+    self.assertEqual((serve_kwargs["env"]["BASE_MODEL"], serve_kwargs["env"]["OPEN_RL_FINE_TUNING_TYPE"]), ("Qwen/Qwen2.5-0.5B", "lora"))
 
     # Launch for second LoRA model ID sharing the same base model
     self.manager.ensure("model-lora-2", "sampler")
@@ -424,15 +454,14 @@ class LocalWorkerManagerSamplerLaunchTest(unittest.TestCase):
       base_model="Qwen/Qwen2.5-0.5B",
       created_at=100.0,
       fine_tuning_type="full",
+      exclusive=True,
     )
 
     self.manager.ensure("model-fft-1", "sampler")
-    self.assertIn(("sampler", "model-fft-1"), self.manager.processes)
-    self.assertEqual(mock_popen.call_count, 1)
-
-    cmd_args = mock_popen.call_args[0][0]
-    self.assertIn("server.vllm_sampler", cmd_args)
-    self.assertIn("model-fft-1", cmd_args)
+    self.assertEqual(set(self.manager.processes), {("sampler", "model-fft-1")})
+    ((command, kwargs),) = [(c[0][0], c[1]) for c in mock_popen.call_args_list]
+    self.assertEqual(command[-2:], ["--pool", "sampler-model-fft-1"])
+    self.assertEqual((kwargs["env"]["BASE_MODEL"], kwargs["env"]["OPEN_RL_FINE_TUNING_TYPE"]), ("Qwen/Qwen2.5-0.5B", "full"))
 
 
 if __name__ == "__main__":

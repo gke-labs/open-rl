@@ -1,14 +1,17 @@
 import hashlib
 import json
 import os
+import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from server.accelerators import Accelerator
 from server.store import StateStore
 from training.types import TRAINER_BACKENDS, FFTConfig, FineTuningType, LoraConfig
+
+K8S_NAME = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 
 SPARSE_DELTA_VERSION = 2
 
@@ -31,19 +34,6 @@ class WeightSyncConfig:
     return cls(strategy=strategy)
 
 
-def extract_weight_sync_config(headers: Any = None) -> WeightSyncConfig:
-  """Extract and normalize WeightSyncConfig from HTTP headers with single-location defaults."""
-  if not headers:
-    return WeightSyncConfig()
-
-  get_header = headers.get if hasattr(headers, "get") else (lambda k, default=None: default)
-
-  strategy = (get_header("x-open-rl-weight-sync-strategy") or "delta").lower()
-  if strategy not in ("delta", "full"):
-    strategy = "delta"
-  return WeightSyncConfig(strategy=strategy)
-
-
 class TrainingModelMetadata(BaseModel):
   # Preserve fields written by other server versions when updating a record.
   model_config = ConfigDict(extra="allow")
@@ -54,24 +44,35 @@ class TrainingModelMetadata(BaseModel):
   weight_sync_config: WeightSyncConfig = Field(default_factory=WeightSyncConfig)
   full_config: FFTConfig = Field(default_factory=FFTConfig)
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
+  sampler_replicas: int = 1
   exclusive: bool = False
   trainer_backend: str = "pytorch"
   # Set once when the model is created. Records from before these fields ran on GPU.
   trainer_accel_prefs: list[Accelerator] = ["gpu"]
   sampler_accel_prefs: list[Accelerator] = ["gpu"]
+  trainer_gpus: int = 1
+  trainer_cp: int = 1
+  recipe: Literal["rl", "sft"] | None = None
+  client_log_id: str | None = None
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
+  # Sessions that created, restored or sampled this model, in order. The model
+  # view reads them to say whether the model's own session is still live; a
+  # shared runtime's other sessions do not count.
+  session_ids: list[str] = Field(default_factory=list)
 
   def shares_gpu(self) -> bool:
     """Whether other workers may time-slice this job's GPUs. An FFT worker
-    suspends between turns. A LoRA worker cannot, so its GPUs are never shared."""
-    return self.fine_tuning_type != "lora" and not self.exclusive
+    suspends between turns. A LoRA worker cannot, so its GPUs are never shared.
+    A multi-GPU trainer is a torchrun group, which cannot park either."""
+    return self.fine_tuning_type != "lora" and not self.exclusive and self.trainer_gpus == 1
 
   def shares_runtime(self) -> bool:
     """Whether this job's workers may serve other jobs too. A LoRA worker serves
-    many jobs, one adapter each. An FFT worker serves one job."""
-    return self.fine_tuning_type == "lora" and not self.exclusive
+    many jobs, one adapter each. An FFT worker serves one job. A multi-GPU
+    trainer is sized for its job, so it serves only that job."""
+    return self.fine_tuning_type == "lora" and not self.exclusive and self.trainer_gpus == 1
 
   def accelerator_for(self, role: str) -> Accelerator:
     """The accelerator a role's workers run on: the most preferred entry
@@ -84,15 +85,36 @@ class TrainingModelMetadata(BaseModel):
 
   def runtime(self, model_id: str) -> str:
     """The id of the workers that serve this job. LoRA jobs share workers only
-    with jobs on the same trainer backend."""
+    with jobs on the same trainer backend. A sampling session on a bare base-model
+    name that does not share is kept apart from the base model's shared runtime."""
     if not self.shares_runtime():
-      return model_id
+      return f"base-{model_id}" if model_id == self.base_model else model_id
     if self.trainer_backend == "pytorch":
       return self.base_model
     if image := self.trainer_image():
       # An image ref is not label safe, so a hash of it keeps images apart.
       return f"image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
     return f"{self.trainer_backend}-{self.base_model}"
+
+  def pool(self, model_id: str) -> str:
+    """The sampling pool that serves this job's runtime. Base model names are not
+    valid Kubernetes names, so those runtimes get a slug and a hash."""
+    return pool_name(self.runtime(model_id))
+
+
+def pool_name(runtime: str) -> str:
+  """The sampling pool that serves a runtime."""
+  return runtime_name(runtime, "sampler-")
+
+
+def runtime_name(runtime: str, prefix: str = "") -> str:
+  """A Kubernetes name for a runtime. A runtime that is not already a valid name
+  keeps a hash of itself, so two runtimes never share workers or a pool."""
+  if K8S_NAME.fullmatch(name := f"{prefix}{runtime}"):
+    return name
+  digest = hashlib.sha256(runtime.encode()).hexdigest()[:8]
+  slug = re.sub(r"[^a-z0-9]+", "-", runtime.lower()).strip("-")[: 62 - len(prefix) - len(digest)].rstrip("-")
+  return f"{prefix}{slug}-{digest}" if slug else f"{prefix}{digest}"
 
 
 def decode_model_metadata(raw: str | None) -> TrainingModelMetadata | None:

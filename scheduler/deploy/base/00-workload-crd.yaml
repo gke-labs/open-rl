@@ -163,6 +163,23 @@ spec:
                     description: |-
                       Standard object's metadata.
                       More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#metadata
+                    properties:
+                      annotations:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      finalizers:
+                        items:
+                          type: string
+                        type: array
+                      labels:
+                        additionalProperties:
+                          type: string
+                        type: object
+                      name:
+                        type: string
+                      namespace:
+                        type: string
                     type: object
                   spec:
                     description: |-
@@ -7196,6 +7213,23 @@ spec:
                                         May contain labels and annotations that will be copied into the PVC
                                         when creating it. No other fields are allowed and will be rejected during
                                         validation.
+                                      properties:
+                                        annotations:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                        finalizers:
+                                          items:
+                                            type: string
+                                          type: array
+                                        labels:
+                                          additionalProperties:
+                                            type: string
+                                          type: object
+                                        name:
+                                          type: string
+                                        namespace:
+                                          type: string
                                       type: object
                                     spec:
                                       description: |-
@@ -8746,6 +8780,13 @@ spec:
                   the pools registered.
                 format: int32
                 type: integer
+              gpuUUIDs:
+                description: |-
+                  GPUUUIDs are the UUIDs of the claim's allocated devices, which GPU
+                  metrics are keyed by.
+                items:
+                  type: string
+                type: array
               memoryPerDevice:
                 description: |-
                   MemoryPerDevice is what each of those devices must provide, i.e. Memory
@@ -8770,12 +8811,23 @@ spec:
                 - Succeeded
                 - Failed
                 type: string
+              placedAt:
+                description: PlacedAt is when the controller observed the allocation
+                  and set NodeName.
+                format: date-time
+                type: string
               podName:
                 description: PodName is the worker pod, once created.
                 type: string
               reason:
                 description: Reason is the most recent human-readable explanation
                   of Phase.
+                type: string
+              releasedAt:
+                description: |-
+                  ReleasedAt is when the worker stopped holding its devices. Cleared by
+                  the next placement.
+                format: date-time
                 type: string
             type: object
         required:

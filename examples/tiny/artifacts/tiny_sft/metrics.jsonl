@@ -1,0 +1,13 @@
+{"loss": 4.541666666666667, "phase": "initial", "step": 0}
+{"loss": 4.541666666666667, "phase": "train", "step": 1}
+{"loss": 1.1901041666666667, "phase": "train", "step": 2}
+{"loss": 0.60528564453125, "phase": "train", "step": 3}
+{"loss": 0.0443572998046875, "phase": "train", "step": 4}
+{"loss": 0.000299533208211263, "phase": "train", "step": 5}
+{"loss": 4.3551127115885414e-05, "phase": "train", "step": 6}
+{"loss": 0.0, "phase": "train", "step": 7}
+{"loss": 1.5894571940104166e-07, "phase": "train", "step": 8}
+{"loss": 0.0, "phase": "train", "step": 9}
+{"loss": 0.0, "phase": "train", "step": 10}
+{"final_state_path": "tinker://1eb14a12-bd83-4b44-9dbc-2482e47836bb/weights/tiny-sft-final", "loss": 0.0, "loss_drop": 1.0, "phase": "final", "step": 10}
+{"phase": "sample", "text": " 4", "tokens": [236743, 236812, 1]}

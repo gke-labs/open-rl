@@ -20,11 +20,14 @@ COPY pyproject.toml .
 COPY src src
 
 # Installed into the base's python so vLLM finds the delta-sync plugin's entry point.
+# /app/.venv sees that python's packages: a routed sampler's readiness probe runs
+# /app/.venv/bin/python, the GPU worker image's interpreter.
 RUN --mount=type=cache,target=/root/.cache/uv \
     PY="$(command -v python)" && \
     uv pip freeze --python "$PY" > /tmp/base-constraints.txt && \
     uv pip install --python "$PY" --constraint /tmp/base-constraints.txt . && \
-    rm -rf build src/*.egg-info /tmp/base-constraints.txt
+    rm -rf build src/*.egg-info /tmp/base-constraints.txt && \
+    uv venv --system-site-packages --python "$PY" /app/.venv
 
 # vLLM saves the compiled model to disk and reuses it on its next start. On TPU,
 # a reused copy can make vLLM run the model uncompiled, one op at a time, which

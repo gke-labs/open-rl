@@ -71,7 +71,7 @@ class ExclusiveTrainerTest(unittest.IsolatedAsyncioTestCase):
         before = worker.model.lm_head.weight.detach().clone()
         processor = asyncio.create_task(trp.run_training_requests_processor(worker, "run-a", store=store))
         try:
-          results = {step.request_id: await store.get_future(step.request_id, timeout=60) for step in steps}
+          results = {step.request_id: await store.get_result(step.request_id, timeout=60) for step in steps}
         finally:
           processor.cancel()
 

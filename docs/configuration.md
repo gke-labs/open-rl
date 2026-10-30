@@ -48,17 +48,16 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `BASE_MODEL` | unset | Hugging Face model id loaded by the trainer and, when using vLLM, by the sampler. |
-| `SAMPLING_BACKEND` | `torch` in one process, `vllm` when `REDIS_URL` is set | Sampling backend selector. `torch` samples in the training process. `vllm` queues sampling requests for a vLLM sampler worker and needs `REDIS_URL`. |
+| `SAMPLING_BACKEND` | `torch` in one process, `vllm` when `REDIS_URL` is set | Sampling backend selector. `torch` samples in the training process. `vllm` samples through the sampling pools described below and needs `REDIS_URL`. |
 | `REDIS_URL` | unset | Enables distributed mode by switching the request store to Redis. Leave unset for a single-machine run. |
 | `OPEN_RL_FUTURE_TTL_S` | `300` | How long resolved request results stay readable by `retrieve_future` after a worker resolves them. |
-| `OPEN_RL_SAMPLER_READY_TIMEOUT_S` | `900` | How long `create_sampling_session` waits for a vLLM sampler worker to report ready before failing. vLLM on TPU precompiles shapes for several minutes first. |
 
 ## Server paths
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. |
-| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `0` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `0` keeps the previous one-datum-at-a-time execution path. |
+| `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. Required with `OPEN_RL_WORKER_MANAGER=scheduler`, set to the shared volume every worker pod mounts. |
+| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `auto` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `auto` uses the smaller of 16384 and the tokens whose activations fit in half of the free device memory, read at each request. A number is used as given; `0` runs one datum per pass. |
 | `OPEN_RL_DEVICE` | unset | Torch device for the trainer: `cuda`, `mps`, `cpu` or `tpu`. Unset picks the first available of `cuda`, `mps` and `cpu`. `tpu` is never picked automatically, and needs the `torch_tpu` package on a host with TPU chips. |
 | `TRAINER_CUDA_VISIBLE_DEVICES`, `SAMPLER_CUDA_VISIBLE_DEVICES` | unset | GPUs given to the trainer and sampler worker processes the local worker manager launches. |
 
@@ -83,7 +82,7 @@ backend by default for physical checkpoint/restore.
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `VLLM_ARCHITECTURE_OVERRIDE` | unset | Optional architecture override passed to the in-repo vLLM worker. Gemma 4 examples use `Gemma4ForCausalLM`. |
-| `VLLM_ENABLE_MULTIMODAL` | `0` | By default the samplers pass `limit_mm_per_prompt={"image": 0, "video": 0}`. Text checkpoints published as `*ForConditionalGeneration` otherwise make vLLM reserve a multi-GiB encoder cache during startup that no OpenRL code path can use, which can OOM engine init. Set to `1` to restore stock vLLM behaviour. |
+| `VLLM_ENABLE_MULTIMODAL` | `0` | By default the samplers pass `limit_mm_per_prompt={"image": 0, "video": 0}`. Text checkpoints published as `*ForConditionalGeneration` otherwise make vLLM reserve a multi-GiB encoder cache during startup that no OpenRL code path can use, which can OOM engine init. Gemma 4 samplers also load the text-only `Gemma4ForCausalLM`. Set to `1` to restore stock vLLM behaviour and keep the full model. |
 
 ## Client variables
 
@@ -127,3 +126,70 @@ On Kubernetes the release bundles set these variables. The API server runs with
 each trainer and sampler, and the OpenRL scheduler starts their pods. The API
 server writes each worker's environment into the `Workload`'s pod template, so
 there are no worker deployments to configure by hand.
+
+## Sampling pools
+
+Sampling goes through sampling pools. A pool serves one FFT job, one exclusive
+LoRA job, or every shared LoRA job on one base model. Pending requests stay in a
+Redis stream until a result is saved, so the Redis in `k8s/deploy/base` keeps an
+append-only file on a persistent volume and never evicts keys.
+
+A pool that one job owns runs vLLM in the sampler's own process when it has one
+replica. A pool with two or more replicas (`openrl.sampler_replicas`), and every
+pool that shared LoRA jobs use, runs `vllm serve` Workloads behind one CPU
+Deployment, named after the pool, that runs the dispatcher, Envoy and the llm-d
+endpoint picker (configured by the `open-rl-sampler-router` ConfigMap in
+`k8s/deploy/base`). A shared pool grows to the most replicas any of its jobs asks
+for. On one machine every pool has one replica, in process. See
+[the sampling pools design](designs/017-sampling-pools.md).
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_DISPATCH_CONCURRENCY` | `256` | Requests one pool keeps in flight. |
+| `OPEN_RL_SAMPLE_DEADLINE_SECONDS` | `3600` | How long a sampling request waits for a result before it fails. Set it on the API server. Worker pods and pool dispatchers get the same value. |
+| `OPEN_RL_DISPATCHER_IMAGE` | the worker image | Image for each pool's dispatcher container. The release sets it to the API-server image, which carries the dispatcher without the GPU stack and pulls in seconds. |
+
+## Inspection API
+
+The API server serves a read-only inventory of runs at
+`/api/v1/inspect/inventory` and a run's logs at
+`/api/v1/inspect/logs?run_id=<id>`. See `/docs` for their fields.
+
+`placements` lists the `Workload`s that hold GPUs now, from their status in
+Kubernetes. Each entry has the node, pod, GPU UUIDs, `placed_at` in Unix
+seconds, and the `run_ids` the `Workload` serves. When the server releases a
+run's workers, it also saves each `Workload`'s last placement to the Redis list
+`open_rl:placements:<runtime>`. The list keeps the newest 200 records for seven
+days.
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_LOG_STORE` | unset | Where it reads logs. Unset turns log reads off. `cloud-logging` reads Cloud Logging in the project of the server's Google credentials. `cloud-logging:<resource>` reads that Cloud Logging resource instead, such as `projects/<project>/locations/global/buckets/<bucket>/views/<view>`. |
+
+To read a run's client logs with `pod=client`, set the session tag
+`openrl.client_log_id=<id>`. Ship the client's logs to the same store with the
+label `openrl_client=<id>`. For a client pod, that is a pod label.
+
+A bucket view only shows client logs when that bucket's sink routes them in, so
+plain `cloud-logging` is the simplest choice when clients run outside the cluster.
+
+### Metrics and logs on GKE
+
+The `lora`, `fft` and `distributed-fft-timeslice` bundles ship an NVIDIA DCGM
+exporter (`k8s/deploy/dcgm`). GKE's managed DCGM exporter skips DRA node pools,
+so without it those nodes report no GPU metrics.
+
+The steps below are for the inspection API's metrics and logs reads. It reads
+Cloud Monitoring and Cloud Logging as the API server's Kubernetes
+ServiceAccount, `open-rl-sa`, through Workload Identity. Enable Workload
+Identity when you create the cluster (`--workload-pool=<project>.svc.id.goog`).
+Enabling it on an existing cluster replaces its nodes.
+
+```bash
+PRINCIPAL=principal://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<project>.svc.id.goog/subject/ns/openrl-system/sa/open-rl-sa
+gcloud projects add-iam-policy-binding <project> --role=roles/monitoring.viewer --member="$PRINCIPAL"
+gcloud projects add-iam-policy-binding <project> --role=roles/logging.viewer --member="$PRINCIPAL"
+```
+
+`<number>` is the project number. If you read logs through a log bucket view,
+also grant `roles/logging.viewAccessor` on that view.

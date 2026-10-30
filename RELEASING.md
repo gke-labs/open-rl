@@ -26,9 +26,11 @@ Assets, attached to the GitHub Release:
 | --- | --- |
 | `openrl-lora.yaml` | `k8s/deploy/lora` |
 | `openrl-fft.yaml` | `k8s/deploy/fft` |
-| `checksums.sha256` | the two YAML files above |
+| `openrl-skill.tar.gz` | `skills/openrl`, the agent skill, stamped with the tag |
+| `checksums.sha256` | the files above |
 
-Every bundle has its images pinned to the release tag.
+Every bundle has its images pinned to the release tag. The API server reports the tag as
+`openrl.version` in `get_server_capabilities` and links the skill asset as `openrl.skill_url`.
 
 ## Cut a release
 
@@ -41,6 +43,11 @@ Every bundle has its images pinned to the release tag.
 
    `dist/` is gitignored, and this is the same target CI runs. The images it pins do not exist yet;
    the point is to confirm the bundles render and every OpenRL image reads the new tag.
+   `tar -tzf dist/openrl-skill.tar.gz` should list `openrl/SKILL.md` and `openrl/references/`.
+
+   Re-read `skills/openrl/references/lifecycle.md` and `runbook.md` against this release. The
+   settings come from the server's own OpenAPI document and cannot drift; the durations and
+   failure modes are hand-written, and an agent will trust them.
 
    To check a recipe overlay, which CI does not exercise:
 

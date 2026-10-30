@@ -2496,6 +2496,7 @@ dependencies = [
 
 [package.optional-dependencies]
 cluster = [
+    { name = "google-auth" },
     { name = "kubernetes" },
     { name = "timeslice" },
 ]
@@ -2564,6 +2565,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "flash-linear-attention", marker = "extra == 'gpu'", specifier = "==0.5.1" },
     { name = "flashinfer-jit-cache", marker = "sys_platform == 'linux' and extra == 'vllm'", specifier = "==0.6.18.post1", index = "https://flashinfer.ai/whl/cu129", conflict = { package = "open-rl", extra = "vllm" } },
+    { name = "google-auth", marker = "extra == 'cluster'" },
     { name = "httpx" },
     { name = "kubernetes", marker = "extra == 'cluster'", specifier = ">=29" },
     { name = "numpy", marker = "extra == 'cpu'" },

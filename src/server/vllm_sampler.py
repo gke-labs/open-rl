@@ -1,131 +1,41 @@
-"""Queue-driven vLLM sampler. One engine serves a model's queue; a request names
-either a LoRA adapter (lora_id) or a whole-model weights version (weights_path)."""
+"""A sampling pool replica with vLLM in this process. It serves its pool's stream itself, with no router, and when its
+job shares a GPU with the trainer it takes a time-slicer turn around each batch, the way the trainer does.
+
+  python -m server.vllm_sampler --pool <pool>
+"""
 
 import argparse
 import asyncio
-import hashlib
+import logging
 import os
 import signal
-import time
-from collections.abc import Callable
+import uuid
 from contextlib import asynccontextmanager
-from itertools import groupby
+from pathlib import Path
 from typing import Any
-
-from opentelemetry import propagate, trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from vllm import SamplingParams
-from vllm.config.weight_transfer import WeightTransferConfig
-from vllm.distributed.weight_transfer.base import WeightTransferUpdateRequest
-from vllm.engine.arg_utils import AsyncEngineArgs
-from vllm.engine.async_llm_engine import AsyncLLMEngine
-from vllm.lora.request import LoRARequest
-from vllm.sampling_params import RequestOutputKind
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
-from server.store import RequestStore, StateStore, get_state_store, get_store
-from server.vllm_options import gpu_memory_utilization, sampler_batch_limits, split_stop, text_only_engine_kwargs
+from server.lora_snapshots import snapshot_root
+from server.sampling_dispatcher import Dispatcher, RevisionUnloadable, delta_applies, failed, redis_client
+from server.sampling_store import SamplingStore
+from server.vllm_options import engine_args, sample_params, sample_result
 
-tracer = trace.get_tracer("vllm.inference.worker")
-SHUTDOWN_SENTINEL = "SHUTDOWN_SENTINEL"
-TMP_DIR = os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl")
-READY_TTL_SECONDS = 3600
-ENGINE_POLL_SECONDS = 5
+logger = logging.getLogger(__name__)
 
-
-def failed_response(message: str) -> dict[str, Any]:
-  return {"type": "RequestFailedResponse", "error_message": message}
-
-
-def on_tpu_platform() -> bool:
-  """Whether vLLM runs on the out-of-tree TPU platform, whose worker has no weight-transfer methods."""
-  from vllm.platforms import current_platform
-
-  return current_platform.is_out_of_tree() and current_platform.device_type == "tpu"
-
-
-def engine_kwargs_from_env(fft_enabled: bool) -> dict[str, Any]:
-  model_name = os.getenv("BASE_MODEL") or os.getenv("VLLM_MODEL")
-  if not model_name:
-    raise ValueError("BASE_MODEL or VLLM_MODEL is required")
-  engine_kwargs = {
-    "model": model_name,
-    # Only a time-sliced sampler sleeps. vLLM refuses sleep mode on out-of-tree platforms such as vllm-torchtpu.
-    "enable_sleep_mode": fft_enabled and time_slicing_enabled(),
-    "enable_lora": not fft_enabled,
-    "max_model_len": int(os.getenv("VLLM_MAX_MODEL_LEN", "8192")),
-    **sampler_batch_limits(),
-    "gpu_memory_utilization": gpu_memory_utilization(),
-    "enable_prefix_caching": False,
-    "enforce_eager": os.getenv("VLLM_ENFORCE_EAGER", "0") == "1",
-    **text_only_engine_kwargs(),
-  }
-  architecture = os.getenv("VLLM_ARCHITECTURE_OVERRIDE")
-  if architecture:
-    engine_kwargs["hf_overrides"] = {"architectures": [architecture]}
-  if fft_enabled:
-    engine_kwargs["weight_transfer_config"] = WeightTransferConfig(backend="delta_snapshot")
-    # vLLM refuses an extension that redefines a worker's methods, so only the TPU worker gets it.
-    if on_tpu_platform():
-      engine_kwargs["worker_extension_cls"] = "server.tpu_worker_extension.TPUWeightTransferExtension"
-  else:
-    engine_kwargs["max_loras"] = int(os.getenv("VLLM_MAX_LORAS", "8"))
-    engine_kwargs["max_lora_rank"] = int(os.getenv("VLLM_MAX_LORA_RANK", "64"))
-  return engine_kwargs
-
-
-def resolve_lora_path(lora_id: str, lora_path: str | None) -> str:
-  """Find the PEFT directory holding adapter_config.json for this adapter."""
-  if lora_path and os.path.exists(os.path.join(lora_path, "adapter_config.json")):
-    return lora_path
-
-  if lora_path:
-    # Check subfolders created by PEFT save_pretrained
-    base_candidates = [
-      lora_id,
-      lora_id.rsplit("/", 1)[-1],
-      lora_id.split("://")[-1].split("/")[0] if "://" in lora_id else lora_id,
-    ]
-    for candidate in base_candidates:
-      candidate_path = os.path.join(lora_path, candidate)
-      if os.path.exists(os.path.join(candidate_path, "adapter_config.json")):
-        return candidate_path
-
-  # Check auto-saved PEFT directory: TMP_DIR/peft/<model_id>/<model_id>
-  base_id = lora_id.split("://")[-1].split("/")[0] if "://" in lora_id else lora_id
-  peft_dir = os.path.join(TMP_DIR, "peft", base_id, base_id)
-  if os.path.exists(os.path.join(peft_dir, "adapter_config.json")):
-    return peft_dir
-
-  return lora_path or peft_dir
-
-
-def lora_request_for(request: dict[str, Any]) -> LoRARequest | None:
-  """A LoRA request when the adapter exists on disk. Before the first save a
-  LoRA job samples from the base model, so a missing adapter is not an error."""
-  lora_id = request.get("lora_id")
-  if not lora_id:
-    return None
-  path = resolve_lora_path(lora_id, request.get("lora_path"))
-  if not os.path.exists(os.path.join(path, "adapter_config.json")):
-    return None
-  lora_int_id = int(hashlib.md5(lora_id.encode("utf-8")).hexdigest(), 16) % (2**31 - 1) + 1
-  return LoRARequest(lora_id, lora_int_id, path)
+# The readiness probe passes once vLLM is up, and asleep when it shares its GPU.
+READY_FILE = os.getenv("OPEN_RL_SAMPLER_READY_FILE", "/tmp/open-rl-sampler-ready")
 
 
 class Sampler:
-  """A vLLM engine that serves sampling requests and swaps its weights between them.
+  """A vLLM engine that answers a pool's records and swaps its weights between batches. `revision` is the weights
+  it holds, "" for the base model. A failed update leaves partial weights behind, so the sampler refuses work until
+  the process is restarted."""
 
-  weights_path is the whole-model version the engine holds; LoRA requests leave it
-  alone and attach their adapter per request. A failed update leaves partial
-  weights behind, so the sampler refuses work until the process is restarted.
-  """
-
-  def __init__(self, engine: AsyncLLMEngine) -> None:
-    self.engine = engine
-    self.weights_path: str | None = None
+  def __init__(self, engine: Any, base_model: str) -> None:
+    self.engine, self.base_model = engine, base_model
+    self.lora_ids: dict[str, int] = {}
+    self.revision = ""
     self.update_failed = False
 
   async def wake(self) -> None:
@@ -134,95 +44,92 @@ class Sampler:
   async def sleep(self) -> None:
     await self.engine.sleep(level=1)
 
-  async def ensure_weights(self, weights_path: str | None) -> None:
-    """Make the engine hold weights_path; None keeps whatever it holds."""
+  async def ensure_weights(self, revision: str) -> bool:
+    """Whether the engine holds `revision` after this, loading it if it can. Raises RevisionUnloadable for a delta
+    that does not apply on the weights it holds."""
     if self.update_failed:
-      raise RuntimeError("Weight update failed; restart the sampler before serving")
-    if weights_path is None or weights_path == self.weights_path:
-      return
-    # No finally/resume on failure: partially updated weights must not be served.
+      return False
+    if revision == self.revision:
+      return True
+    if not revision:
+      return False  # base weights cannot come back in place
+    try:
+      applies = delta_applies(revision, self.revision or "default")
+    except FileNotFoundError:
+      return False  # the dispatcher fails the revision's records
+    if not applies:
+      raise RevisionUnloadable(revision, [self.revision or "default"])
+    from vllm.distributed.weight_transfer.base import WeightTransferUpdateRequest
+
+    # No resume on failure: partially updated weights must not be served.
     try:
       await self.engine.pause_generation(mode="wait", clear_cache=True)
       await self.engine.start_weight_update()
-      await self.engine.update_weights(WeightTransferUpdateRequest(update_info={"target_weights_path": weights_path}))
-      await self.engine.finish_weight_update(weight_version=weights_path)
+      await self.engine.update_weights(WeightTransferUpdateRequest(update_info={"target_weights_path": revision}))
+      await self.engine.finish_weight_update(weight_version=revision)
       await self.engine.reset_encoder_cache()
       await self.engine.resume_generation()
     except BaseException:
       self.update_failed = True
       raise
-    self.weights_path = weights_path
+    self.revision = revision
+    return True
 
-  async def generate(self, request: dict[str, Any]) -> dict[str, Any]:
-    request_id = request["request_id"]
-    prompt_token_ids = request.get("prompt_token_ids", [])
-    max_tokens = request.get("max_tokens", 20)
-    lora_request = lora_request_for(request)
-    stop_strings, stop_token_ids = split_stop(request.get("stop"))
-    sampling_params = SamplingParams(
-      n=request.get("num_samples", 1),
-      temperature=request.get("temperature", 1.0),
-      max_tokens=max_tokens,
-      stop=stop_strings,
-      stop_token_ids=stop_token_ids,
-      top_p=request.get("top_p", 1.0),
-      top_k=request.get("top_k", -1),
-      logprobs=1,  # return logprobs for TITO RL
-      prompt_logprobs=1 if request.get("include_prompt_logprobs", False) else None,
-      output_kind=RequestOutputKind.FINAL_ONLY,
-    )
+  async def generate(self, r: dict[str, Any]) -> dict[str, Any]:
+    """The result. A request vLLM refuses, such as a prompt past max_model_len or a token out of vocabulary, fails
+    at once, since sending it again would only take another turn from the trainer. So does a request in flight when
+    the engine dies, since a request that kills the engine would kill each restarted one too."""
+    from vllm import SamplingParams
+    from vllm.exceptions import VLLMClientError
+    from vllm.sampling_params import RequestOutputKind
+    from vllm.v1.engine.exceptions import EngineDeadError, EngineGenerateError
 
-    results_generator = self.engine.generate(
-      prompt={"prompt_token_ids": prompt_token_ids}, sampling_params=sampling_params, request_id=request_id, lora_request=lora_request
-    )
+    lora_request = self.adapter(r)
+    if self.engine.errored:
+      raise RuntimeError("The engine is dead")  # left pending for the restarted engine, since this one never saw it
+    prompt = list(r["prompt_token_ids"])
+    request_id = f"{r['request_id']}-{uuid.uuid4().hex[:8]}"
+    final = None
+    try:
+      params = SamplingParams(**sample_params(r), output_kind=RequestOutputKind.FINAL_ONLY)
+      stream = self.engine.generate(prompt={"prompt_token_ids": prompt}, sampling_params=params, request_id=request_id, lora_request=lora_request)
+      async for output in stream:
+        final = output
+    except (TypeError, ValueError, VLLMClientError) as exc:
+      return failed(f"Sampler rejected the request: {exc}")
+    except EngineDeadError:
+      return failed("The sampler's vLLM engine died while serving this request")
+    except EngineGenerateError as exc:
+      return failed(f"Sampler failed the request: {exc.__cause__!r}")
+    sequences = []
+    for choice in final.outputs:
+      tokens = list(choice.token_ids)
+      sequences.append((tokens, [step[token].logprob for token, step in zip(tokens, choice.logprobs or [])], choice.finish_reason))
+    prompt_logprobs = None
+    if r["include_prompt_logprobs"]:
+      prompt_logprobs = [None if step is None else step[token].logprob for token, step in zip(prompt, final.prompt_logprobs)]
+    return sample_result(sequences, prompt_logprobs)
 
-    final_output = None
-    with tracer.start_as_current_span("vllm_generate_tokens") as span:
-      span.set_attribute("vllm.prompt_len", len(prompt_token_ids) if prompt_token_ids else 0)
-      span.set_attribute("vllm.max_tokens", max_tokens)
-      if lora_request is not None:
-        span.set_attribute("vllm.lora_id", lora_request.lora_name)
-      async for request_output in results_generator:
-        final_output = request_output
+  def adapter(self, r: dict[str, Any]) -> Any:
+    """The record's LoRA, or None for base weights. vLLM loads an adapter inside the engine step, where a missing one
+    kills the engine, so a snapshot this pod's view of the shared volume does not show yet raises here instead, and
+    the record is sent again."""
+    if r["model"] == self.base_model:
+      return None
+    from vllm.lora.request import LoRARequest
 
-    outputs = final_output.outputs if final_output else []
-    sequences_out = []
-    for output in outputs:
-      generated_token_ids = list(output.token_ids)
-      logprobs = []
-      if output.logprobs:
-        for idx, token_logprobs in enumerate(output.logprobs):
-          # token_logprobs is a dict of {token_id: Logprob}
-          token_id = generated_token_ids[idx]
-          if token_logprobs and token_id in token_logprobs:
-            logprob = token_logprobs[token_id].logprob
-          else:
-            logprob = -9999.0
-          logprobs.append(logprob)
-      sequences_out.append({"tokens": generated_token_ids, "logprobs": logprobs, "stop_reason": output.finish_reason})
-
-    prompt_logprobs_out = None
-    if final_output and final_output.prompt_logprobs:
-      prompt_logprobs_out = []
-      for idx, token_logprobs in enumerate(final_output.prompt_logprobs):
-        if token_logprobs is None:
-          prompt_logprobs_out.append(None)
-        else:
-          token_id = prompt_token_ids[idx]
-          if token_id in token_logprobs:
-            prompt_logprobs_out.append(token_logprobs[token_id].logprob)
-          else:
-            prompt_logprobs_out.append(None)
-
-    res = {"sequences": sequences_out}
-    if prompt_logprobs_out is not None:
-      res["prompt_logprobs"] = prompt_logprobs_out
-    return res
+    path = snapshot_root() / r["model"]
+    if not (path / "adapter_config.json").is_file():
+      os.listdir(path.parent)  # an NFS client keeps a failed lookup until it lists the directory
+      if not (path / "adapter_config.json").is_file():
+        raise FileNotFoundError(f"No LoRA snapshot at {path}")
+    lora_id = self.lora_ids.setdefault(r["model"], len(self.lora_ids) + 1)
+    return LoRARequest(r["model"], lora_id, str(path))
 
 
 @asynccontextmanager
 async def holding_gpu(time_slicer: TimeSlicerClient | None, workload: WorkloadRef | None, sampler: Sampler | None = None):
-  """Hold the time-slicer slot for the body, waking the sampler inside it. Without a slicer the GPU is ours."""
+  """Hold the time-slicer turn for the body, waking the sampler inside it. Without a slicer the GPU is ours."""
   if time_slicer is None:
     yield
     return
@@ -236,174 +143,85 @@ async def holding_gpu(time_slicer: TimeSlicerClient | None, workload: WorkloadRe
         await sampler.sleep()
 
 
-async def process_batch(sampler: Sampler, store: RequestStore, requests: list[dict[str, Any]]) -> None:
-  """Serve consecutive requests that share a weights_path together, updating weights between groups."""
-  for weights_path, group in groupby(requests, key=lambda req: req.get("weights_path")):
-    batch = list(group)
-    try:
-      await sampler.ensure_weights(weights_path)
-    except Exception as exc:
-      for request in batch:
-        await store.set_future(request["request_id"], failed_response(f"vLLM weight update failed: {exc}"))
-      continue
-    await serve_group(sampler, store, batch)
+class TimeSlicedDispatcher(Dispatcher):
+  """A pool's dispatcher when its sampler shares the GPU with the trainer. Each batch runs inside one time-slicer turn."""
+
+  def __init__(
+    self, store: SamplingStore, pool: str, sampler: Sampler, concurrency: int, time_slicer: TimeSlicerClient, workload: WorkloadRef
+  ) -> None:
+    super().__init__(store, pool, sampler, concurrency)
+    self.time_slicer, self.workload = time_slicer, workload
+
+  async def dispatch(self) -> None:
+    await self.read()
+    if not self.to_send():
+      return
+    async with holding_gpu(self.time_slicer, self.workload, self.sampler):
+      await self.read()  # requests that arrived while the turn was pending join it
+      if await self.ready():
+        await asyncio.gather(*(self.send(r) for r in self.to_send()[: self.concurrency]))
 
 
-async def serve_group(sampler: Sampler, store: RequestStore, batch: list[dict[str, Any]]) -> None:
-  """A dead EngineCore leaves generate() hanging, so the wait polls for it and fails what is left."""
-  tasks = {asyncio.create_task(process_request(sampler, store, req)): req for req in batch}
-  pending = set(tasks)
-  while pending:
-    _, pending = await asyncio.wait(pending, timeout=ENGINE_POLL_SECONDS)
-    if pending and sampler.engine.errored:
-      for task in pending:
-        task.cancel()
-      await fail_requests(store, [tasks[task] for task in pending], "vLLM engine died during the batch")
-      break
-  if sampler.engine.errored:
-    raise RuntimeError("vLLM engine is dead")
-  for task in tasks:
-    task.result()
+def make_engine(sleep_mode: bool, is_lora: bool) -> Any:
+  from vllm.config.weight_transfer import WeightTransferConfig
+  from vllm.engine.arg_utils import AsyncEngineArgs
+  from vllm.engine.async_llm_engine import AsyncLLMEngine
+
+  args = engine_args(is_lora, sleep_mode=sleep_mode)
+  if transfer := args.get("weight_transfer_config"):
+    args["weight_transfer_config"] = WeightTransferConfig(**transfer)
+  return AsyncLLMEngine.from_engine_args(AsyncEngineArgs(model=os.environ["BASE_MODEL"], **args))
 
 
-async def fail_requests(store: RequestStore, requests: list[dict[str, Any]], error: Any) -> None:
-  """Best effort, so clients see the failure instead of waiting forever."""
-  for request in requests:
-    try:
-      await store.set_future(request["request_id"], failed_response(f"vLLM Worker Error: {error}"))
-    except Exception as exc:
-      print(f"[vLLM Worker] Could not fail request {request['request_id']}: {exc}")
-
-
-async def process_request(sampler: Sampler, store: RequestStore, request: dict[str, Any]) -> None:
-  with tracer.start_as_current_span("process_sampling_request", context=propagate.extract(request.get("trace_context", {}))):
-    try:
-      result = await sampler.generate(request)
-      result["type"] = "sample"
-    except Exception as exc:
-      result = failed_response(f"vLLM Worker Error: {exc}")
-    await store.set_future(request["request_id"], result)
-
-
-async def mark_ready(state: StateStore, model_id: str) -> None:
-  """The gateway waits on this key. A shared LoRA sampler outlives the TTL, so the loop refreshes it."""
-  await state.set_value(f"open_rl:sampler_ready:{model_id}", "1", ttl_seconds=READY_TTL_SECONDS)
-
-
-async def serve(
-  model_id: str,
-  store: RequestStore,
-  make_engine: Callable[[], AsyncLLMEngine],
-  time_slicer: TimeSlicerClient | None = None,
-  workload: WorkloadRef | None = None,
-) -> None:
-  """Build the engine, then serve the model's queue until the shutdown sentinel arrives.
-
-  Queue and store errors are retried. A dead engine or a process the time slicer
-  could not park raises, so the worker exits and is restarted.
-  """
-  async with holding_gpu(time_slicer, workload):
-    sampler = Sampler(make_engine())
-    if time_slicer is not None:
-      await sampler.sleep()  # give the memory back before releasing the slot
-  state = get_state_store()
-  try:
-    try:
-      ready_at = float("-inf")
-      while True:
-        if time_slicer is not None and time_slicer.faulted:
-          raise RuntimeError(f"Time slicer could not park this process: {time_slicer.faulted}")
-        requests = []
-        started = False
-        try:
-          if time.monotonic() - ready_at > 60:
-            await mark_ready(state, model_id)
-            ready_at = time.monotonic()
-          batch = await store.get_sampling_requests_for_model(model_id)
-          if not batch:
-            await asyncio.sleep(0.05)
-            continue
-          shutdown = any(req.get("request_id") == SHUTDOWN_SENTINEL for req in batch)
-          requests = [req for req in batch if req.get("request_id") != SHUTDOWN_SENTINEL]
-          if requests:
-            async with holding_gpu(time_slicer, workload, sampler):
-              started = True
-              await process_batch(sampler, store, requests)
-          if shutdown:
-            return
-        except Exception as exc:
-          if sampler.engine.errored:
-            raise
-          print(f"[vLLM Worker] Sampling loop error, retrying: {exc}")
-          if not started:
-            await fail_requests(store, requests, exc)
-          await asyncio.sleep(1)
-    finally:
-      await state.delete_values(f"open_rl:sampler_ready:{model_id}")
-  finally:
-    sampler.engine.shutdown()
-
-
-async def serve_time_sliced(model_id: str, store: RequestStore, make_engine: Callable[[], AsyncLLMEngine]) -> None:
-  """An FFT sampler shares its GPU with the trainer, so it is registered with the time slicer while it serves."""
-  time_slicer = time_slicer_client_from_env()
-  workload = workload_from_env(os.getpid(), name=local_workload_name("sampler", model_id), claim=SAMPLER_CLAIM)
-  try:
+async def run_sampling_worker(pool: str) -> None:
+  """Boots vLLM, inside a turn when it shares its GPU, then serves the pool until the engine dies, a weight update
+  breaks off, or the slicer cannot park this process. Each of those exits with an error, so the worker restarts."""
+  time_slicer = time_slicer_client_from_env() if time_slicing_enabled() else None
+  workload = workload_from_env(os.getpid(), name=local_workload_name("sampler", pool), claim=SAMPLER_CLAIM) if time_slicer else None
+  store = SamplingStore(redis_client(os.environ["REDIS_URL"]))
+  if time_slicer is not None:
     await time_slicer.register(workload)
-    try:
-      await serve(model_id, store, make_engine, time_slicer, workload)
-    finally:
-      # A faulted process still holds the GPU; the grant moves on once it exits.
-      if not time_slicer.faulted:
-        await time_slicer.unregister(workload)
-  finally:
-    await time_slicer.close()
-
-
-async def run_sampling_worker(model_id: str) -> None:
-  fft_enabled = os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
-  engine_kwargs = engine_kwargs_from_env(fft_enabled)
-
-  def make_engine() -> AsyncLLMEngine:
-    return AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**engine_kwargs))
-
-  loop = asyncio.get_running_loop()
-  task = asyncio.current_task()
-  assert task is not None
-  installed_signals = []
+  sampler = None
   try:
-    for sig in (signal.SIGTERM, signal.SIGINT):
-      try:
-        loop.add_signal_handler(sig, task.cancel)
-        installed_signals.append(sig)
-      except NotImplementedError:
-        break
-    # An exclusive sampler is alone on its GPU, so it serves awake like a LoRA one.
-    if fft_enabled and time_slicing_enabled():
-      await serve_time_sliced(model_id, get_store(), make_engine)
+    async with holding_gpu(time_slicer, workload):
+      is_lora = os.environ.get("OPEN_RL_FINE_TUNING_TYPE") == "lora"
+      sampler = Sampler(make_engine(sleep_mode=time_slicer is not None, is_lora=is_lora), os.environ["BASE_MODEL"])
+      if time_slicer is not None:
+        await sampler.sleep()  # give the memory back before releasing the turn
+    Path(READY_FILE).touch()
+    concurrency = int(os.getenv("OPEN_RL_DISPATCH_CONCURRENCY", "256"))
+    if time_slicer is not None:
+      dispatcher = TimeSlicedDispatcher(store, pool, sampler, concurrency, time_slicer, workload)
     else:
-      await serve(model_id, get_store(), make_engine)
-  except asyncio.CancelledError:
-    pass  # serve has completed cleanup before cancellation reaches here.
+      dispatcher = Dispatcher(store, pool, sampler, concurrency)
+    task = asyncio.create_task(dispatcher.run())
+    for sig in (signal.SIGTERM, signal.SIGINT):
+      asyncio.get_running_loop().add_signal_handler(sig, task.cancel)
+    while not task.done():
+      sampler_failed = sampler.engine.errored or sampler.update_failed
+      time_slicer_failed = time_slicer is not None and time_slicer.faulted
+      if sampler_failed or time_slicer_failed:
+        # Sends in flight save their failures first, so a request that killed the engine never reaches the next one.
+        if dispatcher.in_flight:
+          await asyncio.wait(list(dispatcher.in_flight.values()), timeout=10)
+        task.cancel()
+        raise RuntimeError(f"The sampler for pool {pool} cannot serve: {sampler_failed=} {time_slicer_failed=}")
+      await asyncio.wait({task}, timeout=1)
   finally:
-    for sig in installed_signals:
-      loop.remove_signal_handler(sig)
+    # A faulted process still holds the GPU; the turn moves on once it exits and its connection closes.
+    if time_slicer is not None and not time_slicer.faulted:
+      await time_slicer.unregister(workload)
+    if sampler is not None:
+      sampler.engine.shutdown()
+    await store.redis.aclose()
 
 
 def main() -> None:
-  parser = argparse.ArgumentParser(description="Open-RL vLLM Pull-Mode Sampler Worker")
-  parser.add_argument("--model-id", type=str, required=True, help="The model ID of the RL job to process requests for")
+  parser = argparse.ArgumentParser(description="Open-RL sampling pool replica with vLLM in this process")
+  parser.add_argument("--pool", required=True, help="The sampling pool whose stream this replica serves")
   args = parser.parse_args()
-  provider = TracerProvider()
-  trace.set_tracer_provider(provider)
-  try:
-    if os.getenv("ENABLE_GCP_TRACE", "0") == "1":
-      from opentelemetry.exporter.cloud_trace import CloudTraceSpanExporter
-
-      provider.add_span_processor(BatchSpanProcessor(CloudTraceSpanExporter()))
-    asyncio.run(run_sampling_worker(args.model_id))
-  finally:
-    provider.shutdown()
+  logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+  asyncio.run(run_sampling_worker(args.pool))
 
 
 if __name__ == "__main__":

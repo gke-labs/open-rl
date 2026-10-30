@@ -130,6 +130,21 @@ spec:
 kubectl --context my-cluster apply --server-side -f openrl-lora.yaml
 ```
 
+From a checkout, `make render` sets the class and size for you. Either can be
+given alone; unset keeps the overlay's `standard-rwx` and `1Ti`:
+
+```bash
+make render OVERLAY=k8s/deploy/fft VERSION=latest \
+  STORAGE_CLASS=zonal-rwx STORAGE_SIZE=10Ti \
+  | kubectl --context my-cluster apply --server-side -f -
+```
+
+Every worker loads its model, and FFT samplers their weight updates, from this
+volume, so its throughput sets how fast workers start. `standard-rwx` (Filestore
+Basic HDD) is the slowest tier. `zonal-rwx` is SSD-backed and its throughput
+grows with size. Filestore creates the instance in the zone of the first pod
+that mounts the claim (the API server), so keep that pod in the GPU nodes' zone.
+
 The storage class must already exist in the cluster. A PVC's storage class
 cannot be changed after it is bound, so make this edit before the first apply,
 or delete the old PVC (and the data on it) first.

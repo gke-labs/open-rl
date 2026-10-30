@@ -2,10 +2,10 @@
 
 import argparse
 import asyncio
-import json
 import os
 import shutil
 import threading
+import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -18,8 +18,10 @@ from opentelemetry import propagate, trace
 
 from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import TRAINER_CLAIM, local_workload_name
+from server.lora_snapshots import freeze_adapter
 from server.model_metadata import get_model_metadata
-from server.store import RequestStore, get_state_store, get_store
+from server.sampling_store import SamplingStore
+from server.store import RedisStore, RequestStore, StateStore, get_state_store, get_store
 from training import commands
 from training.commands import parse_command
 from training.distributed import broadcast_object, is_distributed, is_primary, local_rank
@@ -32,6 +34,11 @@ tracer = trace.get_tracer(__name__)
 
 
 TrainingWorker = FFTTrainingWorker | LoraTrainingWorker
+
+# The trainer's readiness key, the counterpart of the sampler's. A long-lived
+# shared LoRA trainer outlives the TTL, so the loop refreshes it.
+READY_TTL_SECONDS = 3600
+READY_REFRESH_SECONDS = 60
 
 
 def pin_worker_threads_to_this_rank() -> None:
@@ -102,12 +109,16 @@ class TrainingRequestsProcessor:
       raise RuntimeError("A dedicated trainer worker requires REDIS_URL so it can share queues and futures with the API server")
 
     self.store = store
+    # Sampling pools live in Redis, so the in-process trainer's in-memory store has none.
+    self.sampling = SamplingStore(store.redis) if isinstance(store, RedisStore) else None
     self.worker = worker
     self.model_id = model_id
     self.active_tenant_set_id = active_tenant_set_id
     self.time_slicer = time_slicer
     self.workload = workload_from_env(os.getpid(), name=local_workload_name("trainer", model_id), claim=TRAINER_CLAIM) if time_slicer else None
     self.snapshot_registered = False
+    self.state: StateStore | None = None  # opened on first use; tests inject one
+    self.ready_announced_at = float("-inf")
 
   async def run(self) -> None:
     print(f"[WORKER] Training requests processor started (model={self.model_id} active_set={self.active_tenant_set_id}).")
@@ -117,6 +128,7 @@ class TrainingRequestsProcessor:
         self.snapshot_registered = True
       while True:
         try:
+          await self.announce_readiness()
           await self.run_once()
         except asyncio.CancelledError:
           break
@@ -126,6 +138,7 @@ class TrainingRequestsProcessor:
           await asyncio.sleep(1)
     finally:
       try:
+        await self.withdraw_readiness()
         if self.time_slicer is not None:
           try:
             if self.snapshot_registered:
@@ -134,6 +147,29 @@ class TrainingRequestsProcessor:
             await self.time_slicer.close()
       finally:
         close_distributed()
+
+  def ready_key(self) -> str | None:
+    return f"open_rl:trainer_ready:{self.model_id}" if self.model_id and is_primary() else None
+
+  async def announce_readiness(self) -> None:
+    """Tell the API server this trainer has a model loaded and is draining its
+    queue; the model view shows the worker as `ready` from then on. The key
+    carries a TTL and is refreshed each minute, so a dead process stops
+    looking ready on its own."""
+    key = self.ready_key()
+    if key is None or not self.worker.is_ready():
+      return
+    if time.monotonic() - self.ready_announced_at < READY_REFRESH_SECONDS:
+      return
+    if self.state is None:
+      self.state = get_state_store()
+    await self.state.set_value(key, "1", ttl_seconds=READY_TTL_SECONDS)
+    self.ready_announced_at = time.monotonic()
+
+  async def withdraw_readiness(self) -> None:
+    key = self.ready_key()
+    if key is not None and self.state is not None:
+      await self.state.delete_values(key)
 
   async def exit_gracefully(self, unregister: bool = True) -> None:
     print(f"[WORKER] Initiating immediate exit for model {self.model_id} trainer worker...")
@@ -168,7 +204,7 @@ class TrainingRequestsProcessor:
   async def publish_result(self, request_id: str | None, result: dict[str, Any]) -> None:
     # Only rank 0 writes to the store; the other ranks computed the same result.
     if request_id is not None and is_primary():
-      await self.store.set_future(request_id, result)
+      await self.store.set_result(request_id, result)
 
   async def run_once(self) -> None:
     batch = await self.next_batch()
@@ -336,7 +372,10 @@ class TrainingRequestsProcessor:
         ref = command.path or command.sampling_session_id
         checkpoint = await asyncio.to_thread(self.worker.save_for_sampler, command.model_id, command.alias, ref)
         if checkpoint:
-          await self.publish_checkpoint(command.model_id, checkpoint)
+          await self.drop_old_checkpoints(command.model_id, checkpoint)
+        elif self.sampling is not None and is_primary() and ref:
+          # A sampler serves a LoRA save by its reference, so the adapter is frozen under that name.
+          await asyncio.to_thread(freeze_adapter, command.model_id, self.worker.base_model_name, command.path, command.sampling_session_id)
         return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)
@@ -346,14 +385,16 @@ class TrainingRequestsProcessor:
       case _:
         raise NotImplementedError(f"Training request op {command.op!r} is not supported")
 
-  async def publish_checkpoint(self, model_id: str, local_path: str) -> None:
-    """Tell the samplers about a new checkpoint and drop the versions they no longer need."""
+  async def drop_old_checkpoints(self, model_id: str, local_path: str) -> None:
+    """Drop sampler versions beyond the newest few, except ones pending requests still name."""
     if not is_primary():
       return
-    if hasattr(self.store, "redis"):
-      num_subs = await self.store.redis.publish(f"open_rl:weight_update:{model_id}", json.dumps({"weights_path": local_path}))
-      print(f"[Trainer] Published weight update signal to {num_subs} subscribers for version path: {local_path}")
     older = older_versions(local_path, SAMPLER_VERSIONS_KEPT)
+    if self.sampling is not None:
+      meta = await get_model_metadata(get_state_store(), model_id)
+      # A job with no metadata has no pool, so no request pins its versions.
+      pinned = await self.sampling.pinned_revisions(meta.pool(model_id)) if meta is not None else set()
+      older = [path for path in older if path not in pinned]
     for path in older:
       shutil.rmtree(path, ignore_errors=True)
     if older:

@@ -4,22 +4,34 @@ scheduler mode (scheduler_worker_manager.py) creates Workloads."""
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
-from accel_timeslicer.workload import SAMPLER_TIME_SLICE_GROUP, TRAINER_TIME_SLICE_GROUP, workload_job_id
+from accel_timeslicer.time_slicer import time_slicing_enabled
+from accel_timeslicer.workload import TRAINER_TIME_SLICE_GROUP, workload_job_id
 from server.estimator import footprint
-from server.model_metadata import TrainingModelMetadata, decode_model_metadata
+from server.model_metadata import TrainingModelMetadata, decode_model_metadata, runtime_name
+from server.sampling_dispatcher import tmp_root
 from server.store import get_state_store
 
 PROJECT_DIR = Path(__file__).resolve().parents[2]
 
 logger = logging.getLogger(__name__)
+
+# Worker states a client may branch on (design 016, section 5.2). Every
+# launcher reports the same five values; Workload phases, pod states and exit
+# codes map onto them and reach the client only inside the free-text `detail`.
+WAITING_FOR_PLACEMENT = "waiting_for_placement"  # no accelerator assigned yet
+STARTING = "starting"  # placed; pulling the image, mounting volumes or loading the model
+READY = "ready"  # serving requests
+FAILED = "failed"  # exited with an error, or the pod cannot start
+STOPPED = "stopped"  # exited normally, or being released
+WORKER_STATES = (WAITING_FOR_PLACEMENT, STARTING, READY, FAILED, STOPPED)
 
 
 # -- what is being run ------------------------------------------------------------
@@ -30,20 +42,22 @@ def metadata_for(model_id: str) -> TrainingModelMetadata | None:
   return decode_model_metadata(get_state_store().get_value_sync(f"open_rl:model_meta:{model_id}"))
 
 
+def default_metadata(model_id: str) -> TrainingModelMetadata:
+  """A model with no metadata is a sampling session opened on a bare base-model
+  name. It is FFT when this deployment enables FFT and LoRA otherwise, because
+  an FFT sampler in a LoRA deployment would serve base weights and ignore every
+  adapter."""
+  return TrainingModelMetadata(base_model=model_id, fine_tuning_type="full" if os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true" else "lora")
+
+
 def runtime_of(model_id: str) -> tuple[TrainingModelMetadata, str, bool]:
   """Which runtime serves this model, as (metadata, runtime id, is_lora).
 
   A model that owns its runtime (FFT, or exclusive) has the model_id as the
   id. Other LoRA jobs on one base model share a runtime, so the id is the
-  base model, prefixed with the backend or an image hash off PyTorch. A model with no
-  metadata (a sampling session opened on a bare base-model name) is FFT when
-  this deployment enables FFT and LoRA otherwise, because an FFT sampler in
-  a LoRA deployment would serve base weights and ignore every adapter.
+  base model, prefixed with the backend or an image hash off PyTorch.
   """
-  meta = metadata_for(model_id)
-  if meta is None:
-    kind = "full" if os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true" else "lora"
-    meta = TrainingModelMetadata(base_model=model_id, created_at=0.0, fine_tuning_type=kind)
+  meta = metadata_for(model_id) or default_metadata(model_id)
   is_lora = meta.fine_tuning_type == "lora"
   return meta, meta.runtime(model_id), is_lora
 
@@ -52,16 +66,10 @@ def base_model_of(meta: TrainingModelMetadata, runtime: str) -> str:
   return meta.base_model or os.getenv("BASE_MODEL") or runtime
 
 
-# Owners double as label values and pod name stems.
-LABEL_UNSAFE = re.compile(r"[^a-z0-9-]+")
-
-
 def owner_id(runtime: str) -> str:
-  """The scheduler's ownerID for a runtime, the name its trainer and sampler share."""
-  cleaned = LABEL_UNSAFE.sub("-", runtime.lower()).strip("-")
-  if not cleaned:
-    raise ValueError(f"model_id {runtime!r} has no label-safe characters")
-  return cleaned[:63]
+  """The scheduler's ownerID for a runtime, the name its trainer and sampler share.
+  Owners double as label values and pod name stems."""
+  return runtime_name(runtime)
 
 
 def owner_of(model_id: str) -> str:
@@ -89,17 +97,25 @@ def worker_env(meta: TrainingModelMetadata, base_model: str, runtime: str, is_lo
     env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     if meta.trainer_backend == "automodel":
       env["OPEN_RL_TRAINER_BACKEND"] = "automodel"
+    if meta.trainer_gpus > 1:
+      # FSDP2 needs NCCL; the batch broadcast between ranks goes over gloo.
+      env["OPEN_RL_CONTROL_BACKEND"] = "cpu:gloo,cuda:nccl"
+    if meta.trainer_cp > 1:
+      env["OPEN_RL_AUTOMODEL_CP"] = str(meta.trainer_cp)
   else:
-    env["OPEN_RL_MODEL_ID"] = runtime
     env["VLLM_SERVER_DEV_MODE"] = "1"
     env["VLLM_ALLOW_INSECURE_SERIALIZATION"] = "1"
-    if not is_lora and ("gemma-4" in base_model.lower() or "gemma4" in base_model.lower()):
+    # The text-only class skips the multimodal front end vLLM otherwise builds
+    # at start-up (about 45 s); OpenRL only sends token ids. LoRA adapters
+    # trained on the full model apply to it unchanged. VLLM_ENABLE_MULTIMODAL=1
+    # keeps the full model.
+    gemma_4 = "gemma-4" in base_model.lower() or "gemma4" in base_model.lower()
+    if gemma_4 and os.getenv("VLLM_ENABLE_MULTIMODAL", "0") != "1":
       env["VLLM_ARCHITECTURE_OVERRIDE"] = "Gemma4ForCausalLM"
   return env
 
 
-def worker_module(role: str) -> str:
-  return "server.training_requests_processor" if role == "trainer" else "server.vllm_sampler"
+TRAINER_MODULE = "server.training_requests_processor"
 
 
 def worker_args(runtime: str, role: str, is_lora: bool) -> list[str]:
@@ -126,8 +142,19 @@ class WorkerManager(Protocol):
     model ids they served, so the caller can clear their state."""
     ...
 
+  def sampler_exists(self, model_id: str) -> bool:
+    """Whether any sampler of this model's pool exists, ready or not."""
+    ...
+
   def close(self) -> None:
     """The API server is exiting."""
+    ...
+
+  def inspect_owner(self, owner: str) -> list[dict[str, Any]]:
+    """One entry per worker serving this owner, read-only: `role`, `model_id`,
+    `state` (one of WORKER_STATES), `detail` (free text for a human: the
+    launcher's own reason, node and pod state), and `workload`, `node` and
+    `age_seconds` where the launcher knows them."""
     ...
 
 
@@ -139,6 +166,7 @@ class LocalWorkerManager:
       raise RuntimeError("OPEN_RL_ENABLE_FFT=true requires REDIS_URL so launched workers can share queues and futures")
     self.project_dir = project_dir
     self.processes: dict[tuple[str, str], subprocess.Popen] = {}
+    self.started: dict[tuple[str, str], float] = {}
     self.lock = threading.Lock()
 
   def ensure(self, model_id: str, role: str) -> None:
@@ -151,19 +179,31 @@ class LocalWorkerManager:
         return
       base_model = base_model_of(meta, runtime)
       env = {**os.environ, **worker_env(meta, base_model, runtime, is_lora, role)}
-      env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
-      env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP if role == "trainer" else SAMPLER_TIME_SLICE_GROUP
       gpus = os.getenv("TRAINER_CUDA_VISIBLE_DEVICES" if role == "trainer" else "SAMPLER_CUDA_VISIBLE_DEVICES")
       if gpus:
         env["CUDA_VISIBLE_DEVICES"] = gpus
-      extras = ["gpu"] if role == "trainer" else ["gpu", "vllm"]
-      command = python_command(extras, worker_module(role), worker_args(runtime, role, is_lora))
-      log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
-      log_dir.mkdir(parents=True, exist_ok=True)
-      with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:
-        self.processes[(role, runtime)] = subprocess.Popen(
-          command, cwd=self.project_dir, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True
-        )
+      if role == "trainer":
+        env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
+        env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP
+        self.spawn(role, runtime, python_command(["gpu"], TRAINER_MODULE, worker_args(runtime, role, is_lora)), env)
+        return
+      env["OPEN_RL_TMP_DIR"] = tmp_root()
+      same_gpu = gpus == os.getenv("TRAINER_CUDA_VISIBLE_DEVICES")
+      if meta.shares_gpu() and same_gpu and time_slicing_enabled():
+        # The sampler takes turns on the one GPU with its trainer, so it is in the trainer's claim.
+        env["OPEN_RL_TIME_SLICE_JOB_ID"] = workload_job_id(role, runtime)
+        env["OPEN_RL_TIME_SLICE_GROUP"] = TRAINER_TIME_SLICE_GROUP
+      else:
+        env["OPEN_RL_TIME_SLICING"] = "off"
+      self.spawn(role, runtime, python_command(["gpu", "vllm"], "server.vllm_sampler", ["--pool", meta.pool(runtime)]), env)
+
+  def spawn(self, role: str, runtime: str, command: list[str], env: dict[str, str]) -> None:
+    log_dir = Path(os.getenv("OPEN_RL_TMP_DIR", "/tmp"))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    with open(log_dir / f"{role}_{runtime.replace('/', '_')}.log", "a") as log:
+      process = subprocess.Popen(command, cwd=self.project_dir, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    self.processes[(role, runtime)] = process
+    self.started[(role, runtime)] = time.time()
 
   def release(self, model_id: str) -> None:
     try:
@@ -173,6 +213,12 @@ class LocalWorkerManager:
     with self.lock:
       for key in [key for key in self.processes if key[1] in {runtime, model_id}]:
         self.terminate(key)
+
+  def sampler_exists(self, model_id: str) -> bool:
+    _, runtime, _ = runtime_of(model_id)
+    with self.lock:
+      proc = self.processes.get(("sampler", runtime))
+      return proc is not None and proc.poll() is None
 
   def release_owner(self, owner: str) -> set[str]:
     with self.lock:
@@ -188,8 +234,36 @@ class LocalWorkerManager:
 
   def terminate(self, key: tuple[str, str]) -> None:
     proc = self.processes.pop(key)
+    self.started.pop(key, None)
     if proc.poll() is None:
       proc.terminate()
+
+  def inspect_owner(self, owner: str) -> list[dict[str, Any]]:
+    now = time.time()
+    with self.lock:
+      workers = []
+      for (role, runtime), proc in self.processes.items():
+        if owner_id(runtime) != owner:
+          continue
+        code = proc.poll()
+        if code is None:
+          state, detail = READY, f"pid {proc.pid}"
+        elif code:
+          state, detail = FAILED, f"exited with code {code}"
+        else:
+          state, detail = STOPPED, "exited"
+        workers.append(
+          {
+            "role": role,
+            "model_id": runtime,
+            "state": state,
+            "detail": detail,
+            "workload": None,
+            "node": None,
+            "age_seconds": now - self.started.get((role, runtime), now),
+          }
+        )
+      return workers
 
 
 def python_command(extras: list[str], module: str, args: list[str]) -> list[str]:

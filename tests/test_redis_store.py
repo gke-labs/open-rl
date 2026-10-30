@@ -70,18 +70,18 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
     await self.store.redis.aclose()
     self.state.sync_redis.close()
 
-  async def test_get_future_returns_already_resolved_result(self) -> None:
-    await self.store.set_future("req-1", {"type": "sample", "ok": True})
-    self.assertEqual(await self.store.get_future("req-1", timeout=1.0), {"type": "sample", "ok": True})
+  async def test_get_result_returns_already_resolved_result(self) -> None:
+    await self.store.set_result("req-1", {"type": "sample", "ok": True})
+    self.assertEqual(await self.store.get_result("req-1", timeout=1.0), {"type": "sample", "ok": True})
 
-  async def test_get_future_wakes_on_resolution(self) -> None:
+  async def test_get_result_wakes_on_resolution(self) -> None:
     async def resolve_later() -> None:
       await asyncio.sleep(0.2)
-      await self.store.set_future("req-1", {"type": "sample"})
+      await self.store.set_result("req-1", {"type": "sample"})
 
     resolver = asyncio.create_task(resolve_later())
     started = time.monotonic()
-    result = await self.store.get_future("req-1", timeout=10.0)
+    result = await self.store.get_result("req-1", timeout=10.0)
     await resolver
 
     self.assertEqual(result, {"type": "sample"})
@@ -89,21 +89,21 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
     self.assertLess(time.monotonic() - started, 5.0)
 
   async def test_result_survives_repeated_and_concurrent_reads(self) -> None:
-    waiters = [asyncio.create_task(self.store.get_future("req-1", timeout=10.0)) for _ in range(5)]
+    waiters = [asyncio.create_task(self.store.get_result("req-1", timeout=10.0)) for _ in range(5)]
     await asyncio.sleep(0.2)
-    await self.store.set_future("req-1", {"type": "sample"})
+    await self.store.set_result("req-1", {"type": "sample"})
 
     for result in await asyncio.gather(*waiters):
       self.assertEqual(result, {"type": "sample"})
-    self.assertEqual(await self.store.get_future("req-1", timeout=1.0), {"type": "sample"})
+    self.assertEqual(await self.store.get_result("req-1", timeout=1.0), {"type": "sample"})
 
   async def test_unresolved_future_times_out_with_try_again(self) -> None:
-    result = await self.store.get_future("req-never", timeout=0.3)
+    result = await self.store.get_result("req-never", timeout=0.3)
     self.assertEqual(result["type"], "try_again")
 
   async def test_pending_markers_are_not_stored(self) -> None:
-    await self.store.set_future("req-1", {"status": "pending"})
-    self.assertEqual((await self.store.get_future("req-1", timeout=0.3))["type"], "try_again")
+    await self.store.set_result("req-1", {"status": "pending"})
+    self.assertEqual((await self.store.get_result("req-1", timeout=0.3))["type"], "try_again")
 
   async def test_get_requests_rotates_between_tenants(self) -> None:
     for i in range(3):
@@ -151,6 +151,15 @@ class RedisFutureTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(await self.state.set_members("s"), {"b"})
     self.assertEqual(await self.state.set_members("missing"), set())
 
+  async def test_scan_values_returns_live_values_under_a_prefix(self) -> None:
+    await self.state.set_value("open_rl:model_meta:a", "1")
+    await self.state.set_value("open_rl:model_meta:b", "2")
+    await self.state.set_value("open_rl:model_meta:gone", "3", ttl_seconds=0.2)
+    await self.state.set_value("open_rl:session:a", "4")
+    await asyncio.sleep(0.5)
+    self.assertEqual(await self.state.scan_values("open_rl:model_meta:"), {"open_rl:model_meta:a": "1", "open_rl:model_meta:b": "2"})
+    self.assertEqual(await self.state.scan_values("open_rl:missing:"), {})
+
 
 class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
   def setUp(self) -> None:
@@ -158,20 +167,6 @@ class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
 
     self.store = InMemoryStore()
     self.state = InMemoryStateStore()
-
-  async def test_sampling_queue_put_and_get(self) -> None:
-    req1 = {"model_id": "base-m1", "request_id": "r1"}
-    req2 = {"model_id": "base-m1", "request_id": "r2"}
-    await self.store.put_sampling_request(req1)
-    await self.store.put_sampling_request(req2)
-
-    batch = await self.store.get_sampling_requests_for_model("base-m1")
-    self.assertEqual(len(batch), 2)
-    self.assertEqual(batch[0]["request_id"], "r1")
-    self.assertEqual(batch[1]["request_id"], "r2")
-
-    empty_batch = await self.store.get_sampling_requests_for_model("base-m1")
-    self.assertEqual(empty_batch, [])
 
   async def test_get_requests_rotates_between_tenants(self) -> None:
     for i in range(3):
@@ -216,6 +211,15 @@ class InMemoryStoreTest(unittest.IsolatedAsyncioTestCase):
     await self.state.remove_from_set("s", "a")
     self.assertEqual(await self.state.set_members("s"), {"b"})
     self.assertEqual(await self.state.set_members("missing"), set())
+
+  async def test_scan_values_returns_live_values_under_a_prefix(self) -> None:
+    await self.state.set_value("open_rl:model_meta:a", "1")
+    await self.state.set_value("open_rl:model_meta:b", "2")
+    await self.state.set_value("open_rl:model_meta:gone", "3", ttl_seconds=0.2)
+    await self.state.set_value("open_rl:session:a", "4")
+    await asyncio.sleep(0.5)
+    self.assertEqual(await self.state.scan_values("open_rl:model_meta:"), {"open_rl:model_meta:a": "1", "open_rl:model_meta:b": "2"})
+    self.assertEqual(await self.state.scan_values("open_rl:missing:"), {})
 
 
 if __name__ == "__main__":

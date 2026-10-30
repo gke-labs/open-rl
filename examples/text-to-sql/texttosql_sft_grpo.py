@@ -549,13 +549,12 @@ if __name__ == "__main__":
   log_dir = Path(config.log_dir.replace("{preset}", f"{preset}_{config.phase}"))
   metrics_path = log_dir / "metrics.jsonl"
   ml_logger = ml_log.setup_logging(log_dir=str(log_dir), config=config, do_configure_logging_module=True)
-  default_headers = {}
-  if config.fine_tuning_type and config.fine_tuning_type != "lora":
-    default_headers["x-open-rl-fine-tuning-type"] = config.fine_tuning_type
+  # Only an explicit choice; otherwise TINKER_TAGS decides.
+  user_metadata = {"openrl.fine_tuning_type": config.fine_tuning_type} if config.fine_tuning_type and config.fine_tuning_type != "lora" else None
   service_client = tinker.ServiceClient(
+    user_metadata=user_metadata,
     api_key=os.getenv("TINKER_API_KEY", "tml-dummy-key"),
     base_url=config.base_url,
-    default_headers=default_headers,
   )
   tokenizer = AutoTokenizer.from_pretrained(config.model.tokenizer_name)
 

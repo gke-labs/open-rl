@@ -11,6 +11,17 @@ spec:
   - port: 6379
     targetPort: 6379
 ---
+# Pending sampling requests live only in Redis, so it must survive a restart.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 20Gi
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -32,11 +43,24 @@ spec:
       containers:
       - name: redis
         image: redis:7-alpine
+        # Redis by default fsyncs once a second and never evicts keys. Fsyncing every
+        # write would make every queue on this single-threaded server wait on the disk.
+        # A crash can lose the last second of writes. Nothing retries a lost
+        # request or result, so its client polls for a future that never arrives.
+        # Below the pod limit, a full Redis refuses writes instead of being killed.
+        args: ["--appendonly", "yes", "--maxmemory", "3gb"]
         ports:
         - containerPort: 6379
+        volumeMounts:
+        - name: data
+          mountPath: /data
         resources:
           limits:
             memory: "4Gi"
           requests:
             memory: "4Gi"
             cpu: "1"
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: redis-data

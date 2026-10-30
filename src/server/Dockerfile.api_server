@@ -39,6 +39,10 @@ COPY . .
 # Expose source code via PYTHONPATH instead of modifying .venv after COPY . .
 ENV PYTHONPATH="/app/src:/app:$PYTHONPATH"
 
+# The release tag (or dev build id) the server reports in get_server_capabilities.
+ARG OPEN_RL_VERSION=dev
+ENV OPEN_RL_VERSION=${OPEN_RL_VERSION}
+
 EXPOSE 8000
 
 # Start the API server

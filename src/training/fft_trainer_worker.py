@@ -16,6 +16,7 @@ import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
 
 from training.device import model_dtype
+from training.prefetch import prefetch
 from training.trainer_worker import BaseTrainerWorker, Datum
 from training.types import FFTConfig
 
@@ -51,6 +52,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self._prev_weights_shadow: dict[str, torch.Tensor] = {}
     self.model_layer_shapes: dict[str, tuple[int, ...]] = {}
     self.total_model_elements: int = 0
+    # Sampler saves at the current weights, oldest first. "" names the base weights a replica starts with.
+    self.sampler_saves: list[str] = [""]
+    # Sampler saves at the weights the last optimizer step started from, which its sparse delta applies on.
+    # Before any step the delta is empty, and the list is empty when no save holds those weights.
+    self.delta_from: list[str] = [""]
 
   def set_weight_sync_strategy(self, strategy: str) -> None:
     if strategy not in ("full", "delta"):
@@ -66,6 +72,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if param in self._param_shadow:
       self._param_shadow[param][1].view(-1)[indices.to(torch.int64).cpu()] = values
 
+  def is_ready(self) -> bool:
+    return self.model is not None
+
   def load_base_model(self, base_model_name: str) -> None:
     """Load one full model for one fine-tuning job process."""
     if self.model is not None and self.base_model_name == base_model_name:
@@ -75,6 +84,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     print(f"Loading full fine-tuning model {base_model_name} on {self.device}...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
+    prefetch(base_model_name)
     self.model = self._load_causal_lm(base_model_name)
     print("Successfully loaded full fine-tuning model.")
 
@@ -178,7 +188,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     # Under the delta strategy save_state writes the sparse delta the sampler
     # consumes. load_from_state cannot open it, so FFT is not resumable yet.
-    if self.weight_sync_cfg.strategy == "delta":
+    # A sampler save that no replica could apply the delta on is written in full.
+    if self.weight_sync_cfg.strategy == "delta" and (kind != "sampler" or self.delta_from):
       if kind != "sampler":
         logger.warning("save_state for %s under the delta strategy writes a delta, not a resumable checkpoint", model_id)
       return self.save_state_delta(model_id=model_id, state_path=state_path, kind=kind)
@@ -271,6 +282,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
       "total_elements": total_elements,
       "layer_names": layer_names_list,
       "density_pct": round(100.0 * total_changed / max(1, total_elements), 3),
+      # The last sampler save before the last optimizer step. A replica holding any of the bases can apply this delta.
+      "parent": self.delta_from[-1] if self.delta_from else None,
+      "bases": list(dict.fromkeys(self.delta_from + self.sampler_saves)),
       "timestamp": time.time(),
     }
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
@@ -286,6 +300,7 @@ class FFTTrainingWorker(BaseTrainerWorker):
     rel_path = ref[len("tinker://") :] if ref.startswith("tinker://") else ref.lstrip("/")
     local_path = os.path.join(os.getenv("OPEN_RL_TMP_DIR", "/tmp/open-rl"), "sampler_full", rel_path)
     self.save_state(model_id, local_path, False, "sampler")
+    self.sampler_saves.append(local_path)
     return local_path
 
   def load_from_state(self, model_id: str, state_path: str, restore_optimizer: bool = False) -> dict[str, Any]:
@@ -302,8 +317,11 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
     self.base_model_name = base_model
     self.tokenizer = AutoTokenizer.from_pretrained(state_path)
+    prefetch(state_path)
     self.model = self._load_causal_lm(state_path)
     self.prepare_model_for_training()
+    # No sampler save holds the loaded weights.
+    self.sampler_saves, self.delta_from = [], []
 
     if restore_optimizer and metadata.get("has_optimizer"):
       optimizer_path = os.path.join(state_path, "optimizer.pt")
@@ -369,6 +387,8 @@ class FFTTrainingWorker(BaseTrainerWorker):
     self.optimizer.zero_grad()
     t_step_end = time.perf_counter()
     step_time = t_step_end - t_step_start
+    # The weights moved, so the sampler saves made so far hold the weights this step's delta starts from.
+    self.delta_from, self.sampler_saves = self.sampler_saves, []
 
     delta_compute_time = 0.0
     if self.weight_sync_cfg.strategy == "delta" and self.model is not None and hasattr(self.model, "named_parameters"):

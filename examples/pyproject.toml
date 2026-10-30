@@ -27,7 +27,11 @@ dependencies = [
     "ipykernel",
 ]
 
+[project.optional-dependencies]
+agent-sandbox = ["k8s-agent-sandbox[async,grpc]==1.0.5.post1"]
+
 [project.scripts]
+openrl-doctor = "common.openrl_doctor:main"
 harvey-train = "harvey_labs.train:main"
 harvey-eval = "harvey_labs.eval_checkpoint:main"
 harvey-results = "harvey_labs.results:main"

@@ -1,0 +1,8 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# NVIDIA DCGM exporter and its Google Managed Prometheus scraper, for the GPU
+# bundles on GKE. GKE's managed DCGM exporter skips DRA node pools. Not for kind:
+# it has no GPUs and no PodMonitoring CRD.
+resources:
+  - 10-dcgm-monitoring.yaml

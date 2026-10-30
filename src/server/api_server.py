@@ -4,16 +4,19 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 import traceback
 import uuid
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from typing import Annotated, Any
+from pathlib import Path
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, Response
 from fastapi.utils import is_body_allowed_for_status_code
 from opentelemetry import propagate, trace
@@ -23,21 +26,26 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from server import proto_codec
+from server import openrl_status, proto_codec
 from server.accelerators import Accelerator, check_supported, parse_accel_prefs
+from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
   TrainingModelMetadata,
   WeightSyncConfig,
-  extract_weight_sync_config,
   get_model_metadata,
   persist_model_metadata,
+  pool_name,
 )
+from server.observability.router import router
+from server.sampling_dispatcher import SAMPLE_DEADLINE_SECONDS
+from server.sampling_store import SamplingStore
 from server.session_registry import SessionRegistry
-from server.store import RedisStateStore, get_state_store, get_store
-from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, owner_of
+from server.store import get_state_store, get_store
+from server.vllm_options import split_stop
+from server.worker_manager import LocalWorkerManager, WorkerManager, create_worker_manager, default_metadata, owner_id, owner_of, runtime_of
 from training import commands
 from training.commands import Command
-from training.types import TRAINER_BACKENDS, Datum, FFTConfig, LoraConfig
+from training.types import TRAINER_BACKENDS, Datum, FFTConfig, FineTuningType, LoraConfig
 
 store = get_store()
 state = get_state_store()
@@ -45,6 +53,8 @@ worker_manager: WorkerManager | None = None
 
 session_registry = SessionRegistry(state)
 SESSION_REAP_INTERVAL_SEC = 30
+# Jobs whose pools the reconcile may ensure at once.
+RECONCILE_CONCURRENCY = 4
 # Attaching a session to an owner and reaping that owner take turns, so a
 # session cannot attach between the reaper deciding an owner is unused and
 # deleting its workers. In-process, which is why there is one API server replica.
@@ -52,9 +62,17 @@ owner_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 async def bind_session(session_id: str | None, model_id: str) -> None:
-  if worker_manager is not None and session_id:
-    owner = await asyncio.to_thread(owner_of, model_id)
-    async with owner_locks[owner]:
+  if not session_id:
+    return
+  owner = await asyncio.to_thread(owner_of, model_id)
+  async with owner_locks[owner]:
+    # On the model, for the model view: which sessions are this model's own.
+    meta = await get_model_metadata(state, model_id)
+    if meta is not None and session_id not in meta.session_ids:
+      meta.session_ids.append(session_id)
+      await persist_model_metadata(state, model_id, meta)
+    # On the owner, for the reaper: workers stay while any attached session lives.
+    if worker_manager is not None:
       await session_registry.attach(session_id, owner)
 
 
@@ -64,7 +82,9 @@ async def reap_owner(owner: str) -> None:
       return
     print(f"[API_SERVER] No live session uses {owner}; tearing its workers down")
     for model in await asyncio.to_thread(worker_manager.release_owner, owner):
-      await state.delete_values(f"open_rl:sampler_ready:{model}")
+      await state.delete_values(f"open_rl:trainer_ready:{model}")
+      if get_sampler_backend() == "vllm":
+        await SamplingStore(store.redis).delete_if_empty(pool_name(model))
     await session_registry.forget(owner)
 
 
@@ -104,19 +124,27 @@ class SessionHeartbeatRequest(BaseModel):
   session_id: str | None = None
 
 
+USER_METADATA_DOC = (
+  "Free-form client metadata. Keys that start with openrl. are OpenRL settings: "
+  "see components.schemas.OpenRLSettings in this document. "
+  "Values are strings on the wire."
+)
+
+
 class CreateSessionRequest(BaseModel):
   tags: list[str] = Field(default_factory=list)
-  user_metadata: dict[str, Any] | None = None
+  user_metadata: dict[str, Any] | None = Field(default=None, description=USER_METADATA_DOC)
 
 
 class CreateModelRequest(BaseModel):
   base_model: str
   session_id: str | None = None
-  user_metadata: dict[str, Any] | None = None
+  user_metadata: dict[str, Any] | None = Field(default=None, description=USER_METADATA_DOC)
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
-  full_config: FFTConfig = Field(default_factory=FFTConfig)
+  # Removed; FFT options are openrl. settings now. Kept to reject it loudly.
+  full_config: Any = None
 
-  @field_validator("lora_config", "full_config", mode="before")
+  @field_validator("lora_config", mode="before")
   @classmethod
   def default_config(cls, value):
     return {} if value is None else value
@@ -128,11 +156,12 @@ class CreateModelFromStateRequest(BaseModel):
   # The checkpoint's metadata names the base model when the client does not.
   base_model: str | None = None
   session_id: str | None = None
-  user_metadata: dict[str, Any] | None = None
+  user_metadata: dict[str, Any] | None = Field(default=None, description=USER_METADATA_DOC)
   lora_config: LoraConfig = Field(default_factory=LoraConfig)
-  full_config: FFTConfig = Field(default_factory=FFTConfig)
+  # Removed; FFT options are openrl. settings now. Kept to reject it loudly.
+  full_config: Any = None
 
-  @field_validator("lora_config", "full_config", mode="before")
+  @field_validator("lora_config", mode="before")
   @classmethod
   def default_config(cls, value):
     return {} if value is None else value
@@ -162,18 +191,74 @@ def parse_trainer_backend(value: str) -> str:
 
 
 class Settings(BaseModel):
-  model_config = ConfigDict(extra="forbid")
+  """The descriptions are what get_server_capabilities and the skill show, so
+  they are written for the client choosing a value. Each field's wire name is
+  its alias, openrl.<field>: pydantic validates the user_metadata keys as the
+  client wrote them, names them that way in errors, and puts them in the JSON
+  Schema that capabilities and /openapi.json publish."""
 
-  # A workload no other workload shares. The model gets its own trainer and
-  # sampler, and nothing time-slices their GPUs.
-  exclusive: Annotated[bool, BeforeValidator(parse_bool)] = False
-  # The trainer the model runs on. Automodel is LoRA only. An image runs its
-  # own trainer, picked by the OPEN_RL_TRAINER_BACKEND it sets.
-  trainer_backend: Annotated[str, AfterValidator(parse_trainer_backend)] = "pytorch"
-  # The accelerators the model's workers may run on, most preferred first,
-  # like tpu,gpu, or tpu|gpu in a tag.
-  trainer_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = ["gpu"]
-  sampler_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = ["gpu"]
+  model_config = ConfigDict(extra="forbid", alias_generator=lambda field: f"{SETTINGS_PREFIX}{field}", populate_by_name=True)
+
+  sampler_replicas: int = Field(default=1, ge=1, le=8, description="Single-GPU samplers that drain the model's sampling queue together.")
+  exclusive: Annotated[bool, BeforeValidator(parse_bool)] = Field(
+    default=False,
+    description="A workload no other workload shares. The model gets its own trainer and sampler, and nothing time-slices their GPUs.",
+  )
+  trainer_backend: Annotated[str, AfterValidator(parse_trainer_backend)] = Field(
+    default="pytorch",
+    description="The trainer the model runs on: pytorch, automodel (LoRA only), or an image like ghcr.io/org/trainer:tag that runs its own trainer.",
+  )
+  trainer_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = Field(
+    default=["gpu"],
+    description="The accelerators the model's trainer may run on, most preferred first: gpu, tpu or tpu,gpu (tpu|gpu in a tag).",
+  )
+  sampler_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = Field(
+    default=["gpu"],
+    description="The accelerators the model's sampler may run on, most preferred first, like openrl.trainer_accel_prefs.",
+  )
+  trainer_gpus: int = Field(
+    default=1,
+    ge=1,
+    le=8,
+    description="GPUs the trainer drives as one data-parallel torchrun group. More than one is Automodel only and makes the model exclusive.",
+  )
+  trainer_cp: int = Field(
+    default=1,
+    ge=1,
+    le=8,
+    description="Trainer GPUs that share one sequence, as context parallelism. The rest of trainer_gpus is data parallel.",
+  )
+  fine_tuning_type: FineTuningType | None = Field(
+    default=None,
+    description="lora unless set. A model restored from a checkpoint takes the checkpoint's type.",
+  )
+  recipe: Literal["rl", "sft"] | None = Field(
+    default=None,
+    description="What the job runs. rl starts the sampler together with the trainer, so its start-up overlaps the trainer's. "
+    "sft or unset starts it at the first sample or save for sampling.",
+  )
+  client_log_id: str | None = Field(
+    default=None,
+    description="The id on the client's log lines, as the label openrl_client=<id> in the server's log store. "
+    "The inspection API reads the run's client logs by it.",
+  )
+  # The rest apply to full fine-tuning only.
+  weight_sync: Literal["delta", "full"] | None = Field(
+    default=None,
+    description="Full fine-tuning only. How the trainer hands each step's weights to the sampler: delta (changed weights only, the default) or full.",
+  )
+  fft_seed: int | None = Field(default=None, description="Full fine-tuning only. The trainer's random seed.")
+  fft_cpu_offload: Annotated[bool | None, BeforeValidator(parse_bool)] = Field(
+    default=None,
+    description="Full fine-tuning only. Park trainer state in host memory between turns. Exclusive models default to off.",
+  )
+
+
+def settings_schema() -> dict[str, Any]:
+  """The openrl.* settings as JSON Schema, straight from pydantic, published
+  once: components.schemas.OpenRLSettings in /openapi.json. Capabilities
+  point there; the skill sends agents there."""
+  return Settings.model_json_schema(ref_template="#/components/schemas/{model}")
 
 
 def tag_metadata(tags: list[str]) -> dict[str, str]:
@@ -194,14 +279,16 @@ def resolve_settings(*user_metadata: dict[str, Any]) -> Settings:
   unknown openrl. key or a bad value is an error, not a silent default."""
   merged = {}
   for layer in reversed(user_metadata):
-    merged.update({key.removeprefix(SETTINGS_PREFIX): value for key, value in (layer or {}).items() if key.startswith(SETTINGS_PREFIX)})
+    # The user's own metadata keys stay out; the openrl. keys go in as written and
+    # pydantic matches them to the fields by alias.
+    merged.update({key: value for key, value in (layer or {}).items() if key.startswith(SETTINGS_PREFIX)})
   try:
     return Settings.model_validate(merged)
   except ValidationError as exc:
     problems = []
     for error in exc.errors():
       message = "unknown setting" if error["type"] == "extra_forbidden" else error["msg"].removeprefix("Value error, ")
-      problems.append(f"{SETTINGS_PREFIX}{error['loc'][0]}: {message}")
+      problems.append(f"{error['loc'][0]}: {message}")
     raise ValueError("; ".join(problems)) from None
 
 
@@ -274,6 +361,7 @@ class SamplingParams(BaseModel):
   stop: Any = None
   top_p: float = 1.0
   top_k: int = -1
+  seed: int | None = None
 
   @field_validator("max_tokens", "temperature", "top_p", "top_k", mode="before")
   @classmethod
@@ -289,6 +377,7 @@ class AsampleRequest(BaseModel):
   prompt_logprobs: bool = Field(default=False, validation_alias=AliasChoices("prompt_logprobs", "include_prompt_logprobs"))
   model_id: str | None = None
   sampling_session_id: str | None = None
+  seq_id: int | None = None
 
 
 # *** Helpers ***
@@ -312,9 +401,9 @@ def is_fft_enabled() -> bool:
   return os.getenv("OPEN_RL_ENABLE_FFT", "").lower() == "true"
 
 
-def sampler_ready_timeout_s() -> float:
-  # TPU samplers precompile shapes for minutes before reporting ready.
-  return float(os.getenv("OPEN_RL_SAMPLER_READY_TIMEOUT_S", "900"))
+def sampling_ref(sampling_session_id: str) -> str:
+  """The model reference a sampling session was created for, without its per-session suffix."""
+  return re.sub(r"@[0-9a-f]{32}$", "", sampling_session_id)
 
 
 def sampler_session_id(model_id: str, seq_id: int | str) -> str:
@@ -390,51 +479,49 @@ def base_model_id_from_sampling_ref(model_id: str | None) -> str | None:
   return model_id.split("-samp-")[0]
 
 
-def is_sampler_weights_ref(model_id: str | None) -> bool:
-  if not model_id or not model_id.startswith("tinker://"):
-    return False
-
-  path = model_id[len("tinker://") :]
-  parts = path.split("/")
-  return len(parts) >= 3 and parts[1] == "sampler_weights"
-
-
 async def _extract_and_persist_model_metadata(
   req: CreateModelRequest | CreateModelFromStateRequest,
   request: Request | None = None,
-  default_fine_tuning_type: str = "lora",
+  checkpoint_kind: FineTuningType | None = None,
 ) -> tuple[str, TrainingModelMetadata]:
-  """Extract and normalize model configuration from headers and payload, persisting TrainingModelMetadata exactly once."""
+  """Resolve the model's configuration from its openrl. settings and persist TrainingModelMetadata once.
+  checkpoint_kind is the fine-tuning type of the checkpoint a restored model loads."""
   base_model = req.base_model
-  if not base_model and default_fine_tuning_type != "restored":
+  if not base_model:
     raise ValueError("base_model is required in request payload")
-
-  full_config = req.full_config.model_dump()
-  lora_config = req.lora_config.model_dump()
-
   headers = request.headers if request is not None else {}
-  weight_sync_cfg = extract_weight_sync_config(headers)
-
-  fine_tuning_type = default_fine_tuning_type
-  h_val = (headers.get("x-open-rl-fine-tuning-type") or "").lower()
-  if h_val == "full":
-    fine_tuning_type = "full"
-  elif h_val == "lora":
-    fine_tuning_type = "lora"
-
-  if fine_tuning_type == "full" and not is_fft_enabled():
-    raise ValueError("Full Fine-Tuning (FFT) is disabled on this Open-RL API server instance")
-
-  if fine_tuning_type != "full" and default_fine_tuning_type != "restored":
-    fine_tuning_type = "lora"
-
-  full_config["weight_sync_strategy"] = weight_sync_cfg.strategy
+  for header, setting in (("x-open-rl-fine-tuning-type", "fine_tuning_type"), ("x-open-rl-weight-sync-strategy", "weight_sync")):
+    if header in headers:
+      raise ValueError(f"The {header} header was removed; set {SETTINGS_PREFIX}{setting} in TINKER_TAGS or user_metadata")
+  if req.full_config is not None:
+    raise ValueError(f"full_config was removed; set {SETTINGS_PREFIX}fft_seed and {SETTINGS_PREFIX}fft_cpu_offload in TINKER_TAGS or user_metadata")
+  lora_config = req.lora_config.model_dump()
 
   # The model's own user_metadata wins over what the session was opened with.
   settings = resolve_settings(req.user_metadata or {}, await session_registry.user_metadata(req.session_id))
+  if checkpoint_kind is not None and settings.fine_tuning_type not in (None, checkpoint_kind):
+    raise ValueError(f"{SETTINGS_PREFIX}fine_tuning_type={settings.fine_tuning_type} does not match the {checkpoint_kind} checkpoint")
+  fine_tuning_type = settings.fine_tuning_type or checkpoint_kind or "lora"
+  if fine_tuning_type == "full" and not is_fft_enabled():
+    raise ValueError("Full Fine-Tuning (FFT) is disabled on this Open-RL API server instance")
+  fft_settings = {"weight_sync": settings.weight_sync, "fft_seed": settings.fft_seed, "fft_cpu_offload": settings.fft_cpu_offload}
+  if fine_tuning_type != "full" and (given := [name for name, value in fft_settings.items() if value is not None]):
+    raise ValueError(", ".join(f"{SETTINGS_PREFIX}{name}" for name in given) + " applies to fine_tuning_type=full only")
+  weight_sync = settings.weight_sync or "delta"
+  # A TPU sampler holds its linear weights transposed, so sparse patches in
+  # checkpoint coordinates cannot apply; it reloads full checkpoints instead.
+  if fine_tuning_type == "full" and "tpu" in settings.sampler_accel_prefs and weight_sync != "full":
+    print(f"[API_SERVER] weight sync {weight_sync} -> full: a TPU sampler reloads full checkpoints")
+    weight_sync = "full"
+  weight_sync_cfg = WeightSyncConfig(strategy=weight_sync)
+  # Nothing parks an exclusive trainer, so it stays on the GPU.
+  cpu_offload = settings.fft_cpu_offload if settings.fft_cpu_offload is not None else not settings.exclusive
+  full_config = FFTConfig(seed=settings.fft_seed, cpu_offload=cpu_offload, weight_sync_strategy=weight_sync_cfg.strategy).model_dump()
   # Without a worker manager one static runtime serves every model.
   if settings.exclusive and worker_manager is None:
     raise ValueError("openrl.exclusive needs a server that launches workers per model")
+  if settings.sampler_replicas > 1 and isinstance(worker_manager, LocalWorkerManager):
+    raise ValueError("openrl.sampler_replicas above 1 needs a server that launches workers as pods")
   if settings.trainer_backend != "pytorch" and worker_manager is None:
     raise ValueError(f"openrl.trainer_backend={settings.trainer_backend} needs a server that launches workers per model")
   if settings.trainer_backend not in TRAINER_BACKENDS and isinstance(worker_manager, LocalWorkerManager):
@@ -442,17 +529,12 @@ async def _extract_and_persist_model_metadata(
   if settings.trainer_backend == "automodel" and fine_tuning_type != "lora":
     raise ValueError("The automodel trainer supports LoRA only")
   check_supported(fine_tuning_type, settings.trainer_backend, settings.trainer_accel_prefs, settings.sampler_accel_prefs, settings.exclusive)
-  # Nothing parks an exclusive trainer, so it stays on the GPU.
-  if settings.exclusive:
-    full_config["cpu_offload"] = False
-  # A TPU sampler holds its linear weights transposed, so sparse patches in
-  # checkpoint coordinates cannot apply; it reloads full checkpoints instead.
-  if fine_tuning_type == "full" and "tpu" in settings.sampler_accel_prefs:
-    if weight_sync_cfg.strategy != "full":
-      print(f"[API_SERVER] weight sync {weight_sync_cfg.strategy} -> full: a TPU sampler reloads full checkpoints")
-    weight_sync_cfg = WeightSyncConfig(strategy="full")
-    full_config["weight_sync_strategy"] = "full"
-
+  if settings.trainer_gpus > 1 and settings.trainer_backend != "automodel":
+    raise ValueError("openrl.trainer_gpus above 1 needs openrl.trainer_backend=automodel")
+  if settings.trainer_gpus > 1 and isinstance(worker_manager, LocalWorkerManager):
+    raise ValueError("openrl.trainer_gpus above 1 needs a server that launches workers as pods")
+  if settings.trainer_gpus % settings.trainer_cp:
+    raise ValueError(f"openrl.trainer_cp={settings.trainer_cp} must divide openrl.trainer_gpus={settings.trainer_gpus}")
   model_id = str(uuid.uuid4())
   meta_obj = TrainingModelMetadata(
     base_model=base_model,
@@ -461,11 +543,18 @@ async def _extract_and_persist_model_metadata(
     weight_sync_config=weight_sync_cfg,
     full_config=full_config,
     lora_config=lora_config,
+    sampler_replicas=settings.sampler_replicas,
     exclusive=settings.exclusive,
     trainer_backend=settings.trainer_backend,
     trainer_accel_prefs=settings.trainer_accel_prefs,
     sampler_accel_prefs=settings.sampler_accel_prefs,
+    trainer_gpus=settings.trainer_gpus,
+    trainer_cp=settings.trainer_cp,
+    recipe=settings.recipe,
+    client_log_id=settings.client_log_id,
   )
+  if meta_obj.sampler_replicas > 1 and meta_obj.shares_gpu():
+    raise ValueError("openrl.sampler_replicas above 1 needs samplers on GPUs of their own; set openrl.exclusive=true")
   await persist_model_metadata(state, model_id, meta_obj)
 
   return model_id, meta_obj
@@ -503,13 +592,18 @@ async def enqueue(command: Command) -> str:
   return command.request_id
 
 
-async def launch_worker_and_enqueue(command: Command) -> str:
-  """Ensure the model's dedicated trainer worker exists, then enqueue onto its queue.
+async def launch_worker_and_enqueue(command: Command, start_sampler: bool = False) -> str:
+  """Ensure the model's trainer worker exists, then enqueue onto its queue.
 
   The launcher is idempotent per model_id, and Kubernetes (or the local process
   table) owns the worker's lifecycle from here; there is no separate launch
   queue. Launch failures resolve the future immediately so clients don't long-poll
   a request that can never be served.
+
+  With start_sampler (an RL job), the sampler starts here too rather than at
+  the client's first save or sampling call, so its engine build overlaps the
+  trainer's start-up and the client's dataset loading. An SFT job may never
+  sample, so by default it gets no sampler until it asks for one.
   """
   assert worker_manager is not None, "Worker manager is initialized by the app lifespan"
   request_id = command.request_id
@@ -517,8 +611,14 @@ async def launch_worker_and_enqueue(command: Command) -> str:
     await asyncio.to_thread(worker_manager.ensure, command.model_id, "trainer")
   except Exception as exc:
     traceback.print_exc()
-    await store.set_future(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
+    await store.set_result(request_id, {"type": "RequestFailedResponse", "error_message": str(exc)})
     return request_id
+  if start_sampler:
+    try:
+      await ensure_sampler_launched(command.model_id)
+    except HTTPException as exc:
+      await store.set_result(request_id, {"type": "RequestFailedResponse", "error_message": str(exc.detail)})
+      return request_id
   return await enqueue(command)
 
 
@@ -533,13 +633,11 @@ async def ensure_sampler_launched(model_id: str) -> None:
       raise HTTPException(status_code=500, detail=f"Could not start the sampler: {exc}") from exc
 
 
-def check_single_process_backend() -> None:
-  """vLLM sampling runs in a worker the API server launches, and they share queues
-  through Redis, so one process can only sample with torch."""
-  if get_sampler_backend() == "vllm":
+def check_sampler_backend() -> None:
+  if get_sampler_backend() == "vllm" and not os.getenv("REDIS_URL"):
     raise RuntimeError(
-      "SAMPLING_BACKEND=vllm needs REDIS_URL: the API server launches the vLLM sampler as a separate worker. "
-      "Set REDIS_URL (for example redis://127.0.0.1:6379/0), or unset SAMPLING_BACKEND to sample with torch in one process."
+      "Sampling pools need REDIS_URL, because vLLM sampling requests wait in a Redis stream for each pool's dispatcher. "
+      "Set REDIS_URL (for example redis://127.0.0.1:6379/0), or set BASE_MODEL and unset SAMPLING_BACKEND to sample with torch in one process."
     )
 
 
@@ -580,6 +678,16 @@ def translate_future_result(result: dict) -> dict:
   return result
 
 
+async def every_interval(step) -> None:
+  """Runs `step` every SESSION_REAP_INTERVAL_SEC. A failed step is retried next time."""
+  while True:
+    await asyncio.sleep(SESSION_REAP_INTERVAL_SEC)
+    try:
+      await step()
+    except Exception:
+      traceback.print_exc()
+
+
 async def reap_dead_sessions():
   while True:
     await asyncio.sleep(SESSION_REAP_INTERVAL_SEC)
@@ -596,10 +704,71 @@ async def reap_dead_sessions():
         traceback.print_exc()
 
 
+async def reconcile_pools() -> None:
+  """For each job with pending requests whose pool is gone, recreates the pool when the job has a live session and fails
+  the requests when it has none, so no request waits on a pool nothing will bring back. Standing worker deployments
+  run without a worker manager and own their pools."""
+  if worker_manager is None:
+    return
+  sampling = SamplingStore(store.redis)
+  pairs = []
+  for pool in await sampling.pools():
+    try:
+      jobs = await sampling.pending_jobs(pool)
+      # Whichever path answered a pool's last request, its empty stream stays until something deletes it.
+      if not jobs:
+        await sampling.delete_if_empty(pool)
+      pairs += [(pool, job) for job in jobs]
+    except Exception:
+      traceback.print_exc()
+  # Concurrently, since an ensure can wait minutes for an old pool to terminate, but a few at a time so stuck ensures
+  # cannot take every thread the API server runs blocking calls on.
+  slots = asyncio.Semaphore(RECONCILE_CONCURRENCY)
+
+  async def reconcile(pool: str, job: str) -> None:
+    async with slots:
+      await reconcile_job(sampling, pool, job)
+
+  for outcome in await asyncio.gather(*(reconcile(pool, job) for pool, job in pairs), return_exceptions=True):
+    if isinstance(outcome, Exception):
+      traceback.print_exception(outcome)
+
+
+async def reconcile_job(sampling: SamplingStore, pool: str, job: str) -> None:
+  meta, runtime, _ = await asyncio.to_thread(runtime_of, job)
+  if meta.pool(job) != pool:
+    return  # a record from before records named their job, whose model is no job on this pool
+  owner = owner_id(runtime)
+  # Under the owner lock, so a reaper release cannot land between the checks and the ensure and leave a pool no one removes.
+  async with owner_locks[owner]:
+    # Read again under the lock, since delete_model may have completed the job meanwhile.
+    if (current := await get_model_metadata(state, job)) is not None and current.status == "completed":
+      if failed := await sampling.fail_job(pool, job, {"type": "RequestFailedResponse", "error_message": f"{job} was deleted"}):
+        print(f"[API_SERVER] Failed {failed} sampling requests of {job}, which was deleted")
+      return
+    # A pool that is up serves its requests, since a client may sample without a session.
+    if await asyncio.to_thread(worker_manager.sampler_exists, job):
+      return
+    if await session_registry.in_use(owner):
+      await asyncio.to_thread(worker_manager.ensure, job, "sampler")
+      return
+    message = f"The pool of {job} is gone and its session ended before a sampler read the request"
+    if failed := await sampling.fail_job(pool, job, {"type": "RequestFailedResponse", "error_message": message}):
+      print(f"[API_SERVER] Failed {failed} sampling requests of {job}, whose pool is gone and whose session ended")
+
+
+async def sweep_sample_deadlines() -> None:
+  """Fails pool requests past the deadline, which no dispatcher does while the pool is gone."""
+  result = {"type": "RequestFailedResponse", "error_message": f"No sampler read the request within {SAMPLE_DEADLINE_SECONDS}s"}
+  if failed := await SamplingStore(store.redis).fail_older_than(SAMPLE_DEADLINE_SECONDS, result):
+    print(f"[API_SERVER] Failed {failed} sampling requests no sampler read in time")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
   global worker_manager
   task = None
+  check_sampler_backend()
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
     worker_manager = create_worker_manager()
   if is_single_process_mode():
@@ -611,7 +780,6 @@ async def lifespan(_: FastAPI):
     print(f"-> Sampling backend: {get_sampler_backend()}")
     print(f"-> FFT enabled     : {is_fft_enabled()}")
     print("-> Server mode     : API server + worker loop in one process\n")
-    check_single_process_backend()
     if not is_fft_enabled():
       from server import training_requests_processor
 
@@ -620,11 +788,16 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(worker.load_base_model, base_model)
       task = asyncio.create_task(training_requests_processor.run_training_requests_processor(worker))
   reap_task = asyncio.create_task(reap_dead_sessions()) if worker_manager is not None else None
+  pool_tasks = []
+  if get_sampler_backend() == "vllm":
+    # Separate tasks, so a reconcile stuck in an ensure never holds up the deadline sweep.
+    pool_tasks = [asyncio.create_task(every_interval(sweep_sample_deadlines)), asyncio.create_task(every_interval(reconcile_pools))]
   try:
     yield
   finally:
-    if reap_task is not None:
-      reap_task.cancel()
+    for background in (reap_task, *pool_tasks):
+      if background is not None:
+        background.cancel()
     if task is not None:
       task.cancel()
     if worker_manager is not None:
@@ -632,8 +805,43 @@ async def lifespan(_: FastAPI):
       worker_manager = None
 
 
-app = FastAPI(title="Open-RL Server MVP", lifespan=lifespan)
+# The release tag, baked in at image build (OPEN_RL_VERSION build arg); the
+# VERSION file is an internal counter and does not name a release.
+OPEN_RL_VERSION = os.getenv("OPEN_RL_VERSION") or "dev"  # an empty build arg must not become the version
+RELEASES_URL = "https://github.com/gke-labs/open-rl/releases"
+EXAMPLE_MODELS = ["Qwen/Qwen2.5-0.5B", "Qwen/Qwen3-0.6B", "google/gemma-4-e2b", "Qwen/Qwen3-8B"]
+
+app = FastAPI(
+  title="OpenRL API server",
+  version=OPEN_RL_VERSION,
+  description=(
+    "A self-hosted, Kubernetes-native post-training API that serves the Tinker API. "
+    "Tinker SDK clients use the /api/v1 paths. GET /api/v1/openrl/models/{model_id} is OpenRL's own: "
+    "what the server knows about one model, its settings, its workers and whether its session is live. "
+    "Repository and docs: https://github.com/gke-labs/open-rl"
+  ),
+  lifespan=lifespan,
+)
+
+
+def openapi_with_settings() -> dict[str, Any]:
+  """FastAPI publishes the request models on its own. The openrl.* settings
+  travel inside user_metadata, so their schema is added under components by
+  hand. It is the one place the settings are described."""
+  if app.openapi_schema:
+    return app.openapi_schema
+  schema = get_openapi(title=app.title, version=app.version, description=app.description, routes=app.routes)
+  settings = settings_schema()
+  schemas = schema.setdefault("components", {}).setdefault("schemas", {})
+  schemas.update(settings.pop("$defs", {}))
+  schemas["OpenRLSettings"] = settings
+  app.openapi_schema = schema
+  return schema
+
+
+app.openapi = openapi_with_settings
 FastAPIInstrumentor.instrument_app(app, excluded_urls="/api/v1/retrieve_future,/api/v1/session_heartbeat")
+app.include_router(router)
 
 
 @app.exception_handler(RequestValidationError)
@@ -684,6 +892,53 @@ async def health_check():
   return {"status": "ok"}
 
 
+def worker_launcher_mode() -> str:
+  """How this server runs workers: single_process (trainer in this process),
+  process (subprocesses), scheduler (Workloads placed on a cluster), or none
+  (standing worker deployments)."""
+  if is_single_process_mode():
+    return "single_process"
+  if worker_manager is None:
+    return "none"
+  mode = os.getenv("OPEN_RL_WORKER_MANAGER", "local").lower()
+  return "scheduler" if mode == "scheduler" else "process"
+
+
+def env_int(name: str) -> int | None:
+  value = os.getenv(name)
+  return int(value) if value and value.isdigit() else None
+
+
+def openrl_info() -> dict[str, Any]:
+  """What an agent needs to know about this deployment before its first
+  request (design 016, section 5.1). Nested under one key so the SDK's
+  response models ignore it."""
+  release = OPEN_RL_VERSION.startswith("v")
+  return {
+    "version": OPEN_RL_VERSION,
+    "worker_launcher": worker_launcher_mode(),
+    "sampler_backend": get_sampler_backend(),
+    "fft_enabled": is_fft_enabled(),
+    "models": {
+      # Outside single-process mode the base model is whatever create_model names.
+      "any_huggingface_model": not is_single_process_mode(),
+      "default": get_default_model_name(),
+      "examples": EXAMPLE_MODELS,
+    },
+    # The settings themselves live in one place, the OpenAPI document.
+    "settings_schema_url": "/openapi.json#/components/schemas/OpenRLSettings",
+    "settings_howto": "Pass as user_metadata on create_session or create_model, or as TINKER_TAGS=openrl.key=value,...",
+    "limits": {
+      "vllm_max_model_len": env_int("VLLM_MAX_MODEL_LEN"),
+      "train_token_budget": env_int("OPEN_RL_TRAIN_TOKEN_BUDGET"),
+      "session_ttl_seconds": session_registry.ttl_seconds,
+      "session_reap_interval_seconds": SESSION_REAP_INTERVAL_SEC,
+    },
+    "skill_url": f"{RELEASES_URL}/download/{OPEN_RL_VERSION}/openrl-skill.tar.gz" if release else None,
+    "getting_started_url": "https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md",
+  }
+
+
 @app.get("/api/v1/get_server_capabilities")
 async def get_server_capabilities():
   model_name = get_default_model_name()
@@ -691,7 +946,19 @@ async def get_server_capabilities():
     "supported_models": [{"model_name": model_name}] if model_name else [],
     "default_model": model_name,
     "single_process": is_single_process_mode(),
+    "openrl": openrl_info(),
   }
+
+
+# *** The OpenRL model view: read-only, not part of the Tinker API ***
+@app.get("/api/v1/openrl/models/{model_id}")
+async def openrl_model_status(model_id: str):
+  """One model: its settings, its workers with their state, whether its session is live, and a one-line summary."""
+  ctx = openrl_status.StatusContext(state=state, registry=session_registry, manager=worker_manager, worker_launcher=worker_launcher_mode())
+  result = await openrl_status.model_status(ctx, model_id)
+  if result is None:
+    raise HTTPException(status_code=404, detail=f"Unknown model: {model_id}")
+  return result
 
 
 @app.post("/api/v1/client/config")
@@ -728,7 +995,7 @@ async def session_heartbeat(req: SessionHeartbeatRequest):
 async def create_model(req: CreateModelRequest, request: Request) -> dict[str, Any]:
   """ServiceClient.create_lora_training_client_async()"""
   try:
-    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type="lora")
+    model_id, meta = await _extract_and_persist_model_metadata(req, request)
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -741,7 +1008,7 @@ async def create_model(req: CreateModelRequest, request: Request) -> dict[str, A
     lora_config=meta.lora_config or {},
     full_config=meta.full_config or {},
   )
-  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command, start_sampler=meta.recipe == "rl") if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -759,13 +1026,20 @@ async def delete_model(req: ModelRequest):
   elif worker_manager is not None:
     print(f"[API_SERVER] Requesting shutdown of workers for model {model_id}...")
     await store.put_request(commands.wire(commands.Shutdown(model_id=model_id)), active_set_id=await _resolve_active_set_id(model_id))
-    await store.put_sampling_request({"request_id": "SHUTDOWN_SENTINEL", "model_id": model_id})
-    await asyncio.to_thread(worker_manager.release, model_id)
-  now = time.time()
-  meta.status = "completed"
-  meta.completed_at = now
-  meta.updated_at = now
-  await persist_model_metadata(state, model_id, meta)
+  # Under the owner lock the reconcile takes, so it cannot bring back a pool for the job between these steps.
+  async with owner_locks[await asyncio.to_thread(owner_of, model_id)]:
+    now = time.time()
+    meta.status = "completed"
+    meta.completed_at = now
+    meta.updated_at = now
+    await persist_model_metadata(state, model_id, meta)
+    if get_sampler_backend() == "vllm":
+      result = {"type": "RequestFailedResponse", "error_message": f"{model_id} was deleted"}
+      await SamplingStore(store.redis).fail_job(meta.pool(model_id), model_id, result)
+    if worker_manager is not None and not meta.shares_runtime():
+      await asyncio.to_thread(worker_manager.release, model_id)
+      if get_sampler_backend() == "vllm":
+        await SamplingStore(store.redis).delete_if_empty(meta.pool(model_id))
   return {"status": "ok"}
 
 
@@ -784,11 +1058,8 @@ async def create_model_from_state(req: CreateModelFromStateRequest, request: Req
     kind = "lora" if checkpoint["is_lora"] else "full"
     if req.base_model is not None and req.base_model != checkpoint["base_model"]:
       raise ValueError("base_model does not match the checkpoint")
-    requested_kind = request.headers.get("x-open-rl-fine-tuning-type", "").lower()
-    if requested_kind in {"lora", "full"} and requested_kind != kind:
-      raise ValueError("fine-tuning type does not match the checkpoint")
     req = req.model_copy(update={"base_model": checkpoint["base_model"]})
-    model_id, meta = await _extract_and_persist_model_metadata(req, request, default_fine_tuning_type=kind)
+    model_id, meta = await _extract_and_persist_model_metadata(req, request, checkpoint_kind=kind)
   except ValueError as exc:
     raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -800,7 +1071,7 @@ async def create_model_from_state(req: CreateModelFromStateRequest, request: Req
     restore_optimizer=req.restore_optimizer,
     fine_tuning_type="full" if meta.fine_tuning_type == "full" else "lora",
   )
-  req_id = await launch_worker_and_enqueue(command) if worker_manager is not None else await enqueue(command)
+  req_id = await launch_worker_and_enqueue(command, start_sampler=meta.recipe == "rl") if worker_manager is not None else await enqueue(command)
   return {"request_id": req_id}
 
 
@@ -840,7 +1111,7 @@ async def retrieve_future(req: RetrieveFutureRequest, accept: str = Header(defau
   pending, failed, and every other result stay JSON.
   """
   request_id = req.request_id
-  result = await store.get_future(request_id, timeout=60.0)
+  result = await store.get_result(request_id, timeout=60.0)
   if result is None:
     return JSONResponse(status_code=400, content={"type": "RequestFailedResponse", "error_message": "Future not found"})
   if isinstance(result, dict) and result.get("type") == "RequestFailedResponse":
@@ -1010,27 +1281,13 @@ async def create_sampling_session(req: CreateSamplingSessionRequest):
     sess_id = req.model_id or "samp-session-live-123"
     target_model_id = sess_id
 
-  model_meta = await get_model_metadata(state, target_model_id) if target_model_id else None
-  ready_check_id = (model_meta.runtime(target_model_id) or target_model_id) if model_meta else target_model_id
-
   await bind_session(req.session_id, target_model_id)
 
-  if get_sampler_backend() == "vllm" and ready_check_id:
-    # Launch by model ID so the worker manager retains the training kind.
-    # LoRA readiness is still reported under the shared base-model runtime.
+  if get_sampler_backend() == "vllm":
+    # Requests wait in the pool's stream, so there is no sampler to wait for. The SDK
+    # numbers seq_id from 0 in every sampling client, so each session needs its own id.
     await ensure_sampler_launched(target_model_id)
-    if isinstance(state, RedisStateStore):
-      print(f"[API_SERVER] Waiting for dynamic vLLM sampler worker to be ready for model {ready_check_id}...")
-      timeout_s = sampler_ready_timeout_s()
-      start_time = time.monotonic()
-      while True:
-        is_ready = await state.get_value(f"open_rl:sampler_ready:{ready_check_id}")
-        if is_ready == "1" or is_ready == b"1":
-          print(f"[API_SERVER] Dynamic vLLM sampler worker is ready! (took {time.monotonic() - start_time:.2f}s)")
-          break
-        if time.monotonic() - start_time > timeout_s:
-          raise TimeoutError(f"Timed out after {timeout_s:g}s waiting for dynamic vLLM sampler worker to be ready")
-        await asyncio.sleep(1)
+    return {"sampling_session_id": f"{sess_id}@{uuid.uuid4().hex}", "type": "create_sampling_session"}
 
   return {"sampling_session_id": sess_id, "type": "create_sampling_session"}
 
@@ -1045,7 +1302,8 @@ async def get_sampler(sampler_id: str):
   resolve to the base model, which is all the client wants -- it loads the
   tokenizer from the Hub itself.
   """
-  base_model_id = base_model_id_from_sampling_ref(sampler_id)
+  ref = sampling_ref(sampler_id)
+  base_model_id = base_model_id_from_sampling_ref(ref)
   model_meta = await get_model_metadata(state, base_model_id) if base_model_id else None
   base_model = (model_meta.base_model if model_meta is not None else None) or base_model_id or get_default_model_name()
   if not base_model:
@@ -1053,7 +1311,7 @@ async def get_sampler(sampler_id: str):
   return {
     "sampler_id": sampler_id,
     "base_model": base_model,
-    "model_path": sampler_id if sampler_id.startswith("tinker://") else None,
+    "model_path": ref if ref.startswith("tinker://") else None,
   }
 
 
@@ -1064,6 +1322,70 @@ def sample_sequence_ids(request_id: str, num_samples: int) -> list[str]:
   the matching returned sequence; the final SampleResponse does not repeat them.
   """
   return [f"{request_id}:{index}" for index in range(max(1, int(num_samples)))]
+
+
+# How long a sample waits for weights another node just saved to show up here.
+SAVED_WEIGHTS_WAIT_SECONDS = 2.0
+
+
+def visible(path: Path) -> bool:
+  """Whether a file another node saved shows here. An NFS client keeps a failed
+  lookup until it revalidates the directory, and listing a directory makes it
+  revalidate, so on a miss this lists the nearest directory above the file that
+  exists and looks again."""
+  if path.is_file():
+    return True
+  for directory in path.parents:
+    try:
+      os.listdir(directory)
+      break
+    except OSError:
+      continue
+  return path.is_file()
+
+
+async def wait_until_visible(path: Path) -> bool:
+  deadline = time.monotonic() + SAVED_WEIGHTS_WAIT_SECONDS
+  while not await asyncio.to_thread(visible, path):
+    if time.monotonic() >= deadline:
+      return False
+    await asyncio.sleep(0.2)
+  return True
+
+
+async def accept_pool_sample(req: AsampleRequest, prompt: list[int]) -> str:
+  """Missing weights are a 400, never a fallback to other weights."""
+  ref = sampling_ref(req.model_id or req.sampling_session_id or "")
+  lookup_id = base_model_id_from_sampling_ref(ref) or ref
+  meta = await get_model_metadata(state, lookup_id)
+  if meta is None:
+    meta, revision, model = default_metadata(lookup_id), "", lookup_id
+  elif meta.fine_tuning_type == "full":
+    revision, model = resolve_sampler_weights_path(ref), meta.base_model
+    # The trainer writes metadata.json last, so a save in progress is missing too.
+    if not await wait_until_visible(Path(revision, "metadata.json")):
+      raise HTTPException(status_code=400, detail=f"No saved sampler weights for {ref}")
+  else:
+    revision, model = "", snapshot_name(ref)
+    if not await wait_until_visible(snapshot_root() / model / "adapter_config.json"):
+      raise HTTPException(status_code=400, detail=f"No saved LoRA sampler weights for {ref}")
+  pool = meta.pool(lookup_id)
+
+  params = req.sampling_params
+  stop, stop_token_ids = split_stop(params.stop)
+  return await SamplingStore(store.redis).accept(
+    {
+      "request_id": new_request_id(),
+      "pool": pool,
+      "job": lookup_id,
+      "revision": revision,
+      "model": model,
+      "idempotency_key": f"{req.sampling_session_id}:{req.seq_id}" if req.sampling_session_id and req.seq_id is not None else None,
+      "prompt_token_ids": prompt,
+      "sampling_params": {"n": req.num_samples, **params.model_dump(exclude={"stop"}), "stop": stop or [], "stop_token_ids": stop_token_ids or []},
+      "include_prompt_logprobs": req.prompt_logprobs,
+    }
+  )
 
 
 @app.post("/api/v1/asample")
@@ -1091,44 +1413,7 @@ async def asample(req: AsampleRequest):
     )
     return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
-  # vLLM backend
-  req_id = str(uuid.uuid4())
-  carrier = await open_future(req_id)
-
-  model_meta = await get_model_metadata(state, lookup_id)
-  fine_tuning_type = model_meta.fine_tuning_type if model_meta else "lora"
-
-  if fine_tuning_type == "lora":
-    weights_path = None
-    lora_id = model_id
-    peft_dir = os.path.join(TMP_DIR, "peft", lookup_id, lookup_id)
-    lora_path = peft_dir if os.path.exists(peft_dir) else None
-    queue_id = (model_meta.runtime(lookup_id) if model_meta else None) or lookup_id
-  else:
-    resolved_path = resolve_sampler_weights_path(model_id) if is_sampler_weights_ref(model_id) or is_fft_enabled() else None
-    weights_path = resolved_path
-    lora_id = None
-    lora_path = None
-    queue_id = lookup_id
-
-  sampling_req = {
-    "request_id": req_id,
-    "prompt_token_ids": prompt,
-    "max_tokens": params.max_tokens,
-    "temperature": params.temperature,
-    "stop": params.stop,
-    "top_p": params.top_p,
-    "top_k": params.top_k,
-    "num_samples": num_samples,
-    "lora_id": lora_id,
-    "lora_path": lora_path,
-    "weights_path": weights_path,
-    "include_prompt_logprobs": req.prompt_logprobs,
-    "model_id": queue_id,
-    "trace_context": carrier,
-  }
-
-  await store.put_sampling_request(sampling_req)
+  req_id = await accept_pool_sample(req, prompt)
   return {"request_id": req_id, "sample_sequence_ids": sample_sequence_ids(req_id, num_samples)}
 
 

@@ -3,16 +3,7 @@ from unittest.mock import patch
 
 import torch
 from peft import LoraConfig, get_peft_model
-from transformers import (
-  CohereConfig,
-  CohereForCausalLM,
-  Gemma4Config,
-  Gemma4ForConditionalGeneration,
-  GraniteConfig,
-  GraniteForCausalLM,
-  Qwen3Config,
-  Qwen3ForCausalLM,
-)
+from transformers import Gemma4Config, Gemma4ForConditionalGeneration, Qwen3Config, Qwen3ForCausalLM
 
 from training.trainer_worker import BaseTrainerWorker
 
@@ -31,16 +22,6 @@ def gemma4() -> torch.nn.Module:
   torch.manual_seed(0)
   text = dict(TINY, final_logit_softcapping=SOFTCAP, vocab_size_per_layer_input=VOCAB, hidden_size_per_layer_input=8)
   return Gemma4ForConditionalGeneration(Gemma4Config(text_config=text, vision_config=None, audio_config=None)).eval()
-
-
-def cohere() -> torch.nn.Module:
-  torch.manual_seed(0)
-  return CohereForCausalLM(CohereConfig(**TINY, logit_scale=0.5)).eval()
-
-
-def granite() -> torch.nn.Module:
-  torch.manual_seed(0)
-  return GraniteForCausalLM(GraniteConfig(**TINY, logits_scaling=4.0)).eval()
 
 
 def with_lora(model: torch.nn.Module) -> torch.nn.Module:
@@ -89,14 +70,11 @@ def chunk_size(rows: int):
 
 class TestChunkedTargetLogprobs(unittest.TestCase):
   def test_matches_full_logits_path(self) -> None:
-    # Cohere and Granite rescale logits after the head, so they take the full-logits path.
     models = {
       "qwen3": qwen3,
       "gemma4": gemma4,
       "qwen3+lora": lambda: with_lora(qwen3()),
       "gemma4+lora": lambda: with_lora(gemma4()),
-      "cohere": cohere,
-      "granite": granite,
     }
     # 2 x 7 = 14 rows: 1 gives one row per chunk; 6 gives chunks of 6, 6, 2; 1024 is one chunk.
     for name, build in models.items():
@@ -115,7 +93,8 @@ class TestChunkedTargetLogprobs(unittest.TestCase):
             torch.testing.assert_close(actual_grads[param], grad, rtol=0, atol=1e-4 * grad.abs().max().item(), msg=param)
 
   def test_output_head_runs_per_chunk(self) -> None:
-    for name, build, rows, expected in [("qwen3", qwen3, 1, [1] * 14), ("gemma4+lora", lambda: with_lora(gemma4()), 6, [6, 6, 2])]:
+    # The first head call is the model's own, on the last position of each of the 2 rows.
+    for name, build, rows, expected in [("qwen3", qwen3, 1, [2] + [1] * 14), ("gemma4+lora", lambda: with_lora(gemma4()), 6, [2, 6, 6, 2])]:
       with self.subTest(model=name, rows=rows):
         model = build()
         head_rows = record_head_rows(model)

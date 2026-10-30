@@ -1,0 +1,11 @@
+{"loss": 0.005751132965087891, "mean_reward": 0.375, "num_datums": 8, "phase": "train", "step": 1}
+{"loss": -0.03567624092102051, "mean_reward": 0.5, "num_datums": 8, "phase": "train", "step": 2}
+{"loss": -0.034942060708999634, "mean_reward": 0.75, "num_datums": 8, "phase": "train", "step": 3}
+{"loss": -0.03561300039291382, "mean_reward": 0.75, "num_datums": 8, "phase": "train", "step": 4}
+{"loss": 0.005585089325904846, "mean_reward": 0.875, "num_datums": 8, "phase": "train", "step": 5}
+{"loss": -0.0209779292345047, "mean_reward": 0.875, "num_datums": 8, "phase": "train", "step": 6}
+{"loss": -16.10178792476654, "mean_reward": 1.0, "num_datums": 8, "phase": "train", "step": 7}
+{"loss": -16.07758927345276, "mean_reward": 1.0, "num_datums": 8, "phase": "train", "step": 8}
+{"loss": -16.031923174858093, "mean_reward": 1.0, "num_datums": 8, "phase": "train", "step": 9}
+{"loss": -16.01024341583252, "mean_reward": 1.0, "num_datums": 8, "phase": "train", "step": 10}
+{"final_state_path": "tinker://e9d876ad-53c7-461e-8222-42478c165893/weights/tiny-rl-final", "mean_reward": 1.0, "phase": "final", "step": 10}

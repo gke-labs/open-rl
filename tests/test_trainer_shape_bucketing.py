@@ -53,7 +53,11 @@ def rollouts() -> list[Datum]:
 
 def run(model, data, loss_fn, *, enabled: bool, shapes: list | None = None):
   model.zero_grad(set_to_none=True)
-  hook = model.model.register_forward_pre_hook(lambda _module, args: shapes.append(tuple(args[0].shape))) if shapes is not None else None
+
+  def record(_module, args, kwargs):
+    shapes.append(tuple((args[0] if args else kwargs["input_ids"]).shape))
+
+  hook = model.model.register_forward_pre_hook(record, with_kwargs=True) if shapes is not None else None
   with bucketing(enabled), token_budget(4096):
     result = cpu_worker().forward_backward(model, data, loss_fn, LOSSES[loss_fn])
   if hook:
@@ -138,7 +142,7 @@ class TestBucketedPacker(unittest.TestCase):
     worker = cpu_worker()
     for budget in (256, 1024, 4096, 16384):
       with self.subTest(budget=budget), bucketing(True), token_budget(budget):
-        batches = worker.make_training_batches(data)
+        batches = worker.make_training_batches(data, budget)
         self.assertCountEqual([idx for batch in batches for idx, _ in batch], range(len(data)))
         for batch in batches:
           rows = worker.bucket_size(len(batch))
@@ -150,9 +154,9 @@ class TestBucketedPacker(unittest.TestCase):
     data = [datum(10, seed) for seed in range(5)]
     worker = cpu_worker()
     with token_budget(50):
-      self.assertEqual([len(batch) for batch in worker.make_training_batches(data)], [5])
+      self.assertEqual([len(batch) for batch in worker.make_training_batches(data, 50)], [5])
       with bucketing(True):
-        self.assertEqual([len(batch) for batch in worker.make_training_batches(data)], [1] * 5)
+        self.assertEqual([len(batch) for batch in worker.make_training_batches(data, 50)], [1] * 5)
 
 
 if __name__ == "__main__":

@@ -69,3 +69,6 @@ site/public/
 site/resources/_gen/
 site/static/deck/
 site/.hugo_build.lock
+
+# The site serves this on purpose (design 016).
+!site/static/llms.txt

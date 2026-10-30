@@ -32,22 +32,12 @@ class RequestStore(ABC):
     pass
 
   @abstractmethod
-  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
-    """Push a sampling request into the queue for its model."""
-    pass
-
-  @abstractmethod
-  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
-    """Block until this model has at least 1 sampling request, then return all queued requests for it."""
-    pass
-
-  @abstractmethod
-  async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
+  async def set_result(self, req_id: str, result: dict[str, Any]) -> None:
     """Resolve a future by its request ID."""
     pass
 
   @abstractmethod
-  async def get_future(self, req_id: str, timeout: float) -> dict[str, Any] | None:
+  async def get_result(self, req_id: str, timeout: float) -> dict[str, Any] | None:
     """Block until the future resolves or the timeout is reached."""
     pass
 
@@ -61,7 +51,6 @@ class InMemoryStore(RequestStore):
     self.active_tenants_cv = asyncio.Condition()
     self.futures_store: dict[str, dict[str, Any]] = {}
     self.futures_cv = asyncio.Condition()
-    self.sampling_queues: dict[str, asyncio.Queue] = {}
 
   async def put_request(self, req_data: dict[str, Any], active_set_id: str | None = None) -> None:
     model_id = req_data.get("model_id", "default")
@@ -112,31 +101,14 @@ class InMemoryStore(RequestStore):
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     raise RuntimeError("Per-model full fine-tuning workers require REDIS_URL; in-memory queues cannot be shared across processes")
 
-  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
-    model_id = req_data.get("model_id", "default")
-    if model_id not in self.sampling_queues:
-      self.sampling_queues[model_id] = asyncio.Queue()
-    await self.sampling_queues[model_id].put(req_data)
-
-  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
-    if model_id not in self.sampling_queues:
-      return []
-    queue = self.sampling_queues[model_id]
-    if queue.empty():
-      return []
-    batch = [queue.get_nowait()]
-    while not queue.empty():
-      batch.append(queue.get_nowait())
-    return batch
-
-  async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
+  async def set_result(self, req_id: str, result: dict[str, Any]) -> None:
     if result.get("status") == "pending":
       return
     async with self.futures_cv:
       self.futures_store[req_id] = result
       self.futures_cv.notify_all()
 
-  async def get_future(self, req_id: str, timeout: float) -> dict[str, Any] | None:
+  async def get_result(self, req_id: str, timeout: float) -> dict[str, Any] | None:
     async with self.futures_cv:
       try:
         await asyncio.wait_for(self.futures_cv.wait_for(lambda: req_id in self.futures_store), timeout=timeout)
@@ -234,32 +206,7 @@ class RedisStore(RequestStore):
 
     return batch
 
-  async def put_sampling_request(self, req_data: dict[str, Any]) -> None:
-    model_id = req_data.get("model_id", "default")
-    queue_key = f"open_rl:sampler_queue:{model_id}"
-    await self.redis.rpush(queue_key, json.dumps(req_data))
-
-  async def get_sampling_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
-    queue_key = f"open_rl:sampler_queue:{model_id}"
-    try:
-      result = await self.redis.blpop(queue_key, timeout=5)
-    except RedisTimeoutError:
-      return []
-
-    if not result:
-      return []
-
-    batch = [json.loads(result[1])]
-
-    while True:
-      item = await self.redis.lpop(queue_key)
-      if not item:
-        break
-      batch.append(json.loads(item))
-
-    return batch
-
-  async def set_future(self, req_id: str, result: dict[str, Any]) -> None:
+  async def set_result(self, req_id: str, result: dict[str, Any]) -> None:
     if result.get("status") == "pending":
       return
     key = f"open_rl:future:{req_id}"
@@ -270,7 +217,7 @@ class RedisStore(RequestStore):
       pipeline.expire(key, 300)
       await pipeline.execute()
 
-  async def get_future(self, req_id: str, timeout: float) -> dict[str, Any] | None:
+  async def get_result(self, req_id: str, timeout: float) -> dict[str, Any] | None:
     key = f"open_rl:future:{req_id}"
     deadline = time.monotonic() + timeout
     while True:
@@ -322,12 +269,24 @@ class StateStore(ABC):
   async def set_members(self, key: str) -> set[str]:
     pass
 
+  @abstractmethod
+  async def scan_values(self, prefix: str) -> dict[str, str]:
+    """Every live value whose key starts with prefix."""
+    pass
+
+  @abstractmethod
+  def push_recent_sync(self, key: str, values: list[str], keep: int, ttl_seconds: float) -> None:
+    """Synchronously put values at the head of the list at key and keep its newest `keep`. Redis drops the list
+    ttl_seconds after the last push."""
+    pass
+
 
 class InMemoryStateStore(StateStore):
   def __init__(self):
     self.kv_store: dict[str, str] = {}
     self.expiries: dict[str, float] = {}
     self.sets: dict[str, set[str]] = {}
+    self.lists: dict[str, list[str]] = {}
 
   async def set_value(self, key: str, value: str, ttl_seconds: float | None = None) -> None:
     self.kv_store[key] = value
@@ -359,6 +318,12 @@ class InMemoryStateStore(StateStore):
   async def set_members(self, key: str) -> set[str]:
     return set(self.sets.get(key, set()))
 
+  async def scan_values(self, prefix: str) -> dict[str, str]:
+    return {key: value for key in list(self.kv_store) if key.startswith(prefix) and (value := self.get_value_sync(key)) is not None}
+
+  def push_recent_sync(self, key: str, values: list[str], keep: int, ttl_seconds: float) -> None:
+    self.lists[key] = (values[::-1] + self.lists.get(key, []))[:keep]
+
 
 class RedisStateStore(StateStore):
   def __init__(self, client: redis.Redis, sync_client: sync_redis.Redis):
@@ -387,6 +352,13 @@ class RedisStateStore(StateStore):
   async def set_members(self, key: str) -> set[str]:
     return set(await self.redis.smembers(key))
 
+  async def scan_values(self, prefix: str) -> dict[str, str]:
+    keys = [key async for key in self.redis.scan_iter(match=prefix + "*", count=1000)]
+    return {key: value for key, value in zip(keys, await self.redis.mget(keys)) if value is not None} if keys else {}
+
+  def push_recent_sync(self, key: str, values: list[str], keep: int, ttl_seconds: float) -> None:
+    self.sync_redis.pipeline().lpush(key, *values).ltrim(key, 0, keep - 1).expire(key, int(ttl_seconds)).execute()
+
 
 @cache
 def redis_client(redis_url: str) -> redis.Redis:
@@ -405,5 +377,5 @@ def get_store() -> RequestStore:
 def get_state_store() -> StateStore:
   redis_url = os.environ.get("REDIS_URL")
   if redis_url:
-    return RedisStateStore(redis_client(redis_url), sync_redis.Redis.from_url(redis_url, decode_responses=True))
+    return RedisStateStore(redis_client(redis_url), sync_redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=5))
   return InMemoryStateStore()
