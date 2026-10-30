@@ -241,7 +241,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(container["image"], "tpu-sampler:1")
     # A shared LoRA sampler is a routed pool replica, as on GPU.
     self.assertEqual(container["command"], ["uv", "run", "python", "-u", "-m", "server.vllm_serve"])
-    # OPEN_RL_DEVICE picks the trainer's device; the sampler image carries vllm-tpu.
+    # OPEN_RL_DEVICE picks the trainer's device; the sampler image carries vLLM for TPU.
     self.assertNotIn("OPEN_RL_DEVICE", env)
     self.assertEqual(container["resources"], fp.resources)
     self.assertEqual(template_spec["tolerations"], [{"key": "google.com/tpu", "operator": "Exists", "effect": "NoSchedule"}])
