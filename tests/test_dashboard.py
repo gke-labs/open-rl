@@ -1,47 +1,47 @@
+"""The inspection routes as an agent calls them, over a snapshot with one run and its recorded optim_step."""
+
 import asyncio
 import unittest
 from unittest import mock
 
 from fastapi.testclient import TestClient
 
-from server import api_server
-from server.dashboard import fleet
-from server.model_metadata import TrainingModelMetadata
+from server.dashboard import fleet, router
+from server.dashboard.__main__ import app
 from server.store import InMemoryStateStore
+from server.telemetry import key
+
+RUN = {"run_id": "r1", "name": "Run one", "model": "Qwen/base", "runtime_id": "r1", "created_at": 0, "completed_at": None}
+RUN |= {"lifecycle": "placed", "status": "active", "workloads": [], "pods": [], "settings": {}, "session_ids": []}
 
 
-def meta(**fields) -> str:
-  return TrainingModelMetadata(base_model="Qwen/Qwen3-8B", **fields).model_dump_json()
-
-
-class InventoryTest(unittest.TestCase):
-  def inventory(self, **records: str) -> dict:
-    store = InMemoryStateStore()
-    for key, value in records.items():
-      asyncio.run(store.set_value(f"open_rl:{key}", value))
+class ApiTest(unittest.TestCase):
+  def setUp(self):
+    self.store = InMemoryStateStore()
+    op = {"run_id": "r1", "role": "trainer", "pod": "trainer-0", "operation": "optim_step", "status": "succeeded", "started_at": 100, "at": 150}
+    asyncio.run(self.store.append_sample(key("operations", "r1"), op, 10, None))
+    self.snapshot = {"observed_at": 200, "placements": [], "workers": [], "runs": [RUN], "nodes": [], "pods": [], "errors": []}
     fleet.cache.clear()
-    self.enterContext(mock.patch.object(fleet, "get_state_store", return_value=store))
-    return TestClient(api_server.app).get("/api/v1/inspect/inventory").json()
+    self.enterContext(mock.patch.object(fleet, "snapshot", mock.AsyncMock(return_value=self.snapshot)))
+    self.enterContext(mock.patch("server.dashboard.facts.get_state_store", return_value=self.store))
+    self.enterContext(mock.patch.object(fleet, "get_state_store", return_value=self.store))
+    self.enterContext(mock.patch.object(router, "query", mock.AsyncMock(return_value={"series": []})))  # Prometheus has no series
+    self.client = TestClient(app)
 
-  def test_a_run_is_active_only_while_the_client_has_a_live_session(self):
-    body = self.inventory(
-      **{
-        "model_meta:live": meta(session_ids=["s1"], created_at=3),
-        "model_meta:idle": meta(session_ids=["s2"], created_at=2),
-        "model_meta:done": meta(status="completed", session_ids=["s1"], created_at=1),
-        "session:s1": "{}",
-      }
-    )
+  def test_routes_are_read_only_and_a_run_summary_reads_the_store(self):
+    summary = self.client.get("/api/v1/inspect/runs/r1/summary").json()
+    self.assertEqual((summary["steps"], summary["last_op"]["operation"]), (1, "optim_step"))
+    self.assertEqual(self.client.get("/api/v1/inspect/runs/missing/summary").status_code, 404)
+    self.assertTrue(all(set(methods) == {"get"} for methods in self.client.get("/openapi.json").json()["paths"].values()))
 
-    runs = [(r["run_id"], r["lifecycle"], r["client_status"]) for r in body["runs"]]
-    self.assertEqual(runs, [("live", "active", "active"), ("idle", "ended", "active"), ("done", "ended", "completed")])
-    self.assertEqual(body["errors"], [])
-
-  def test_a_malformed_model_record_is_skipped_with_an_error(self):
-    body = self.inventory(**{"model_meta:good": meta(), "model_meta:bad": "not json"})
-
-    self.assertEqual([r["run_id"] for r in body["runs"]], ["good"])
-    self.assertTrue(any("bad" in error for error in body["errors"]), body["errors"])
+  def test_a_session_id_names_its_one_run_and_a_session_with_several_runs_is_refused(self):
+    self.snapshot["runs"] = [{**RUN, "session_ids": ["s1", "s2"]}, {**RUN, "run_id": "r2", "runtime_id": "r2", "session_ids": ["s2"]}]
+    by_session = self.client.get("/api/v1/inspect/runs/s1/summary").json()
+    self.assertEqual((by_session["run_id"], by_session["steps"]), ("r1", 1))
+    refused = self.client.get("/api/v1/inspect/runs/s2/summary")
+    self.assertEqual(refused.status_code, 409)
+    self.assertIn("r1, r2", refused.text)
+    self.assertEqual(self.client.get("/api/v1/inspect/runs/s3/summary").status_code, 404)
 
 
 if __name__ == "__main__":

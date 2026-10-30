@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -201,6 +202,16 @@ func (r *WorkloadReconciler) repairPlacementAssignment(ctx context.Context, scop
 				return placementPhaseResult{}, err
 			}
 			scope.claimName = ""
+			// Record the loss now. A re-cut reuses the claim's name, and the
+			// later Pending or Failed patches touch neither claim nor node,
+			// so this is the only transition that releases the placement.
+			if err := r.patchStatus(ctx, worker, func(status *openrlv1alpha1.WorkloadStatus) {
+				status.Phase = openrlv1alpha1.PhasePending
+				status.ClaimName, status.AssignmentID, status.NodeName = "", "", ""
+				status.Reason = "ReplacingLostClaim: the assigned claim no longer exists"
+			}); err != nil {
+				return placementPhaseResult{}, err
+			}
 		}
 	}
 	// One seat per worker. Any other seat under this name is stale, left by
@@ -512,6 +523,14 @@ func (r *WorkloadReconciler) teardown(ctx context.Context, worker *openrlv1alpha
 			return ctrl.Result{}, err
 		}
 	}
+	if err := r.patchStatus(ctx, worker, func(status *openrlv1alpha1.WorkloadStatus) {
+		if status.PlacedAt != nil && status.ReleasedAt == nil {
+			now := metav1.Now()
+			status.ReleasedAt = &now
+		}
+	}); err != nil {
+		return ctrl.Result{}, err
+	}
 	controllerutil.RemoveFinalizer(worker, workerFinalizer)
 	return ctrl.Result{}, r.Update(ctx, worker)
 }
@@ -694,9 +713,19 @@ func (r *WorkloadReconciler) reportPod(ctx context.Context, worker *openrlv1alph
 			node = claim.Node
 		}
 	}
+	var uuids []string
+	if node != "" && len(worker.Status.GPUUUIDs) == 0 {
+		var err error
+		if uuids, err = r.gpuUUIDs(ctx, claimName); err != nil {
+			return err
+		}
+	}
 
 	return r.patchStatus(ctx, worker, func(status *openrlv1alpha1.WorkloadStatus) {
 		status.Phase, status.ClaimName, status.PodName, status.NodeName, status.Reason = phase, claimName, podName, node, reason
+		if len(uuids) > 0 {
+			status.GPUUUIDs = uuids
+		}
 		// The footprint is DRA's answer, recordable only once the
 		// allocation is observed: which tier held, and what each device
 		// carries under it.
@@ -715,6 +744,7 @@ func (r *WorkloadReconciler) reportPod(ctx context.Context, worker *openrlv1alph
 func (r *WorkloadReconciler) patchStatus(ctx context.Context, worker *openrlv1alpha1.Workload, mutate func(*openrlv1alpha1.WorkloadStatus)) error {
 	before := worker.Status.DeepCopy()
 	mutate(&worker.Status)
+	trackPlacement(before, &worker.Status, metav1.Now())
 	worker.Status.ObservedGeneration = worker.Generation
 	// Skip no-op writes: they would re-trigger the watch forever.
 	if apiequality.Semantic.DeepEqual(before, &worker.Status) {
@@ -727,7 +757,41 @@ func (r *WorkloadReconciler) patchStatus(ctx context.Context, worker *openrlv1al
 		}
 		return fmt.Errorf("patch status of %s: %w", worker.Name, err)
 	}
+	logPlacement(ctx, worker, before)
 	return nil
+}
+
+// trackPlacement stamps the placement interval on every status write. A worker
+// is placed when NodeName is set and released when NodeName clears or its claim
+// changes. Teardown releases it explicitly, since nothing else changes there.
+func trackPlacement(before, after *openrlv1alpha1.WorkloadStatus, now metav1.Time) {
+	held := before.NodeName != "" && before.PlacedAt != nil && before.ReleasedAt == nil
+	if held && (after.NodeName == "" || after.ClaimName != before.ClaimName) {
+		after.NodeName, after.GPUUUIDs, after.ReleasedAt = "", nil, &now
+		return
+	}
+	if after.NodeName != "" && (after.NodeName != before.NodeName || after.PlacedAt == nil) {
+		after.PlacedAt, after.ReleasedAt = &now, nil
+	}
+}
+
+// logPlacement writes one JSON line per persisted bind or release. GKE turns
+// it into a structured entry the diagnostics read by kind.
+func logPlacement(ctx context.Context, worker *openrlv1alpha1.Workload, before *openrlv1alpha1.WorkloadStatus) {
+	after := &worker.Status
+	event, held, at := "placed", after, after.PlacedAt
+	switch {
+	case after.PlacedAt != nil && !after.PlacedAt.Equal(before.PlacedAt):
+	case after.ReleasedAt != nil && before.ReleasedAt == nil:
+		// A release may clear the node and devices, so report what was held.
+		event, held, at = "released", before, after.ReleasedAt
+	default:
+		return
+	}
+	log.FromContext(ctx).Info("placement "+event,
+		"kind", "openrl.placement", "event", event, "run_id", worker.Spec.ModelID, "role", worker.Spec.Role,
+		"workload", worker.Name, "pod", held.PodName, "node", held.NodeName, "uuids", held.GPUUUIDs,
+		"time", at.UTC().Format(time.RFC3339))
 }
 
 func (r *WorkloadReconciler) markPending(ctx context.Context, worker *openrlv1alpha1.Workload, reason string) error {
@@ -792,6 +856,9 @@ func managedClaims() predicate.Predicate {
 // SetupWithManager registers the reconciler.
 func (r *WorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.reader = mgr.GetAPIReader()
+	if err := metrics.Registry.Register(gpuHeldCollector{reader: mgr.GetClient(), namespace: r.Namespace}); err != nil {
+		return err
+	}
 
 	// Capacity changes are fleet-wide: a freed claim might unblock any
 	// pending worker, so these events wake every worker rather than one.

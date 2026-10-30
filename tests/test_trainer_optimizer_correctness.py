@@ -510,6 +510,32 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
       },
     )
 
+  async def test_full_processor_sampler_save_records_delta_metrics(self) -> None:
+    """A delta save's density and size travel with the op result, where the command record keeps them."""
+
+    class _DeltaWorker(_RecordingFullWorker):
+      def save_state(self, model_id, state_path, include_optimizer=False, kind="state"):
+        self.last_save_metrics = {"delta/density_pct": 6.97, "delta/changed_elements": 34439901.0, "delta/total_elements": 494032768.0}
+        return super().save_state(model_id, state_path, include_optimizer, kind)
+
+    worker = _DeltaWorker()
+    store = _FutureStoreStub()
+    time_slicer = _TimeSlicerStub()
+    with patch.dict(os.environ, {"OPEN_RL_TMP_DIR": "/tmp/open-rl-test", "REDIS_URL": "redis://localhost:6379"}):
+      processor = training_requests_processor_module.TrainingRequestsProcessor(store, worker, "model-a", time_slicer=time_slicer)
+      await processor.process_request(
+        {
+          "request_id": "req-a",
+          "model_id": "model-a",
+          "op": "save_weights_for_sampler",
+          "payload": {"path": "tinker://model-a/sampler_weights/final", "sampling_session_id": "tinker://model-a/sampler_weights/sampler-7"},
+        },
+      )
+    result = store.results["req-a"]
+    self.assertEqual(result["type"], "sampler_weights_saved")
+    self.assertEqual(result["metrics"]["delta/density_pct"], 6.97)
+    self.assertEqual(result["metrics"]["delta/total_elements"], 494032768.0)
+
   async def test_full_processor_requires_redis(self) -> None:
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}, clear=True), self.assertRaisesRegex(RuntimeError, "REDIS_URL"):
       await training_requests_processor_module.run_training_requests_processor(_RecordingFullWorker(), "model-a")

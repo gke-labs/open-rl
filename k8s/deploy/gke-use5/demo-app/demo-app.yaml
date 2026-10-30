@@ -1,0 +1,100 @@
+# The demo app: a sweep page that starts and stops RL client Jobs, and a fleet
+# view fed by the dashboard's inspection API. Runs on the API server image with
+# its code mounted from a ConfigMap, so there is no image to build. It is the
+# only thing in the namespace with write access to Jobs; the dashboard stays
+# read-only.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-rl-demo
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-rl-demo
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "delete", "get", "list", "watch", "patch"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: ["openrl.io"]
+  resources: ["workloads"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-rl-demo
+subjects:
+- kind: ServiceAccount
+  name: open-rl-demo
+roleRef:
+  kind: Role
+  name: open-rl-demo
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-demo
+  labels:
+    app: open-rl-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-rl-demo
+  template:
+    metadata:
+      labels:
+        app: open-rl-demo
+    spec:
+      serviceAccountName: open-rl-demo
+      containers:
+      - name: demo
+        image: ghcr.io/gke-labs/open-rl/api-server:latest
+        command: ["sh", "-c", "cd /app && uv run python /demo/app.py"]
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: DASHBOARD_URL
+          value: http://open-rl-dashboard:8000
+        - name: API_SERVER_URL
+          value: http://open-rl-api-server-service:8000
+        - name: CLIENT_IMAGE
+          value: us-east5-docker.pkg.dev/cdrollouts-sunilarora/open-rl/open-rl-client:pr383-pools-c0cd426
+        readinessProbe:
+          httpGet:
+            path: /api/sweep/presets
+            port: 8000
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        volumeMounts:
+        - name: code
+          mountPath: /demo
+          readOnly: true
+      volumes:
+      - name: code
+        configMap:
+          name: open-rl-demo-code
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-rl-demo
+spec:
+  selector:
+    app: open-rl-demo
+  ports:
+  - port: 8000
+    targetPort: 8000

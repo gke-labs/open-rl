@@ -153,3 +153,34 @@ gcloud projects add-iam-policy-binding <project> --role=roles/logging.viewer --m
 
 `<number>` is the project number. If you read logs through a log bucket view,
 also grant `roles/logging.viewAccessor` on that view.
+
+## Run telemetry
+
+Trainers, samplers and the API server record each run in Redis.
+`python -m server.dashboard` serves the records read only under
+`/api/v1/inspect`; `/docs` describes each route. Design Doc 018 explains them.
+
+| Env var | Default | What it does |
+| --- | --- | --- |
+| `OPEN_RL_OPS_SAMPLE_LIMIT` | `2000` | Newest command records kept per run, for trainer ops and samples separately. The scheduler passes it to worker pods. |
+| `OPEN_RL_OPS_TTL_DAYS` | `7` | Days a record lives after its last write. `0` keeps records. The scheduler passes it to worker pods. |
+| `OPEN_RL_INSPECTION_API` | unset | No longer read: since #388 the API server mounts `/api/v1/inspect` itself. It lists every run, so keep that server away from clients. On GKE it reads nodes cluster-wide, which `k8s/deploy/base` does not grant; apply `k8s/deploy/dashboard`, whose RBAC binds the same service account. |
+| `OPEN_RL_PROMETHEUS_URL` | unset | Prometheus for GPU and vLLM metrics. Unset, the dashboard uses Managed Prometheus on GKE. |
+| `OPEN_RL_GKE_PROJECT` / `OPEN_RL_GKE_CLUSTER` / `OPEN_RL_GKE_LOCATION` | from the metadata server | The cluster whose metrics and logs the dashboard reads. `OPEN_RL_GKE_TELEMETRY=false` turns GKE reads off. |
+| `OPEN_RL_LOG_VIEWS` | the project | Comma-separated Cloud Logging views to read run logs from, such as a long-retention bucket's view. |
+| `OPEN_RL_CLIENT_RUNS_ROOT` | `/mnt/shared` | Where the dashboard looks for each run's client directory, three levels deep. |
+
+### Client metrics and logs
+
+The dashboard reads a run's client metrics and logs from the directory the
+tinker-cookbook client writes, its `log_path`. The client sends nothing extra.
+On GKE, set each run's `log_path` on the shared volume, such as
+`/mnt/shared/<project>/<run>`, which the API server also mounts at
+`/mnt/shared`. A run whose directory the server cannot read has no client
+metrics or logs.
+
+A directory is a run's when its `checkpoints.jsonl` names `tinker://<run>/`.
+Before the first checkpoint, it is a run's when its `config.json` was written
+within 60 seconds of the run's creation and names the run's base model. When
+several directories match a run and the time does not single one out, none
+is used.

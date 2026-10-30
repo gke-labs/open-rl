@@ -1,0 +1,30 @@
+# Managed Prometheus scrape targets the dashboard's PromQL expects:
+# openrl_gpu_held from the scheduler, which joins DCGM series to runs.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: open-rl-scheduler
+spec:
+  selector:
+    matchLabels:
+      app: open-rl-scheduler
+  endpoints:
+  - port: metrics
+    interval: 10s
+---
+# vLLM metrics from sampler pods: the PR adds a port named http (9095) to
+# every sampler pod, served by the worker's own Prometheus registry.
+# Worker pods carry the openrl.io/worker label; trainers have no http port,
+# so only samplers match the endpoint.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: open-rl-samplers
+spec:
+  selector:
+    matchExpressions:
+    - key: openrl.io/worker
+      operator: Exists
+  endpoints:
+  - port: http
+    interval: 10s

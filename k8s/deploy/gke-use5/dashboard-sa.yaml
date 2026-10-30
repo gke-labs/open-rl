@@ -1,0 +1,9 @@
+# Dedicated identity for the dashboard. Bound through Workload Identity
+# Federation directly (no Google service account in between) to
+# roles/monitoring.viewer and roles/logging.viewer on the project:
+#   principal://iam.googleapis.com/projects/288171024361/locations/global/workloadIdentityPools/cdrollouts-sunilarora.svc.id.goog/subject/ns/openrl-system/sa/open-rl-dashboard
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: open-rl-dashboard
+  namespace: openrl-system

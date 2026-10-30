@@ -1,0 +1,114 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Trial of PR #383 (run telemetry and dashboard) on open-rl-dra-use5
+# (us-east5): the FFT bundle plus the PR's dashboard deployment, with images
+# built from the rebased PR branch (try/pr-383-rebased-3) into the
+# us-east5 Artifact Registry repo. Shared volume on Filestore Zonal.
+#
+# Render from the PR worktree, which holds k8s/deploy/dashboard:
+#   kubectl apply --server-side --force-conflicts -k ../open-rl-pr383/k8s/deploy/gke-use5
+# Notes: runs/2026-10-27_pr383_dashboard_use5/notes.md
+# Overlay-level resources take this namespace too (dashboard-sa.yaml would
+# otherwise keep the file's).
+namespace: openrl-system
+resources:
+  - ../fft
+  - ../dashboard
+  - dashboard-sa.yaml
+  # Scrape targets for the dashboard's GPU and sampler charts. The DCGM
+  # exporter itself comes with the lora bundle since #391 (k8s/deploy/dcgm);
+  # k8s/deploy/dashboard still ships neither of these (finding 4).
+  - monitoring.yaml
+  # The demo app (sweep page + fleet view over the inspect API).
+  - demo-app
+
+images:
+  - name: ghcr.io/gke-labs/open-rl/server
+    newName: us-east5-docker.pkg.dev/cdrollouts-sunilarora/open-rl/open-rl-server
+    newTag: pr383-pools-c0cd426  # try/pr-383-rebased-3: #383 + our commits rebased on upstream 163533d (#388 #389 #391 #380)
+  - name: ghcr.io/gke-labs/open-rl/api-server
+    newName: us-east5-docker.pkg.dev/cdrollouts-sunilarora/open-rl/open-rl-api-server
+    newTag: pr383-pools-886bd93  # carries the dashboard's lane-occupancy fix (finding 14); server and client unchanged since c0cd426
+  - name: ghcr.io/gke-labs/open-rl/scheduler
+    newName: us-east5-docker.pkg.dev/cdrollouts-sunilarora/open-rl/open-rl-scheduler
+    newTag: pr383-844424a
+
+patches:
+  # Filestore Zonal for the shared volume (the bundle default is Basic HDD).
+  - target:
+      kind: PersistentVolumeClaim
+      name: open-rl-shared-pvc
+    patch: |-
+      apiVersion: v1
+      kind: PersistentVolumeClaim
+      metadata:
+        name: open-rl-shared-pvc
+      spec:
+        storageClassName: zonal-rwx
+
+  # The dashboard runs as its own service account so Workload Identity can
+  # give it, and only it, monitoring.viewer and logging.viewer. The PR's
+  # manifests reuse the API server's open-rl-sa; the bindings below add the
+  # dedicated account as a second subject so the PR's RBAC stays untouched.
+  - target:
+      kind: Deployment
+      name: open-rl-dashboard
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: open-rl-dashboard
+      spec:
+        template:
+          spec:
+            serviceAccountName: open-rl-dashboard
+            # Workload Identity needs the GKE metadata server; one default-pool
+            # node could not be replaced (us-east5-c stockout) and lacks it.
+            nodeSelector:
+              iam.gke.io/gke-metadata-server-enabled: "true"
+            containers:
+              - name: dashboard
+                env:
+                  - name: OPEN_RL_CLIENT_RUNS_ROOT
+                    value: /mnt/shared/open-rl/runs
+  - target:
+      kind: RoleBinding
+      name: open-rl-dashboard
+    patch: |-
+      - op: add
+        path: /subjects/-
+        value:
+          kind: ServiceAccount
+          name: open-rl-dashboard
+          namespace: openrl-system
+  - target:
+      kind: ClusterRoleBinding
+      name: open-rl-dashboard
+    patch: |-
+      - op: add
+        path: /subjects/-
+        value:
+          kind: ServiceAccount
+          name: open-rl-dashboard
+          namespace: openrl-system
+
+  # Demo: one worker per GPU while GPUs are free; seats on an existing claim
+  # only when none can be cut. The default binpack co-locates trainer and
+  # sampler on one GPU with the rest idle.
+  - target:
+      kind: Deployment
+      name: open-rl-scheduler
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: open-rl-scheduler
+      spec:
+        template:
+          spec:
+            containers:
+              - name: manager
+                env:
+                  - name: OPEN_RL_PLACEMENT_STRATEGY
+                    value: spread

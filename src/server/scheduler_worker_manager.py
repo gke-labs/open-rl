@@ -32,6 +32,7 @@ from kubernetes import client, config
 from server.estimator import Footprint, footprint
 from server.lora_snapshots import snapshot_root
 from server.sampling_dispatcher import revision_file, tmp_root
+from server.telemetry import SAMPLER_METRICS_PORT
 from server.vllm_options import ENGINE_ENV
 from server.worker_manager import (
   FAILED,
@@ -52,6 +53,7 @@ logger = logging.getLogger(__name__)
 GROUP = "openrl.io"
 VERSION = "v1alpha1"
 PLURAL = "workloads"
+OPS_SETTINGS = ("OPEN_RL_OPS_TTL_DAYS", "OPEN_RL_OPS_SAMPLE_LIMIT")
 
 EPP_IMAGE = "ghcr.io/llm-d/llm-d-router-endpoint-picker:v0.11.0"
 ENVOY_IMAGE = "docker.io/envoyproxy/envoy:distroless-v1.33.2"
@@ -148,7 +150,7 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   # MAX_JOBS caps FlashInfer's JIT build, which otherwise runs one ~3GB
   # compiler per core and blows through the pod's host memory limit.
   passed = (*ENGINE_ENV, "OPEN_RL_TRAIN_TOKEN_BUDGET", "MAX_JOBS")
-  for name in (*passed, "OPEN_RL_SAMPLE_DEADLINE_SECONDS"):
+  for name in (*passed, "OPEN_RL_SAMPLE_DEADLINE_SECONDS", *OPS_SETTINGS):
     if os.getenv(name):
       values[name] = os.environ[name]
   # vLLM keys its torch.compile artifacts by model, GPU type and engine config.
@@ -166,6 +168,9 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   env.append(downward("OPEN_RL_ACCEL_TIMESLICER_HOST", "status.hostIP"))
   if worker.pool:
     env.append(downward("POD_IP", "status.podIP"))
+  # The pod identity a worker stamps on the ops it records, for the dashboard.
+  for name, field in (("POD_NAME", "metadata.name"), ("POD_UID", "metadata.uid"), ("NODE_NAME", "spec.nodeName")):
+    env.append(downward(name, field))
   return env
 
 
@@ -241,6 +246,8 @@ def pod_template(worker: Worker) -> dict[str, Any]:
 
   if pull_policy := os.getenv("OPEN_RL_WORKER_IMAGE_PULL_POLICY"):
     template["spec"]["containers"][0]["imagePullPolicy"] = pull_policy
+  if worker.role == "sampler":
+    template["spec"]["containers"][0]["ports"] = [{"name": "http", "containerPort": SAMPLER_METRICS_PORT}]
   return template
 
 
@@ -564,6 +571,22 @@ class SchedulerWorkerManager:
         }
       )
     return workers
+
+  def workloads(self) -> list[dict[str, Any]]:
+    """Our Workload objects as the API returns them, read fresh, for the placement records."""
+    selector = "app.kubernetes.io/managed-by=open-rl-api-server"
+    return self.custom_api.list_namespaced_custom_object(GROUP, VERSION, self.namespace, PLURAL, label_selector=selector)["items"]
+
+  def pod_terminations(self) -> dict[str, list[dict[str, Any]]]:
+    """Each worker pod's container terminations, the current one and the one before a restart, for the placement records."""
+    found: dict[str, list[dict[str, Any]]] = {}
+    for pod in client.CoreV1Api().list_namespaced_pod(self.namespace, label_selector="openrl.io/worker").items:
+      for cs in pod.status.container_statuses or []:
+        for ended in (cs.state and cs.state.terminated, cs.last_state and cs.last_state.terminated):
+          if ended and ended.finished_at:
+            entry = {"at": ended.finished_at.timestamp(), "container": cs.name, "reason": ended.reason, "exit_code": ended.exit_code}
+            found.setdefault(pod.metadata.name, []).append(entry | {"signal": ended.signal})
+    return found
 
   def dispatcher_available(self, pool: str) -> bool:
     try:

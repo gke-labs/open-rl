@@ -79,10 +79,12 @@ func enabledNode() []client.Object {
 	nodeName := testNode
 	product := "NVIDIA RTX PRO 6000 Blackwell"
 	device := func(name string) resourcev1.Device {
+		uuid := "GPU-" + name
 		return resourcev1.Device{
 			Name: name,
 			Attributes: map[resourcev1.QualifiedName]resourcev1.DeviceAttribute{
 				"productName": {StringValue: &product},
+				"uuid":        {StringValue: &uuid},
 			},
 			Capacity: map[resourcev1.QualifiedName]resourcev1.DeviceCapacity{
 				"memory": {Value: resource.MustParse("96Gi")},

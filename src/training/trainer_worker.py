@@ -46,6 +46,8 @@ class BaseTrainerWorker:
   def __init__(self):
     self.tokenizer: PreTrainedTokenizerBase | None = None
     self.last_token_budget: int | None = None
+    # What the last save moved, for the op record: a sparse delta's density and size, or empty for a full checkpoint.
+    self.last_save_metrics: dict[str, float] = {}
 
     if torch.cuda.is_available():
       self.device = torch.device("cuda", local_rank())

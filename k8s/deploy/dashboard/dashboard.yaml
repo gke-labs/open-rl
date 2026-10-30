@@ -1,0 +1,68 @@
+# The dashboard as its own process (python -m server.dashboard), so it can be
+# restarted, scaled, or broken without touching the API server. It reuses the
+# slim API-server image: same dependencies, different entrypoint.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-dashboard
+  labels:
+    app: open-rl-dashboard
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-rl-dashboard
+  template:
+    metadata:
+      labels:
+        app: open-rl-dashboard
+    spec:
+      serviceAccountName: open-rl-sa
+      containers:
+      - name: dashboard
+        image: ghcr.io/gke-labs/open-rl/api-server:latest
+        command: ["uv", "run", "python", "-m", "server.dashboard", "--host", "0.0.0.0", "--port", "8000"]
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: REDIS_URL
+          value: redis://redis-service:6379
+        - name: OPEN_RL_WORKER_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        # GKE metrics use Cloud Monitoring's PromQL API (monitoring.viewer on
+        # the workload identity). Set OPEN_RL_PROMETHEUS_URL for another backend.
+        # A long run's activity keeps the process busy for seconds; the default
+        # one-second timeout took the pod out of its Service meanwhile.
+        readinessProbe:
+          httpGet:
+            path: /openapi.json
+            port: 8000
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+        # Each run's client directory, its tinker-cookbook log_path, holds its metrics and logs.
+        volumeMounts:
+        - name: shared-storage
+          mountPath: /mnt/shared
+          readOnly: true
+      volumes:
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
+          readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-rl-dashboard
+spec:
+  selector:
+    app: open-rl-dashboard
+  ports:
+  - port: 8000
+    targetPort: 8000

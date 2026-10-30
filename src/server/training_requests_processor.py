@@ -22,6 +22,7 @@ from server.lora_snapshots import freeze_adapter
 from server.model_metadata import get_model_metadata
 from server.sampling_store import SamplingStore
 from server.store import RedisStore, RequestStore, StateStore, get_state_store, get_store
+from server.telemetry import answered, finish, gpu_turn, observe_operation, popped, serving, set_phase
 from training import commands
 from training.commands import parse_command
 from training.distributed import broadcast_object, is_distributed, is_primary, local_rank
@@ -126,6 +127,7 @@ class TrainingRequestsProcessor:
       if self.time_slicer is not None:
         await self.time_slicer.register(self.workload)
         self.snapshot_registered = True
+      set_phase("ready")
       while True:
         try:
           await self.announce_readiness()
@@ -183,6 +185,7 @@ class TrainingRequestsProcessor:
       await self.time_slicer.close()
     except Exception:
       pass
+    await finish()
     os._exit(0)
 
   async def next_batch(self) -> list[dict[str, Any]]:
@@ -205,6 +208,7 @@ class TrainingRequestsProcessor:
     # Only rank 0 writes to the store; the other ranks computed the same result.
     if request_id is not None and is_primary():
       await self.store.set_result(request_id, result)
+      answered(request_id, result)
 
   async def run_once(self) -> None:
     batch = await self.next_batch()
@@ -214,6 +218,7 @@ class TrainingRequestsProcessor:
 
     shutdown = any(req.get("op") == "shutdown_workers" for req in batch)
     work = [req for req in batch if req.get("op") != "shutdown_workers"]
+    popped(work)
     model_id = batch[0].get("model_id", "default")
 
     results: list[tuple[str | None, dict[str, Any]]] = []
@@ -268,7 +273,7 @@ class TrainingRequestsProcessor:
     save_reqs = [r for r in requests if r.get("op") in save_ops]
 
     if gpu_reqs:
-      async with self.time_slicer.acquire(self.workload):
+      async with gpu_turn(self.time_slicer.acquire(self.workload)):
         await asyncio.to_thread(self.worker.wake_up)
         try:
           for request in gpu_reqs:
@@ -282,7 +287,7 @@ class TrainingRequestsProcessor:
       for request in save_reqs:
         results.append(await self.handle_request(request))
     else:
-      async with self.time_slicer.acquire(self.workload):
+      async with gpu_turn(self.time_slicer.acquire(self.workload)):
         for request in save_reqs:
           results.append(await self.handle_request(request))
 
@@ -301,7 +306,7 @@ class TrainingRequestsProcessor:
       ctx = propagate.extract(command.trace_context) if command.trace_context else None
       token = otel_context.attach(ctx) if ctx else None
 
-      result = await self.dispatch_operation(command)
+      result = await observe_operation(raw_request, "trainer", self.model_id, lambda: self.dispatch_operation(command))
       return request_id, result
     except Exception as exc:
       traceback.print_exc()
@@ -311,6 +316,12 @@ class TrainingRequestsProcessor:
     finally:
       if token:
         otel_context.detach(token)
+
+  def save_metrics(self) -> dict[str, Any]:
+    """The last save's metrics (a sparse delta's density and size) for the op record. The API server drops them from
+    the client's response, which the SDK's save types do not carry."""
+    metrics = self.worker.last_save_metrics
+    return {"metrics": dict(metrics)} if metrics else {}
 
   async def dispatch_operation(self, command: commands.TrainingCommand) -> dict[str, Any]:
     match command:
@@ -364,7 +375,7 @@ class TrainingRequestsProcessor:
         return result
       case commands.SaveState():
         result = await asyncio.to_thread(self.worker.save_state, command.model_id, command.state_path, command.include_optimizer, command.kind)
-        return {"path": result.get("path", command.state_path), "type": "state_saved"}
+        return {"path": result.get("path", command.state_path), "type": "state_saved", **self.save_metrics()}
       case commands.LoadWeights():
         await asyncio.to_thread(self.worker.load_from_state, command.model_id, command.state_path, command.restore_optimizer)
         return {"path": command.state_path, "type": "weights_loaded"}
@@ -376,7 +387,7 @@ class TrainingRequestsProcessor:
         elif self.sampling is not None and is_primary() and ref:
           # A sampler serves a LoRA save by its reference, so the adapter is frozen under that name.
           await asyncio.to_thread(freeze_adapter, command.model_id, self.worker.base_model_name, command.path, command.sampling_session_id)
-        return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
+        return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved", **self.save_metrics()}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)
         return {"status": "ok", "type": "model_deleted"}
@@ -472,6 +483,11 @@ async def main_async(args: argparse.Namespace) -> None:
   )
 
 
+async def serve_trainer(args: argparse.Namespace) -> None:
+  async with serving("trainer", os.getenv("OPEN_RL_MODEL_ID") or args.model_id):
+    await main_async(args)
+
+
 def start_request_processing_loop() -> None:
   parser = argparse.ArgumentParser()
   parser.add_argument("--model-id", help="Model id whose per-model request queue this dedicated trainer worker drains.")
@@ -485,7 +501,7 @@ def start_request_processing_loop() -> None:
   cuda_devs = os.getenv("CUDA_VISIBLE_DEVICES", "ALL")
   print(f"-> Hardware : CUDA_VISIBLE_DEVICES={cuda_devs}")
 
-  asyncio.run(main_async(args))
+  asyncio.run(serve_trainer(args))
 
 
 if __name__ == "__main__":

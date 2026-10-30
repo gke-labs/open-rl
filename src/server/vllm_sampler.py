@@ -9,6 +9,7 @@ import asyncio
 import logging
 import os
 import signal
+import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -19,6 +20,7 @@ from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload
 from server.lora_snapshots import snapshot_root
 from server.sampling_dispatcher import Dispatcher, RevisionUnloadable, delta_applies, failed, redis_client
 from server.sampling_store import SamplingStore
+from server.telemetry import gpu_turn, sampled_group, serve_metrics, serving, set_phase
 from server.vllm_options import engine_args, sample_params, sample_result
 
 logger = logging.getLogger(__name__)
@@ -133,7 +135,7 @@ async def holding_gpu(time_slicer: TimeSlicerClient | None, workload: WorkloadRe
   if time_slicer is None:
     yield
     return
-  async with time_slicer.acquire(workload):
+  async with gpu_turn(time_slicer.acquire(workload)):
     if sampler is not None:
       await sampler.wake()
     try:
@@ -159,7 +161,9 @@ class TimeSlicedDispatcher(Dispatcher):
     async with holding_gpu(self.time_slicer, self.workload, self.sampler):
       await self.read()  # requests that arrived while the turn was pending join it
       if await self.ready():
-        await asyncio.gather(*(self.send(r) for r in self.to_send()[: self.concurrency]))
+        batch, started = self.to_send()[: self.concurrency], time.time()
+        await asyncio.gather(*(self.send(r) for r in batch))
+        sampled_group(batch, started)  # one record per run for the group, so the lane shows when it sampled
 
 
 def make_engine(sleep_mode: bool, is_lora: bool) -> Any:
@@ -181,6 +185,13 @@ async def run_sampling_worker(pool: str) -> None:
   store = SamplingStore(redis_client(os.environ["REDIS_URL"]))
   if time_slicer is not None:
     await time_slicer.register(workload)
+  serve_metrics()  # vLLM's own registry on the http port, for the sampler PodMonitoring
+  async with serving("sampler", pool):  # this process's worker record, rewritten every few seconds
+    await serve_pool(pool, store, time_slicer, workload)
+
+
+async def serve_pool(pool: str, store: SamplingStore, time_slicer: TimeSlicerClient | None, workload: WorkloadRef | None) -> None:
+  """The worker's life after registration: boot the engine, serve the pool, and give everything back at the end."""
   sampler = None
   try:
     async with holding_gpu(time_slicer, workload):
@@ -189,6 +200,7 @@ async def run_sampling_worker(pool: str) -> None:
       if time_slicer is not None:
         await sampler.sleep()  # give the memory back before releasing the turn
     Path(READY_FILE).touch()
+    set_phase("ready")
     concurrency = int(os.getenv("OPEN_RL_DISPATCH_CONCURRENCY", "256"))
     if time_slicer is not None:
       dispatcher = TimeSlicedDispatcher(store, pool, sampler, concurrency, time_slicer, workload)

@@ -23,6 +23,9 @@ class RuntimeManager:
   def release(self, model_id):
     self.released_models.append(model_id)
 
+  def workloads(self):
+    return []
+
   def release_owner(self, owner):
     self.released.append(owner)
     return {"test-base"} if owner == "test-base" else set()

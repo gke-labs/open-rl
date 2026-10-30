@@ -19,6 +19,7 @@ import httpx
 import redis.asyncio as redis
 
 from server.sampling_store import SamplingStore, job_of
+from server.telemetry import op_finished, sampled_group
 from server.vllm_options import sample_params, sample_result
 
 logger = logging.getLogger(__name__)
@@ -110,9 +111,14 @@ class Dispatcher:
     await self.read()
     if await self.ready():
       # Read after the await above, so a request whose result was saved meanwhile is not sent again.
-      for r in self.to_send()[: self.concurrency - len(self.in_flight)]:
+      batch, started, tasks = self.to_send()[: self.concurrency - len(self.in_flight)], time.time(), []
+      for r in batch:
         self.in_flight[r["request_id"]] = task = asyncio.create_task(self.send(r))
         task.add_done_callback(lambda _, request_id=r["request_id"]: self.in_flight.pop(request_id))
+        tasks.append(task)
+      if tasks:
+        # the group record once every send of this dispatch has answered
+        asyncio.gather(*tasks, return_exceptions=True).add_done_callback(lambda _, b=batch, t=started: sampled_group(b, t))
 
   async def ready(self) -> bool:
     """Whether the sampler serves the current revision, loading it if it can. A revision it can never load fails its
@@ -177,14 +183,17 @@ class Dispatcher:
   async def send(self, r: dict[str, Any]) -> None:
     """Saves the sampler's answer. None, or an error, leaves the record pending to be sent again."""
     self.served[job_of(r)] = next(self.sends)
+    started = time.time()
     try:
       # A sampler that never answers must not hold the send past its record's deadline.
       timeout = max(0.0, accepted_at(r) + SAMPLE_DEADLINE_SECONDS - time.time())
       result = await asyncio.wait_for(self.sampler.generate(r), timeout)
     except Exception as exc:
+      op_finished(r, "sampler", r.get("pool"), started, type(exc).__name__)
       logger.info("Retrying %s after %r", r["request_id"], exc)
       return
     if result is not None:
+      op_finished(r, "sampler", r.get("pool"), started, result=result)
       await self.set_result(r, result)
 
 

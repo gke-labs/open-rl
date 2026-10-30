@@ -7,9 +7,10 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from server import api_server
+from server import api_server, telemetry
 from server.store import InMemoryStateStore, InMemoryStore
 from server.worker_manager import LocalWorkerManager
+from tests.api_client import asgi_client
 from tests.test_session_lifecycle import RuntimeManager
 
 
@@ -20,6 +21,7 @@ class ApiServerTest(unittest.TestCase):
   def setUp(self) -> None:
     self.enterContext(patch.object(api_server, "store", InMemoryStore()))
     self.enterContext(patch.object(api_server, "state", InMemoryStateStore()))
+    self.enterContext(patch.object(api_server.session_registry, "state", api_server.state))
     self.client = TestClient(api_server.app)
 
   def post(self, path: str, body: dict, **kwargs):
@@ -576,6 +578,40 @@ class TrainerBackendTest(ApiServerTest):
       self.assertEqual(self.post("create_model", {"base_model": "m", "user_metadata": fft}).status_code, 400)
       exclusive = self.post("create_model", {"base_model": "m", "user_metadata": {**fft, "openrl.exclusive": "true"}})
     self.assertEqual(self.metadata(exclusive.json()["request_id"])["sampler_replicas"], 4)
+
+
+class TelemetryRecordsTest(ApiServerTest):
+  """Records are written in the background, so each test runs its requests in one loop and lets the writes land."""
+
+  def setUp(self) -> None:
+    super().setUp()
+    # The in-memory store has no Redis, which the vLLM pool path needs on delete; these tests are about the records.
+    self.enterContext(patch.dict(os.environ, {"SAMPLING_BACKEND": "torch"}))
+    self.enterContext(patch("server.worker_manager.get_state_store", return_value=api_server.state))
+    self.enterContext(patch.object(telemetry, "get_state_store", return_value=api_server.state))
+
+  def call(self, *requests: tuple[str, dict]) -> list[dict]:
+    async def run() -> list[dict]:
+      async with asgi_client() as client:
+        answers = [(await client.post(f"/api/v1/{path}", json=body)).json() for path, body in requests]
+      await asyncio.gather(*list(telemetry.writes))
+      return answers
+
+    return asyncio.run(run())
+
+  def test_a_shared_trainers_delete_is_counted_neither_enqueued_nor_popped(self) -> None:
+    [created] = self.call(("create_model", {"base_model": "m"}))
+    self.assertEqual(self.post("delete_model", {"model_id": created["request_id"]}).status_code, 200)
+
+    async def trainer() -> None:
+      async with telemetry.serving("trainer", "m"):
+        requests = await api_server.store.get_requests(active_set_id="m-1")
+        self.assertEqual([r["op"] for r in requests], ["create_model", "delete_model"])
+        telemetry.popped(requests)
+
+    asyncio.run(trainer())
+    counts = asyncio.run(api_server.state.read_counts(telemetry.key("ledger", created["request_id"])))
+    self.assertEqual(counts, {"enqueued": 1, "popped": 1})
 
 
 if __name__ == "__main__":

@@ -359,7 +359,10 @@ def examples_env(config: RunConfig) -> dict[str, str]:
       weight_sync = token.split("=", 1)[1]
   weight_sync = config.weight_sync_strategy or weight_sync
   fine_tuning_type = "full" if config.scenario.startswith("fft") or "fft" in config.scenario else None
-  set_settings(env, fine_tuning_type=fine_tuning_type, weight_sync=weight_sync)
+  # An RL scenario samples from its first step, so the API server should start the sampler with the trainer
+  # (openrl.recipe=rl) rather than on the first sample request.
+  recipe = "rl" if {"rl", "textsql"} & set(config.scenario.split("-")) else None
+  set_settings(env, fine_tuning_type=fine_tuning_type, weight_sync=weight_sync, recipe=recipe)
   existing_path = env.get("PYTHONPATH", "")
   env["PYTHONPATH"] = f"examples:{existing_path}" if existing_path else "examples"
   return env

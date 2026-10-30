@@ -1,0 +1,635 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenRL demo</title>
+<style>
+  :root { --bg:#0F1113; --ink:#F2EEDE; --soft:#C9C6BA; --faint:#7D7B72; --line:#2A2D31; --tile:#1A1D21; --tileOn:#23272C;
+          --lora:#2CC2AE; --loraSoft:#17433D; --fft:#E9743A; --fftSoft:#4A2A18; --api:#4D95E8; --wait:#E6C230; --ok:#4CC27A; --bad:#E05A4F; --term:#0B0D0F; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; background:var(--bg); color:var(--ink); font:15px/1.45 "Avenir Next","Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif; }
+  .mono { font-family:"SF Mono",Menlo,Consolas,"Liberation Mono",monospace; }
+  header { display:flex; align-items:center; gap:18px; padding:14px 28px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:20px; font-weight:700; }
+  header h1 span { color:var(--faint); font-weight:500; margin-left:8px; }
+  nav button { background:none; border:0; color:var(--faint); font:inherit; font-size:16px; padding:6px 12px; cursor:pointer; border-radius:6px; }
+  nav button.on { color:var(--ink); background:var(--tile); }
+  header .right { margin-left:auto; color:var(--faint); font-size:13px; }
+  main { padding:20px 28px; }
+  .tab { display:none; } .tab.on { display:block; }
+  /* sweep */
+  .row { display:flex; gap:12px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+  input, select { background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:inherit; font-size:14px; }
+  input[type=number] { width:80px; }
+  button.act { background:var(--tile); color:var(--ink); border:1px solid var(--line); border-radius:6px; padding:8px 14px; font:inherit; font-size:14px; cursor:pointer; }
+  button.act:hover { border-color:var(--faint); }
+  button.primary { background:var(--lora); color:#06211D; border-color:var(--lora); font-weight:600; }
+  button.danger { color:var(--bad); border-color:#5a2b27; }
+  button.small { padding:3px 9px; font-size:12px; }
+  table { border-collapse:collapse; width:100%; }
+  th { text-align:left; color:var(--faint); font-weight:600; font-size:12px; padding:6px 8px; border-bottom:1px solid var(--line); }
+  td { padding:6px 8px; border-bottom:1px solid var(--line); vertical-align:middle; font-size:14px; }
+  .spec td input, .spec td select { width:100%; }
+  .spec td.n input { width:80px; }
+  .grid { display:grid; grid-template-columns: 1fr 1fr; gap:24px; align-items:start; }
+  .log { background:var(--term); border:1px solid var(--line); border-radius:8px; padding:14px 16px; height:420px; overflow:auto; font-size:13px; line-height:1.6; color:var(--soft); }
+  .log .c { color:var(--ink); } .log .t { color:var(--faint); margin-right:8px; } .log .g { color:var(--api); } .log .q { color:var(--ink); } .log .l { color:var(--lora); } .log .f { color:var(--fft); }
+  .st { display:inline-block; padding:1px 8px; border-radius:999px; font-size:12px; border:1px solid var(--line); }
+  .st.queued,.st.submitting { color:var(--faint); } .st.waiting { color:var(--wait); } .st.starting { color:var(--api); } .st.running { color:var(--ink); border-color:var(--soft); } .st.done { color:var(--ok); } .st.failed { color:var(--bad); }
+  .bar { position:relative; width:160px; height:14px; background:var(--tile); border-radius:4px; overflow:hidden; display:inline-block; vertical-align:middle; margin-right:8px; }
+  .bar i { position:absolute; left:0; top:0; bottom:0; }
+  /* fleet */
+  .stage-wrap { display:grid; place-items:center; --u:min(calc((100vw - 56px) / 100), calc((100vh - 110px) / 56.25)); }
+  .stage { position:relative; width:calc(var(--u) * 100); height:calc(var(--u) * 56.25); background:var(--bg); overflow:hidden; border:1px solid var(--line); border-radius:10px; }
+  canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
+  .hint { color:var(--faint); font-size:13px; margin-top:10px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenRL <span>demo</span></h1>
+  <nav><button data-tab="sweep" class="on">Sweep</button><button data-tab="fleet">Fleet</button><button data-tab="timeline">Timeline</button><button data-tab="weights">Weights</button><button data-tab="harvey">Harvey LAB</button></nav>
+  <div class="right" id="conn">connecting</div>
+</header>
+<main>
+  <section class="tab on" id="tab-sweep">
+    <div class="row">
+      <label>run <input id="run" class="mono" value="" size="16"></label>
+      <span style="color:var(--faint)">presets</span><span id="presets"></span>
+      <button class="act" id="addrow">Add row</button>
+      <span style="flex:1"></span>
+      <button class="act primary" id="start">Start sweep</button>
+      <button class="act danger" id="stopall">Stop all</button>
+    </div>
+    <div class="grid">
+      <div>
+        <table class="spec" id="spec"><thead><tr><th>type</th><th>model</th><th>count</th><th>steps</th><th>first seed</th><th></th></tr></thead><tbody></tbody></table>
+        <datalist id="models"><option value="google/gemma-4-e2b"><option value="Qwen/Qwen3-0.6B"><option value="Qwen/Qwen2.5-0.5B-Instruct"></datalist>
+        <p class="hint">Each row becomes count Jobs, seeds first seed and up. Every Job runs the GSM8K GRPO recipe against the in-cluster API server; LoRA jobs on one base model share a runtime, full fine-tuning jobs get their own trainer and sampler.</p>
+      </div>
+      <div class="log mono" id="log"></div>
+    </div>
+    <h3 style="margin:22px 0 8px;font-size:15px;color:var(--soft)">Jobs</h3>
+    <table id="jobs"><thead><tr><th>sweep</th><th>#</th><th>job</th><th>model</th><th>type</th><th>seed</th><th>state</th><th>steps</th><th>run</th><th>views</th><th></th></tr></thead><tbody></tbody></table>
+  </section>
+  <section class="tab" id="tab-fleet">
+    <div class="row" style="margin-bottom:10px"><label>sweep <select id="fleet-run"><option value="">all</option></select></label><span class="hint" style="margin:0">Click a GPU tile for its timeline, a job row for the job's timeline, double-click a job row for its weights.</span></div>
+    <div class="stage-wrap"><div class="stage"><canvas id="fleet"></canvas></div></div><p class="hint">Jobs and placements from Kubernetes every second; runs and steps from the inspection API, which caches for 5 to 10 s. DCGM duty is about a minute behind.</p></section>
+  <section class="tab" id="tab-timeline">
+    <div class="row">
+      <label>accelerator <select id="tl-gpu"><option value="">—</option></select></label>
+      <label>job <select id="tl-job"><option value="">—</option></select></label>
+      <label>window <select id="tl-win"><option value="900">15 min</option><option value="1800" selected>30 min</option><option value="3600">1 h</option><option value="sweep">this sweep</option></select></label>
+      <label id="tl-others-wrap" style="display:none"><input type="checkbox" id="tl-others"> overlay other jobs on these GPUs</label>
+      <span class="hint" style="margin:0">Pick one. Clicking a GPU tile or a job row on the Fleet tab opens it here.</span>
+    </div>
+    <div class="stage-wrap"><div class="stage"><canvas id="timeline"></canvas></div></div>
+    <p class="hint">One trace per accelerator: 1 while a worker holds the GPU, coloured by who holds it; 0 when idle. The thin band at the base is a worker that has the claim but no turn. Drag across the trace to select a window: the percentages are then computed over exactly that span; Escape or double-click returns to the live sliding window. Turns come from each worker's own record through the inspection API's activity route, fetched every 1.5 s (the API caches 5 to 10 s).</p>
+  </section>
+  <section class="tab" id="tab-weights">
+    <div class="row">
+      <label>job <select id="wt-job"><option value="">—</option></select></label>
+      <span class="hint" style="margin:0">Full fine-tuning publishes a sparse delta to the sampler after every optimizer step: only the weights that changed. This shows how much of the model that was, step by step.</span>
+    </div>
+    <div class="stage-wrap"><div class="stage"><canvas id="weights"></canvas></div></div>
+    <p class="hint">Read from the trainer's log lines through the inspection API's logs route (Cloud Logging, a few seconds behind). A LoRA job publishes adapter files instead and has no delta.</p>
+  </section>
+  <section class="tab" id="tab-harvey"><div class="stage-wrap"><div class="stage"><canvas id="harvey"></canvas></div></div><p class="hint">A previous run, from examples/harvey_labs: held-out reward 0.57 to 0.72 in 30 steps. Press r to replay.</p></section>
+</main>
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const T = { bg:'#0F1113', ink:'#F2EEDE', soft:'#C9C6BA', faint:'#7D7B72', line:'#2A2D31', tile:'#1A1D21', tileOn:'#23272C', lora:'#2CC2AE', loraSoft:'#17433D', fft:'#E9743A', fftSoft:'#4A2A18', api:'#4D95E8', wait:'#E6C230', ok:'#4CC27A', bad:'#E05A4F' };
+  const SANS = '"Avenir Next","Segoe UI","Helvetica Neue",Helvetica,Arial,sans-serif', MONO = '"SF Mono",Menlo,Consolas,"Liberation Mono",monospace';
+  const clamp = (x,a=0,b=1) => Math.max(a, Math.min(b,x));
+  const mmss = s => `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`;
+  const short = m => (m||'').split('/').pop().toLowerCase();
+  const api = async (p, opts) => { const r = await fetch(p, opts); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); };
+
+  // ---- tabs
+  function showTab(name) {
+    const b = document.querySelector(`nav button[data-tab="${name}"]`); if (!b) return;
+    document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+    document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + name));
+    if (name === 'harvey') harveyStart = performance.now();
+    if (!location.hash.startsWith('#' + name)) history.replaceState(null, '', '#' + name);
+    if (name === 'weights' && typeof wt !== 'undefined' && !wt.job && tl.kind === 'job') { wt.job = tl.id; wtSel.value = tl.id; }
+  }
+  document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  addEventListener('hashchange', () => showTab((location.hash.slice(1) || 'sweep').split('?')[0]));
+  if (location.hash) showTab(location.hash.slice(1).split('?')[0]);
+
+  // ---- sweep: spec editor
+  const spec = $('#spec tbody');
+  function addRow(r = { kind:'fft', model:'Qwen/Qwen3-0.6B', count:1, steps:4, seed:1 }) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td><select><option value="lora"${r.kind==='lora'?' selected':''}>lora</option><option value="fft"${r.kind==='fft'?' selected':''}>full</option></select></td>
+      <td><input list="models" value="${r.model}"></td><td class="n"><input type="number" min="1" max="40" value="${r.count}"></td>
+      <td class="n"><input type="number" min="1" max="100" value="${r.steps}"></td><td class="n"><input type="number" min="0" value="${r.seed}"></td>
+      <td><button class="act small">remove</button></td>`;
+    tr.querySelector('button').onclick = () => tr.remove();
+    spec.appendChild(tr);
+  }
+  function readSpec() {
+    return [...spec.querySelectorAll('tr')].map(tr => { const [k, m, c, s, d] = tr.querySelectorAll('select,input'); return { kind:k.value, model:m.value.trim(), count:+c.value, steps:+s.value, seed:+d.value }; }).filter(r => r.model && r.count > 0);
+  }
+  $('#addrow').onclick = () => addRow();
+  $('#run').value = 'demo-' + new Date().toISOString().slice(11,19).replace(/:/g,'');
+  api('/api/sweep/presets').then(P => {
+    for (const name of Object.keys(P)) {
+      const b = document.createElement('button'); b.className = 'act small'; b.textContent = name;
+      b.onclick = () => { spec.innerHTML = ''; P[name].jobs.forEach(j => addRow({ seed:1, ...j })); };
+      $('#presets').appendChild(b);
+    }
+    spec.innerHTML = ''; P['keynote-20'].jobs.forEach(j => addRow({ seed:1, ...j }));
+  });
+
+  // ---- sweep: log and actions
+  const log = $('#log');
+  function say(html) { const d = document.createElement('div'); d.innerHTML = `<span class="t">${new Date().toISOString().slice(11,19)}</span>${html}`; log.appendChild(d); log.scrollTop = log.scrollHeight; }
+  $('#start').onclick = async () => {
+    const jobs = readSpec(); if (!jobs.length) return say('<span class="c">nothing to start</span>');
+    const n = jobs.reduce((a, j) => a + j.count, 0);
+    say(`<span class="c">$ openrl sweep start --run ${$('#run').value} --jobs ${n}</span>`);
+    sweepStart = Date.now() / 1000;
+    try { const r = await api('/api/sweep/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ run: $('#run').value, jobs }) });
+      say(`<span class="c">${r.created.length} jobs submitted. Same loop in every one; only the model, the tuning mode and the seed differ.</span>`); }
+    catch (e) { say(`<span class="f">${e.message}</span>`); }
+  };
+  $('#stopall').onclick = async () => { say('<span class="c">$ openrl sweep stop --all</span>'); const r = await api('/api/sweep/stop_all', { method:'POST' }); say(`<span class="c">stopped ${r.stopped.length}: workers released ${r.stopped.filter(s => s.released).length}</span>`); };
+
+  // ---- state
+  let jobsList = [], fleetJobs = [], latestRun = null, fleetRun = null, runs = {}, inventory = null, busy = null, seen = new Set(), sweepStart = null, lastTick = 0, heldSecs = 0, capSecs = 0, heldLast = null;
+  const fleetRunSel = $('#fleet-run'); fleetRunSel.onchange = () => { fleetRun = fleetRunSel.value || null; };
+  const sweepLetter = new Map(); let backlogSeen = false;
+  const tag = j => `${sweepLetter.get(j.run) || ''}${String(jobIndex.get(j.name)).padStart(2,'0')}`;  // A15: sweep letter + job number
+  const jobIndex = new Map();
+  function stateOf(j) {
+    const run = j.run_id ? runs[j.run_id] : null;
+    if (j.state === 'failed') return 'failed';
+    if (j.state === 'succeeded' || (run && run.lifecycle === 'ended')) return 'done';
+    if (!run) return j.pod_phase === 'Running' ? 'submitting' : 'queued';
+    if (run.lifecycle === 'waiting') return 'waiting';
+    return (run.steps || 0) > 0 ? 'running' : 'starting';
+  }
+  // Each source on its own clock, so a slow one never holds the others back. The dashboard caches its fleet
+  // snapshot for 5 s and run ops for 10 s; Jobs and Workloads are read live from Kubernetes every second.
+  let livePlacements = null, inflight = {};
+  function every(ms, key, fn) { const tick = async () => { if (inflight[key]) return; inflight[key] = true; try { await fn(); } catch (e) { $('#conn').textContent = 'disconnected: ' + e.message; } finally { inflight[key] = false; } }; setInterval(tick, ms); tick(); }
+  every(1000, 'runs', async () => { const R = await api('/api/inspect/runs?ended=true'); runs = Object.fromEntries(R.runs.map(r => [r.run_id, r])); });
+  every(1500, 'inventory', async () => { inventory = await api('/api/inspect/inventory'); });
+  every(1000, 'placements', async () => { livePlacements = (await api('/api/sweep/placements')).placements; });
+  async function poll() {
+    try {
+      const J = await api('/api/sweep/jobs');
+      jobsList = J.jobs; $('#conn').textContent = 'connected · ' + new Date().toISOString().slice(11,19) + 'Z';
+      // jobs arrive newest first; number each within its own sweep in creation order
+      const byRun = {}; [...jobsList].sort((a, b) => a.created_at - b.created_at).forEach(j => { byRun[j.run] = (byRun[j.run] || 0) + 1; jobIndex.set(j.name, byRun[j.run]); });
+      // sweeps get a letter by recency (A = newest) so job numbers stay unambiguous across sweeps; the Fleet tab
+      // shows every sweep unless one is chosen in the selector
+      const runsSeen = [...new Set(jobsList.map(j => j.run))], want = runsSeen.join('|');
+      sweepLetter.clear(); runsSeen.forEach((r, i) => sweepLetter.set(r, String.fromCharCode(65 + (i % 26))));
+      if (fleetRunSel.dataset.want !== want) { fleetRunSel.dataset.want = want; const cur = fleetRunSel.value; fleetRunSel.innerHTML = '<option value="">all</option>' + runsSeen.map(r => `<option value="${r}">${sweepLetter.get(r)} · ${r} · ${jobsList.filter(j => j.run === r).length} jobs</option>`).join(''); fleetRunSel.value = cur; }
+      const chosen = fleetRun && runsSeen.includes(fleetRun) ? fleetRun : null;
+      if (chosen !== latestRun) { latestRun = chosen; heldSecs = 0; capSecs = 0; heldLast = null; sweepStart = null; }
+      const pool = chosen ? jobsList.filter(j => j.run === chosen) : jobsList;
+      // active jobs first in submission order, then finished ones newest first
+      const rank = j => (j.state === 'succeeded' || j.state === 'failed') ? 1 : 0;
+      fleetJobs = pool.slice().sort((a, b) => rank(a) - rank(b) || (rank(a) ? b.created_at - a.created_at : a.created_at - b.created_at));
+      const active = fleetJobs.filter(j => !rank(j));
+      const anchor = active.length ? Math.min(...active.map(j => j.created_at)) : (fleetJobs.length ? Math.min(...fleetJobs.map(j => j.created_at)) : null);
+      if (anchor !== sweepStart) { sweepStart = anchor; if (active.length === 0 || sweepStart === null) { heldSecs = 0; capSecs = 0; heldLast = null; } }
+      if (!backlogSeen) { backlogSeen = true; jobsList.forEach(j => seen.add(j.name)); if (jobsList.length) say(`<span class="c">${jobsList.length} jobs on the cluster from ${new Set(jobsList.map(j => j.run)).size} sweeps; new submissions stream below.</span>`); }
+      for (const j of [...jobsList].reverse()) if (!seen.has(j.name)) { seen.add(j.name); const k = j.kind === 'lora' ? 'l' : 'f';
+        say(`submitted  <span class="q">${String(jobIndex.get(j.name)).padStart(2,'0')}</span>  <span class="${j.model.includes('gemma')?'g':'q'}">${short(j.model).padEnd(14)}</span> <span class="${k}">${j.kind==='lora'?'lora':'full'}</span>  seed=${j.seed}  ${j.name}`); }
+      renderJobs();
+    } catch (e) { $('#conn').textContent = 'disconnected: ' + e.message; }
+    // GPU time held: accumulated from the placements seen on each poll, as the mock's gauge meant it.
+    { const now = Date.now()/1000, devs = (((inventory||{}).cluster||{}).nodes||[]).reduce((a, n) => a + (n.devices||[]).length, 0);
+      const heldNow = new Set(((livePlacements || (inventory||{}).placements)||[]).flatMap(p => p.devices||[])).size;
+      if (heldLast !== null && devs) { heldSecs += heldNow * (now - heldLast); capSecs += devs * (now - heldLast); } heldLast = now; }
+    if (Date.now() - lastTick > 10000) { lastTick = Date.now(); const since = Math.round(sweepStart ? Math.min(sweepStart, Date.now()/1000 - 60) : Date.now()/1000 - 600);
+      api(`/api/inspect/query?name=gpu_busy&since=${since}&points=1`).then(q => { const vals = (q.series||[]).map(s => s.points.length ? s.points[s.points.length-1][1] : null).filter(v => v !== null); busy = vals.length ? vals : null; }).catch(() => {}); }
+  }
+  function renderJobs() {
+    const tb = $('#jobs tbody'); tb.innerHTML = '';
+    for (const j of jobsList) {
+      const run = j.run_id ? runs[j.run_id] : null, st = stateOf(j), n = run ? Math.min(run.steps || 0, j.steps) : (st === 'done' ? j.steps : 0);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `<td class="mono" style="color:var(--faint)">${sweepLetter.get(j.run) || ''} ${j.run}</td><td class="mono">${String(jobIndex.get(j.name)).padStart(2,'0')}</td><td class="mono">${j.name}</td><td style="color:${j.model.includes('gemma')?T.api:T.ink}">${short(j.model)}</td>
+        <td style="color:${j.kind==='lora'?T.lora:T.fft}">${j.kind==='lora'?'lora':'full'}</td><td class="mono">${j.seed}</td><td><span class="st ${st}">${st}</span></td>
+        <td><span class="bar"><i style="width:${100*n/Math.max(1,j.steps)}%;background:${j.kind==='lora'?T.lora:T.fft}"></i></span><span class="mono" style="color:${st==='done'?T.ok:T.faint}">${n}/${j.steps}</span></td>
+        <td class="mono" style="color:var(--faint)">${j.run_id ? j.run_id.slice(0,8) : ''}</td>
+        <td><button class="act small" data-v="timeline">timeline</button> <button class="act small" data-v="weights">weights</button> <button class="act small" data-v="fleet">fleet</button></td>
+        <td><button class="act small danger" data-v="stop">stop</button></td>`;
+      tr.querySelector('[data-v=stop]').onclick = async () => { say(`<span class="c">$ openrl sweep stop ${j.name}</span>`); const r = await api('/api/sweep/stop', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ name: j.name }) }); say(`stopped ${j.name}${r.released ? ', workers released' : ''}`); };
+      tr.querySelector('[data-v=timeline]').onclick = () => openTimeline('job', j.name, { span: true });
+      tr.querySelector('[data-v=weights]').onclick = () => openWeights(j.name);
+      tr.querySelector('[data-v=fleet]').onclick = () => { fleetRunSel.value = j.run; fleetRun = j.run; showTab('fleet'); };
+      tb.appendChild(tr);
+    }
+  }
+  every(1000, 'jobs', poll);
+
+  // ---- fleet canvas (the mock's scene 2, fed by the API)
+  const W = 1920, H = 1080;
+  function setup(canvas) { const ctx = canvas.getContext('2d'); const dpr = Math.min(2, devicePixelRatio || 1), r = canvas.getBoundingClientRect();
+    if (canvas.width !== Math.round(r.width * dpr)) { canvas.width = Math.round(r.width * dpr); canvas.height = Math.round(r.height * dpr); }
+    ctx.setTransform(canvas.width / W, 0, 0, canvas.height / H, 0, 0); return ctx; }
+  function rr(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); }
+  function text(ctx, s, x, y, size, color, align='left', weight=500, font=SANS) { ctx.font = `${weight} ${size}px ${font}`; ctx.fillStyle = color; ctx.textAlign = align; ctx.textBaseline = 'middle'; ctx.fillText(s, x, y); }
+  const mono = (ctx, s, x, y, size=26, color=T.soft, align='left', weight=500) => text(ctx, s, x, y, size, color, align, weight, MONO);
+  function fit(ctx, s, maxW, size, weight=500, font=MONO) { ctx.font = `${weight} ${size}px ${font}`; if (ctx.measureText(s).width <= maxW) return s; while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; }
+  const STATE_COLOR = { queued:T.faint, submitting:T.faint, waiting:T.wait, starting:T.api, running:T.ink, done:T.ok, failed:T.bad };
+  function drawFleet(t) {
+    const canvas = $('#fleet'); refreshSelectors(); if (!canvas.offsetParent) return; const ctx = setup(canvas); hits = [];
+    ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    const cluster = inventory ? 'open-rl-dra-use5  ·  openrl-system' : 'connecting';
+    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'fleet', 212, 70, 34, T.faint); text(ctx, cluster, 300, 70, 26, T.faint);
+    const over = fleetJobs.length > 0 && fleetJobs.every(j => j.state === 'succeeded' || j.state === 'failed'), endAt = over ? Math.max(...fleetJobs.map(j => j.completed_at || j.created_at)) : Date.now()/1000;
+    const cs = sweepStart ? endAt - sweepStart : 0;
+    if (over && !latestRun) mono(ctx, `idle  ·  last finish ${new Date(endAt*1000).toISOString().slice(11,19)}Z`, W-72, 70, 28, T.soft, 'right');
+    else mono(ctx, `+${mmss(cs)}  ${over ? 'first submit to last finish' : 'since the first submit'}`, W-72, 70, 28, T.soft, 'right');
+    mono(ctx, over ? 'ended' : 'live', W-72, 108, 22, over ? T.faint : T.ok, 'right');
+    const list = fleetJobs, states = list.map(stateOf), count = s => states.filter(x => x === s).length;
+    const sweepsShown = [...new Set(list.map(j => j.run))];
+    mono(ctx, fit(ctx, latestRun ? `sweep ${sweepLetter.get(latestRun)} · ${latestRun}` : sweepsShown.map(r => `${sweepLetter.get(r)} ${r}`).join('   '), 640, 18), W-72, 146, 18, T.faint, 'right');
+    const gpuNodes = ((inventory||{}).cluster||{}).nodes||[]; const devices = gpuNodes.flatMap(n => n.devices.map(d => ({ ...d, node:n.name })));
+    // Pool occupancy from Workload status (seconds behind), run labels from the dashboard's placement records.
+    const dashPlacements = (inventory||{}).placements||[];
+    const placements = (livePlacements || dashPlacements).map(p => {
+      if (p.run_ids) return p;
+      const same = dashPlacements.filter(q => (p.pod && q.pod === p.pod) || (q.role === p.role && (q.devices||[]).join() === (p.devices||[]).join() && (q.id||'').startsWith(p.name)));
+      const ids = [...new Set(same.flatMap(q => q.run_ids||[]))];
+      return { ...p, run_ids: ids.length ? ids : (p.owner && !p.shared ? [p.owner] : []), label: (same[0] && same[0].label) || p.name || '' }; });
+    // one tile chip per Workload: a shared runtime is one chip whatever the dashboard says
+    const seenPods = new Set(); for (let i = placements.length - 1; i >= 0; i--) { const key = placements[i].pod || placements[i].name; if (seenPods.has(key)) placements.splice(i, 1); else seenPods.add(key); }
+    const held = new Set(placements.flatMap(p => p.devices||[]));
+    const tiles = [['running', count('running') + count('starting'), T.ink], ['waiting for a seat', count('waiting') + count('queued') + count('submitting'), T.wait], ['done', count('done'), T.ok], ['GPUs busy', `${held.size} / ${devices.length || '?'}`, T.lora]];
+    tiles.forEach(([k, v, c], i) => { const x = 72 + i*270; rr(ctx, x, 120, 250, 96, 12); ctx.fillStyle = T.tile; ctx.fill(); text(ctx, String(v), x+20, 158, 44, c, 'left', 700); text(ctx, k, x+20, 196, 20, T.faint); });
+    // job table
+    const tx = 72, ty = 268, rows = Math.min(list.length, 20), rh = rows > 16 ? 32 : 38;
+    [['job',0],['model',110],['type',350],['seed',450],['state',560],['steps',760]].forEach(([h,dx]) => text(ctx, h, tx+dx, ty, 20, T.faint, 'left', 600));
+    ctx.fillStyle = T.line; ctx.fillRect(tx, ty+20, 1040, 1);
+    list.slice(0, 20).forEach((j, i) => {
+      const y = ty + 48 + i*rh, st = states[i], run = j.run_id ? runs[j.run_id] : null, n = run ? Math.min(run.steps||0, j.steps) : (st === 'done' ? j.steps : 0), k = n / Math.max(1, j.steps);
+      hits.push({ kind: 'job', id: j.name, x: tx, y: y - rh/2, w: 1080, h: rh });
+      ctx.save(); ctx.globalAlpha = st === 'queued' ? 0.45 : 1;
+      mono(ctx, tag(j), tx, y, 24, T.soft); mono(ctx, short(j.model), tx+110, y, 24, j.model.includes('gemma') ? T.api : T.ink);
+      mono(ctx, j.kind === 'lora' ? 'lora' : 'full', tx+350, y, 24, j.kind === 'lora' ? T.lora : T.fft); mono(ctx, String(j.seed), tx+450, y, 24, T.soft); mono(ctx, st, tx+560, y, 24, STATE_COLOR[st]);
+      const bx = tx+760, bw = 280; rr(ctx, bx, y-10, bw, 20, 5); ctx.fillStyle = T.tile; ctx.fill();
+      if (n > 0 || st === 'done') { rr(ctx, bx, y-10, bw*(st==='done'?1:k), 20, 5); ctx.fillStyle = j.kind === 'lora' ? T.lora : T.fft; ctx.fill(); for (let s = 1; s < j.steps; s++) { ctx.fillStyle = T.bg; ctx.fillRect(bx + bw*s/j.steps - 1, y-10, 2, 20); } }
+      mono(ctx, `${n}/${j.steps}`, bx+bw+14, y, 22, st === 'done' ? T.ok : T.faint);
+      ctx.restore();
+    });
+    if (list.length > 20) mono(ctx, `+${list.length-20} more`, tx, ty + 48 + 20*rh, 22, T.faint);
+    // the pool
+    const cols = devices.length > 6 ? 4 : 3, tw = cols === 4 ? 150 : 195, gap = 14, px0 = 1210, py0 = 300, th = 150;
+    text(ctx, 'accelerator pool', 1210, 268, 20, T.faint, 'left', 600);
+    const model = devices.length && placements.length ? '' : ''; text(ctx, `${devices.length} × H100 80 GB`, 1845, 268, 20, T.faint, 'right');
+    devices.forEach((d, gi) => {
+      const x = px0 + (gi % cols) * (tw + gap), y = py0 + Math.floor(gi / cols) * (th + gap);
+      hits.push({ kind: 'gpu', id: d.id, x, y, w: tw, h: th });
+      const here = placements.filter(p => (p.devices||[]).includes(d.id));
+      const lora = here.filter(p => p.shared || (p.run_ids||[]).length > 1 || /lora/i.test(p.label||'')), on = here.length > 0;
+      rr(ctx, x, y, tw, th, 12); ctx.fillStyle = on ? T.tileOn : T.tile; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = on ? (lora.length ? T.lora : T.fft) : T.line; ctx.stroke();
+      mono(ctx, d.name || `gpu-${gi}`, x+12, y+20, 17, T.faint);
+      if (!on) { mono(ctx, 'idle', x+tw-12, y+20, 15, T.faint, 'right'); return; }
+      // chips: one column up to three holders, two columns beyond, at most six shown
+      const shown = here.slice(0, 6), twoCol = here.length > 3, cw = twoCol ? (tw-26)/2 : tw-20, chH = twoCol ? 24 : 28, pitch = twoCol ? 28 : 34, fs = twoCol ? 13 : 16;
+      shown.forEach((p, k) => {
+        const cx = x + 10 + (twoCol ? (k % 2) * (cw + 6) : 0), cy = y + 50 + (twoCol ? Math.floor(k / 2) : k) * pitch;
+        // which jobs this worker serves: numbers for the sweep on screen, "other" for another sweep's jobs
+        const mine = [], other = [];
+        (p.run_ids||[]).forEach(r => { const j = jobsList.find(j => j.run_id === r); if (j && (!latestRun || j.run === latestRun)) mine.push(j); else other.push(r); });
+        const shared = p.shared || (p.run_ids||[]).length > 1, foreign = !mine.length && other.length > 0;
+        const col = foreign ? T.faint : (shared || /lora/i.test(p.label||'') ? T.lora : T.fft);
+        rr(ctx, cx, cy - chH/2, cw, chH, 6); ctx.fillStyle = foreign ? T.tile : (shared ? T.loraSoft : T.fftSoft); ctx.fill();
+        if (foreign) { ctx.lineWidth = 1; ctx.strokeStyle = T.line; ctx.stroke(); }
+        // contiguous numbers collapse to a range; the rest are listed in order
+        // one sweep: numbers, collapsed to a range when contiguous; several sweeps: lettered tags
+        const oneSweep = new Set(mine.map(j => j.run)).size <= 1;
+        const nums = [...new Set(mine.map(j => jobIndex.get(j.name)))].sort((a, b) => a - b), pad = n => String(n).padStart(2,'0');
+        const contiguous = oneSweep && nums.length > 2 && nums.every((n, i) => i === 0 || n === nums[i-1] + 1);
+        const lead = mine.length && !latestRun ? (sweepLetter.get(mine[0].run) || '') : '';
+        const jobs = contiguous ? `${lead}${pad(nums[0])}–${pad(nums[nums.length-1])}` : oneSweep ? nums.map(n => lead + pad(n)).join(' ') : [...new Set(mine.map(tag))].join(' ');
+        const extra = other.length && mine.length ? ` +${other.length}` : '';
+        // the tile's teal stroke already says LoRA, so the chip spends its width on the job numbers
+        const body = foreign ? 'other' : shared ? (nums.length ? `${jobs}${extra}` : 'shared') : (jobs || '…');
+        mono(ctx, fit(ctx, `${p.role === 'trainer' ? 'T' : 'S'} ${body}`, cw - 14, fs, 700), cx + 8, cy, fs, col, 'left', 700);
+      });
+      if (here.length > 6) mono(ctx, `+${here.length-6}`, x+tw-12, y+th-14, 14, T.faint, 'right');
+    });
+    // waiting lane
+    const waiting = list.map((j, i) => ({ j, i, st: states[i] })).filter(x => x.st === 'waiting' || x.st === 'queued' || x.st === 'submitting');
+    const ly = py0 + Math.ceil(Math.max(1, devices.length) / cols) * (th + gap) + 30;
+    text(ctx, 'waiting for a seat', 1210, ly, 20, T.faint, 'left', 600);
+    if (waiting.length) waiting.slice(0, 9).forEach(({ j }, k) => { const x = 1210 + k*70, y = ly + 48; rr(ctx, x, y-22, 60, 44, 8); ctx.fillStyle = j.kind === 'lora' ? T.loraSoft : T.fftSoft; ctx.fill(); mono(ctx, latestRun ? String(jobIndex.get(j.name)).padStart(2,'0') : tag(j), x+30, y, 20, j.kind === 'lora' ? T.lora : T.fft, 'center', 700); });
+    if (waiting.length > 9) mono(ctx, `+${waiting.length-9}`, 1210 + 9*70, ly + 48, 18, T.faint);
+    else mono(ctx, 'none', 1210, ly + 48, 22, T.faint);
+    // pool busy: DCGM, averaged over the sweep so far
+    const gy = ly + 120; text(ctx, 'pool busy', 1210, gy, 20, T.faint, 'left', 600);
+    rr(ctx, 1210, gy+26, 630, 22, 6); ctx.fillStyle = T.tile; ctx.fill();
+    const util = capSecs > 0 ? clamp(heldSecs / capSecs) : 0;
+    rr(ctx, 1210, gy+26, 630*util, 22, 6); ctx.fillStyle = T.lora; ctx.fill();
+    mono(ctx, `${Math.round(util*100)}% of GPU time held by a job since the first submit`, 1210, gy+76, 22, T.soft);
+    const duty = busy && devices.length ? busy.reduce((a,b) => a+b, 0) / devices.length : null;
+    mono(ctx, duty === null ? 'DCGM duty: waiting for data' : `DCGM duty across the pool: ${duty.toFixed(1)}%`, 1210, gy+108, 20, T.faint);
+    // end card
+    if (list.length && states.every(s => s === 'done' || s === 'failed')) {
+      rr(ctx, 1210, H-110, 630, 72, 12); ctx.fillStyle = T.loraSoft; ctx.fill();
+      text(ctx, `${count('done')} of ${list.length} finished on ${devices.length} GPUs`, 1525, H-74, 26, T.ink, 'center', 600);
+    }
+  }
+
+  // ---- timeline drill-down: one accelerator, or one job
+  const tl = { kind: null, id: null, lanes: [], since: null, inflight: false, fetchedAt: 0 };
+  const JOB_COLORS = ['#2CC2AE', '#E9743A', '#4D95E8', '#E6C230', '#C86DD7', '#4CC27A', '#F28CB1', '#8AB4F8', '#F0A35E', '#7FDBCA'];
+  const OP_COLORS = { forward_backward: '#4D95E8', optim_step: '#C86DD7', sample: '#2CC2AE', create_model: '#4CC27A', save_weights_for_sampler: '#4E8F6B', save_state: '#4E8F6B', delete_model: '#7D7B72' };
+  const gpuSel = $('#tl-gpu'), jobSel = $('#tl-job'), winSel = $('#tl-win'), othersBox = $('#tl-others');
+  tl.others = [];  // lanes of other workers on the job's GPUs, when the overlay is on
+  othersBox.onchange = () => { tl.fetchedAt = 0; };
+  function devicesList() { return (((inventory||{}).cluster||{}).nodes||[]).flatMap(n => (n.devices||[]).map(d => ({ ...d, node: n.name }))); }
+  function openTimeline(kind, id, opts = {}) { tl.kind = kind; tl.id = id; tl.lanes = []; tl.others = []; tl.fetchedAt = 0; $('#tl-others-wrap').style.display = kind === 'job' ? '' : 'none';
+    // a finished job is framed by its own lifetime, so a historic job shows its data instead of an empty live window
+    const j = kind === 'job' ? jobsList.find(j => j.name === id) : null;
+    if (opts.span && j && j.completed_at) tl.sel = { a: j.created_at - 30, b: j.completed_at + 30 }; else if (opts.span) tl.sel = null; gpuSel.value = kind === 'gpu' ? id : ''; jobSel.value = kind === 'job' ? id : ''; showTab('timeline'); history.replaceState(null, '', `#timeline?${kind}=${encodeURIComponent(id)}`); }
+  gpuSel.onchange = () => gpuSel.value && openTimeline('gpu', gpuSel.value);
+  jobSel.onchange = () => jobSel.value && openTimeline('job', jobSel.value);
+  function refreshSelectors() {
+    const devs = devicesList(), cur = gpuSel.value;
+    if (gpuSel.options.length !== devs.length + 1) { gpuSel.innerHTML = '<option value="">—</option>' + devs.map(d => `<option value="${d.id}">${d.name}</option>`).join(''); gpuSel.value = cur; }
+    const curJ = jobSel.value, want = jobsList.map(j => j.name).join('|');
+    if (jobSel.dataset.want !== want) { jobSel.dataset.want = want; jobSel.innerHTML = '<option value="">—</option>' + jobsList.map(j => `<option value="${j.name}">${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')} ${short(j.model)} ${j.kind}</option>`).join(''); jobSel.value = curJ; }
+  }
+  function windowStart() { const now = Date.now()/1000; if (winSel.value === 'sweep' && sweepStart) return sweepStart - 30; return now - (+winSel.value || 1800); }
+  const LIVE_FETCH_MS = 1500;  // the inspection API caches its fleet snapshot 5 s and run ops 10 s, so this is as live as the source gets
+  async function pollTimeline() {
+    if (!tl.kind || tl.inflight || !$('#tab-timeline').classList.contains('on') || Date.now() - tl.fetchedAt < LIVE_FETCH_MS) return;
+    tl.inflight = true;
+    try {
+      const since = Math.round((tl.sel ? tl.sel.a : windowStart()) - 60), until = tl.sel ? `&until=${Math.round(Math.min(tl.sel.b + 60, Date.now()/1000))}` : '';
+      if (tl.kind === 'gpu') { const dev = devicesList().find(d => d.id === tl.id); if (!dev) return;
+        const a = await api(`/api/inspect/activity?node_id=${encodeURIComponent(dev.node)}&since=${since}${until}`); tl.lanes = a.placements.filter(p => (p.devices||[]).includes(tl.id)); }
+      else { const j = jobsList.find(j => j.name === tl.id); if (!j || !j.run_id) { tl.lanes = []; return; }
+        const a = await api(`/api/inspect/activity?run_id=${j.run_id}&since=${since}${until}`); tl.lanes = a.placements;
+        if (othersBox.checked) { const nodes = [...new Set(tl.lanes.map(p => p.node).filter(Boolean))], devs = new Set(tl.lanes.flatMap(p => p.devices||[]));
+          const all = await Promise.all(nodes.map(n => api(`/api/inspect/activity?node_id=${encodeURIComponent(n)}&since=${since}${until}`)));
+          tl.others = all.flatMap(x => x.placements).filter(p => !(p.run_ids||[]).includes(j.run_id) && (p.devices||[]).some(d => devs.has(d))); }
+        else tl.others = []; }
+      tl.since = since; tl.fetchedAt = Date.now();
+    } catch (e) { $('#conn').textContent = 'timeline: ' + e.message; } finally { tl.inflight = false; }
+  }
+  setInterval(pollTimeline, 500);
+  const cursor = { x: null, y: null };
+  // drag on the trace to select a window; percentages are then computed over exactly that span
+  tl.sel = null; const drag = { x0: null, x1: null }; let tlLink = null;
+  $('#timeline').addEventListener('click', e => { if (!tlLink) return; const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; if (x >= tlLink.x && x <= tlLink.x + tlLink.w && y >= tlLink.y && y <= tlLink.y + tlLink.h) openWeights(tlLink.job); });
+  const TLX = { L: 300, R: W - 72 };
+  function timeAtX(x, t0, t1) { return t0 + clamp((x - TLX.L) / (TLX.R - TLX.L)) * (t1 - t0); }
+  $('#timeline').addEventListener('mousedown', e => { if (e.button !== 0) return; const r = e.currentTarget.getBoundingClientRect(); drag.x0 = drag.x1 = (e.clientX - r.left) * W / r.width; });
+  addEventListener('mouseup', e => {
+    if (drag.x0 === null) return; const r = $('#timeline').getBoundingClientRect(); const x1 = clamp((e.clientX - r.left) * W / r.width, TLX.L, TLX.R), x0 = clamp(drag.x0, TLX.L, TLX.R);
+    const [t0, t1] = tl.view || [windowStart(), Date.now()/1000];
+    if (Math.abs(x1 - x0) > 8) { const a = timeAtX(Math.min(x0, x1), t0, t1), b = timeAtX(Math.max(x0, x1), t0, t1); if (b - a >= 5) { tl.sel = { a, b }; tl.fetchedAt = 0; } }
+    drag.x0 = drag.x1 = null;
+  });
+  $('#timeline').addEventListener('dblclick', () => { tl.sel = null; tl.fetchedAt = 0; });
+  addEventListener('keydown', e => { if (e.key === 'Escape' && tl.sel) { tl.sel = null; tl.fetchedAt = 0; } });
+  { const hv = new URLSearchParams(location.hash.split('?')[1] || '').get('hover'); if (hv) { const [fx, fy] = hv.split(',').map(Number); cursor.x = W * fx; cursor.y = H * (fy || 0.5); } }  // stills: #timeline?gpu=…&hover=0.6,0.4
+  $('#timeline').addEventListener('mousemove', e => { const r = e.currentTarget.getBoundingClientRect(); cursor.x = (e.clientX - r.left) * W / r.width; cursor.y = (e.clientY - r.top) * H / r.height; if (drag.x0 !== null) drag.x1 = cursor.x; });
+  $('#timeline').addEventListener('mouseleave', () => { cursor.x = null; });
+  const fmtT = t => new Date(t * 1000).toISOString().slice(11, 19), fmtD = d => d >= 60 ? `${Math.floor(d/60)}m ${Math.round(d%60)}s` : `${d.toFixed(d < 10 ? 1 : 0)}s`;
+  function tooltip(ctx, x, y, lines) {
+    const pad = 14, lh = 24; ctx.font = `500 16px ${MONO}`;
+    const w = Math.max(...lines.map(([k, v]) => ctx.measureText(`${k}  ${v}`).width)) + pad * 2 + 10, h = lines.length * lh + pad * 2;
+    const bx = Math.min(x + 18, W - w - 20), by = y > H * 0.5 ? Math.max(20, y - h - 18) : Math.min(y + 18, H - h - 20);
+    rr(ctx, bx, by, w, h, 8); ctx.fillStyle = '#1A1D21'; ctx.fill(); ctx.lineWidth = 1; ctx.strokeStyle = '#3A3F46'; ctx.stroke();
+    lines.forEach(([k, v, c], i) => { const yy = by + pad + lh * i + lh / 2; mono(ctx, k, bx + pad, yy, 16, T.faint); mono(ctx, v, bx + pad + 110, yy, 16, c || T.ink); });
+  }
+  function laneJob(p) { for (const r of p.run_ids||[]) { const j = jobsList.find(j => j.run_id === r); if (j) return j; } return null; }
+  function laneTitle(p) {
+    const js = (p.run_ids||[]).map(r => jobsList.find(j => j.run_id === r)).filter(Boolean);
+    const nums = js.map(j => String(jobIndex.get(j.name)).padStart(2,'0')), role = p.role === 'trainer' ? 'T' : 'S';
+    const tags = js.map(tag);
+    if (p.shared_runtime) return `${role} lora ${tags[0] || (p.run_ids||[])[0]?.slice(0,4) || ''}`;
+    return `${role} ${tags[0] || (p.run_ids||[])[0]?.slice(0,8) || p.label}`;
+  }
+  function laneColor(p, i) { const j = laneJob(p); return j ? JOB_COLORS[(jobIndex.get(j.name) - 1) % JOB_COLORS.length] : JOB_COLORS[i % JOB_COLORS.length]; }
+  // one trace per accelerator: a step line at 1 while a worker holds the GPU, coloured by who holds it, 0 when idle
+  function traces() {
+    const devs = devicesList();
+    if (tl.kind === 'gpu') {
+      const dev = devs.find(d => d.id === tl.id);
+      const segs = tl.lanes.flatMap((p, i) => (p.intervals||[]).map(([a, b]) => ({ a, b, color: laneColor(p, i), key: laneTitle(p), model: short((laneJob(p)||{}).model || (p.label||'').split(' · ')[0]), lane: p })));
+      const claims = tl.lanes.map((p, i) => ({ a: p.start, b: p.ended ? p.end : null, color: laneColor(p, i), key: laneTitle(p), lane: p }));
+      return [{ label: dev ? dev.name : tl.id.slice(0, 12), sub: dev ? (dev.model || 'H100') : '', segs, claims }];
+    }
+    const byDev = {};
+    tl.lanes.forEach(p => { const key = (p.devices||[]).join(',') || 'unplaced'; (byDev[key] = byDev[key] || []).push(p); });
+    return Object.entries(byDev).map(([key, ps]) => { const d = devs.find(d => d.id === key);
+      const color = p => p.role === 'trainer' ? T.fft : T.lora, name = p => p.role === 'trainer' ? 'trainer' : 'sampler';
+      const others = tl.others.filter(p => (p.devices||[]).includes(key)).flatMap((p, i) => (p.intervals||[]).map(([a, b]) => ({ a, b, color: laneColor(p, i), key: laneTitle(p), model: short((laneJob(p)||{}).model || (p.label||'').split(' · ')[0]), lane: p, other: true })));
+      return { label: d ? d.name : (key === 'unplaced' ? 'waiting for a seat' : key.slice(0, 8)), sub: [...new Set(ps.map(name))].sort().join(' + '),
+        segs: ps.flatMap(p => (p.intervals||[]).map(([a, b]) => ({ a, b, color: color(p), key: name(p), model: short((laneJob(p)||{}).model || ''), lane: p }))),
+        others,
+        claims: ps.map(p => ({ a: p.start, b: p.ended ? p.end : null, color: color(p), key: name(p), lane: p })) }; });
+  }
+  function drawTimeline() {
+    const canvas = $('#timeline'); if (!canvas.offsetParent) return; const ctx = setup(canvas);
+    ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'timeline', 212, 70, 34, T.faint);
+    if (!tl.kind) { text(ctx, 'Pick an accelerator or a job above, or click one on the Fleet tab.', 72, 160, 26, T.faint); return; }
+    const now = Date.now()/1000, t0 = tl.sel ? tl.sel.a : windowStart(), t1 = tl.sel ? tl.sel.b : now, L = TLX.L, R = TLX.R, X = t => L + (R - L) * clamp((t - t0) / (t1 - t0));
+    tl.view = [t0, t1];
+    const dev = tl.kind === 'gpu' ? devicesList().find(d => d.id === tl.id) : null, job = tl.kind === 'job' ? jobsList.find(j => j.name === tl.id) : null;
+    const title = dev ? `${dev.name}  ·  ${dev.model || 'H100'}  ·  ${dev.id}` : job ? `${job.run} · ${String(jobIndex.get(job.name)).padStart(2,'0')}  ${short(job.model)}  ${job.kind === 'lora' ? 'lora' : 'full'}  seed ${job.seed}  ·  ${job.run_id ? job.run_id.slice(0,8) : 'no run yet'}` : '';
+    mono(ctx, title, 72, 120, 24, T.soft);
+    if (job) { ctx.font = `500 24px ${MONO}`; const tw = ctx.measureText(title).width; mono(ctx, 'weights →', 72 + tw + 40, 120, 20, T.api); tlLink = { x: 72 + tw + 40, y: 106, w: 120, h: 28, job: job.name }; } else tlLink = null;
+    const live = !tl.sel && tl.lanes.some(p => !p.ended), pulse = 0.5 + 0.5 * Math.sin(now * 3);
+    if (tl.sel) mono(ctx, `selected ${fmtT(t0)} → ${fmtT(t1)}  (${fmtD(t1 - t0)})   Esc or double-click returns to live`, R, 146, 16, T.wait, 'right');
+    if (live) { ctx.beginPath(); ctx.arc(R - 60, 120, 6, 0, 7); ctx.fillStyle = T.ok; ctx.globalAlpha = 0.5 + 0.5 * pulse; ctx.fill(); ctx.globalAlpha = 1; mono(ctx, 'live', R, 120, 18, T.ok, 'right'); }
+    else mono(ctx, tl.lanes.length ? 'ended' : '', R, 120, 18, T.faint, 'right');
+    const tr = traces();
+    // axis
+    const top = 200, span = t1 - t0, tick = span > 3000 ? 600 : span > 1500 ? 300 : span > 400 ? 60 : span > 100 ? 15 : 5;
+    const legendH = 110, avail = H - top - legendH - 40, trackH = Math.min(tr.length === 1 ? 420 : 260, Math.max(90, avail / Math.max(1, tr.length) - 70));
+    for (let t = Math.ceil(t0 / tick) * tick; t <= t1; t += tick) { ctx.fillStyle = T.line; ctx.fillRect(X(t), top - 12, 1, tr.length * (trackH + 70)); if (X(t1) - X(t) > (tl.sel ? 110 : 70)) mono(ctx, new Date(t*1000).toISOString().slice(11, tick < 60 ? 19 : 16), X(t), top - 26, 16, T.faint, 'center'); }
+    mono(ctx, tl.sel ? fmtT(t1) : 'now', X(t1), top - 26, 16, T.soft, 'right');
+    if (!tr.length) text(ctx, tl.kind === 'job' && job && !job.run_id ? 'The client has not created its run yet.' : 'Nothing recorded in this window.', 72, top + 30, 24, T.faint);
+    const seen = new Map(), geo = [];
+    tr.forEach((track, ti) => {
+      const base = top + ti * (trackH + 70) + trackH;   // y of 0
+      const yOf = v => base - v * (trackH - 20);
+      geo.push({ track, y1: yOf(1) - 10, y0: yOf(0) + 8 });
+      // labels: name, kind, and the 1 / 0 marks
+      mono(ctx, track.label, 72, yOf(0.5) - 10, 22, T.ink, 'left', 700); if (track.sub) mono(ctx, fit(ctx, track.sub, 200, 15), 72, yOf(0.5) + 14, 15, T.faint);
+      mono(ctx, '1', L - 14, yOf(1), 14, T.faint, 'right'); mono(ctx, '0', L - 14, yOf(0), 14, T.faint, 'right');
+      // claimed but not in a turn: a thin dim band at the base, so an idle holder is visible without lifting the line
+      track.claims.forEach(c => { const a = Math.max(c.a, t0), b = Math.min(c.b ?? t1, t1); if (b <= a) return; ctx.fillStyle = c.color; ctx.globalAlpha = 0.14; ctx.fillRect(X(a), yOf(0) - 6, X(b) - X(a), 6); ctx.globalAlpha = 1; });
+      // the trace: idle baseline, then every turn as a filled step to 1 in the holder's colour
+      ctx.fillStyle = T.line; ctx.fillRect(L, yOf(0), R - L, 2);
+      // other jobs' turns on this GPU, muted, drawn first so the job's own turns sit on top
+      // only turns that overlap the window count; a turn after a selected window's end would otherwise go negative
+      const within = sg => sg.b > t0 && sg.a < t1;
+      const others = (track.others||[]).filter(within).sort((p, q) => p.a - q.a);
+      others.forEach(sg => { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1), w = Math.max(2, X(b) - X(a));
+        ctx.fillStyle = sg.color; ctx.globalAlpha = 0.22; ctx.fillRect(X(a), yOf(1), w, yOf(0) - yOf(1)); ctx.globalAlpha = 0.6; ctx.fillRect(X(a), yOf(1) - 1, w, 2); ctx.globalAlpha = 1;
+        seen.set(sg.key, { color: sg.color, model: sg.model, secs: (seen.get(sg.key)?.secs || 0) + (b - a), other: true }); });
+      const segs = track.segs.filter(within).sort((p, q) => p.a - q.a);
+      segs.forEach(sg => { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1), w = Math.max(2, X(b) - X(a));
+        ctx.fillStyle = sg.color; ctx.globalAlpha = 0.55; ctx.fillRect(X(a), yOf(1), w, yOf(0) - yOf(1)); ctx.globalAlpha = 1;
+        ctx.fillRect(X(a), yOf(1) - 1, w, 3);                       // the top of the step
+        ctx.fillRect(X(a), yOf(1), 2, yOf(0) - yOf(1)); ctx.fillRect(X(a) + w - 2, yOf(1), 2, yOf(0) - yOf(1));  // the rising and falling edges
+        seen.set(sg.key, { color: sg.color, model: sg.model, secs: (seen.get(sg.key)?.secs || 0) + (b - a) }); });
+      if (live) { ctx.fillStyle = T.ok; ctx.globalAlpha = 0.35 + 0.4 * pulse; ctx.fillRect(X(t1) - 1, yOf(1) - 10, 2, yOf(0) - yOf(1) + 10); ctx.globalAlpha = 1; }
+      // occupancy of the window: union of turns
+      let busy = 0, cur = null; for (const sg of segs) { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1); if (!cur || a > cur[1]) { if (cur) busy += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b); } if (cur) busy += cur[1] - cur[0];
+      const holder = segs.find(sg => sg.b >= t1 - 3) || others.find(sg => sg.b >= t1 - 3);
+      let withOthers = '';
+      if (others.length) { const all = [...segs, ...others].map(sg => [Math.max(sg.a, t0), Math.min(sg.b, t1)]).sort((p, q) => p[0] - q[0]); let tot = 0, c = null;
+        for (const [a, b] of all) { if (!c || a > c[1]) { if (c) tot += c[1] - c[0]; c = [a, b]; } else c[1] = Math.max(c[1], b); } if (c) tot += c[1] - c[0];
+        withOthers = `  ·  ${Math.round(100 * tot / span)}% with ${new Set(others.map(o => o.key)).size} other worker${new Set(others.map(o => o.key)).size === 1 ? '' : 's'}`; }
+      mono(ctx, `${tl.kind === 'job' ? 'this job' : 'occupied'} ${Math.round(100 * busy / span)}% of the window${withOthers}${holder ? `  ·  now: ${holder.key}` : live ? '  ·  now: idle' : ''}`, R, base + 26, 16, T.soft, 'right');
+    });
+    // legend: who held the GPU in this window, with their share
+    const items = [...seen.entries()].sort((a, b) => b[1].secs - a[1].secs).slice(0, 12);
+    let lx = 72; const ly = H - 78;
+    text(ctx, tl.kind === 'gpu' ? 'held by' : 'worker', lx, ly, 16, T.faint, 'left', 600); lx += 90;
+    items.forEach(([key, v]) => { ctx.fillStyle = v.color; ctx.globalAlpha = v.other ? 0.45 : 1; ctx.fillRect(lx, ly - 8, 16, 16); ctx.globalAlpha = 1; const label = `${key}${v.model ? ' ' + v.model : ''}  ${Math.round(100 * v.secs / span)}%`; mono(ctx, label, lx + 24, ly, 15, v.other ? T.faint : T.soft); lx += 24 + ctx.measureText(label).width + 36; });
+    if (!items.length) mono(ctx, 'nobody held it in this window', lx, ly, 15, T.faint);
+    ctx.fillStyle = T.line; ctx.fillRect(72, H - 44, 14, 6); mono(ctx, 'thin band at the base: claimed by a worker between turns', 96, H - 41, 14, T.faint);
+    // the selection being dragged
+    if (drag.x0 !== null && drag.x1 !== null && tr.length) { const a = clamp(Math.min(drag.x0, drag.x1), L, R), b = clamp(Math.max(drag.x0, drag.x1), L, R);
+      ctx.fillStyle = T.wait; ctx.globalAlpha = 0.12; ctx.fillRect(a, top - 12, b - a, tr.length * (trackH + 70)); ctx.globalAlpha = 0.8; ctx.fillRect(a, top - 12, 1, tr.length * (trackH + 70)); ctx.fillRect(b, top - 12, 1, tr.length * (trackH + 70)); ctx.globalAlpha = 1;
+      mono(ctx, `${fmtT(timeAtX(a, t0, t1))} → ${fmtT(timeAtX(b, t0, t1))}  (${fmtD(timeAtX(b, t0, t1) - timeAtX(a, t0, t1))})`, (a + b) / 2, top - 46, 15, T.wait, 'center'); }
+    // hover: a crosshair at the cursor's time, and what held the GPU then
+    if (cursor.x !== null && cursor.x >= L && cursor.x <= R && tr.length && drag.x0 === null) {
+      const t = t0 + (cursor.x - L) / (R - L) * (t1 - t0);
+      ctx.fillStyle = T.soft; ctx.globalAlpha = 0.5; ctx.fillRect(cursor.x, top - 12, 1, tr.length * (trackH + 70)); ctx.globalAlpha = 1;
+      mono(ctx, fmtT(t), cursor.x, top - 44, 15, T.soft, 'center');
+      const g = geo.find(g => cursor.y >= g.y1 && cursor.y <= g.y0) || geo[0];
+      const seg = g.track.segs.find(sg => t >= sg.a && t <= sg.b) || (g.track.others||[]).find(sg => t >= sg.a && t <= sg.b), claim = g.track.claims.find(c => t >= c.a && t <= (c.b ?? t1));
+      const hit = seg || claim; const p = hit && hit.lane, j = p && laneJob(p);
+      let lines;
+      if (seg) {
+        const ops = Object.entries(p.ops||{}).filter(([op, ivs]) => ivs.some(([a, b]) => b >= seg.a && a <= seg.b)).map(([op]) => op.replace(/_/g, ' '));
+        lines = [[seg.other ? 'other job' : 'holding', `${seg.key}${seg.model ? '  ' + seg.model : ''}`, seg.color], ['worker', `${p.role}${p.shared_runtime ? ' · shared runtime' : ''}`],
+          ...(j ? [['job', `${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')} ${j.kind} seed ${j.seed}`]] : []),
+          ['run', (p.run_ids||[]).map(r => r.slice(0, 8)).join(' ') || '—'], ['pod', (p.pod||'').replace(/^orw-/, '')],
+          ['turn', `${fmtT(seg.a)} → ${seg.b >= t1 - 2 && !p.ended ? 'now' : fmtT(seg.b)}  (${fmtD(Math.min(seg.b, t1) - seg.a)})`], ['ops', ops.join(', ') || 'none recorded']];
+      } else if (claim) {
+        const since = Math.max(claim.a, t0);
+        lines = [['idle', 'claimed, no turn', T.faint], ['claimed by', `${claim.key}${p.shared_runtime ? ' · shared runtime' : ''}`, claim.color],
+          ...(j ? [['job', `${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')} ${j.kind} seed ${j.seed}`]] : []),
+          ['pod', (p.pod||'').replace(/^orw-/, '')], ['held since', `${fmtT(p.start)}  (${fmtD(t - p.start)} ago at cursor)`], ['waits', `${(p.waits||[]).length} recorded`]];
+      } else lines = [['idle', 'no worker on this GPU', T.faint], ['time', fmtT(t)]];
+      tooltip(ctx, cursor.x, cursor.y, lines);
+    }
+  }
+  // clicks on the Fleet canvas: job rows and GPU tiles open the timeline
+  let hits = [];
+  $('#fleet').addEventListener('click', e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; const h = hits.find(h => x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h); if (h) openTimeline(h.kind, h.id, { span: h.kind === 'job' }); });
+  $('#fleet').style.cursor = 'pointer';
+
+  // ---- weights: the sparse delta the trainer published after each step
+  // var, not const: showTab may run from the URL hash before this line, and a typeof check must not throw
+  var wt = { job: null, saves: [], fetchedAt: 0, inflight: false, error: null, source: null };
+  var wtSel = $('#wt-job');
+  function openWeights(name) { wt.job = name; wt.saves = []; wt.fetchedAt = 0; wt.error = null; wtSel.value = name; showTab('weights'); history.replaceState(null, '', `#weights?job=${encodeURIComponent(name)}`); }
+  wtSel.onchange = () => wtSel.value && openWeights(wtSel.value);
+  function refreshWeightsSelector() { const cur = wtSel.value, want = jobsList.map(j => j.name).join('|'); if (wtSel.dataset.want !== want) { wtSel.dataset.want = want; wtSel.innerHTML = '<option value="">—</option>' + jobsList.map(j => `<option value="${j.name}">${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')} ${short(j.model)} ${j.kind}</option>`).join(''); wtSel.value = cur; } }
+  async function pollWeights() {
+    if (!wt.job || wt.inflight || !$('#tab-weights').classList.contains('on') || Date.now() - wt.fetchedAt < 4000) return;
+    const j = jobsList.find(j => j.name === wt.job); if (!j || !j.run_id) return;
+    wt.inflight = true;
+    try {
+      // native: the save op's metrics in the run's steps (delta/density_pct), once the workers record them
+      const st = await api(`/api/inspect/runs/${j.run_id}/steps?last=500&fields=none`);
+      const native = (st.steps||[]).flatMap(step => { const op = (step.ops||{}).save_weights_for_sampler; const m = op && op.metrics && op.metrics['delta/density_pct'];
+        return m ? [{ time: new Date((step.ended_at||step.started_at||0) * 1000).toISOString(), kind: 'delta', version: `step ${step.step}`, density_pct: m.mean, changed: Math.round(((op.metrics['delta/changed_elements']||{}).mean)||0), total: Math.round(((op.metrics['delta/total_elements']||{}).mean)||0), final: false, step: step.step }] : []; });
+      if (native.length) { wt.saves = native; wt.source = 'steps'; }
+      else { const since = Math.round(j.created_at - 60); const r = await api(`/api/sweep/deltas?run_id=${j.run_id}&since=${since}&kind=${j.kind}`); wt.saves = r.saves; wt.source = 'logs'; }
+      wt.error = null;
+    } catch (e) { wt.error = e.message; } finally { wt.inflight = false; wt.fetchedAt = Date.now(); }
+  }
+  setInterval(pollWeights, 500);
+  const fmtN = n => n >= 1e9 ? (n/1e9).toFixed(2) + ' B' : n >= 1e6 ? (n/1e6).toFixed(1) + ' M' : n >= 1e3 ? (n/1e3).toFixed(0) + ' k' : String(n);
+  function drawWeights() {
+    const canvas = $('#weights'); refreshWeightsSelector(); if (!canvas.offsetParent) return; const ctx = setup(canvas);
+    ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'weights', 212, 70, 34, T.faint);
+    const j = wt.job ? jobsList.find(j => j.name === wt.job) : null;
+    if (!j) { text(ctx, 'Pick a job above, or open one from the Fleet tab.', 72, 160, 26, T.faint); return; }
+    mono(ctx, `${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')}  ${short(j.model)}  ${j.kind === 'lora' ? 'lora' : 'full fine-tuning'}  seed ${j.seed}  ·  ${j.run_id ? j.run_id.slice(0,8) : 'no run yet'}`, 72, 120, 24, T.soft);
+    const live = stateOf(j) === 'running' || stateOf(j) === 'starting'; if (live) { const pulse = 0.5 + 0.5 * Math.sin(Date.now()/1000 * 3); ctx.beginPath(); ctx.arc(W - 72 - 60, 120, 6, 0, 7); ctx.fillStyle = T.ok; ctx.globalAlpha = 0.5 + 0.5 * pulse; ctx.fill(); ctx.globalAlpha = 1; mono(ctx, 'live', W - 72, 120, 18, T.ok, 'right'); }
+    if (wt.error) { text(ctx, wt.error, 72, 180, 20, T.bad); return; }
+    const deltas = wt.saves.filter(s => s.kind === 'delta'), adapters = wt.saves.filter(s => s.kind === 'adapter');
+    if (j.kind === 'lora') {
+      text(ctx, 'LoRA: the trainer publishes the adapter, not a delta of the base model.', 72, 190, 24, T.ink);
+      text(ctx, `${adapters.length} adapter save${adapters.length === 1 ? '' : 's'} so far. The base weights never change, so the sampler loads a few megabytes per step.`, 72, 226, 20, T.soft);
+      return;
+    }
+    if (!deltas.length) { text(ctx, j.run_id ? (wt.fetchedAt ? 'No delta published yet. The first appears after the first optimizer step.' : 'reading the trainer log…') : 'The client has not created its run yet.', 72, 190, 22, T.faint); return; }
+    // headline numbers
+    // the save before the first optimizer step carries an empty delta; it is shown dim and left out of the average
+    const total = deltas[0].total, steps = deltas.filter(d => !d.final && d.changed > 0), mean = steps.reduce((a, d) => a + d.density_pct, 0) / Math.max(1, steps.length);
+    const union = Math.min(100, steps.reduce((a, d) => a + d.density_pct, 0)); // an upper bound on the share touched at least once
+    const tiles = [[`${mean.toFixed(1)}%`, 'of weights change per step, average', T.lora], [`${fmtN(total)}`, 'parameters in the model', T.ink], [`${deltas.length}`, 'deltas published', T.soft], [`${fmtN(Math.round(mean / 100 * total))}`, 'elements shipped per sync, average', T.fft]];
+    tiles.forEach(([v, k, c], i) => { const x = 72 + i * 440; rr(ctx, x, 160, 420, 96, 12); ctx.fillStyle = T.tile; ctx.fill(); text(ctx, v, x + 20, 198, 40, c, 'left', 700); text(ctx, k, x + 20, 236, 18, T.faint); });
+    // the chart: one bar per delta, height = share of weights changed
+    const cx = 110, cy = 320, cw = W - 110 - 72, ch = H - cy - 170, maxPct = Math.max(10, Math.ceil(Math.max(...deltas.map(d => d.density_pct)) / 10) * 10);
+    const Y = pct => cy + ch - ch * pct / maxPct;
+    for (let p = 0; p <= maxPct; p += maxPct / 5) { ctx.fillStyle = T.line; ctx.fillRect(cx, Y(p), cw, 1); mono(ctx, `${p}%`, cx - 14, Y(p), 16, T.faint, 'right'); }
+    text(ctx, 'share of the model\'s weights that changed, per optimizer step', cx, cy - 30, 20, T.soft, 'left', 600);
+    const n = deltas.length, gap = 10, bw = Math.max(6, Math.min(90, (cw - gap * n) / n));
+    deltas.forEach((d, i) => {
+      const x = cx + i * (bw + gap), h = ch * d.density_pct / maxPct;
+      rr(ctx, x, Y(d.density_pct), bw, Math.max(2, h), 4); ctx.fillStyle = d.final ? T.soft : d.changed > 0 ? T.fft : T.line; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+      if (bw >= 30) mono(ctx, d.changed > 0 ? `${d.density_pct.toFixed(d.density_pct < 10 ? 1 : 0)}%` : 'base', x + bw / 2, Y(d.density_pct) - 14, 14, d.changed > 0 ? T.ink : T.faint, 'center', 700);
+      if (bw >= 22) mono(ctx, d.final ? 'final' : d.version.replace('sampler-', '').replace('step ', ''), x + bw / 2, cy + ch + 20, 14, T.faint, 'center');
+    });
+    mono(ctx, wt.source === 'steps' ? 'optimizer step' : 'sampler weight version', cx + cw, cy + ch + 20, 14, T.faint, 'right');
+    // the comparison that matters: what a full checkpoint would move instead
+    const ly = H - 100;
+    rr(ctx, 72, ly - 28, W - 144, 56, 10); ctx.fillStyle = T.tile; ctx.fill();
+    text(ctx, `Full checkpoint every step: ${fmtN(total)} elements each time. Sparse delta: ${fmtN(Math.round(mean / 100 * total))} on average, ${(100 / Math.max(0.01, mean)).toFixed(0)}× fewer. The sampler patches them in place and keeps serving.`, 92, ly, 19, T.ink);
+    mono(ctx, `last delta ${deltas[deltas.length-1].density_pct.toFixed(2)}% at ${(deltas[deltas.length-1].time||'').slice(11,19)}  ·  source: ${wt.source === 'steps' ? 'op metrics via /runs/{id}/steps' : 'trainer log via /logs'}`, W - 92, ly + 46, 14, T.faint, 'right');
+  }
+  // the job timeline links to weights; fleet rows open the timeline, and a double-click opens weights
+  $('#fleet').addEventListener('dblclick', e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; const h = hits.find(h => h.kind === 'job' && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h); if (h) openWeights(h.id); });
+
+  // ---- Harvey (the mock's scene 3, unchanged: the published previous run)
+  let harveyStart = performance.now();
+  const noise = (i, salt=0) => { const s = Math.sin(i*12.9898 + salt*78.233) * 43758.5453; return s - Math.floor(s); };
+  const CURVE = (() => { const o = []; for (let s = 0; s <= 30; s++) { const k = s/30, base = 0.57 + 0.15*(1 - Math.pow(1-k, 2.2)), j = (noise(s,4)-0.5)*0.035*(1-0.5*k); o.push(s===0?0.57:s===30?0.72:base+j); } return o; })();
+  function drawHarvey() {
+    const canvas = $('#harvey'); if (!canvas.offsetParent) return; const ctx = setup(canvas); const t = (performance.now() - harveyStart) / 1000;
+    ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'run', 212, 70, 34, T.faint); mono(ctx, 'harvey-lab  ·  Qwen3.5-9B  ·  LoRA r32  ·  GRPO', 300, 70, 26, T.soft); mono(ctx, 'previous run, 30 steps', W-72, 70, 26, T.faint, 'right');
+    const cx = 110, cy = 200, cw = 1150, ch = 700, X = s => cx + cw*s/30, Y = r => cy + ch - ch*(r-0.5)/0.3;
+    for (let r = 0.5; r <= 0.801; r += 0.05) { ctx.fillStyle = T.line; ctx.fillRect(cx, Y(r), cw, 1); mono(ctx, r.toFixed(2), cx-16, Y(r), 20, T.faint, 'right'); }
+    for (let s = 0; s <= 30; s += 5) mono(ctx, String(s), X(s), cy+ch+28, 20, T.faint, 'center');
+    text(ctx, 'held-out reward', cx, cy-36, 22, T.soft, 'left', 600); text(ctx, 'step', cx+cw+40, cy+ch+28, 20, T.faint);
+    const upto = 30 * clamp((t - 0.6) / 12);
+    ctx.beginPath(); for (let s = 0; s <= Math.floor(upto); s++) { s ? ctx.lineTo(X(s), Y(CURVE[s])) : ctx.moveTo(X(s), Y(CURVE[s])); }
+    ctx.lineWidth = 5; ctx.strokeStyle = T.lora; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
+    for (let s = 0; s <= Math.floor(upto); s++) { ctx.beginPath(); ctx.arc(X(s), Y(CURVE[s]), 6, 0, 7); ctx.fillStyle = T.lora; ctx.fill(); }
+    if (t > 0.6) mono(ctx, '0.57', X(0)+14, Y(0.57)+30, 28, T.soft, 'left', 700);
+    if (upto >= 30) mono(ctx, '0.72', X(30)-14, Y(0.72)-34, 36, T.ink, 'right', 700);
+    const px = 1340; let y = 220;
+    [['task','Harvey Legal Agent Benchmark',T.ink],['','long documents, tools to read them,',T.soft],['','deliverables graded by a judge',T.soft],['environment','agent-substrate sandbox',T.api],['','one per rollout, on the same cluster',T.soft],['turns','32k tokens in a 192k context',T.soft],['step','48 rollouts, 4-GPU trainer',T.soft],['recipe','examples/harvey_labs',T.lora],['also runs on','Gemma 4 E4B, same script',T.soft]]
+      .forEach(([k, v, c], i) => { if (k) { text(ctx, k, px, y, 20, T.faint, 'left', 600); y += 34; } text(ctx, v, px, y, 26, c, 'left', k === 'task' ? 600 : 500); y += k ? 36 : 34; if ([2,4,5,6,7].includes(i)) y += 18; });
+    if (upto >= 30) { rr(ctx, px, 880, 508, 96, 12); ctx.fillStyle = T.loraSoft; ctx.fill(); text(ctx, 'Same loop. Any model, any accelerator.', px+254, 928, 28, T.ink, 'center', 600); }
+  }
+  addEventListener('keydown', e => { if (e.key === 'r') harveyStart = performance.now(); if (e.key >= '1' && e.key <= '3') document.querySelectorAll('nav button')[+e.key-1].click(); });
+  (function frame() { drawFleet(); drawTimeline(); drawWeights(); drawHarvey(); requestAnimationFrame(frame); })();
+  { const m = location.hash.match(/^#weights\?job=([^&]+)/); if (m) { const want = decodeURIComponent(m[1]); const t = setInterval(() => { if (jobsList.length) { clearInterval(t); openWeights(want); } }, 500); } }
+  if (/[?&]others=1/.test(location.hash)) othersBox.checked = true;
+  { const m = location.hash.match(/[?&]sel=([0-9.]+),([0-9.]+)/); if (m) tl.sel = { a: +m[1], b: +m[2] }; }  // stills: &sel=<unix a>,<unix b>
+  { const m = location.hash.match(/^#timeline\?(gpu|job)=([^&]+)/); if (m) { const want = decodeURIComponent(m[2]); const t = setInterval(() => { if (devicesList().length && jobsList.length) { clearInterval(t); openTimeline(m[1], want); } }, 500); } }
+})();
+</script>
+</body>
+</html>
