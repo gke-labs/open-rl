@@ -139,14 +139,29 @@ class ActivityTest(ApiTest):
     body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4 * 3600)})
 
     lane = {"name": "fft-a", "role": "trainer", "node": "n1", "pod": "orw-fft-a", "run_ids": ["fft-1"], "shared_gpu": False}
+    idle = {"turns": [], "waits": []}  # no worker record, so no slicer turns
     self.assertEqual(
       body["lanes"],
       [
-        lane | {"gpu_uuids": ["GPU-fft-a"], "intervals": [[T - 150 * 60, T - 2 * 3600], [T - 30 * 60, T - 10 * 60]], "ended": False},
-        lane | {"gpu_uuids": ["GPU-other"], "intervals": [[T - 150 * 60, T - 2 * 3600]], "ended": True},
+        lane | {"gpu_uuids": ["GPU-fft-a"], "intervals": [[T - 150 * 60, T - 2 * 3600], [T - 30 * 60, T - 10 * 60]], "ended": False} | idle,
+        lane | {"gpu_uuids": ["GPU-other"], "intervals": [[T - 150 * 60, T - 2 * 3600]], "ended": True} | idle,
       ],
     )
     self.assertEqual(body["errors"], [])
+
+  def test_a_lane_carries_its_workers_turns_and_waits_clipped_to_the_placement_and_the_window(self):
+    self.released("fft-1", "fft-a", ["GPU-fft-a"], T - 3600, T - 1800)
+    # The same pod name appears in an earlier placement; only the process alive during this one counts.
+    earlier = {"id": "w0", "pod": "orw-fft-a", "started_at": T - 9000, "heartbeat_at": T - 7200, "turns": [[T - 8000, T - 7900]], "waits": []}
+    worker = {"id": "w1", "pod": "orw-fft-a", "started_at": T - 3600, "heartbeat_at": T - 1800, "phase": "exited"}
+    worker |= {"turns": [[T - 3500, T - 3400], [T - 2500, T - 1700]], "waits": [[T - 3600, T - 3500]]}
+    for record in (earlier, worker):
+      asyncio.run(self.store.set_value(f"open_rl:worker:{record['id']}", json.dumps(record)))
+    window = "since=2026-10-28T11:10:00Z&until=2026-10-28T12:00:00Z"  # T - 3000 onwards
+    body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4000)})
+
+    (lane,) = body["lanes"]
+    self.assertEqual((lane["intervals"], lane["turns"], lane["waits"]), ([[T - 3000, T - 1800]], [[T - 2500, T - 1800]], []))
 
   def test_live_lanes_come_back_with_an_error_when_redis_fails(self):
     self.serve_workloads(workload("fft-a", "fft-1", "fft", placedAt="2026-10-28T11:30:00Z"))

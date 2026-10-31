@@ -139,15 +139,22 @@ async def read_holdings() -> dict:
   cluster = await kubernetes()
   live = [{f: w[f] for f in PLACEMENT_FIELDS} | {"runtime": w["model_id"]} for w in cluster["workloads"] or [] if w["holds_gpus"]]
   try:
-    runs, released, errors = await history
+    runs, released, workers, errors = await history
   except Exception as exc:
-    runs, released, errors = [], [], [redis_failed(exc)]
-  return {"observed_at": now, "runs": runs, "placements": live + released, "errors": cluster["errors"] + errors}
+    runs, released, workers, errors = [], [], [], [redis_failed(exc)]
+  return {"observed_at": now, "runs": runs, "placements": live + released, "workers": workers, "errors": cluster["errors"] + errors}
 
 
-async def read_history() -> tuple[list[dict], list[dict], list[str]]:
-  """From Redis: the runs, the placements their runtimes released, and an error per unreadable history."""
+async def read_history() -> tuple[list[dict], list[dict], list[dict], list[str]]:
+  """From Redis: the runs, the placements their runtimes released, the worker processes' records, and an error per
+  unreadable history."""
   store, runs, released, errors = get_state_store(), [], [], []
+  workers = []
+  for raw in (await store.scan_values("open_rl:worker:")).values():
+    try:
+      workers.append(json.loads(raw))
+    except ValueError as exc:
+      errors.append(f"worker record unreadable: {exc!r}")
   for name, raw in (await store.scan_values("open_rl:model_meta:")).items():
     try:
       meta, run_id = decode_model_metadata(raw), name.removeprefix("open_rl:model_meta:")
@@ -161,18 +168,21 @@ async def read_history() -> tuple[list[dict], list[dict], list[str]]:
       released += [{f: record[f] for f in PLACEMENT_FIELDS} | {"runtime": runtime} for record in map(json.loads, records)]
     except (ValueError, KeyError) as exc:
       errors.append(f"placement history of {runtime} unreadable: {exc!r}")
-  return runs, released, errors
+  return runs, released, workers, errors
 
 
 def lanes(held: dict, low: float, high: float, run_id: str | None = None, node_id: str | None = None) -> list[dict]:
-  """One lane per Workload and the GPUs it held in [low, high]: the intervals it held them, clipped to the window, and the
-  runs on its runtime that lived then. Lanes that held one GPU at overlapping times are shared_gpu."""
+  """One lane per Workload and the GPUs it held in [low, high]: the intervals it held them, clipped to the window, the
+  runs on its runtime that lived then, and from its worker processes' records the time-slicer turns it was on the GPUs
+  and its waits for them. Holding is the placement; a turn is a slice of it, so a lane with turns was busy only during
+  them. Lanes that held one GPU at overlapping times are shared_gpu."""
   now, found = held["observed_at"], {}
   for p in held["placements"]:
     start, end = p["placed_at"], p["released_at"] or now
     if start >= high or end <= low:
       continue
-    fresh = {k: p[k] for k in ("name", "role", "node", "pod", "gpu_uuids")} | {"run_ids": set(), "intervals": [], "ended": True}
+    fresh = {k: p[k] for k in ("name", "role", "node", "pod", "gpu_uuids")} | {"run_ids": set(), "ended": True}
+    fresh |= {"intervals": [], "turns": [], "waits": []}
     lane = found.setdefault((p["name"], p["node"], tuple(p["gpu_uuids"])), fresh)
     lane["run_ids"].update(
       r["run_id"]
@@ -180,8 +190,14 @@ def lanes(held: dict, low: float, high: float, run_id: str | None = None, node_i
       if (r["runtime"], r["kind"]) == (p["runtime"], p["training_kind"]) and r["created_at"] <= end and (r["completed_at"] or now) >= start
     )
     lane["intervals"].append([max(low, start), min(high, end)])
+    # Pod names repeat across a Workload's placements; a process ran inside the placement it heartbeat during.
+    lo, hi = max(low, start), min(high, end)
+    for proc in held.get("workers") or []:
+      if p["pod"] and proc.get("pod") == p["pod"] and proc.get("started_at", 0) <= end and proc.get("heartbeat_at", 0) >= start:
+        for kind in ("turns", "waits"):
+          lane[kind] += [[max(lo, a), min(hi, b)] for a, b in proc.get(kind) or [] if a < hi and b > lo]
     lane["ended"] &= p["released_at"] is not None
-  result = [lane | {"run_ids": sorted(lane["run_ids"]), "intervals": merge(lane["intervals"])} for lane in found.values()]
+  result = [lane | {"run_ids": sorted(lane["run_ids"]), **{k: merge(lane[k]) for k in ("intervals", "turns", "waits")}} for lane in found.values()]
   for lane in result:
     lane["shared_gpu"] = any(
       other is not lane and set(lane["gpu_uuids"]) & set(other["gpu_uuids"]) and overlap(lane["intervals"], other["intervals"]) for other in result
