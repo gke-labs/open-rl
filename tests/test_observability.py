@@ -199,6 +199,14 @@ class QueryTest(ApiTest):
     unescaped = [q.replace("\\", "") for q in self.sent]
     self.assertTrue(unescaped and all("GPU-fft-a" in q and "GPU-fft-b" not in q for q in unescaped), self.sent)
 
+  def test_a_source_that_answers_null_for_no_series_is_read_as_empty(self):
+    # Managed Service for Prometheus answers "result": null where plain Prometheus answers [].
+    self.answers["DCGM_FI_PROF_GR_ENGINE_ACTIVE"] = None
+    self.answers["DCGM_FI_DEV_GPU_UTIL"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "30"]]}]
+    body = self.get("/api/v1/inspect/query?name=gpu_busy&run_id=fft-1", None, **self.runs)
+
+    self.assertEqual((body["available"], body["metric"], body["series"][0]["points"]), (True, "DCGM_FI_DEV_GPU_UTIL", [[T, 30.0]]))
+
   def test_gpu_busy_falls_back_to_gpu_util_and_says_which_it_read(self):
     self.answers["DCGM_FI_DEV_GPU_UTIL"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "30"]]}]
     fallback = self.get("/api/v1/inspect/query?name=gpu_busy&run_id=fft-1", None, **self.runs)
