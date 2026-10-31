@@ -205,6 +205,30 @@ def lanes(held: dict, low: float, high: float, run_id: str | None = None, node_i
   return [lane for lane in result if (not run_id or run_id in lane["run_ids"]) and (not node_id or lane["node"] == node_id)]
 
 
+async def active_runs(lanes: list[dict], low: float, high: float) -> None:
+  """Fill each lane's `active`: for each run it serves, when that run had work on this lane's worker, from the run's op
+  records clipped to the window. A trainer op names the pod that ran it, so a shared trainer's lane shows its runs
+  taking turns. A sample group names the process that recorded it, which for a routed pool is the dispatcher, so a
+  sampler lane takes its runs' sample groups as they are; a pool with several replicas shows them on each."""
+  store, limit = get_state_store(), asyncio.Semaphore(16)
+  runs = sorted({run for lane in lanes for run in lane["run_ids"]})
+
+  async def read(run: str) -> tuple[list[dict], list[dict]]:
+    async with limit:
+      return await asyncio.gather(store.read_samples(f"open_rl:operations:{run}"), store.read_samples(f"open_rl:operations:{run}:samples"))
+
+  records = dict(zip(runs, await asyncio.gather(*(read(run) for run in runs))))
+  for lane in lanes:
+    lane["active"] = {}
+    for run in lane["run_ids"]:
+      ops, samples = records[run]
+      mine = [r for r in ops if r.get("pod") == lane["pod"]] if lane["role"] == "trainer" else samples
+      inside = [r for r in mine if r.get("started_at") is not None and r["started_at"] < high and r["at"] > low]
+      spans = [[max(low, r["started_at"]), min(high, r["at"])] for r in inside]
+      if spans:
+        lane["active"][run] = merge(spans)
+
+
 def merge(spans: list[list[float]]) -> list[list[float]]:
   merged: list[list[float]] = []
   for start, end in sorted(spans):

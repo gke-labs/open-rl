@@ -49,11 +49,15 @@ async def activity(since: Bound = None, until: Bound = None, run_id: str | None 
   """One lane per Workload that held GPUs in the window, a run's or a node's: its role, node, pod, GPU UUIDs, the runs on
   its runtime that lived then, the intervals it held them in Unix seconds clipped to the window, and whether it let go.
   turns are the time-slicer turns its worker process was on the GPUs within those intervals, and waits its waits for a
-  turn, both from the worker's record; a lane with no slicer has none. shared_gpu means another lane held one of its GPUs
-  at an overlapping time, so its GPUs' metrics are not its own."""
+  turn, both from the worker's record; a lane with no slicer has none. active maps each run the lane serves to when it
+  had work on this worker, from its op records: a shared worker's runs taking turns. shared_gpu means another lane held
+  one of its GPUs at an overlapping time, so its GPUs' metrics are not its own."""
   since, until = bounds(since, until)
   held = await fleet.holdings()
-  return {"since": since, "until": until, "errors": held["errors"], "lanes": fleet.lanes(held, epoch(since), epoch(until), run_id, node_id)}
+  low, high = epoch(since), epoch(until)
+  lanes = fleet.lanes(held, low, high, run_id, node_id)
+  await fleet.active_runs(lanes, low, high)
+  return {"since": since, "until": until, "errors": held["errors"], "lanes": lanes}
 
 
 @router.get("/api/v1/inspect/query")

@@ -139,7 +139,7 @@ class ActivityTest(ApiTest):
     body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4 * 3600)})
 
     lane = {"name": "fft-a", "role": "trainer", "node": "n1", "pod": "orw-fft-a", "run_ids": ["fft-1"], "shared_gpu": False}
-    idle = {"turns": [], "waits": []}  # no worker record, so no slicer turns
+    idle = {"turns": [], "waits": [], "active": {}}  # no worker record, so no slicer turns; no op records either
     self.assertEqual(
       body["lanes"],
       [
@@ -162,6 +162,27 @@ class ActivityTest(ApiTest):
 
     (lane,) = body["lanes"]
     self.assertEqual((lane["intervals"], lane["turns"], lane["waits"]), ([[T - 3000, T - 1800]], [[T - 2500, T - 1800]], []))
+
+  def test_a_lane_shows_when_each_run_it_serves_had_work_on_its_worker(self):
+    self.released("fft-1", "fft-t", ["GPU-t"], T - 3600, T - 1800)
+    sampler = {"name": "fft-s", "role": "sampler", "node": "n1", "pod": "orw-fft-s", "gpu_uuids": ["GPU-s"], "training_kind": "fft"}
+    self.store.push_recent_sync("open_rl:placements:fft-1", [json.dumps(sampler | {"placed_at": T - 3600, "released_at": T - 1800})], 200, 3600)
+
+    def op(started: float, at: float, pod: str) -> str:
+      return json.dumps({"operation": "forward_backward", "status": "succeeded", "started_at": started, "at": at, "role": "trainer", "pod": pod})
+
+    # two ops in this lane's pod, one in another pod of the same run (a relaunch elsewhere), one before the window
+    ops = [op(T - 3000, T - 2900, "orw-fft-t"), op(T - 2800, T - 2700, "orw-fft-t")]
+    ops += [op(T - 2600, T - 2500, "orw-elsewhere"), op(T - 3300, T - 3200, "orw-fft-t")]
+    self.store.push_recent_sync("open_rl:operations:fft-1", ops, 100, 3600)
+    group = json.dumps({"operation": "sample", "started_at": T - 3100, "at": T - 2950, "count": 8, "role": "sampler", "pod": "dispatcher-0"})
+    self.store.push_recent_sync("open_rl:operations:fft-1:samples", [group], 100, 3600)
+    window = "since=2026-10-28T11:10:00Z&until=2026-10-28T12:00:00Z"  # T - 3000 on
+    body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4000)})
+
+    by_name = {lane["name"]: lane for lane in body["lanes"]}
+    self.assertEqual(by_name["fft-t"]["active"], {"fft-1": [[T - 3000, T - 2900], [T - 2800, T - 2700]]})
+    self.assertEqual(by_name["fft-s"]["active"], {"fft-1": [[T - 3000, T - 2950]]})
 
   def test_live_lanes_come_back_with_an_error_when_redis_fails(self):
     self.serve_workloads(workload("fft-a", "fft-1", "fft", placedAt="2026-10-28T11:30:00Z"))
