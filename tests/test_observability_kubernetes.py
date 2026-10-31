@@ -2,7 +2,7 @@ import asyncio
 import unittest
 from unittest import mock
 
-from server.observability.kubernetes import gpu_capacity, kubernetes, problem
+from server.observability.kubernetes import gpu_capacity, gpus, kubernetes, problem
 
 
 class NodeTest(unittest.TestCase):
@@ -14,6 +14,24 @@ class NodeTest(unittest.TestCase):
 
     slices = [slice_on("n1", 8), slice_on("n1", 8, generation=1), slice_on("n2", 4), slice_on("n1", 4, driver="tpu.google.com")]
     self.assertEqual((gpu_capacity(node, []), gpu_capacity(node, slices)), (0, 8))
+
+  def test_a_dra_node_lists_its_gpus_by_the_name_and_uuid_placements_use(self):
+    node = {"metadata": {"name": "n1"}, "status": {}}
+    device = {"name": "gpu-1", "attributes": {"uuid": {"string": "GPU-b"}, "productName": {"string": "H100"}}}
+    device["capacity"] = {"memory": {"value": "80Gi"}}
+    older = {"name": "gpu-9", "attributes": {"uuid": {"string": "GPU-old"}}}
+    slices = [
+      {"spec": {"driver": "gpu.nvidia.com", "nodeName": "n1", "pool": {"name": "n1", "generation": 2}, "devices": [device, {"name": "gpu-0"}]}},
+      {"spec": {"driver": "gpu.nvidia.com", "nodeName": "n1", "pool": {"name": "n1", "generation": 1}, "devices": [older]}},
+    ]
+
+    self.assertEqual(
+      gpus(node, slices),
+      [
+        {"name": "gpu-0", "uuid": None, "product": None, "memory": None},
+        {"name": "gpu-1", "uuid": "GPU-b", "product": "H100", "memory": "80Gi"},
+      ],
+    )
 
 
 class ProblemTest(unittest.TestCase):
