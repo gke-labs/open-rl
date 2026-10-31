@@ -10,8 +10,3 @@ spec:
         env:
         - name: OPEN_RL_ENABLE_FFT
           value: "true"
-        - name: OPEN_RL_TPU_FFT_SAMPLER_IMAGE
-          valueFrom:
-            configMapKeyRef:
-              name: open-rl-images
-              key: tpu-fft-sampler

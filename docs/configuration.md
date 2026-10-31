@@ -106,9 +106,10 @@ with the model when it is created and never change.
 
 Workers run on the first entry of their role's list for now; later entries are
 not used yet. TPU workers run only in scheduler mode on Kubernetes. The API
-server refuses a model that lists `tpu` anywhere for full fine-tuning, since
-TPU supports LoRA only, and in the trainer list for the `automodel` trainer
-backend. A job's own trainer image can run on TPU if it includes `torch_tpu`.
+server refuses a model that lists `tpu` anywhere for full fine-tuning unless
+`openrl.exclusive=true`, since TPU workers cannot be parked by the time slicer,
+and in the trainer list for the `automodel` trainer backend. A job's own
+trainer image can run on TPU if it includes `torch_tpu`.
 
 In scheduler mode these variables on the API server set up the worker pods:
 
