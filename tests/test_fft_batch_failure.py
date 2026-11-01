@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from server.store import InMemoryStore
 from server.training_requests_processor import TrainingRequestsProcessor
+from training import commands
+from training.types import FFTConfig
 
 
 class SlicerStub:
@@ -52,6 +54,50 @@ class BatchStore(InMemoryStore):
 def processor(store, slicer):
   with patch.dict(os.environ, {"REDIS_URL": "redis://test"}):
     return TrainingRequestsProcessor(store, BrokenWorker(), "run-a", time_slicer=slicer)
+
+
+class RecordingSlicer(SlicerStub):
+  def __init__(self):
+    self.acquired = 0
+
+  @contextlib.asynccontextmanager
+  async def acquire(self, workload):
+    self.acquired += 1
+    yield
+
+
+class LoadingWorker(BrokenWorker):
+  """create_model works; wake_up still fails, so a turn taken for the load would show as an error."""
+
+  def __init__(self):
+    self.loaded = []
+
+  def create_model(self, base_model, model_id=None, config=None):
+    self.loaded.append((base_model, config.cpu_offload if config else None))
+
+
+class CreateModelWithoutTurnTest(unittest.TestCase):
+  def run_create_model(self, **fields) -> tuple[RecordingSlicer, LoadingWorker, dict]:
+    # the wire format the API server queues: envelope keys plus the command's fields under payload
+    command = commands.CreateModel(request_id="cm-1", model_id="run-a", base_model="Qwen/base", fine_tuning_type="full", **fields)
+    store = BatchStore([commands.wire(command)])
+    slicer, worker = RecordingSlicer(), LoadingWorker()
+    with patch.dict(os.environ, {"REDIS_URL": "redis://test"}):
+      proc = TrainingRequestsProcessor(store, worker, "run-a", time_slicer=slicer)
+    try:
+      asyncio.run(proc.run_once())
+    except RuntimeError:
+      pass  # a batch that fails under its turn re-raises after answering every request
+    return slicer, worker, store.futures["cm-1"]
+
+  def test_an_offloaded_full_trainer_loads_its_model_without_a_gpu_turn(self) -> None:
+    slicer, worker, result = self.run_create_model()
+    self.assertEqual((slicer.acquired, worker.loaded, result["type"]), (0, [("Qwen/base", True)], "model_created"))
+
+  def test_a_trainer_that_keeps_its_model_on_the_gpu_loads_it_under_a_turn(self) -> None:
+    slicer, worker, result = self.run_create_model(full_config=FFTConfig(cpu_offload=False))
+    self.assertEqual((slicer.acquired, worker.loaded), (1, []))  # wake_up fails before the load, as the stub says
+    self.assertEqual(result["type"], "RequestFailedResponse")
 
 
 class FFTBatchFailureTest(unittest.TestCase):

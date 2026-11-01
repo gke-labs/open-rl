@@ -269,8 +269,21 @@ class TrainingRequestsProcessor:
       return
 
     save_ops = {"save_state", "save_weights_for_sampler"}
-    gpu_reqs = [r for r in requests if r.get("op") not in save_ops]
+
+    def loads_on_cpu(r: dict[str, Any]) -> bool:
+      # An offloaded full fine-tuning trainer loads its model on the CPU and parks it; no turn until the first op.
+      if r.get("op") != "create_model":
+        return False
+      try:
+        command = parse_command(r)
+      except Exception:
+        return False  # handle_request reports the malformed request
+      return isinstance(command, commands.CreateModel) and command.fine_tuning_type == "full" and command.full_config.cpu_offload
+
+    gpu_reqs = [r for r in requests if r.get("op") not in save_ops and not loads_on_cpu(r)]
     save_reqs = [r for r in requests if r.get("op") in save_ops]
+    for request in (r for r in requests if loads_on_cpu(r)):
+      results.append(await self.handle_request(request))
 
     if gpu_reqs:
       async with gpu_turn(self.time_slicer.acquire(self.workload)):

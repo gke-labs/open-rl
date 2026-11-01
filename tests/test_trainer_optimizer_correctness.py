@@ -547,7 +547,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "payload": {
               "base_model": "base-model",
               "fine_tuning_type": "full",
-              "full_config": {"seed": 123},
+              "full_config": {"seed": 123, "cpu_offload": False},
             },
           }
         ]
@@ -576,6 +576,43 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(worker.created_models[0][0], "base-model")
     self.assertEqual(store.results["req-a"]["model_id"], "model-a")
 
+  async def test_offloaded_create_model_runs_without_a_turn(self) -> None:
+    # An offloaded trainer loads its model on the CPU and parks it, so create_model takes no time-slicer turn.
+    worker = _RecordingFullWorker()
+    store = _TrainingRequestsStoreStub(
+      [
+        [
+          {
+            "request_id": "req-a",
+            "model_id": "model-a",
+            "op": "create_model",
+            "payload": {
+              "base_model": "base-model",
+              "fine_tuning_type": "full",
+              "full_config": {"seed": 123, "cpu_offload": True},
+            },
+          }
+        ]
+      ]
+    )
+    time_slicer = _TimeSlicerStub()
+
+    with (
+      patch.dict(
+        os.environ,
+        {
+          "OPEN_RL_ENABLE_FFT": "true",
+          "REDIS_URL": "redis://localhost:6379",
+        },
+      ),
+      patch.object(training_requests_processor_module, "get_store", return_value=store),
+    ):
+      await training_requests_processor_module.run_training_requests_processor(worker, "model-a", time_slicer=time_slicer)
+
+    self.assertEqual([event[0] for event in time_slicer.events], ["register", "unregister", "close"])
+    self.assertEqual(worker.created_models[0][0], "base-model")
+    self.assertEqual(store.results["req-a"]["model_id"], "model-a")
+
   async def test_full_processor_publishes_result_after_release(self) -> None:
     events = []
     worker = _RecordingFullWorker()
@@ -589,7 +626,7 @@ class TestTrainingRequestsProcessorFullMode(unittest.IsolatedAsyncioTestCase):
             "payload": {
               "base_model": "base-model",
               "fine_tuning_type": "full",
-              "full_config": {"seed": 123},
+              "full_config": {"seed": 123, "cpu_offload": False},
             },
           }
         ]

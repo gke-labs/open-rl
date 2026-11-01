@@ -81,11 +81,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
       return
 
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-    target_device = "auto" if num_gpus > 1 else self.device
+    # An offloaded single-GPU trainer loads on the CPU and parks there, so create_model needs no GPU turn: on a
+    # time-sliced GPU it would otherwise wait behind the sampler's whole start-up. Its first op moves it to the GPU.
+    parks = self.cpu_offload and num_gpus == 1
+    target_device = "cpu" if parks else "auto" if num_gpus > 1 else self.device
     print(f"Loading full fine-tuning model {base_model_name} (target device map: {target_device}, visible GPUs: {num_gpus})...")
     self.base_model_name = base_model_name
     self.tokenizer = AutoTokenizer.from_pretrained(base_model_name)
-    dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    # The bf16 check initialises a CUDA context, which a parked load must not do; OpenRL's GPUs all run bf16.
+    dtype = torch.bfloat16 if parks or torch.cuda.is_bf16_supported() else torch.float32
 
     prefetch(base_model_name)
     self.model = AutoModelForCausalLM.from_pretrained(base_model_name, dtype=dtype, device_map=target_device)
@@ -101,6 +105,26 @@ class FFTTrainingWorker(BaseTrainerWorker):
     if config is not None and config.seed is not None:
       torch.manual_seed(config.seed)
     self.prepare_model_for_training()
+    parked_load = self.model is not None and self.cpu_offload and torch.cuda.is_available() and not self._is_offloaded
+    if parked_load and all(t.device.type == "cpu" for t in self.model.parameters()):
+      self._park_on_cpu()
+
+  def _park_on_cpu(self) -> None:
+    """Leave a model loaded on the CPU as sleep() would leave it: every weight in a pinned shadow buffer bound for
+    self.device, an empty placeholder in its place, and the worker offloaded, so the first wake_up moves it over."""
+    start_t = time.perf_counter()
+    for tensor in itertools.chain(self.model.parameters(), self.model.buffers()):
+      shadow = self._param_shadow.get(tensor)
+      if shadow is not None and shadow[1].shape == tensor.shape:
+        cpu_buf = shadow[1]  # the delta strategy's copy, already pinned
+      else:
+        cpu_buf = torch.empty(tensor.shape, dtype=tensor.dtype, device="cpu", pin_memory=True)
+        cpu_buf.copy_(tensor.data)
+      self._param_shadow[tensor] = (self.device, cpu_buf)
+      tensor.data = torch.empty(0, dtype=tensor.dtype)
+    gc.collect()
+    self._is_offloaded = True
+    print(f"[FFT Worker] Parked the loaded model in pinned CPU memory in {(time.perf_counter() - start_t) * 1000:.1f} ms; no GPU turn taken.")
 
   def prepare_model_for_training(self) -> None:
     assert self.model is not None, "Model is not loaded. Call load_base_model first."
