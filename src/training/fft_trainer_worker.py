@@ -177,6 +177,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    # Cleared first, on every path: save_state_delta sets this save's figures, and any path that writes something else,
+    # or returns early, must not leave the previous delta's on the worker for the processor to attach.
+    self.last_save_metrics = {}
     if self.cpu_offload and not self._is_offloaded:
       raise RuntimeError(
         "Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
@@ -287,6 +290,15 @@ class FFTTrainingWorker(BaseTrainerWorker):
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
       json.dump(metadata, f)
 
+    # The op record keeps these, so the share of the model that moved each step is a step metric.
+    self.last_save_metrics = {
+      "delta/density_pct": metadata["density_pct"],
+      "delta/changed_elements": float(total_changed),
+      "delta/total_elements": float(total_elements),
+      "delta/layers": float(len(layer_names_list)),
+      "time/delta_collect": collect_time,
+      "time/delta_write": save_file_time,
+    }
     print(f"Saved sparse delta ({metadata['density_pct']}% changed elements, {total_changed}/{total_elements}) to {state_path}")
     return {"path": state_path, "density_pct": metadata["density_pct"]}
 

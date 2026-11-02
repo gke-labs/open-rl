@@ -317,6 +317,12 @@ class TrainingRequestsProcessor:
       if token:
         otel_context.detach(token)
 
+  def save_metrics(self) -> dict[str, Any]:
+    """The last save's metrics (a sparse delta's density and size) for the op record. The API server drops them from
+    the client's response, which the SDK's save types do not carry."""
+    metrics = self.worker.last_save_metrics
+    return {"metrics": dict(metrics)} if metrics else {}
+
   async def dispatch_operation(self, command: commands.TrainingCommand) -> dict[str, Any]:
     match command:
       case commands.CreateModel():
@@ -369,7 +375,7 @@ class TrainingRequestsProcessor:
         return result
       case commands.SaveState():
         result = await asyncio.to_thread(self.worker.save_state, command.model_id, command.state_path, command.include_optimizer, command.kind)
-        return {"path": result.get("path", command.state_path), "type": "state_saved"}
+        return {"path": result.get("path", command.state_path), "type": "state_saved", **self.save_metrics()}
       case commands.LoadWeights():
         await asyncio.to_thread(self.worker.load_from_state, command.model_id, command.state_path, command.restore_optimizer)
         return {"path": command.state_path, "type": "weights_loaded"}
@@ -381,7 +387,7 @@ class TrainingRequestsProcessor:
         elif self.sampling is not None and is_primary() and ref:
           # A sampler serves a LoRA save by its reference, so the adapter is frozen under that name.
           await asyncio.to_thread(freeze_adapter, command.model_id, self.worker.base_model_name, command.path, command.sampling_session_id)
-        return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved"}
+        return {"path": command.path, "sampling_session_id": command.sampling_session_id, "type": "sampler_weights_saved", **self.save_metrics()}
       case commands.DeleteModel():
         await asyncio.to_thread(self.worker.delete_model, command.model_id)
         return {"status": "ok", "type": "model_deleted"}

@@ -3,6 +3,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import torch
 import torch.nn as nn
@@ -81,6 +82,18 @@ class DeltaWeightSyncTest(unittest.TestCase):
       torch.equal(worker._param_shadow[worker.model.fc.weight][1], worker.model.fc.weight.data.cpu()),
       "Worker shadow must be updated after delta save",
     )
+
+  def test_save_state_clears_metrics_from_an_earlier_save(self):
+    """A save that writes no figures of its own (here a delta save returning early) must not report the previous delta's."""
+    worker = FFTTrainingWorker()
+    worker.cpu_offload = False
+    worker.model = SimpleModel()
+    worker.weight_sync_cfg.strategy = "delta"
+    worker.last_save_metrics = {"delta/density_pct": 6.97, "delta/changed_elements": 7.0}
+    with patch.object(worker, "save_state_delta", return_value={"path": self.test_dir}) as save_state_delta:
+      worker.save_state("model-a", self.test_dir, kind="state")
+    save_state_delta.assert_called_once()
+    self.assertEqual(worker.last_save_metrics, {})
 
   def test_weight_sync_strategy_selection(self):
     worker = FFTTrainingWorker()
