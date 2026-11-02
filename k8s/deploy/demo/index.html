@@ -184,7 +184,9 @@
     return [...spec.querySelectorAll('tr')].map(tr => { const [k, m, c, s, d] = tr.querySelectorAll('select,input'); return { kind:k.value, model:m.value.trim(), count:+c.value, steps:+s.value, seed:+d.value }; }).filter(r => r.model && r.count > 0);
   }
   $('#addrow').onclick = () => addRow();
-  $('#run').value = 'demo-' + new Date().toISOString().slice(11,19).replace(/:/g,'');
+  // a fresh run name per sweep: Job names come from it, and a name that already has Jobs submits nothing
+  const freshRun = () => { $('#run').value = 'demo-' + new Date().toISOString().slice(11,19).replace(/:/g,''); };
+  freshRun();
   api('/api/sweep/presets').then(R => {
     env = { namespace: R.namespace || '', cluster: R.cluster || '' }; const P = R.presets;
     for (const name of Object.keys(P)) {
@@ -204,7 +206,9 @@
     say(`<span class="c">$ openrl sweep start --run ${$('#run').value} --jobs ${n}</span>`);
     sweepStart = Date.now() / 1000;
     try { const r = await api('/api/sweep/start', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ run: $('#run').value, jobs }) });
-      say(`<span class="c">${r.created.length} jobs submitted. Same loop in every one; only the model, the tuning mode and the seed differ.</span>`); }
+      if (r.created.length) say(`<span class="c">${r.created.length} jobs submitted. Same loop in every one; only the model, the tuning mode and the seed differ.</span>`);
+      if ((r.skipped || []).length) say(`<span class="f">${r.skipped.length} job${r.skipped.length === 1 ? '' : 's'} not submitted: run ${r.run} already has ${r.skipped.length === 1 ? 'a Job' : 'Jobs'} by ${r.skipped.length === 1 ? 'that name' : 'those names'}. Start again with the new run name.</span>`);
+      freshRun(); }
     catch (e) { say(`<span class="f">${e.message}</span>`); }
   };
   $('#stopall').onclick = async () => { say('<span class="c">$ openrl sweep stop --all</span>'); const r = await api('/api/sweep/stop_all', { method:'POST' }); say(`<span class="c">stopped ${r.stopped.length}: workers released ${r.stopped.filter(s => s.released).length}</span>`); };

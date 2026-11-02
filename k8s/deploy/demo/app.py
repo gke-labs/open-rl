@@ -334,7 +334,7 @@ async def start(body: dict):
   if not specs:
     raise HTTPException(400, "no jobs")
   existing = {j.metadata.name for j in batch.list_namespaced_job(NAMESPACE, label_selector=f"app={APP_LABEL}").items}
-  created, n = [], 0
+  created, skipped, n = [], [], 0
   for spec in specs:
     kind, model = spec.get("kind", "fft"), spec.get("model", "Qwen/Qwen3-0.6B")
     if kind not in ("lora", "fft"):
@@ -344,12 +344,13 @@ async def start(body: dict):
       n += 1
       name = f"{run}-{n:02d}-{kind}-{slug(model)}"[:63].rstrip("-")
       if name in existing:
+        skipped.append(name)  # a Job by this name already exists: the page names them so a reused run is not silent
         continue
       manifest = job_manifest(run, name, kind, model, steps, seed0 + i)
       await asyncio.to_thread(batch.create_namespaced_job, NAMESPACE, manifest)
       created.append({"name": name, "kind": kind, "model": model, "steps": steps, "seed": seed0 + i})
       await asyncio.sleep(0.3)  # one every third of a second, so the submit log reads as a stream
-  return {"run": run, "created": created}
+  return {"run": run, "created": created, "skipped": skipped}
 
 
 @app.post("/api/sweep/stop")
