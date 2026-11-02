@@ -28,13 +28,21 @@ a Job is matched to its run.
   `TINKER_TAGS=openrl.recipe=rl`. Stop releases the run's workers through
   `delete_model` and deletes the Job. Jobs are listed newest first; sweeps get
   a letter (A is the newest) so job numbers stay unambiguous across sweeps.
-- **Fleet.** Counts, the job table with step progress, one tile per GPU with
-  a chip per worker holding it, the waiting lane, GPU time held since the
-  first submit, and DCGM duty when the API server has a metrics source.
-  Click a tile or a job row to open it on the Timeline tab.
+- **Fleet.** Counts, the job table with step progress, and the pool: a box
+  per node with one row per GPU and a chip per worker holding it. A chip is
+  lit while its worker is computing (a time-slicer turn, or a shared LoRA
+  runtime serving one of its runs) and soft while it waits for its turn.
+  Below the pool: the queue (jobs without a GPU yet; outlined while the pod
+  is still starting) and the share of the pool's GPU time held by a job since
+  the first submit, computed from the placements the server recorded. Click
+  a GPU row or a job row to open it on the Timeline tab. Counts, bars and
+  states move to each new poll instead of jumping; a worker that gets a GPU
+  flies from its job's tag in the queue to its row.
 - **Timeline.** One occupancy trace per GPU: 1 while a worker is on it,
   coloured by the holder, 0 when idle; the thin band at the base is a worker
-  that holds the GPU between time-slicer turns. Live view scrolls; drag on
+  that holds the GPU between time-slicer turns. The default window, fit,
+  frames what was recorded: a live job from its first claim to now, a
+  finished one from its first claim to its last release. Live view scrolls; drag on
   the trace to select a window, and the shares are computed over exactly that
   span. For a job, the overlay toggle adds the other workers on its GPUs.
 - **Weights.** For a full fine-tuning run, the share of the model's weights
@@ -46,6 +54,13 @@ a Job is matched to its run.
   and output length, one line per job in its colour with the sweep's mean on
   top, or one job alone. Read from the `metrics.jsonl` the client writes to
   the log directory the app assigned it (`RUNS_ROOT/<job>`).
+
+## Presenting
+
+Press `p` (or open `/?present=1#fleet`) for presentation mode: the canvas
+fills the screen, the selectors and hints are hidden, and the header slides
+in when the pointer touches the top edge. Keys `1` to `5` switch tabs and
+`Escape` leaves the mode.
 
 ## Deploy
 
@@ -60,12 +75,10 @@ The bundle expects an OpenRL installation in the same namespace
 service account, `open-rl-sa`, and binds a Role to it for the Jobs it
 creates and the pod logs it reads. Point `CLIENT_IMAGE` at the client
 image that matches the server, and set `CLUSTER_NAME` if you want it on the
-Fleet tab. The Timeline's turn-level trace and the GPU tiles need the API
+Fleet tab. The Timeline's turn-level trace and the GPU rows need the API
 server to report worker turns and node GPUs in the inspection API; without
-them the trace falls back to placement holds and the tiles stay empty. The
-Weights tab needs the save op's delta metrics in the run's steps. The DCGM
-duty figure needs `OPEN_RL_PROMETHEUS_URL` on the API
-server.
+them the trace falls back to placement holds and the GPU rows stay empty. The
+Weights tab needs the save op's delta metrics in the run's steps.
 
 ## Files
 

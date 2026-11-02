@@ -44,6 +44,15 @@
   .stage { position:relative; width:calc(var(--u) * 100); height:calc(var(--u) * 56.25); background:var(--bg); overflow:hidden; border:1px solid var(--line); border-radius:10px; }
   canvas { position:absolute; inset:0; width:100%; height:100%; display:block; }
   .hint { color:var(--faint); font-size:13px; margin-top:10px; }
+  /* presentation mode (p, or #…?present=1): the canvas fills the screen; the header slides in from the top edge */
+  body.present header { position:fixed; top:0; left:0; right:0; z-index:5; background:var(--bg); transform:translateY(-100%); transition:transform .25s cubic-bezier(.25,.8,.25,1); }
+  body.present header::after { content:""; position:absolute; left:0; right:0; bottom:-16px; height:16px; }
+  body.present header:hover { transform:none; }
+  body.present main { padding:0; }
+  body.present .tab > .row, body.present .tab > .hint { display:none; }
+  body.present .stage-wrap { height:100vh; --u:min(1vw, calc(100vh / 56.25)); }
+  body.present .stage { border:0; border-radius:0; }
+  body.present #tab-sweep { padding:20px 28px; }
 </style>
 </head>
 <body>
@@ -74,15 +83,15 @@
     <table id="jobs"><thead><tr><th>sweep</th><th>#</th><th>job</th><th>model</th><th>type</th><th>seed</th><th>state</th><th>steps</th><th>run</th><th>views</th><th></th></tr></thead><tbody></tbody></table>
   </section>
   <section class="tab" id="tab-fleet">
-    <div class="row" style="margin-bottom:10px"><label>sweep <select id="fleet-run"><option value="">all</option></select></label><span class="hint" style="margin:0">Click a GPU tile for its timeline, a job row for the job's timeline, double-click a job row for its weights.</span></div>
-    <div class="stage-wrap"><div class="stage"><canvas id="fleet"></canvas></div></div><p class="hint">Jobs and placements from Kubernetes every second; runs and steps from the inspection API, which caches for 5 to 10 s. DCGM duty is about a minute behind.</p></section>
+    <div class="row" style="margin-bottom:10px"><label>sweep <select id="fleet-run"><option value="">all</option></select></label><span class="hint" style="margin:0">Click a GPU row for its timeline, a job row for the job's timeline, double-click a job row for its weights.</span></div>
+    <div class="stage-wrap"><div class="stage"><canvas id="fleet"></canvas></div></div><p class="hint">Jobs and placements from Kubernetes every second; runs and steps from the inspection API, which caches for 5 to 10 s, so a chip lights a few seconds after its worker's turn begins.</p></section>
   <section class="tab" id="tab-timeline">
     <div class="row">
       <label>accelerator <select id="tl-gpu"><option value="">—</option></select></label>
       <label>job <select id="tl-job"><option value="">—</option></select></label>
-      <label>window <select id="tl-win"><option value="900">15 min</option><option value="1800" selected>30 min</option><option value="3600">1 h</option><option value="sweep">this sweep</option></select></label>
+      <label>window <select id="tl-win"><option value="fit" selected>fit</option><option value="900">15 min</option><option value="1800">30 min</option><option value="3600">1 h</option><option value="sweep">this sweep</option></select></label>
       <label id="tl-others-wrap" style="display:none"><input type="checkbox" id="tl-others"> overlay other jobs on these GPUs</label>
-      <span class="hint" style="margin:0">Pick one. Clicking a GPU tile or a job row on the Fleet tab opens it here.</span>
+      <span class="hint" style="margin:0">Pick one. Clicking a GPU row or a job row on the Fleet tab opens it here.</span>
     </div>
     <div class="stage-wrap"><div class="stage"><canvas id="timeline"></canvas></div></div>
     <p class="hint">One trace per accelerator: 1 while a worker holds the GPU, coloured by who holds it; 0 when idle. The thin band at the base is a worker that has the claim but no turn. Drag across the trace to select a window: the percentages are then computed over exactly that span; Escape or double-click returns to the live sliding window. Turns come from each worker's own record through the inspection API's activity route, fetched every 1.5 s (the API caches 5 to 10 s).</p>
@@ -115,16 +124,48 @@
   const short = m => (m||'').split('/').pop().toLowerCase();
   const api = async (p, opts) => { const r = await fetch(p, opts); if (!r.ok) throw new Error(`${p}: ${r.status}`); return r.json(); };
 
+  // ---- motion: the screen eases toward each poll instead of snapping to it
+  // Polls land every 1 to 2 s; a count, a bar or a chip that jumps on a big screen reads as a glitch. Every drawn value
+  // that changes goes through one of these, keyed by what it is (a job's bar, a GPU's border), so it moves from where it
+  // was. A value seen for the first time, or during a quiet spell (page load, tab switch), is drawn where it is.
+  var MO = { v: new Map(), seen: new Map(), rolls: new Map(), now: performance.now() / 1000, dt: 0, quietUntil: performance.now() / 1000 + 1.5 };
+  const quiet = () => MO.now < MO.quietUntil;
+  function tick() { const n = performance.now() / 1000; MO.dt = Math.min(0.1, n - MO.now); MO.now = n;
+    if (Math.floor(n) % 5 === 0 && MO.pruned !== Math.floor(n)) { MO.pruned = Math.floor(n); for (const [k, t] of MO.seen) if (n - t > 8) { MO.seen.delete(k); MO.v.delete(k); MO.rolls.delete(k); } } }
+  // exponential approach: about 95% of the way in 3 * tau seconds, from wherever the value is now
+  function approach(key, target, tau = 0.16, from) {
+    let v = MO.v.get(key); if (v === undefined) v = from === undefined || quiet() ? target : from;
+    v += (target - v) * (1 - Math.exp(-MO.dt / tau)); if (Math.abs(target - v) < 1e-3) v = target;
+    MO.v.set(key, v); MO.seen.set(key, MO.now); return v;
+  }
+  // cubic-bezier easing; travel uses (0.45, 0, 0.1, 1), arrivals (0.25, 0.8, 0.25, 1)
+  function bezier(x1, y1, x2, y2) { const f = (t, a, b) => 3*a*t*(1-t)*(1-t) + 3*b*t*t*(1-t) + t*t*t;
+    return x => { x = clamp(x); let t = x; for (let i = 0; i < 8; i++) { const d = (f(t + 1e-4, x1, x2) - f(t, x1, x2)) / 1e-4; if (!d) break; t = clamp(t - (f(t, x1, x2) - x) / d); } return f(t, y1, y2); }; }
+  const travel = bezier(0.45, 0, 0.1, 1), arrive = bezier(0.25, 0.8, 0.25, 1);
+  const hexRgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  function mix(a, b, k) { const p = hexRgb(a), q = hexRgb(b); return `rgb(${p.map((x, i) => Math.round(x + (q[i] - x) * clamp(k))).join(',')})`; }
+
   // ---- tabs
   function showTab(name) {
     const b = document.querySelector(`nav button[data-tab="${name}"]`); if (!b) return;
     document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('on', t.id === 'tab-' + name));
-    if (!location.hash.startsWith('#' + name)) history.replaceState(null, '', '#' + name);
+    if (!location.hash.startsWith('#' + name)) history.replaceState(null, '', '#' + name + (document.body.classList.contains('present') ? '?present=1' : ''));
+    if (MO) MO.quietUntil = performance.now() / 1000 + 0.3;  // a tab that comes back shows where things are, not a replay
     if (name === 'weights' && typeof wt !== 'undefined' && !wt.job && tl.kind === 'job') { wt.job = tl.id; wtSel.value = tl.id; }
     if (name === 'metrics' && typeof mt !== 'undefined') mt.fetchedAt = 0;
   }
   document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+  // presentation mode: p toggles it, 1 to 5 switch tabs, Escape leaves it (outside text fields)
+  const TABS = ['sweep', 'fleet', 'timeline', 'weights', 'metrics'];
+  function setPresent(on) { document.body.classList.toggle('present', on); dispatchEvent(new Event('resize')); }
+  if (/[?&]present=1/.test(location.hash) || new URLSearchParams(location.search).get('present') === '1') setPresent(true);
+  addEventListener('keydown', e => {
+    if (e.target.closest('input,select,textarea') || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === 'p') setPresent(!document.body.classList.contains('present'));
+    else if (e.key === 'Escape' && document.body.classList.contains('present') && !tl.sel) setPresent(false);
+    else if (e.key >= '1' && e.key <= '5') showTab(TABS[+e.key - 1]);
+  });
   addEventListener('hashchange', () => showTab((location.hash.slice(1) || 'sweep').split('?')[0]));
   if (location.hash) showTab(location.hash.slice(1).split('?')[0]);
 
@@ -169,7 +210,7 @@
   $('#stopall').onclick = async () => { say('<span class="c">$ openrl sweep stop --all</span>'); const r = await api('/api/sweep/stop_all', { method:'POST' }); say(`<span class="c">stopped ${r.stopped.length}: workers released ${r.stopped.filter(s => s.released).length}</span>`); };
 
   // ---- state
-  let jobsList = [], fleetJobs = [], latestRun = null, fleetRun = null, fleetScope = null, runs = {}, inventory = null, busy = null, busyNote = null, seen = new Set(), sweepStart = null, lastTick = 0, heldSecs = 0, capSecs = 0, heldLast = null;
+  let jobsList = [], fleetJobs = [], latestRun = null, fleetRun = null, fleetScope = null, runs = {}, inventory = null, seen = new Set(), sweepStart = null;
   let env = { namespace: '', cluster: '' };  // from /api/sweep/presets
   const fleetRunSel = $('#fleet-run'); fleetRunSel.onchange = () => { fleetRun = fleetRunSel.value || null; };
   const sweepLetter = new Map(); let backlogSeen = false;
@@ -195,6 +236,29 @@
   every(2000, 'runs', async () => { const R = await api('/api/inspect/runs'); R.runs.forEach(r => { runs[r.run_id] = r; }); });
   every(15000, 'runs-ended', async () => { const R = await api('/api/inspect/runs?ended=true'); runs = Object.fromEntries(R.runs.map(r => [r.run_id, r])); });
   every(1500, 'inventory', async () => { inventory = await api('/api/inspect/inventory'); });
+  // the fleet's activity: who is computing on each GPU now (lights the chips) and every placement since the sweep began
+  // (GPU time held). The API serves a snapshot up to ~10 s old, so the chips replay it ACT_LAG seconds behind the server's
+  // clock (`until`): every recorded turn flashes as the replay passes it, instead of only turns still open at a poll.
+  var fleetAct = { lanes: [], until: 0, at: 0 };
+  every(2000, 'activity', async () => {
+    if (!$('#tab-fleet').classList.contains('on')) return;
+    const nodes = (((inventory||{}).cluster||{}).nodes||[]).filter(n => (n.gpus||[]).length).map(n => n.name); if (!nodes.length) return;
+    const since = Math.round((sweepStart || Date.now()/1000 - 600) - 60);
+    const all = await Promise.all(nodes.map(n => api(`/api/inspect/activity?node_id=${encodeURIComponent(n)}&since=${since}`)));
+    const until = Math.max(...all.map(a => Date.parse(a.until) / 1000).filter(isFinite));
+    fleetAct = { lanes: all.flatMap(a => a.lanes || []), until: isFinite(until) ? until : Date.now()/1000, at: Date.now()/1000 };
+  });
+  // share of the pool's GPU time some worker held since the first submit: per GPU, the union of placement intervals
+  function heldShare(end) {
+    const devs = devicesList(); if (!sweepStart || !devs.length || !fleetAct.at || end <= sweepStart) return null;
+    let held = 0;
+    for (const d of devs) {
+      const iv = fleetAct.lanes.filter(l => (l.gpu_uuids||[]).includes(d.id)).flatMap(l => (l.intervals||[]).map(([a, b]) =>
+        [Math.max(a, sweepStart), Math.min(!l.ended && b >= fleetAct.until - 15 ? end : b, end)])).filter(([a, b]) => b > a).sort((p, q) => p[0] - q[0]);
+      let cur = null; for (const [a, b] of iv) { if (!cur || a > cur[1]) { if (cur) held += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b); } if (cur) held += cur[1] - cur[0];
+    }
+    return clamp(held / (devs.length * (end - sweepStart)));
+  }
   async function poll() {
     try {
       const J = await api('/api/sweep/jobs');
@@ -212,7 +276,7 @@
       const activeRuns = runsSeen.filter(r => jobsList.some(j => j.run === r && live(j)));
       const scope = fleetRun === '*' ? runsSeen : fleetRun && runsSeen.includes(fleetRun) ? [fleetRun] : activeRuns.length ? activeRuns : runsSeen.slice(0, 1);
       const chosen = scope.length === 1 && fleetRun !== '*' ? scope[0] : null, scopeKey = scope.join('|');
-      if (scopeKey !== fleetScope) { fleetScope = scopeKey; latestRun = chosen; heldSecs = 0; capSecs = 0; heldLast = null; sweepStart = null; }
+      if (scopeKey !== fleetScope) { fleetScope = scopeKey; latestRun = chosen; sweepStart = null; }
       latestRun = chosen;
       const pool = jobsList.filter(j => scope.includes(j.run));
       // active jobs first in submission order, then finished ones newest first
@@ -220,18 +284,12 @@
       fleetJobs = pool.slice().sort((a, b) => rank(a) - rank(b) || (rank(a) ? b.created_at - a.created_at : a.created_at - b.created_at));
       const active = fleetJobs.filter(j => !rank(j));
       const anchor = active.length ? Math.min(...active.map(j => j.created_at)) : (fleetJobs.length ? Math.min(...fleetJobs.map(j => j.created_at)) : null);
-      if (anchor !== sweepStart) { sweepStart = anchor; if (active.length === 0 || sweepStart === null) { heldSecs = 0; capSecs = 0; heldLast = null; } }
+      if (anchor !== sweepStart) sweepStart = anchor;
       if (!backlogSeen) { backlogSeen = true; jobsList.forEach(j => seen.add(j.name)); if (jobsList.length) say(`<span class="c">${jobsList.length} jobs on the cluster from ${new Set(jobsList.map(j => j.run)).size} sweeps; new submissions stream below.</span>`); }
       for (const j of [...jobsList].reverse()) if (!seen.has(j.name)) { seen.add(j.name); const k = j.kind === 'lora' ? 'l' : 'f';
         say(`submitted  <span class="q">${String(jobIndex.get(j.name)).padStart(2,'0')}</span>  <span class="${j.model.includes('gemma')?'g':'q'}">${short(j.model).padEnd(14)}</span> <span class="${k}">${j.kind==='lora'?'lora':'full'}</span>  seed=${j.seed}  ${j.name}`); }
       renderJobs();
     } catch (e) { $('#conn').textContent = 'disconnected: ' + e.message; }
-    // GPU time held: accumulated from the placements seen on each poll, as the mock's gauge meant it.
-    { const now = Date.now()/1000, devs = devicesList().length;
-      const heldNow = new Set(((inventory||{}).placements||[]).flatMap(p => p.gpu_uuids||[])).size;
-      if (heldLast !== null && devs) { heldSecs += heldNow * (now - heldLast); capSecs += devs * (now - heldLast); } heldLast = now; }
-    if (Date.now() - lastTick > 10000) { lastTick = Date.now(); const since = Math.round(sweepStart ? Math.min(sweepStart, Date.now()/1000 - 60) : Date.now()/1000 - 600);
-      api(`/api/inspect/query?name=gpu_busy&since=${since}&points=1`).then(q => { busyNote = q.available === false ? `DCGM duty: ${q.error || 'no metrics source'}` : null; const vals = (q.series||[]).map(s => s.points.length ? s.points[s.points.length-1][1] : null).filter(v => v !== null); busy = vals.length ? vals : null; }).catch(() => {}); }
   }
   function renderJobs() {
     const tb = $('#jobs tbody'); tb.innerHTML = '';
@@ -264,112 +322,241 @@
   const mono = (ctx, s, x, y, size=26, color=T.soft, align='left', weight=500) => text(ctx, s, x, y, size, color, align, weight, MONO);
   function fit(ctx, s, maxW, size, weight=500, font=MONO) { ctx.font = `${weight} ${size}px ${font}`; if (ctx.measureText(s).width <= maxW) return s; while (s.length > 1 && ctx.measureText(s + '…').width > maxW) s = s.slice(0, -1); return s + '…'; }
   const STATE_COLOR = { queued:T.faint, submitting:T.faint, waiting:T.wait, starting:T.api, running:T.ink, done:T.ok, failed:T.bad };
-  function drawFleet(t) {
+  const STATE_WORD = { queued:'starting', submitting:'starting', waiting:'queued', starting:'starting' };
+  // text that changes rolls: the old string slides up and out while the new one comes up from below, inside its own line
+  function roll(ctx, key, s, x, y, size, color, align = 'left', weight = 500, font = SANS, dur = 0.42) {
+    let r = MO.rolls.get(key);
+    if (!r || quiet()) r = { cur: s, color, prev: null, pcolor: color, at: -9 };
+    else if (r.cur !== s) r = { cur: s, color, prev: r.cur, pcolor: r.color, at: MO.now };
+    r.color = color; MO.rolls.set(key, r); MO.seen.set(key, MO.now);
+    const k = r.prev === null ? 1 : clamp((MO.now - r.at) / dur);
+    if (k >= 1) { text(ctx, s, x, y, size, color, align, weight, font); return; }
+    const e = travel(k), d = size * 0.85;
+    ctx.font = `${weight} ${size}px ${font}`; const w = Math.max(ctx.measureText(s).width, ctx.measureText(r.prev).width) + 8;
+    const left = align === 'left' ? x - 4 : align === 'right' ? x - w + 4 : x - w / 2;
+    ctx.save(); ctx.beginPath(); ctx.rect(left, y - size * 0.72, w, size * 1.44); ctx.clip();
+    ctx.globalAlpha = 1 - e; text(ctx, r.prev, x, y - d * e, size, r.pcolor, align, weight, font);
+    ctx.globalAlpha = e; text(ctx, s, x, y + d * (1 - e), size, color, align, weight, font);
+    ctx.restore();
+  }
+  // where each waiting job's chip was last drawn, so a placement can fly from it to its GPU tile
+  const waitSeen = new Map();   // job name -> { x, y, w, h, at }
+  const chipsLast = new Map();  // placement key -> the chip as last drawn, for the fade when it leaves
+  const flights = new Map();    // placement key -> { from, at }
+  const ghosts = [];            // chips and waiting tags that just left, fading where they were
+  const joins = [];             // a waiting tag flying into a chip that already exists: a LoRA job joining its shared runtime
+  function chipRect(ctx, g, alpha) {
+    ctx.save(); ctx.globalAlpha *= alpha;
+    const lit = g.lit || 0, fill = lit ? mix(g.fill, g.kc, lit) : g.fill, color = lit ? mix(g.color, T.bg, lit) : g.color;
+    rr(ctx, g.x, g.y - g.h / 2, g.w, g.h, 6); ctx.fillStyle = fill; ctx.fill();
+    if (g.stroke) { ctx.lineWidth = 1; ctx.strokeStyle = g.stroke; ctx.stroke(); }
+    if (g.waitK > 0.02) { ctx.save(); ctx.globalAlpha *= g.waitK; ctx.lineWidth = 2; ctx.strokeStyle = T.wait; ctx.stroke(); ctx.restore(); }
+    mono(ctx, fit(ctx, g.label, g.w - 14, g.fs, 700), g.align === 'center' ? g.x + g.w / 2 : g.x + 10, g.y + 1, g.fs, color, g.align || 'left', 700);
+    ctx.restore();
+  }
+  function liveDot(ctx, x, y, on) {
+    const pulse = 0.5 + 0.5 * Math.sin(MO.now * 3);
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, 7); ctx.fillStyle = on ? T.ok : T.faint; ctx.globalAlpha = on ? 0.45 + 0.55 * pulse : 1; ctx.fill(); ctx.globalAlpha = 1;
+  }
+  function drawFleet() {
     const canvas = $('#fleet'); refreshSelectors(); if (!canvas.offsetParent) return; const ctx = setup(canvas); hits = [];
     ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
+    const present = document.body.classList.contains('present');
     const cluster = inventory ? [env.cluster, env.namespace].filter(Boolean).join('  ·  ') : 'connecting';
-    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'fleet', 212, 70, 34, T.faint); text(ctx, cluster, 300, 70, 26, T.faint);
+    text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'fleet', 212, 70, 34, T.faint); text(ctx, cluster, 300, 71, 24, T.faint);
     const over = fleetJobs.length > 0 && fleetJobs.every(j => j.state === 'succeeded' || j.state === 'failed'), endAt = over ? Math.max(...fleetJobs.map(j => j.completed_at || j.created_at)) : Date.now()/1000;
     const cs = sweepStart ? endAt - sweepStart : 0;
-    if (over && !latestRun) mono(ctx, `idle  ·  last finish ${new Date(endAt*1000).toISOString().slice(11,19)}Z`, W-72, 70, 28, T.soft, 'right');
-    else mono(ctx, `+${mmss(cs)}  ${over ? 'first submit to last finish' : 'since the first submit'}`, W-72, 70, 28, T.soft, 'right');
-    mono(ctx, over ? 'ended' : 'live', W-72, 108, 22, over ? T.faint : T.ok, 'right');
+    // the clock: one number, its meaning under it, a live dot beside it
     const list = fleetJobs, states = list.map(stateOf), count = s => states.filter(x => x === s).length;
     const sweepsShown = [...new Set(list.map(j => j.run))];
-    mono(ctx, fit(ctx, latestRun ? `sweep ${sweepLetter.get(latestRun)} · ${latestRun}` : sweepsShown.map(r => `${sweepLetter.get(r)} ${r}`).join('   '), 640, 18), W-72, 146, 18, T.faint, 'right');
+    const scopeLine = latestRun ? `sweep ${sweepLetter.get(latestRun)} · ${latestRun}` : sweepsShown.map(r => `${sweepLetter.get(r)} ${r}`).join('   ');
+    if (over && !latestRun) {
+      mono(ctx, new Date(endAt*1000).toISOString().slice(11,19) + 'Z', W-72, 68, 34, T.soft, 'right', 600);
+      text(ctx, 'idle  ·  last finish', W-72, 106, 18, T.faint, 'right');
+    } else {
+      mono(ctx, `+${mmss(cs)}`, W-72, 68, 36, T.ink, 'right', 600);
+      ctx.font = `600 36px ${MONO}`; const cw = ctx.measureText(`+${mmss(cs)}`).width;
+      liveDot(ctx, W-72-cw-24, 68, !over);
+      text(ctx, `${over ? 'first submit to last finish' : 'since the first submit'}  ·  ${fit(ctx, scopeLine, 420, 18, 500, SANS)}`, W-72, 106, 18, T.faint, 'right');
+    }
     const devices = devicesList();
     // the inventory's placements: the Workloads holding GPUs now, each with the runs it serves (cached a few seconds)
     const placements = ((inventory||{}).placements||[]).map(p => ({ ...p, shared: /^lora-/.test(p.name||''), label: runName((p.run_ids||[])[0]) || p.name || '' }));
     const held = new Set(placements.flatMap(p => p.gpu_uuids||[]));
-    const tiles = [['running', count('running') + count('starting'), T.ink], ['waiting for a seat', count('waiting') + count('queued') + count('submitting'), T.wait], ['done', count('done'), T.ok], ['GPUs busy', `${held.size} / ${devices.length || '?'}`, T.lora]];
-    tiles.forEach(([k, v, c], i) => { const x = 72 + i*270; rr(ctx, x, 120, 250, 96, 12); ctx.fillStyle = T.tile; ctx.fill(); text(ctx, String(v), x+20, 158, 44, c, 'left', 700); text(ctx, k, x+20, 196, 20, T.faint); });
-    // job table
-    const tx = 72, ty = 268, rows = Math.min(list.length, 20), rh = rows > 16 ? 32 : 38;
-    [['job',0],['model',110],['type',350],['seed',450],['state',560],['steps',760]].forEach(([h,dx]) => text(ctx, h, tx+dx, ty, 20, T.faint, 'left', 600));
-    ctx.fillStyle = T.line; ctx.fillRect(tx, ty+20, 1040, 1);
+    // counts: a number rolls when it changes; a zero stays quiet instead of shouting in its colour
+    const waitingN = count('waiting') + count('queued') + count('submitting');
+    const tiles = [['running', count('running') + count('starting'), T.ink], ['in the queue', waitingN, T.wait], ['done', count('done'), T.ok], ['GPUs busy', held.size, T.lora, devices.length]];
+    tiles.forEach(([k, v, c, of], i) => { const x = 72 + i*270; rr(ctx, x, 128, 250, 96, 12); ctx.fillStyle = T.tile; ctx.fill();
+      const col = v > 0 ? c : T.faint; roll(ctx, 'stat:' + k, String(v), x+20, 166, 44, col, 'left', 700, MONO);
+      if (of !== undefined) { ctx.font = `700 44px ${MONO}`; const vw = ctx.measureText(String(v)).width; mono(ctx, ` / ${of || '?'}`, x+20+vw, 166, 44, T.faint, 'left', 700); }
+      text(ctx, k, x+20, 204, 20, T.faint); });
+    // job table: rows glide to their place when the order changes; finished rows step back
+    const tx = 72, ty = 276, rows = Math.min(list.length, 20), rh = rows > 16 ? 32 : 38, anyLive = states.some(s => s !== 'done' && s !== 'failed');  // finished rows step back only while others still run
+    [['job',0],['model',110],['type',340],['seed',440],['state',540],['steps',740]].forEach(([h,dx]) => text(ctx, h, tx+dx, ty, 20, T.faint, 'left', 600));
+    ctx.fillStyle = T.line; ctx.fillRect(tx, ty+20, 1100, 1);
+    ctx.save(); ctx.beginPath(); ctx.rect(tx - 10, ty + 22, 1196 - tx, 20 * rh + 30); ctx.clip();
     list.slice(0, 20).forEach((j, i) => {
-      const y = ty + 48 + i*rh, st = states[i], run = j.run_id ? runs[j.run_id] : null, n = run ? Math.min(run.steps||0, j.steps) : (st === 'done' ? j.steps : 0), k = n / Math.max(1, j.steps);
-      hits.push({ kind: 'job', id: j.name, x: tx, y: y - rh/2, w: 1080, h: rh });
-      ctx.save(); ctx.globalAlpha = st === 'queued' ? 0.45 : 1;
-      mono(ctx, tag(j), tx, y, 24, T.soft); mono(ctx, short(j.model), tx+110, y, 24, j.model.includes('gemma') ? T.api : T.ink);
-      mono(ctx, j.kind === 'lora' ? 'lora' : 'full', tx+350, y, 24, j.kind === 'lora' ? T.lora : T.fft); mono(ctx, String(j.seed), tx+450, y, 24, T.soft); mono(ctx, st, tx+560, y, 24, STATE_COLOR[st]);
-      const bx = tx+760, bw = 280; rr(ctx, bx, y-10, bw, 20, 5); ctx.fillStyle = T.tile; ctx.fill();
-      if (n > 0 || st === 'done') { rr(ctx, bx, y-10, bw*(st==='done'?1:k), 20, 5); ctx.fillStyle = j.kind === 'lora' ? T.lora : T.fft; ctx.fill(); for (let s = 1; s < j.steps; s++) { ctx.fillStyle = T.bg; ctx.fillRect(bx + bw*s/j.steps - 1, y-10, 2, 20); } }
-      mono(ctx, `${n}/${j.steps}`, bx+bw+14, y, 22, st === 'done' ? T.ok : T.faint);
+      const st = states[i], run = j.run_id ? runs[j.run_id] : null, n = run ? Math.min(run.steps||0, j.steps) : (st === 'done' ? j.steps : 0), k = st === 'done' ? 1 : n / Math.max(1, j.steps);
+      const y = approach('row-y:' + j.name, ty + 48 + i*rh, 0.14, ty + 48 + i*rh + 24), key = 'row:' + j.name;
+      hits.push({ kind: 'job', id: j.name, x: tx, y: ty + 48 + i*rh - rh/2, w: 1080, h: rh });
+      const dim = approach('row-a:' + j.name, st === 'queued' ? 0.45 : (st === 'done' || st === 'failed') && anyLive ? 0.62 : 1, 0.2, 0);
+      // a row moving more than one place would slide through the rows between; it fades out on the way and back in at its place
+      const far = Math.abs(y - (ty + 48 + i*rh)) - rh * 1.05, cross = far > 0 ? clamp(1 - far / (rh * 0.5), 0.06, 1) : 1;
+      ctx.save(); ctx.globalAlpha = dim * cross;
+      const kc = j.kind === 'lora' ? T.lora : T.fft;
+      mono(ctx, tag(j), tx, y, 24, T.soft); mono(ctx, short(j.model), tx+110, y, 24, T.ink);
+      mono(ctx, j.kind === 'lora' ? 'lora' : 'full', tx+340, y, 24, kc); mono(ctx, String(j.seed), tx+440, y, 24, T.faint);
+      roll(ctx, key + ':st', STATE_WORD[st] || st, tx+540, y, 24, STATE_COLOR[st], 'left', 500, MONO);
+      const bx = tx+740, bw = 260, kk = approach(key + ':bar', k, 0.22, 0);
+      rr(ctx, bx, y-10, bw, 20, 5); ctx.fillStyle = T.tile; ctx.fill();
+      if (kk > 0.002) { rr(ctx, bx, y-10, Math.max(10, bw*kk), 20, 5); ctx.fillStyle = kc; ctx.fill(); }
+      for (let s = 1; s < j.steps; s++) { ctx.fillStyle = T.bg; ctx.fillRect(bx + bw*s/j.steps - 1, y-10, 2, 20); }
+      roll(ctx, key + ':n', `${n}/${j.steps}`, bx+bw+14, y, 22, st === 'done' ? T.ok : T.faint, 'left', 500, MONO);
       ctx.restore();
     });
-    if (list.length > 20) mono(ctx, `+${list.length-20} more`, tx, ty + 48 + 20*rh, 22, T.faint);
+    ctx.restore();
+    if (list.length > 20) text(ctx, `+${list.length-20} more`, tx, ty + 48 + 20*rh, 20, T.faint);
     const hidden = jobsList.length - list.length;
-    if (hidden > 0) mono(ctx, `${hidden} job${hidden === 1 ? '' : 's'} from earlier sweeps not counted here  ·  choose "all sweeps" above`, tx, ty + 48 + Math.min(list.length, 20)*rh + (list.length > 20 ? 34 : 0), 18, T.faint);
-    // the pool
-    const cols = devices.length > 6 ? 4 : 3, tw = cols === 4 ? 150 : 195, gap = 14, px0 = 1210, py0 = 300, th = 150;
-    text(ctx, 'accelerator pool', 1210, 268, 20, T.faint, 'left', 600);
-    text(ctx, `${devices.length} × ${devices.length ? devices[0].model : 'GPU'}`, 1845, 268, 20, T.faint, 'right');
-    devices.forEach((d, gi) => {
-      const x = px0 + (gi % cols) * (tw + gap), y = py0 + Math.floor(gi / cols) * (th + gap);
-      hits.push({ kind: 'gpu', id: d.id, x, y, w: tw, h: th });
-      const here = placements.filter(p => (p.gpu_uuids||[]).includes(d.id));
-      const lora = here.filter(p => p.shared || (p.run_ids||[]).length > 1 || /lora/i.test(p.label||'')), on = here.length > 0;
-      rr(ctx, x, y, tw, th, 12); ctx.fillStyle = on ? T.tileOn : T.tile; ctx.fill(); ctx.lineWidth = 2; ctx.strokeStyle = on ? (lora.length ? T.lora : T.fft) : T.line; ctx.stroke();
-      mono(ctx, d.name || `gpu-${gi}`, x+12, y+20, 17, T.faint);
-      if (!on) { mono(ctx, 'idle', x+tw-12, y+20, 15, T.faint, 'right'); return; }
-      // chips: one column up to three holders, two columns beyond, at most six shown
-      const shown = here.slice(0, 6), twoCol = here.length > 3, cw = twoCol ? (tw-26)/2 : tw-20, chH = twoCol ? 24 : 28, pitch = twoCol ? 28 : 34, fs = twoCol ? 13 : 16;
-      shown.forEach((p, k) => {
-        const cx = x + 10 + (twoCol ? (k % 2) * (cw + 6) : 0), cy = y + 50 + (twoCol ? Math.floor(k / 2) : k) * pitch;
-        // which jobs this worker serves: numbers for the sweep on screen, "other" for another sweep's jobs
-        const mine = [], other = [];
-        (p.run_ids||[]).forEach(r => { const j = jobsList.find(j => j.run_id === r); if (j && (!latestRun || j.run === latestRun)) mine.push(j); else other.push(r); });
-        const shared = p.shared || (p.run_ids||[]).length > 1, foreign = !mine.length && other.length > 0;
-        const col = shared || /lora/i.test(p.label||'') ? T.lora : foreign ? T.faint : T.fft;
-        rr(ctx, cx, cy - chH/2, cw, chH, 6); ctx.fillStyle = foreign ? T.tile : (shared ? T.loraSoft : T.fftSoft); ctx.fill();
-        if (foreign) { ctx.lineWidth = 1; ctx.strokeStyle = T.line; ctx.stroke(); }
-        // contiguous numbers collapse to a range; the rest are listed in order
-        // one sweep: numbers, collapsed to a range when contiguous; several sweeps: lettered tags
-        const oneSweep = new Set(mine.map(j => j.run)).size <= 1;
-        const nums = [...new Set(mine.map(j => jobIndex.get(j.name)))].sort((a, b) => a - b), pad = n => String(n).padStart(2,'0');
-        const contiguous = oneSweep && nums.length > 2 && nums.every((n, i) => i === 0 || n === nums[i-1] + 1);
-        const lead = mine.length && !latestRun ? (sweepLetter.get(mine[0].run) || '') : '';
-        const jobs = contiguous ? `${lead}${pad(nums[0])}–${pad(nums[nums.length-1])}` : oneSweep ? nums.map(n => lead + pad(n)).join(' ') : [...new Set(mine.map(tag))].join(' ');
-        const extra = other.length && mine.length ? ` +${other.length}` : '';
-        // the tile's teal stroke already says LoRA, so the chip spends its width on the job numbers
-        const body = shared ? (nums.length ? `${jobs}${extra}` : 'shared') : foreign ? 'other' : (jobs || '…');
-        mono(ctx, fit(ctx, `${p.role === 'trainer' ? 'T' : 'S'} ${body}`, cw - 14, fs, 700), cx + 8, cy, fs, col, 'left', 700);
+    if (hidden > 0 && !present) text(ctx, `${hidden} job${hidden === 1 ? '' : 's'} from earlier sweeps not counted here  ·  choose "all sweeps" above`, tx, ty + 48 + Math.min(list.length, 20)*rh + (list.length > 20 ? 34 : 0), 17, T.faint);
+    // the pool: one box per node, one row per GPU; a row's border fades in the colour of what holds it, and each worker's
+    // chip is lit while that worker is computing on the GPU (a time-slicer turn, or a shared runtime serving a run)
+    const PX = 1210, PW = 638, groups = [];
+    devices.forEach(d => { let g = groups.find(g => g.node === d.node); if (!g) groups.push(g = { node: d.node, gpus: [] }); g.gpus.push(d); });
+    text(ctx, 'accelerator pool', PX, ty, 20, T.faint, 'left', 600);
+    const rowH = clamp((450 - groups.length * 48) / Math.max(1, devices.length), 30, 50), fsC = rowH >= 44 ? 16 : 14;
+    const ACT_LAG = 8, lanesByName = new Map(fleetAct.lanes.map(l => [l.name, l])), Tsrv = fleetAct.until - ACT_LAG + (Date.now() / 1000 - fleetAct.at);
+    // a worker is computing (a time-slicer turn, or a shared runtime serving a run), waiting for the GPU (a time-slicer
+    // wait), or idle; an interval still open in the snapshot runs on, and a short turn shows for at least half a second
+    const workState = l => { if (!l || !fleetAct.at) return 'idle';
+      const open = ([a, b]) => a <= Tsrv && (Tsrv <= Math.max(b, a + 0.5) || (!l.ended && b >= fleetAct.until - 12));
+      if ((l.turns || []).length || (l.waits || []).length) return (l.turns || []).some(open) ? 'on' : (l.waits || []).some(open) ? 'wait' : 'idle';
+      return Object.values(l.active || {}).some(ivs => ivs.some(open)) ? 'on' : 'idle'; };
+    const chipsNow = new Map(), jobChip = new Map();
+    let by = ty + 22;
+    groups.forEach(g => {
+      const bh = 44 + g.gpus.length * rowH + 6;
+      rr(ctx, PX, by, PW, bh, 14); ctx.lineWidth = 1.5; ctx.strokeStyle = T.line; ctx.stroke();
+      text(ctx, `${g.gpus.length} × ${g.gpus[0].model}`, PX + 18, by + 24, 18, T.soft, 'left', 600);
+      // the key for the chips' two looks, in the box's own header
+      { let kx = PX + PW - 18; ctx.font = `500 15px ${SANS}`;
+        [['idle', T.fftSoft, null], ['waiting for the GPU', T.fftSoft, T.wait], ['computing', T.fft, null]].forEach(([word, fill, ring]) => {
+          text(ctx, word, kx, by + 24, 15, T.faint, 'right'); kx -= ctx.measureText(word).width + 22;
+          rr(ctx, kx, by + 17, 14, 14, 3); ctx.fillStyle = fill; ctx.fill(); if (ring) { ctx.lineWidth = 2; ctx.strokeStyle = ring; ctx.stroke(); } kx -= 18; }); }
+      g.gpus.forEach((d, k) => {
+        const x = PX + 10, y = by + 44 + k * rowH, w = PW - 20, h = rowH - 6;
+        hits.push({ kind: 'gpu', id: d.id, x, y, w, h });
+        const here = placements.filter(p => (p.gpu_uuids||[]).includes(d.id));
+        const lora = here.filter(p => p.shared || (p.run_ids||[]).length > 1 || /lora/i.test(p.label||'')), on = here.length > 0;
+        if (on) MO.v.set('tile-acc:' + d.id, lora.length ? 1 : 0);   // the colour it had stays while it fades out
+        const acc = (MO.v.get('tile-acc:' + d.id) ?? 0) ? T.lora : T.fft, ok = approach('tile-on:' + d.id, on ? 1 : 0, 0.1, 0);
+        rr(ctx, x, y, w, h, 8); ctx.fillStyle = mix(T.tile, T.tileOn, ok); ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = mix(T.line, acc, ok); ctx.stroke();
+        mono(ctx, d.name || `gpu-${k}`, x + 14, y + h / 2, fsC, T.faint);
+        if (ok < 0.5) { ctx.save(); ctx.globalAlpha = 1 - ok * 2; text(ctx, 'idle', x + w - 14, y + h / 2, 15, T.faint, 'right'); ctx.restore(); }
+        // chips left to right: full words when they fit, the short form when the row is crowded
+        const shown = here.slice(0, 6), cx0 = x + 84, cx1 = x + w - 8 - (here.length > 6 ? 34 : 0), gapC = 6;
+        const slot = shown.length ? (cx1 - cx0 - gapC * (shown.length - 1)) / shown.length : 0, chH = h - 10;
+        let cx = cx0;
+        shown.forEach(p => {
+          // which jobs this worker serves: numbers for the sweep on screen; "other" only for another sweep's jobs
+          const mine = [], other = [];
+          (p.run_ids||[]).forEach(r => { const j = jobsList.find(j => j.run_id === r); if (j && (!latestRun || j.run === latestRun)) mine.push(j); else other.push(r); });
+          const otherSweep = other.filter(r => jobsList.some(j => j.run_id === r));
+          const shared = p.shared || (p.run_ids||[]).length > 1, foreign = !mine.length && otherSweep.length > 0, isLora = shared || /lora/i.test(p.label||'');
+          const oneSweep = new Set(mine.map(j => j.run)).size <= 1;
+          const nums = [...new Set(mine.map(j => jobIndex.get(j.name)))].sort((a, b) => a - b), pad = n => String(n).padStart(2,'0');
+          const contiguous = oneSweep && nums.length > 2 && nums.every((n, i) => i === 0 || n === nums[i-1] + 1);
+          const lead = mine.length && !latestRun ? (sweepLetter.get(mine[0].run) || '') : '';
+          const jobs = contiguous ? `${lead}${pad(nums[0])}–${pad(nums[nums.length-1])}` : oneSweep ? nums.map(n => lead + pad(n)).join(' ') : [...new Set(mine.map(tag))].join(' ');
+          const extra = otherSweep.length && mine.length ? ` +${otherSweep.length}` : '';
+          const body = shared ? (nums.length ? `${jobs}${extra}` : 'shared') : foreign ? 'other' : (jobs || '…');
+          ctx.font = `700 ${fsC}px ${MONO}`; const full = `${p.role} ${body}`, fullW = ctx.measureText(full).width + 22;
+          const label = fullW <= slot ? full : `${p.role === 'trainer' ? 'T' : 'S'} ${body}`, cw = Math.min(slot, Math.max(fullW <= slot ? fullW : ctx.measureText(label).width + 22, 64));
+          const ck = 'chip:' + (p.name || (p.run_ids||[]).join(',')) + '@' + d.id, kc = isLora ? T.lora : T.fft;
+          const ws = foreign ? 'idle' : workState(lanesByName.get(p.name));
+          const lit = approach(ck + ':lit', ws === 'on' ? 1 : 0, 0.08, 0), waitK = approach(ck + ':wait', ws === 'wait' ? 1 : 0, 0.12, 0);
+          const gch = { x: approach(ck + ':x', cx, 0.14), y: approach(ck + ':y', y + h / 2, 0.14), w: cw, h: chH, fs: fsC, label,
+                        fill: foreign ? T.tile : (isLora ? T.loraSoft : T.fftSoft), stroke: foreign ? T.line : null, color: foreign ? T.faint : kc, kc, lit, waitK };
+          cx += cw + gapC;
+          // a chip seen for the first time flies from its job's tag in the queue when there was one, else drops in from just above
+          if (!chipsLast.has(ck) && !quiet() && !flights.has(ck)) {
+            const jw = mine.find(j => { const ws = waitSeen.get(j.name); return ws && MO.now - ws.at < 20; });
+            flights.set(ck, jw ? { from: waitSeen.get(jw.name), job: jw.name, at: MO.now, dur: 0.8 } : { from: null, at: MO.now, dur: 0.45 });
+          }
+          chipsNow.set(ck, gch); mine.forEach(j => { if (!jobChip.has(j.name)) jobChip.set(j.name, ck); });
+        });
+        if (here.length > 6) mono(ctx, `+${here.length-6}`, x + w - 12, y + h / 2, 14, T.faint, 'right');
       });
-      if (here.length > 6) mono(ctx, `+${here.length-6}`, x+tw-12, y+th-14, 14, T.faint, 'right');
+      by += bh + 14;
     });
-    // waiting lane
-    const waiting = list.map((j, i) => ({ j, i, st: states[i] })).filter(x => x.st === 'waiting' || x.st === 'queued' || x.st === 'submitting');
-    const ly = py0 + Math.ceil(Math.max(1, devices.length) / cols) * (th + gap) + 30;
-    text(ctx, 'waiting for a seat', 1210, ly, 20, T.faint, 'left', 600);
-    if (waiting.length) waiting.slice(0, 9).forEach(({ j }, k) => { const x = 1210 + k*70, y = ly + 48; rr(ctx, x, y-22, 60, 44, 8); ctx.fillStyle = j.kind === 'lora' ? T.loraSoft : T.fftSoft; ctx.fill(); mono(ctx, latestRun ? String(jobIndex.get(j.name)).padStart(2,'0') : tag(j), x+30, y, 20, j.kind === 'lora' ? T.lora : T.fft, 'center', 700); });
-    if (waiting.length > 9) mono(ctx, `+${waiting.length-9}`, 1210 + 9*70, ly + 48, 18, T.faint);
-    else if (!waiting.length) mono(ctx, 'none', 1210, ly + 48, 22, T.faint);
-    // pool busy: DCGM, averaged over the sweep so far
-    const gy = ly + 120; text(ctx, 'pool busy', 1210, gy, 20, T.faint, 'left', 600);
-    rr(ctx, 1210, gy+26, 630, 22, 6); ctx.fillStyle = T.tile; ctx.fill();
-    const util = capSecs > 0 ? clamp(heldSecs / capSecs) : 0;
-    rr(ctx, 1210, gy+26, 630*util, 22, 6); ctx.fillStyle = T.lora; ctx.fill();
-    mono(ctx, `${Math.round(util*100)}% of GPU time held by a job since the first submit`, 1210, gy+76, 22, T.soft);
-    const duty = busy && devices.length ? busy.reduce((a,b) => a+b, 0) / devices.length : null;
-    mono(ctx, fit(ctx, duty === null ? (busyNote || 'DCGM duty: waiting for data') : `DCGM duty across the pool: ${duty.toFixed(1)}%`, 630, 20), 1210, gy+108, 20, T.faint);
-    // end card
-    if (list.length && states.every(s => s === 'done' || s === 'failed')) {
-      rr(ctx, 1210, H-110, 630, 72, 12); ctx.fillStyle = T.loraSoft; ctx.fill();
-      text(ctx, `${count('done')} of ${list.length} finished on ${devices.length} GPUs`, 1525, H-74, 26, T.ink, 'center', 600);
+    // chips: in flight, dropping in, or resting; ones that left fade where they were
+    if (!quiet()) for (const [ck, g] of chipsLast) if (!chipsNow.has(ck)) ghosts.push({ g, at: MO.now, dur: 0.35 });
+    chipsLast.clear();
+    for (const [ck, g] of chipsNow) {
+      chipsLast.set(ck, g);
+      const f = flights.get(ck);
+      if (!f) { chipRect(ctx, g, 1); continue; }
+      const k = clamp((MO.now - f.at) / f.dur);
+      if (k >= 1) { flights.delete(ck); chipRect(ctx, g, 1); continue; }
+      if (!f.from) { const e = arrive(k); chipRect(ctx, { ...g, y: g.y - 12 * (1 - e) }, e); continue; }
+      // the flight: departs, travels on an arc, and takes the chip's size and look in its last third
+      const e = travel(k), s = f.from, mid = [ (s.x + s.w / 2 + g.x + g.w / 2) / 2, Math.min(s.y, g.y) - 80 ];
+      const bx = (1-e)*(1-e)*(s.x + s.w/2) + 2*(1-e)*e*mid[0] + e*e*(g.x + g.w/2), by = (1-e)*(1-e)*s.y + 2*(1-e)*e*mid[1] + e*e*g.y;
+      const m = clamp((k - 0.66) / 0.34), w = s.w + (g.w - s.w) * travel(m), h = s.h + (g.h - s.h) * travel(m);
+      chipRect(ctx, { ...g, x: bx - w / 2, y: by, w, h, label: m < 0.5 ? s.label : g.label, align: m < 0.5 ? 'center' : 'left', fs: m < 0.5 ? s.fs : g.fs, fill: m < 0.5 ? s.fill : g.fill, color: m < 0.5 ? s.color : g.color }, 1);
     }
+    for (let i = ghosts.length - 1; i >= 0; i--) { const gh = ghosts[i], k = (MO.now - gh.at) / gh.dur; if (k >= 1) { ghosts.splice(i, 1); continue; } chipRect(ctx, { ...gh.g, y: gh.g.y - 14 * arrive(k) }, 1 - k); }
+    // joins: the tag travels into the chip it joined, shrinking to the chip's height, and fades into it on arrival
+    for (let i = joins.length - 1; i >= 0; i--) { const jn = joins[i], k = clamp((MO.now - jn.at) / 0.8), to = chipsNow.get(jn.to); if (k >= 1 || !to) { joins.splice(i, 1); continue; }
+      const e = travel(k), s = jn.from, sx = s.x + s.w / 2, tx2 = to.x + to.w * 0.75, mx = (sx + tx2) / 2, my = Math.min(s.y, to.y) - 80;
+      const bx = (1-e)*(1-e)*sx + 2*(1-e)*e*mx + e*e*tx2, by = (1-e)*(1-e)*s.y + 2*(1-e)*e*my + e*e*to.y, h = s.h + (to.h - s.h) * e, w = s.w * (1 - 0.3 * e);
+      chipRect(ctx, { ...s, x: bx - w / 2, y: by, w, h }, k < 0.8 ? 1 : 1 - (k - 0.8) / 0.2); }
+    // the queue: a tag per job without a GPU yet (outlined while its pod is still starting); the ones behind close up when one leaves
+    const waiting = list.map((j, i) => ({ j, i, st: states[i] })).filter(x => x.st === 'waiting' || x.st === 'queued' || x.st === 'submitting');
+    const ly = by + 20;
+    text(ctx, 'in the queue', 1210, ly, 20, T.faint, 'left', 600);
+    const laneNow = new Set(), flying = new Set([...flights.values()].map(f => f.job).filter(Boolean));
+    // a tag whose worker is in flight is the flight; if the job still waits for another worker, its tag drops back in
+    waiting.filter(x => !flying.has(x.j.name)).slice(0, 9).forEach(({ j, st }, k) => {
+      const tx1 = 1210 + k*70, y = ly + 48, x = approach('wait-x:' + j.name, tx1, 0.14), a = approach('wait-a:' + j.name, 1, 0.12, 0);
+      const g = { x, y: y - 10 * (1 - a), w: 60, h: 44, fs: 20, align: 'center', label: latestRun ? String(jobIndex.get(j.name)).padStart(2,'0') : tag(j),
+                  fill: j.kind === 'lora' ? T.loraSoft : T.fftSoft, color: j.kind === 'lora' ? T.lora : T.fft, stroke: st === 'waiting' ? null : T.line };
+      chipRect(ctx, g, a * (st === 'waiting' ? 1 : 0.7)); waitSeen.set(j.name, { ...g, y, at: MO.now }); laneNow.add(j.name);
+    });
+    // a tag that left without a flight to follow it (stopped, failed) fades in place; one that flew is covered by its flight
+    for (const [name, w] of waitSeen) if (!laneNow.has(name) && w.at < MO.now && MO.now - w.at < 0.08 && !flying.has(name) && !quiet()) {
+      if (jobChip.has(name)) joins.push({ from: w, to: jobChip.get(name), at: MO.now }); else ghosts.push({ g: w, at: MO.now, dur: 0.3 }); w.at = -99; }
+    for (const name of flying) MO.v.delete('wait-a:' + name);   // so the tag drops back in if the job still waits
+    if (waiting.length > 9) mono(ctx, `+${waiting.length-9}`, 1210 + 9*70 + 6, ly + 48, 18, T.faint);
+    else if (!waiting.length) { ctx.save(); ctx.globalAlpha = approach('wait-none', 1, 0.2, 0); text(ctx, 'none', 1210, ly + 48, 22, T.faint); ctx.restore(); }
+    if (waiting.length) MO.v.set('wait-none', 0);
+    // GPU time held since the first submit, from the placements the server recorded (so it is right however late the page opened)
+    const gy = ly + 112, share = heldShare(over ? endAt : Date.now() / 1000);
+    text(ctx, 'GPUs held by a job since the first submit', 1210, gy, 20, T.faint, 'left', 600);
+    const util = approach('util', share ?? 0, 0.3, 0);
+    rr(ctx, 1210, gy+26, 630, 22, 6); ctx.fillStyle = T.tile; ctx.fill();
+    if (util > 0.005) { rr(ctx, 1210, gy+26, Math.max(12, 630*util), 22, 6); ctx.fillStyle = T.lora; ctx.fill(); }
+    if (share !== null) mono(ctx, `${Math.round(util*100)}%`, 1840, gy, 22, T.ink, 'right', 700);
+    // end card: arrives from just below and stays
+    const allDone = list.length && states.every(s => s === 'done' || s === 'failed'), ea = approach('endcard', allDone ? 1 : 0, 0.18, 0);
+    if (ea > 0.01) { ctx.save(); ctx.globalAlpha = ea; const ey = H - 110 + 14 * (1 - ea);
+      rr(ctx, 1210, ey, 630, 72, 12); ctx.fillStyle = T.loraSoft; ctx.fill();
+      text(ctx, `${count('done')} of ${list.length} finished on ${devices.length} GPUs`, 1525, ey + 36, 26, T.ink, 'center', 600); ctx.restore(); }
   }
 
   // ---- timeline drill-down: one accelerator, or one job
   const tl = { kind: null, id: null, lanes: [], since: null, inflight: false, fetchedAt: 0 };
-  const JOB_COLORS = ['#2CC2AE', '#E9743A', '#4D95E8', '#E6C230', '#C86DD7', '#4CC27A', '#F28CB1', '#8AB4F8', '#F0A35E', '#7FDBCA'];
+  // eight hues, brightened for a projector on a dark surface. Checked as a set against #0F1113: neighbours stay apart for
+  // colour-blind (worst ΔE 9.6) and full-colour viewers (worst ΔE 23), all clear 3:1; they sit above the usual lightness
+  // band on purpose. A view hands them out in order of appearance, so up to eight holders on one GPU never share a colour.
+  const JOB_COLORS = ['#4c9bff', '#ff6a2b', '#1fd18f', '#ffb000', '#ff5c9e', '#3dcb3d', '#a493ff', '#ff6b6b'];
+  const viewColors = new Map();   // job name -> colour, for the timeline view on screen; cleared when the view changes
+  const viewColor = name => { if (!viewColors.has(name)) viewColors.set(name, JOB_COLORS[viewColors.size % JOB_COLORS.length]); return viewColors.get(name); };
   const OP_COLORS = { forward_backward: '#4D95E8', optim_step: '#C86DD7', sample: '#2CC2AE', create_model: '#4CC27A', save_weights_for_sampler: '#4E8F6B', save_state: '#4E8F6B', delete_model: '#7D7B72' };
   const gpuSel = $('#tl-gpu'), jobSel = $('#tl-job'), winSel = $('#tl-win'), othersBox = $('#tl-others');
-  tl.others = [];  // lanes of other workers on the job's GPUs, when the overlay is on
-  othersBox.onchange = () => { tl.fetchedAt = 0; };
+  tl.others = [];  // lanes of other workers on the job's GPUs; always fetched, so the overlay box shows them at once
   // the inventory lists each DRA node's GPUs by name and UUID; a Workload's placement names the same UUIDs
   function devicesList() { return (((inventory||{}).cluster||{}).nodes||[]).flatMap(n => (n.gpus||[]).map(g => ({ id: g.uuid, name: g.name, model: (g.product || 'GPU').replace(/^NVIDIA /, ''), memory: g.memory, node: n.name }))); }
-  function openTimeline(kind, id, opts = {}) { tl.kind = kind; tl.id = id; tl.lanes = []; tl.others = []; tl.fetchedAt = 0; $('#tl-others-wrap').style.display = kind === 'job' ? '' : 'none';
+  function openTimeline(kind, id, opts = {}) { viewColors.clear(); tl.kind = kind; tl.id = id; tl.lanes = []; tl.others = []; tl.fetchedAt = 0; $('#tl-others-wrap').style.display = kind === 'job' ? '' : 'none';
     // a finished job is framed by its own lifetime, so a historic job shows its data instead of an empty live window
     const j = kind === 'job' ? jobsList.find(j => j.name === id) : null;
     if (opts.span && j && j.completed_at) tl.sel = { a: j.created_at - 30, b: j.completed_at + 30 }; else if (opts.span) tl.sel = null; gpuSel.value = kind === 'gpu' ? id : ''; jobSel.value = kind === 'job' ? id : ''; showTab('timeline'); history.replaceState(null, '', `#timeline?${kind}=${encodeURIComponent(id)}`); }
@@ -381,7 +568,12 @@
     const curJ = jobSel.value, want = jobsList.map(j => j.name).join('|');
     if (jobSel.dataset.want !== want) { jobSel.dataset.want = want; jobSel.innerHTML = '<option value="">—</option>' + jobsList.map(j => `<option value="${j.name}">${j.run} · ${String(jobIndex.get(j.name)).padStart(2,'0')} ${short(j.model)} ${j.kind}</option>`).join(''); jobSel.value = curJ; }
   }
-  function windowStart() { const now = Date.now()/1000; if (winSel.value === 'sweep' && sweepStart) return sweepStart - 30; return now - (+winSel.value || 1800); }
+  // fit (the default) frames what was recorded: from just before the first claim in view to now, never under three minutes
+  function windowStart() { const now = Date.now()/1000; if (winSel.value === 'sweep' && sweepStart) return sweepStart - 30;
+    if (winSel.value === 'fit') { const starts = tl.lanes.map(p => p.start).filter(Boolean); if (!starts.length) return now - 180;
+      const a = Math.min(...starts), span = Math.max(180, (now - a) * 1.06); return now - span; }
+    return now - (+winSel.value || 1800); }
+  const fetchStart = () => winSel.value === 'fit' ? Math.min(windowStart(), Date.now()/1000 - 1800) : windowStart();
   const LIVE_FETCH_MS = 1500;  // the inspection API caches its fleet snapshot 5 s, so this is as live as the source gets
   function runName(id) { return id ? ((runs[id]||{}).name || (((inventory||{}).runs||[]).find(r => r.run_id === id)||{}).name || '') : ''; }
   function runShared(id) { return !!((((inventory||{}).runs||[]).find(r => r.run_id === id)||{}).shared_runtime); }
@@ -394,15 +586,14 @@
     if (!tl.kind || tl.inflight || !$('#tab-timeline').classList.contains('on') || Date.now() - tl.fetchedAt < LIVE_FETCH_MS) return;
     tl.inflight = true;
     try {
-      const since = Math.round((tl.sel ? tl.sel.a : windowStart()) - 60), until = tl.sel ? `&until=${Math.round(Math.min(tl.sel.b + 60, Date.now()/1000))}` : '';
+      const since = Math.round((tl.sel ? tl.sel.a : fetchStart()) - 60), until = tl.sel ? `&until=${Math.round(Math.min(tl.sel.b + 60, Date.now()/1000))}` : '';
       if (tl.kind === 'gpu') { const dev = devicesList().find(d => d.id === tl.id); if (!dev) return;
         const a = await api(`/api/inspect/activity?node_id=${encodeURIComponent(dev.node)}&since=${since}${until}`); tl.lanes = a.lanes.map(lane).filter(p => (p.gpu_uuids||[]).includes(tl.id)); }
       else { const j = jobsList.find(j => j.name === tl.id); if (!j || !j.run_id) { tl.lanes = []; return; }
         const a = await api(`/api/inspect/activity?run_id=${j.run_id}&since=${since}${until}`); tl.lanes = a.lanes.map(lane);
-        if (othersBox.checked) { const nodes = [...new Set(tl.lanes.map(p => p.node).filter(Boolean))], devs = new Set(tl.lanes.flatMap(p => p.gpu_uuids||[]));
+        { const nodes = [...new Set(tl.lanes.map(p => p.node).filter(Boolean))], devs = new Set(tl.lanes.flatMap(p => p.gpu_uuids||[]));
           const all = await Promise.all(nodes.map(n => api(`/api/inspect/activity?node_id=${encodeURIComponent(n)}&since=${since}${until}`)));
-          tl.others = all.flatMap(x => x.lanes.map(lane)).filter(p => !(p.run_ids||[]).includes(j.run_id) && (p.gpu_uuids||[]).some(d => devs.has(d))); }
-        else tl.others = []; }
+          tl.others = all.flatMap(x => x.lanes.map(lane)).filter(p => !(p.run_ids||[]).includes(j.run_id) && (p.gpu_uuids||[]).some(d => devs.has(d))); } }
       tl.since = since; tl.fetchedAt = Date.now();
     } catch (e) { $('#conn').textContent = 'timeline: ' + e.message; } finally { tl.inflight = false; }
   }
@@ -449,12 +640,12 @@
     return `${role} ${tags[0] || (p.run_ids||[])[0]?.slice(0,8) || p.label}`;
   }
   function runJob(r) { return jobsList.find(j => j.run_id === r) || null; }
-  function jobColor(r) { const j = runJob(r); return j ? JOB_COLORS[(jobIndex.get(j.name) - 1) % JOB_COLORS.length] : T.lora; }
+  function jobColor(r) { const j = runJob(r); return j ? viewColor(j.name) : viewColor('run:' + r); }
   function runKey(p, r) { const j = runJob(r); return `${p.role === 'trainer' ? 'T' : 'S'} ${j ? tag(j) : r.slice(0, 8)}`; }
   function runModel(r) { const j = runJob(r); return short(j ? j.model : ((((inventory||{}).runs||[]).find(x => x.run_id === r)||{}).model || '')); }
   // a resident worker (no turns) that serves several runs: the runs' own activity on it, from the lane's op records
   function runSegs(p, keep) { return Object.entries(p.active||{}).filter(([r]) => !keep || keep(r)).flatMap(([r, ivs]) => ivs.map(([a, b]) => ({ a, b, color: jobColor(r), key: runKey(p, r), model: runModel(r), lane: p, byRun: true }))); }
-  function laneColor(p, i) { if (p.shared_runtime) return T.lora; const j = laneJob(p); return j ? JOB_COLORS[(jobIndex.get(j.name) - 1) % JOB_COLORS.length] : JOB_COLORS[i % JOB_COLORS.length]; }
+  function laneColor(p, i) { if (p.shared_runtime) return T.lora; const j = laneJob(p); return viewColor(j ? j.name : 'lane:' + (p.name || i)); }
   // one trace per accelerator: a step line at 1 while a worker holds the GPU, coloured by who holds it, 0 when idle
   function traces() {
     const devs = devicesList();
@@ -471,8 +662,8 @@
       const color = p => p.role === 'trainer' ? T.fft : T.lora, name = p => p.role === 'trainer' ? 'trainer' : 'sampler';
       const j = jobsList.find(j => j.name === tl.id), mine = r => j && r === j.run_id;
       const sharedOthers = othersBox.checked ? ps.flatMap(p => runSegs(p, r => !mine(r)).map(sg => ({ ...sg, other: true }))) : [];
-      const others = sharedOthers.concat(tl.others.filter(p => (p.gpu_uuids||[]).includes(key)).flatMap((p, i) => (!p.exact && Object.keys(p.active||{}).length ? runSegs(p, r => !mine(r)) : (p.busy||[]).map(([a, b]) => ({ a, b, color: laneColor(p, i), key: laneTitle(p), model: short((laneJob(p)||{}).model || (p.label||'').split(' · ')[0]), lane: p }))).map(sg => ({ ...sg, other: true }))));
-      return { label: d ? d.name : (key === 'unplaced' ? 'waiting for a seat' : key.slice(0, 8)), sub: [...new Set(ps.map(name))].sort().join(' + '),
+      const others = sharedOthers.concat((othersBox.checked ? tl.others : []).filter(p => (p.gpu_uuids||[]).includes(key)).flatMap((p, i) => (!p.exact && Object.keys(p.active||{}).length ? runSegs(p, r => !mine(r)) : (p.busy||[]).map(([a, b]) => ({ a, b, color: laneColor(p, i), key: laneTitle(p), model: short((laneJob(p)||{}).model || (p.label||'').split(' · ')[0]), lane: p }))).map(sg => ({ ...sg, other: true }))));
+      return { label: d ? d.name : (key === 'unplaced' ? 'in the queue' : key.slice(0, 8)), sub: [...new Set(ps.map(name))].sort().join(' + '),
         segs: ps.flatMap(p => !p.exact && (p.active||{})[j && j.run_id] ? runSegs(p, mine).map(sg => ({ ...sg, color: color(p), key: name(p) })) : (p.busy||[]).map(([a, b]) => ({ a, b, color: color(p), key: name(p), model: short((laneJob(p)||{}).model || ''), lane: p }))),
         others,
         claims: ps.map(p => ({ a: p.start, b: p.ended ? p.end : null, color: color(p), key: name(p), lane: p })) }; });
@@ -482,7 +673,9 @@
     ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
     text(ctx, 'OpenRL', 72, 70, 34, T.ink, 'left', 700); text(ctx, 'timeline', 212, 70, 34, T.faint);
     if (!tl.kind) { text(ctx, 'Pick an accelerator or a job above, or click one on the Fleet tab.', 72, 160, 26, T.faint); return; }
-    const now = Date.now()/1000, t0 = tl.sel ? tl.sel.a : windowStart(), t1 = tl.sel ? tl.sel.b : now, L = TLX.L, R = TLX.R, X = t => L + (R - L) * clamp((t - t0) / (t1 - t0));
+    // fit on finished work frames the work itself, from the first claim to the last release, with a little air
+    const ended = winSel.value === 'fit' && tl.lanes.length && tl.lanes.every(p => p.ended && p.end), endSpan = ended ? (() => { const a = Math.min(...tl.lanes.map(p => p.start)), b = Math.max(...tl.lanes.map(p => p.end)), pad = Math.max(10, (b - a) * 0.05); return [a - pad, b + pad]; })() : null;
+    const now = Date.now()/1000, t0 = tl.sel ? tl.sel.a : endSpan ? endSpan[0] : windowStart(), t1 = tl.sel ? tl.sel.b : endSpan ? endSpan[1] : now, L = TLX.L, R = TLX.R, X = t => L + (R - L) * clamp((t - t0) / (t1 - t0));
     tl.view = [t0, t1];
     const dev = tl.kind === 'gpu' ? devicesList().find(d => d.id === tl.id) : null, job = tl.kind === 'job' ? jobsList.find(j => j.name === tl.id) : null;
     const title = dev ? `${dev.name}  ·  ${dev.model}  ·  ${dev.id}` : job ? `${job.run} · ${String(jobIndex.get(job.name)).padStart(2,'0')}  ${short(job.model)}  ${job.kind === 'lora' ? 'lora' : 'full'}  seed ${job.seed}  ·  ${job.run_id ? job.run_id.slice(0,8) : 'no run yet'}` : '';
@@ -498,8 +691,8 @@
     // axis
     const top = 200, span = t1 - t0, tick = span > 3000 ? 600 : span > 1500 ? 300 : span > 400 ? 60 : span > 100 ? 15 : 5;
     const legendH = 110, avail = H - top - legendH - 40, trackH = Math.min(tr.length === 1 ? 420 : 260, Math.max(90, avail / Math.max(1, tr.length) - 70));
-    for (let t = Math.ceil(t0 / tick) * tick; t <= t1; t += tick) { ctx.fillStyle = T.line; ctx.fillRect(X(t), top - 12, 1, tr.length * (trackH + 70)); if (X(t1) - X(t) > (tl.sel ? 110 : 70)) mono(ctx, new Date(t*1000).toISOString().slice(11, tick < 60 ? 19 : 16), X(t), top - 26, 16, T.faint, 'center'); }
-    mono(ctx, tl.sel ? fmtT(t1) : 'now', X(t1), top - 26, 16, T.soft, 'right');
+    for (let t = Math.ceil(t0 / tick) * tick; t <= t1; t += tick) { ctx.fillStyle = T.line; ctx.fillRect(X(t), top - 12, 1, tr.length * (trackH + 70)); if (X(t1) - X(t) > (tl.sel || endSpan ? 110 : 70)) mono(ctx, new Date(t*1000).toISOString().slice(11, tick < 60 ? 19 : 16), X(t), top - 26, 16, T.faint, 'center'); }
+    mono(ctx, tl.sel || endSpan ? fmtT(t1) : 'now', X(t1), top - 26, 16, T.soft, 'right');
     if (!tr.length) text(ctx, tl.kind === 'job' && job && !job.run_id ? 'The client has not created its run yet.' : 'Nothing recorded in this window.', 72, top + 30, 24, T.faint);
     const seen = new Map(), geo = [];
     tr.forEach((track, ti) => {
@@ -521,12 +714,15 @@
         ctx.fillStyle = sg.color; ctx.globalAlpha = 0.22; ctx.fillRect(X(a), yOf(1), w, yOf(0) - yOf(1)); ctx.globalAlpha = 0.6; ctx.fillRect(X(a), yOf(1) - 1, w, 2); ctx.globalAlpha = 1;
         seen.set(sg.key, { color: sg.color, model: sg.model, secs: (seen.get(sg.key)?.secs || 0) + (b - a), other: true }); });
       const segs = track.segs.filter(within).sort((p, q) => p.a - q.a);
-      segs.forEach(sg => { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1), w = Math.max(2, X(b) - X(a));
-        ctx.fillStyle = sg.color; ctx.globalAlpha = sg.lane.exact || sg.byRun ? 0.55 : 0.28; ctx.fillRect(X(a), yOf(1), w, yOf(0) - yOf(1)); ctx.globalAlpha = 1;
-        ctx.fillRect(X(a), yOf(1) - 1, w, 3);                       // the top of the step
-        ctx.fillRect(X(a), yOf(1), 2, yOf(0) - yOf(1)); ctx.fillRect(X(a) + w - 2, yOf(1), 2, yOf(0) - yOf(1));  // the rising and falling edges
+      // each turn is its own pulse: sharp rising and falling edges, a light fill, and a 2 px gap where one turn meets the
+      // next, so back-to-back turns read as turns and not as one filled block
+      segs.forEach(sg => { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1), raw = X(b) - X(a), x = X(a) + (raw > 6 ? 1 : 0), w = Math.max(2, raw > 6 ? raw - 2 : raw);
+        const y1 = yOf(1), hh = yOf(0) - yOf(1);
+        ctx.fillStyle = mix(T.bg, sg.color, sg.lane.exact || sg.byRun ? 0.46 : 0.22); ctx.fillRect(x, y1, w, hh);
+        ctx.fillStyle = sg.color; ctx.fillRect(x, y1 - 1, w, 3);                                      // the top of the step
+        ctx.fillRect(x, y1, 2, hh); if (w > 3) ctx.fillRect(x + w - 2, y1, 2, hh);   // the rising and falling edges
         seen.set(sg.key, { color: sg.color, model: sg.model, held: !(sg.lane.exact || sg.byRun), secs: (seen.get(sg.key)?.secs || 0) + (b - a) }); });
-      if (live) { ctx.fillStyle = T.ok; ctx.globalAlpha = 0.35 + 0.4 * pulse; ctx.fillRect(X(t1) - 1, yOf(1) - 10, 2, yOf(0) - yOf(1) + 10); ctx.globalAlpha = 1; }
+      if (live) { ctx.fillStyle = T.ok; ctx.globalAlpha = 0.5; ctx.fillRect(X(t1) - 1, yOf(1) - 10, 2, yOf(0) - yOf(1) + 10); ctx.globalAlpha = 1; }
       // occupancy of the window: union of turns
       let busy = 0, cur = null; for (const sg of segs) { const a = Math.max(sg.a, t0), b = Math.min(sg.b, t1); if (!cur || a > cur[1]) { if (cur) busy += cur[1] - cur[0]; cur = [a, b]; } else cur[1] = Math.max(cur[1], b); } if (cur) busy += cur[1] - cur[0];
       const holder = segs.find(sg => sg.b >= t1 - 3) || others.find(sg => sg.b >= t1 - 3);
@@ -598,7 +794,9 @@
     } catch (e) { wt.error = e.message; } finally { wt.inflight = false; wt.fetchedAt = Date.now(); }
   }
   setInterval(pollWeights, 500);
-  const fmtN = n => n >= 1e9 ? (n/1e9).toFixed(2) + ' B' : n >= 1e6 ? (n/1e6).toFixed(1) + ' M' : n >= 1e3 ? (n/1e3).toFixed(0) + ' k' : String(n);
+  // three significant digits at most, no trailing .0: 596 M, 54.8 M, 1.2 B
+  const sig = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1).replace(/\.0$/, '') : v.toFixed(2).replace(/\.?0+$/, '');
+  const fmtN = n => n >= 1e9 ? sig(n/1e9) + ' B' : n >= 1e6 ? sig(n/1e6) + ' M' : n >= 1e3 ? sig(n/1e3) + ' k' : String(n);
   function drawWeights() {
     const canvas = $('#weights'); refreshWeightsSelector(); if (!canvas.offsetParent) return; const ctx = setup(canvas);
     ctx.fillStyle = T.bg; ctx.fillRect(0, 0, W, H);
@@ -619,25 +817,32 @@
     // the save before the first optimizer step carries an empty delta; it is shown dim and left out of the average
     const total = deltas[0].total, steps = deltas.filter(d => !d.final && d.changed > 0), mean = steps.reduce((a, d) => a + d.density_pct, 0) / Math.max(1, steps.length);
     const union = Math.min(100, steps.reduce((a, d) => a + d.density_pct, 0)); // an upper bound on the share touched at least once
-    const tiles = [[`${mean.toFixed(1)}%`, 'of weights change per step, average', T.lora], [`${fmtN(total)}`, 'parameters in the model', T.ink], [`${deltas.length}`, 'deltas published', T.soft], [`${fmtN(Math.round(mean / 100 * total))}`, 'elements shipped per sync, average', T.fft]];
-    tiles.forEach(([v, k, c], i) => { const x = 72 + i * 440; rr(ctx, x, 160, 420, 96, 12); ctx.fillStyle = T.tile; ctx.fill(); text(ctx, v, x + 20, 198, 40, c, 'left', 700); text(ctx, k, x + 20, 236, 18, T.faint); });
+    // one headline number in the chart's colour; the rest are context in ink
+    // until the first optimizer step there is only the base save, which changes nothing: no average to show yet
+    const has = steps.length > 0;
+    const tiles = [[has ? `${mean.toFixed(1)}%` : '—', 'of weights change per step, average', has ? T.fft : T.faint], [`${fmtN(total)}`, 'parameters in the model', T.ink], [`${steps.length}`, 'deltas after an optimizer step', steps.length ? T.ink : T.faint], [has ? `${fmtN(Math.round(mean / 100 * total))}` : '—', 'elements shipped per sync, average', has ? T.ink : T.faint]];
+    tiles.forEach(([v, k, c], i) => { const x = 72 + i * 440; rr(ctx, x, 160, 420, 96, 12); ctx.fillStyle = T.tile; ctx.fill(); roll(ctx, 'wt-tile:' + i, v, x + 20, 198, 40, c, 'left', 700, MONO); text(ctx, k, x + 20, 236, 18, T.faint); });
     // the chart: one bar per delta, height = share of weights changed
     const cx = 110, cy = 320, cw = W - 110 - 72, ch = H - cy - 170, maxPct = Math.max(10, Math.ceil(Math.max(...deltas.map(d => d.density_pct)) / 10) * 10);
     const Y = pct => cy + ch - ch * pct / maxPct;
     for (let p = 0; p <= maxPct; p += maxPct / 5) { ctx.fillStyle = T.line; ctx.fillRect(cx, Y(p), cw, 1); mono(ctx, `${p}%`, cx - 14, Y(p), 16, T.faint, 'right'); }
     text(ctx, 'share of the model\'s weights that changed, per optimizer step', cx, cy - 30, 20, T.soft, 'left', 600);
-    const n = deltas.length, gap = 10, bw = Math.max(6, Math.min(90, (cw - gap * n) / n));
+    // a slot for every step the job will run, so a young job's bars sit in their place and the empty ones say what is coming
+    const n = Math.max(deltas.length, (j.steps || 0) + 1), gap = 14, bw = Math.max(6, Math.min(240, (cw - gap * n) / n));
+    for (let i = deltas.length; i < n; i++) { const x = cx + i * (bw + gap); rr(ctx, x, cy + ch - 4, bw, 4, 2); ctx.fillStyle = T.tile; ctx.fill(); if (bw >= 22) mono(ctx, String(i), x + bw / 2, cy + ch + 20, 14, T.line, 'center'); }
     deltas.forEach((d, i) => {
-      const x = cx + i * (bw + gap), h = ch * d.density_pct / maxPct;
-      rr(ctx, x, Y(d.density_pct), bw, Math.max(2, h), 4); ctx.fillStyle = d.final ? T.soft : d.changed > 0 ? T.fft : T.line; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
-      if (bw >= 30) mono(ctx, d.changed > 0 ? `${d.density_pct.toFixed(d.density_pct < 10 ? 1 : 0)}%` : 'base', x + bw / 2, Y(d.density_pct) - 14, 14, d.changed > 0 ? T.ink : T.faint, 'center', 700);
+      // a new bar grows from the base
+      const pct = approach(`wt-bar:${j.name}:${i}`, d.density_pct, 0.2, 0), x = cx + i * (bw + gap), h = ch * pct / maxPct;
+      rr(ctx, x, Y(pct), bw, Math.max(2, h), 4); ctx.fillStyle = d.final ? T.soft : d.changed > 0 ? T.fft : T.line; ctx.globalAlpha = 0.85; ctx.fill(); ctx.globalAlpha = 1;
+      if (bw >= 30) mono(ctx, d.changed > 0 ? `${d.density_pct.toFixed(d.density_pct < 10 ? 1 : 0)}%` : 'base', x + bw / 2, Y(pct) - 14, 14, d.changed > 0 ? T.ink : T.faint, 'center', 700);
       if (bw >= 22) mono(ctx, d.final ? 'final' : d.version.replace('sampler-', '').replace('step ', ''), x + bw / 2, cy + ch + 20, 14, T.faint, 'center');
     });
     mono(ctx, wt.source === 'steps' ? 'optimizer step' : 'sampler weight version', cx + cw, cy + ch + 20, 14, T.faint, 'right');
     // the comparison that matters: what a full checkpoint would move instead
     const ly = H - 100;
     rr(ctx, 72, ly - 28, W - 144, 56, 10); ctx.fillStyle = T.tile; ctx.fill();
-    text(ctx, `Full checkpoint every step: ${fmtN(total)} elements each time. Sparse delta: ${fmtN(Math.round(mean / 100 * total))} on average, ${(100 / Math.max(0.01, mean)).toFixed(0)}× fewer. The sampler patches them in place and keeps serving.`, 92, ly, 19, T.ink);
+    if (!has) text(ctx, 'The first sparse delta arrives after the first optimizer step; the save at step 0 is the base model and changes nothing.', 92, ly, 19, T.soft);
+    else text(ctx, `Full checkpoint every step: ${fmtN(total)} elements each time. Sparse delta: ${fmtN(Math.round(mean / 100 * total))} on average, ${(100 / Math.max(0.01, mean)).toFixed(0)}× fewer. The sampler patches them in place and keeps serving.`, 92, ly, 19, T.ink);
     mono(ctx, `last delta ${deltas[deltas.length-1].density_pct.toFixed(2)}% at ${(deltas[deltas.length-1].time||'').slice(11,19)}  ·  source: ${wt.source === 'steps' ? 'op metrics via /runs/{id}/steps' : 'trainer log via /logs'}`, W - 92, ly + 46, 14, T.faint, 'right');
   }
   // ---- metrics: what each job's client logged per step, read from its own log directory
@@ -682,7 +887,13 @@
     const series = js.slice().sort((a, b) => jobIndex.get(a.name) - jobIndex.get(b.name)).map(j => ({ j, rows: ((mt.data[j.name] || {}).rows) || [], color: JOB_COLORS[(jobIndex.get(j.name) - 1) % JOB_COLORS.length] })).filter(s => s.rows.length);
     if (!series.length) { text(ctx, mt.fetchedAt ? 'No metrics yet. A client writes its first line when its first step completes.' : 'reading…', 72, 180, 22, T.faint); return; }
     const maxStep = Math.max(1, ...series.flatMap(s => s.rows.map(r => r.step)));
-    const px0 = 72, py0 = 190, gap = 48, pw = (W - 144 - gap * 2) / 3, ph = H - py0 - 210;
+    // legend: equal columns, the jobs spread evenly over as few rows as fit, at most three rows
+    // many jobs get the short form (tag, model family, mode) so every one fits in three rows
+    const legLabel = series.length > 9 ? s => `${tag(s.j)} ${short(s.j.model).split('-')[0]} ${s.j.kind === 'lora' ? 'lora' : 'full'}`
+                                       : s => `${tag(s.j)} ${short(s.j.model)} ${s.j.kind === 'lora' ? 'lora' : 'full'} · step ${s.rows[s.rows.length - 1].step}`;
+    ctx.font = `500 15px ${MONO}`; const colW = Math.max(...series.map(s => ctx.measureText(legLabel(s)).width)) + 60, legX = series.length > 1 ? 72 + 170 : 72;
+    const perRowMax = Math.max(1, Math.floor((W - 72 - legX) / colW)), legRows = Math.min(3, Math.ceil(series.length / perRowMax)), perRow = Math.min(perRowMax, Math.ceil(series.length / legRows));
+    const px0 = 72, py0 = 170, gap = 48, pw = (W - 144 - gap * 2) / 3, ph = H - py0 - 70 - legRows * 32;
     MT_PANELS.forEach((pan, k) => {
       const x0 = px0 + k * (pw + gap), cx = x0 + 70, cw = pw - 90, cy = py0 + 90, ch = ph - 130;
       rr(ctx, x0, py0, pw, ph, 12); ctx.fillStyle = T.tile; ctx.fill();
@@ -690,10 +901,13 @@
       const vals = series.flatMap(s => s.rows.map(r => r[pan.key]).filter(v => v !== undefined));
       if (!vals.length) { mono(ctx, 'not logged', x0 + pw / 2, cy + ch / 2, 16, T.faint, 'center'); return; }
       let lo = pan.lo ?? Math.min(...vals), hi = pan.hi ?? Math.max(...vals);
-      if (pan.hi === undefined) hi = hi + (hi - lo || Math.abs(hi) || 1) * 0.1;
-      if (pan.lo === undefined) lo = lo - (hi - lo || 1) * 0.1;
+      if (pan.hi === undefined) hi = hi + (hi - lo || Math.abs(hi) || 1) * 0.05;
+      if (pan.lo === undefined) lo = lo - (hi - lo || 1) * 0.05;
+      const raw = (hi - lo) / 4 || 1, mag = Math.pow(10, Math.floor(Math.log10(raw))), stepV = [1, 2, 2.5, 5, 10].map(m => m * mag).find(m => m >= raw);
+      if (pan.lo === undefined) lo = Math.floor(lo / stepV + 1e-9) * stepV; if (pan.hi === undefined) hi = Math.ceil(hi / stepV - 1e-9) * stepV;
+      const nTicks = Math.round((hi - lo) / stepV);
       const X = st => cx + cw * (maxStep ? st / maxStep : 0), Y = v => cy + ch - ch * (v - lo) / ((hi - lo) || 1);
-      for (let i = 0; i <= 4; i++) { const v = lo + (hi - lo) * i / 4; ctx.fillStyle = T.line; ctx.fillRect(cx, Y(v), cw, 1); mono(ctx, pan.fmt(v), cx - 10, Y(v), 14, T.faint, 'right'); }
+      for (let i = 0; i <= nTicks; i++) { const v = lo + stepV * i; ctx.fillStyle = T.line; ctx.fillRect(cx, Y(v), cw, 1); mono(ctx, pan.fmt(v), cx - 10, Y(v), 14, T.faint, 'right'); }
       const tick = Math.max(1, Math.ceil(maxStep / 8));
       for (let st = 0; st <= maxStep; st += tick) mono(ctx, String(st), X(st), cy + ch + 18, 13, T.faint, 'center');
       mono(ctx, 'step', cx + cw, cy + ch + 40, 13, T.faint, 'right');
@@ -712,22 +926,18 @@
     });
     // legend: each job with its last step
     // wraps onto a second row rather than running off the edge
-    let lx = 72, ly = H - 86, shown = 0; const right = W - 72;
-    if (series.length > 1) { ctx.fillStyle = T.ink; ctx.fillRect(lx, ly - 2, 22, 4); mono(ctx, 'sweep mean', lx + 30, ly, 15, T.ink); lx += 150; }
-    for (const s of series) {
-      const label = `${tag(s.j)} ${short(s.j.model)} ${s.j.kind === 'lora' ? 'lora' : 'full'} · step ${s.rows[s.rows.length - 1].step}`;
-      ctx.font = `500 15px ${MONO}`; const w = ctx.measureText(label).width + 52;
-      if (lx + w > right) { if (ly > H - 70) break; lx = 72; ly += 30; }
-      ctx.fillStyle = s.color; ctx.fillRect(lx, ly - 7, 14, 14); mono(ctx, label, lx + 22, ly, 15, T.soft); lx += w; shown++;
-    }
-    if (shown < series.length) mono(ctx, `+${series.length - shown} more`, right, ly, 15, T.faint, 'right');
-    const waiting = js.length - series.length; if (waiting) mono(ctx, `${waiting} job${waiting === 1 ? '' : 's'} not logged a step yet`, W - 72, H - 116, 14, T.faint, 'right');
+    const ly0 = py0 + ph + 44; let shown = 0;
+    if (series.length > 1) { ctx.fillStyle = T.ink; ctx.fillRect(72, ly0 - 2, 22, 4); text(ctx, 'sweep mean', 72 + 30, ly0, 16, T.ink, 'left', 600); }
+    series.slice(0, perRow * legRows).forEach((s, i) => { const lx = legX + (i % perRow) * colW, ly = ly0 + Math.floor(i / perRow) * 32;
+      ctx.fillStyle = s.color; ctx.fillRect(lx, ly - 7, 14, 14); mono(ctx, legLabel(s), lx + 22, ly, 15, T.soft); shown++; });
+    if (shown < series.length) text(ctx, `+${series.length - shown} more`, W - 72, ly0 + (legRows - 1) * 32, 15, T.faint, 'right');
+    const waiting = js.length - series.length; if (waiting) text(ctx, `${waiting} job${waiting === 1 ? ' has' : 's have'} not logged a step yet`, W - 72, 120, 16, T.faint, 'right');
   }
   { const m = location.hash.match(/^#metrics\?sweep=([^&]+)(?:&job=([^&]+))?/); if (m) { mt.sweep = decodeURIComponent(m[1]); mt.job = m[2] ? decodeURIComponent(m[2]) : ''; } }  // stills: #metrics?sweep=…&job=…
   // the job timeline links to weights; fleet rows open the timeline, and a double-click opens weights
   $('#fleet').addEventListener('dblclick', e => { const r = e.currentTarget.getBoundingClientRect(); const x = (e.clientX - r.left) * W / r.width, y = (e.clientY - r.top) * H / r.height; const h = hits.find(h => h.kind === 'job' && x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h); if (h) openWeights(h.id); });
 
-  (function frame() { drawFleet(); drawTimeline(); drawWeights(); drawMetrics(); requestAnimationFrame(frame); })();
+  (function frame() { tick(); drawFleet(); drawTimeline(); drawWeights(); drawMetrics(); requestAnimationFrame(frame); })();
   { const m = location.hash.match(/^#weights\?job=([^&]+)/); if (m) { const want = decodeURIComponent(m[1]); const t = setInterval(() => { if (jobsList.length) { clearInterval(t); openWeights(want); } }, 500); } }
   if (/[?&]others=1/.test(location.hash)) othersBox.checked = true;
   { const m = location.hash.match(/[?&]sel=([0-9.]+),([0-9.]+)/); if (m) tl.sel = { a: +m[1], b: +m[2] }; }  // stills: &sel=<unix a>,<unix b>
