@@ -177,6 +177,9 @@ class FFTTrainingWorker(BaseTrainerWorker):
 
   def save_state(self, model_id: str, state_path: str, include_optimizer: bool = False, kind: str = "state") -> dict[str, Any]:
     assert self.model is not None, "Model must be loaded first."
+    # Cleared first, on every path: save_state_delta sets this save's figures, and any path that writes something else,
+    # or returns early, must not leave the previous delta's on the worker for the processor to attach.
+    self.last_save_metrics = {}
     if self.cpu_offload and not self._is_offloaded:
       raise RuntimeError(
         "Cannot save state while worker is not offloaded (self._is_offloaded is False) when cpu_offload=True. "
@@ -213,7 +216,6 @@ class FFTTrainingWorker(BaseTrainerWorker):
     with open(os.path.join(state_path, "metadata.json"), "w") as f:
       json.dump(metadata, f)
 
-    self.last_save_metrics = {}
     print(f"Saved full fine-tuning state to {state_path}")
     return {"path": state_path}
 
