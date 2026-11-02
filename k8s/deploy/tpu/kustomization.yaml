@@ -1,9 +1,12 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-# LoRA on GKE TPU nodes served by the TPU DRA driver. Same control plane as
-# k8s/deploy/lora; the scheduler's built-in TPU defaults need no settings.
-# Models run on TPU when the client sets the openrl.*_accel_prefs settings.
+# LoRA and full fine-tuning on GKE TPU nodes served by the TPU DRA driver.
+# Same control plane as k8s/deploy/lora; the scheduler's built-in TPU defaults
+# need no settings. Models run on TPU when the client sets the
+# openrl.*_accel_prefs settings. Full fine-tuning on TPU runs only for models
+# with openrl.exclusive=true, each worker on its own node, so no time slicer
+# is needed and FFT stays enabled.
 namespace: openrl-system
 resources:
   - ../lora

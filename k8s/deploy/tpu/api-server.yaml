@@ -8,6 +8,8 @@ spec:
       containers:
       - name: api-server
         env:
+        - name: OPEN_RL_ENABLE_FFT
+          value: "true"
         - name: OPEN_RL_TPU_TRAINER_IMAGE
           valueFrom:
             configMapKeyRef:
