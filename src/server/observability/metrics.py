@@ -35,7 +35,8 @@ async def query(name: str, gpus: list[str], low: float, high: float, points: int
   for metric, template in QUERIES[name].items():
     text = Template(template).substitute(gpus=matcher, step=step)
     params = {"query": text, "start": high if points == 1 else low, "end": high, "step": step}
-    rows = (await get(f"{url}/api/v1/query_range", params))["data"]["result"]
+    # Managed Service for Prometheus answers "result": null where plain Prometheus answers [].
+    rows = (await get(f"{url}/api/v1/query_range", params))["data"].get("result") or []
     series = [{"labels": r["metric"], "points": [[float(t), float(v)] for t, v in r["values"] if math.isfinite(float(v))]} for r in rows]
     answer = {"metric": metric, "query": text, "step": step, "series": series}
     if series:
