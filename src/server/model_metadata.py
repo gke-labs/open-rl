@@ -85,16 +85,21 @@ class TrainingModelMetadata(BaseModel):
 
   def runtime(self, model_id: str) -> str:
     """The id of the workers that serve this job. LoRA jobs share workers only
-    with jobs on the same trainer backend. A sampling session on a bare base-model
-    name that does not share is kept apart from the base model's shared runtime."""
+    with jobs on the same trainer backend and the same accelerators. A sampling
+    session on a bare base-model name that does not share is kept apart from the
+    base model's shared runtime."""
     if not self.shares_runtime():
       return f"base-{model_id}" if model_id == self.base_model else model_id
+    # A TPU runtime is its own; GPU keeps the bare id. When only one role runs on
+    # TPU the id names it, so jobs share only workers on the same hardware.
+    on_tpu = [role for role in ("trainer", "sampler") if self.accelerator_for(role) == "tpu"]
+    accel = "" if not on_tpu else "tpu-" if len(on_tpu) == 2 else f"tpu-{on_tpu[0]}-"
     if self.trainer_backend == "pytorch":
-      return self.base_model
+      return f"{accel}{self.base_model}"
     if image := self.trainer_image():
       # An image ref is not label safe, so a hash of it keeps images apart.
-      return f"image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
-    return f"{self.trainer_backend}-{self.base_model}"
+      return f"{accel}image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
+    return f"{accel}{self.trainer_backend}-{self.base_model}"
 
   def pool(self, model_id: str) -> str:
     """The sampling pool that serves this job's runtime. Base model names are not

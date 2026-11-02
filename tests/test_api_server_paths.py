@@ -595,6 +595,21 @@ class TrainerBackendTest(ApiServerTest):
     self.assertEqual(self.active_set(second), self.active_set(first))
     self.assertNotEqual(self.active_set(other), self.active_set(first))
 
+  def test_tpu_jobs_share_apart_from_gpu_jobs_on_one_base_model(self) -> None:
+    def create(*tags: str) -> str:
+      session_id = self.post("create_session", {"tags": list(tags)}).json()["session_id"]
+      return self.post("create_model", {"base_model": "m", "session_id": session_id}).json()["request_id"]
+
+    both = "openrl.trainer_accel_prefs=tpu", "openrl.sampler_accel_prefs=tpu"
+    first, second, gpu = create(*both), create(*both), create()
+    self.assertEqual(self.active_set(first), "tpu-m-1")
+    self.assertEqual(self.active_set(second), "tpu-m-1")
+    self.assertEqual(self.active_set(gpu), "m-1")
+    # Only one role on TPU is its own runtime, so jobs share only workers on the same hardware.
+    self.assertEqual(self.active_set(create("openrl.trainer_accel_prefs=tpu")), "tpu-trainer-m-1")
+    self.assertEqual(self.active_set(create("openrl.sampler_accel_prefs=tpu|gpu")), "tpu-sampler-m-1")
+    self.assertRegex(self.active_set(create(*both, "openrl.trainer_backend=ghcr.io/org/trainer:1")), r"^tpu-image-[0-9a-f]{10}-m-1$")
+
   def test_a_local_worker_manager_refuses_a_trainer_image(self) -> None:
     with patch.object(api_server, "worker_manager", object.__new__(LocalWorkerManager)):
       response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_backend": "ghcr.io/org/trainer:1"}})
