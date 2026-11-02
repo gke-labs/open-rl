@@ -1,0 +1,106 @@
+# The demo app: a sweep page that starts and stops RL client Jobs, and fleet,
+# timeline and weights views fed by the API server's inspection API. Runs on
+# the API server image with its code mounted from a ConfigMap, so there is no
+# image to build. It runs as the installation's one service account,
+# open-rl-sa, and adds the Job writes the sweep page needs to it; the
+# inspection API it reads stays read-only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: open-rl-demo
+rules:
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "delete", "get", "list", "watch", "patch"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: open-rl-demo
+subjects:
+- kind: ServiceAccount
+  name: open-rl-sa
+roleRef:
+  kind: Role
+  name: open-rl-demo
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: open-rl-demo
+  labels:
+    app: open-rl-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: open-rl-demo
+  template:
+    metadata:
+      labels:
+        app: open-rl-demo
+    spec:
+      serviceAccountName: open-rl-sa
+      # Stateless and quick to answer: on a rollout the old pod should go at once, or a
+      # port-forward attached to it keeps serving the old code for the default 30 s.
+      terminationGracePeriodSeconds: 2
+      containers:
+      - name: demo
+        image: ghcr.io/gke-labs/open-rl/api-server:latest
+        command: ["sh", "-c", "cd /app && uv run python /demo/app.py"]
+        ports:
+        - name: http
+          containerPort: 8000
+        env:
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        - name: API_SERVER_URL
+          value: http://open-rl-api-server-service:8000
+        # The client image the sweep's Jobs run; an overlay points it at its own build.
+        - name: CLIENT_IMAGE
+          value: ghcr.io/gke-labs/open-rl/client:latest
+        # Shown on the Fleet tab next to the namespace; optional.
+        - name: CLUSTER_NAME
+          value: ""
+        readinessProbe:
+          httpGet:
+            path: /api/sweep/presets
+            port: 8000
+          timeoutSeconds: 5
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+        volumeMounts:
+        - name: code
+          mountPath: /demo
+          readOnly: true
+        # The Jobs' log directories, read-only: the Metrics tab charts what each Job's client wrote.
+        - name: shared-storage
+          mountPath: /mnt/shared
+          readOnly: true
+      volumes:
+      - name: code
+        configMap:
+          name: open-rl-demo-code
+      - name: shared-storage
+        persistentVolumeClaim:
+          claimName: open-rl-shared-pvc
+          readOnly: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: open-rl-demo
+spec:
+  selector:
+    app: open-rl-demo
+  ports:
+  - port: 8000
+    targetPort: 8000
