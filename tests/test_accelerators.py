@@ -77,7 +77,8 @@ class PodSpecTest(unittest.TestCase):
     self.assertEqual((spec.toleration_key, spec.workload_type), ("google.com/tpu", "TPU"))
     self.assertEqual(spec.env_configmap_env, "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP")
     self.assertEqual(spec.env, {"OPEN_RL_DEVICE": "tpu"})
-    self.assertEqual((spec.volumes, spec.volume_mounts), ([], []))
+    self.assertEqual(spec.volumes, [{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}])
+    self.assertEqual(spec.volume_mounts, [{"name": "dshm", "mountPath": "/dev/shm"}])
 
   def test_tpu_sampler(self) -> None:
     spec = pod_spec("tpu", "sampler")
@@ -85,7 +86,7 @@ class PodSpecTest(unittest.TestCase):
     self.assertEqual((spec.toleration_key, spec.workload_type), ("google.com/tpu", "TPU"))
     self.assertEqual(spec.env_configmap_env, "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP")
     self.assertEqual(spec.env, {})
-    self.assertEqual(spec.volumes, [{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}])
+    self.assertEqual(spec.volumes, [{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}])
     self.assertEqual(spec.volume_mounts, [{"name": "dshm", "mountPath": "/dev/shm"}])
 
 

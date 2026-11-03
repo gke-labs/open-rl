@@ -119,7 +119,10 @@ and a `tpu` trainer with the `automodel` trainer backend. A full fine-tuning
 model with a `tpu` sampler always syncs weights with `openrl.weight_sync=full`:
 the TPU sampler reloads the whole checkpoint, since sparse deltas cannot patch
 its transposed weights. A job's own trainer image can run on TPU if it includes
-`torch_tpu`. Cluster setup, node pools and the per-model knobs are in
+`torch_tpu`. TPU worker pods keep the programs torch_tpu compiles under
+`torchtpu-cache/` in `OPEN_RL_TMP_DIR`, so a trainer or sampler that meets a
+shape an earlier pod compiled loads the program instead of compiling it again.
+Cluster setup, node pools and the per-model knobs are in
 [OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
 
 The TPU sampler image installs the released `vllm-torchtpu` wheel, which serves
