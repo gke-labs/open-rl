@@ -18,6 +18,8 @@ class WorkloadState:
   workload: WorkloadRef
   checkpointed: bool = False
   failed: bool = False
+  # Why no process can run under this name again, once one left state behind that the restorer cannot drop.
+  unservable: str | None = None
 
 
 class SingleNodeTimeSlicer(TimeSlicer):
@@ -49,6 +51,9 @@ class SingleNodeTimeSlicer(TimeSlicer):
       state = self.workloads.get(workload.name)
       if state is None:
         self.workloads[workload.name] = WorkloadState(connection_id=connection_id, workload=workload)
+      elif state.unservable:
+        # Refused up front, so the new process exits with the reason instead of booting inside a turn it can never leave.
+        return {"ok": False, "error": f"workload {workload.name} cannot run on this node again: {state.unservable}"}
       else:
         # A registration is a live process announcing itself, so a failure
         # recorded against an earlier process under this name is cleared.
@@ -65,6 +70,8 @@ class SingleNodeTimeSlicer(TimeSlicer):
       if state is None:
         state = WorkloadState(connection_id=None, workload=workload)
         self.workloads[name] = state
+      if state.unservable:
+        return {"ok": False, "error": f"workload {name} cannot run on this node again: {state.unservable}"}
       if state.failed:
         return {"ok": False, "error": f"workload {name} is failed"}
       if name in self.waiting_workloads or self.running.get(claim) == name:
@@ -139,7 +146,8 @@ class SingleNodeTimeSlicer(TimeSlicer):
         return {"ok": False, "error": f"workload {name} is not registered"}
 
       self.clear_workload(name)
-      del self.workloads[name]
+      if not self.process_gone(self.workloads[name]):
+        del self.workloads[name]
       self.condition.notify_all()
       return {"ok": True}
 
@@ -152,7 +160,17 @@ class SingleNodeTimeSlicer(TimeSlicer):
         state.failed = True
         state.checkpointed = False
         state.connection_id = None
+        self.process_gone(state)
       self.condition.notify_all()
+
+  def process_gone(self, state: WorkloadState) -> bool:
+    """The workload's process has left. Whether its name must stay on record because the restorer can no longer park
+    a process under it, so the next one is refused with the reason."""
+    reason = self.restorer.forget(state.workload)
+    if reason:
+      logger.error("workload %s claim %s cannot run on this node again: %s", state.workload.name, state.workload.claim, reason)
+      state.unservable = reason
+    return bool(reason)
 
   def clear_workload(self, name: str) -> None:
     if name in self.waiting_workloads:

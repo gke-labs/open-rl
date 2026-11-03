@@ -18,6 +18,10 @@ class CheckpointRestorer(Protocol):
   def restore(self, workload: WorkloadRef) -> None:
     pass
 
+  def forget(self, workload: WorkloadRef) -> str | None:
+    """The workload's process is gone. Drops what the restorer holds for it, or returns why no new process can be
+    parked under its name."""
+
 
 class CudaCheckpointRestorer:
   def __init__(self, cuda_checkpoint_bin: str | None = None, timeout_ms: int | None = None):
@@ -59,6 +63,9 @@ class CudaCheckpointRestorer:
       self.run_cuda_checkpoint(["--action", "unlock", "--pid", str(pid)])
     self.checkpointed_pids.pop(workload.name, None)
     logger.info("restore workload=%s took %.0f ms", workload.name, (time.perf_counter() - start) * 1000)
+
+  def forget(self, workload: WorkloadRef) -> None:
+    self.checkpointed_pids.pop(workload.name, None)
 
   def run_cuda_checkpoint(self, args: list[str]) -> None:
     full_argv = [self.cuda_checkpoint_bin, *args]

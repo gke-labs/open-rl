@@ -5,7 +5,9 @@ workers that share one accelerator bundle.
 
 It exposes workload commands over a Unix socket or TCP listener:
 
-- `REGISTER(workload)` records a worker workload.
+- `REGISTER(workload)` records a worker workload. It is refused, with the reason, when an
+  earlier process under that name left state the backend cannot drop, such as a job the
+  llm-d snapshot agent still holds as `SAVED` after its process exited.
 - `ACQUIRE(workload)` grants that workload the right to touch CUDA.
 - `RELEASE(workload)` releases the workload and checkpoints it.
 - `UNREGISTER(workload)` removes the workload registration.

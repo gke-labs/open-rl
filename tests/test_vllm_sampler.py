@@ -34,6 +34,9 @@ class RecordingRestorer:
   def restore(self, workload: WorkloadRef) -> None:
     self.log.append(("restore", workload.name))
 
+  def forget(self, workload: WorkloadRef) -> None:
+    pass
+
 
 class GpuSampler:
   """Stands in for vllm_sampler.Sampler, whose vLLM engine needs a GPU. It logs each call and fails any that reaches
