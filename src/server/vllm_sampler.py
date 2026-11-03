@@ -40,7 +40,12 @@ class Sampler:
     self.update_failed = False
 
   async def wake(self) -> None:
-    await self.engine.wake_up(tags=["weights", "kv_cache"])
+    """Wakes the weights alone. The KV cache follows in `wake_kv_cache` once the turn's weights are settled, since a
+    delta update needs the headroom the cache would hold."""
+    await self.engine.wake_up(tags=["weights"])
+
+  async def wake_kv_cache(self) -> None:
+    await self.engine.wake_up(tags=["kv_cache"])
 
   async def sleep(self) -> None:
     await self.engine.sleep(level=1)
@@ -160,6 +165,7 @@ class TimeSlicedDispatcher(Dispatcher):
     async with holding_gpu(self.time_slicer, self.workload, self.sampler):
       await self.read()  # requests that arrived while the turn was pending join it
       if await self.ready():
+        await self.sampler.wake_kv_cache()
         await asyncio.gather(*(self.send(r) for r in self.to_send()[: self.concurrency]))
 
 
