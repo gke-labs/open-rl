@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 
 from server import api_server
 from server.estimator import footprint
-from server.model_metadata import TrainingModelMetadata
+from server.model_metadata import TrainingModelMetadata, pool_name
 from server.scheduler_worker_manager import GROUP, PLURAL, VERSION, SchedulerWorkerManager
 from server.store import InMemoryStateStore, InMemoryStore
 from server.worker_manager import owner_id
@@ -214,6 +214,13 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.manager.ensure("job-tpu", "sampler")
     trainer, sampler = self.api.created
     return trainer, sampler
+
+  def test_tpu_lora_workers_have_their_own_runtime(self) -> None:
+    trainer, sampler = self.tpu_workloads()
+    owner = owner_id("tpu-Qwen/Qwen3-0.6B")
+    self.assertEqual(trainer["metadata"]["name"], f"lora-{owner}-0-trainer")
+    self.assertEqual(sampler["spec"]["ownerID"], owner)
+    self.assertEqual(sampler["metadata"]["labels"]["app.kubernetes.io/instance"], pool_name("tpu-Qwen/Qwen3-0.6B"))
 
   def test_a_tpu_trainer_pod(self) -> None:
     trainer, _ = self.tpu_workloads()
