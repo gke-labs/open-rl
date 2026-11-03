@@ -111,6 +111,12 @@ server refuses a model that lists `tpu` anywhere for full fine-tuning unless
 and in the trainer list for the `automodel` trainer backend. A job's own
 trainer image can run on TPU if it includes `torch_tpu`.
 
+The TPU sampler image installs the released `vllm-torchtpu` wheel, which serves
+full fine-tuning but not LoRA: the multi-LoRA changes are still open upstream
+(vllm-torchtpu PRs #2376, #2359, #2378 and #2360). Until a release carries them,
+a TPU sampler image for LoRA jobs has to be built from vllm-torchtpu's main
+branch with those changes applied.
+
 In scheduler mode these variables on the API server set up the worker pods:
 
 | Env var | Default | What it does |
