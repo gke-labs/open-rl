@@ -314,12 +314,15 @@ class BaseTrainerWorker:
     pad_value: int | float = 0,
     width: int | None = None,
   ) -> torch.Tensor:
-    """Return padded values with shape [batch, width or max(lengths)]."""
-    padded = torch.full((len(sequences), width or max(lengths)), pad_value, dtype=dtype, device=self.device)
-    for row, sequence in enumerate(sequences):
-      length = lengths[row]
-      padded[row, :length] = padded.new_tensor(sequence[:length])
-    return padded
+    """Return padded values with shape [batch, width or max(lengths)].
+
+    Padded on the host and moved in one copy. A per-row write into a device
+    tensor is a device kernel shaped by that row's length, and on TPU every new
+    shape compiles a program that stays in memory for the life of the process.
+    """
+    width = width or max(lengths)
+    rows = [list(sequence[: lengths[row]]) + [pad_value] * (width - lengths[row]) for row, sequence in enumerate(sequences)]
+    return torch.tensor(rows, dtype=dtype).to(self.device)
 
   def pad_model_inputs(
     self,
@@ -327,14 +330,12 @@ class BaseTrainerWorker:
   ) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
     """Return input_ids and attention_mask with shape [batch, max_input_len]."""
     pad_token_id = self.tokenizer.pad_token_id if self.tokenizer and self.tokenizer.pad_token_id is not None else 0
-    batch_size = len(data)
     input_lengths = [len(datum.model_input) for datum in data]
     max_input_len = self.padded_length(input_lengths)
 
     input_ids = self.pad_sequences([datum.model_input for datum in data], input_lengths, torch.long, pad_token_id, width=max_input_len)
-    attention_mask = input_ids.new_zeros((batch_size, max_input_len))
-    for row, input_len in enumerate(input_lengths):
-      attention_mask[row, :input_len] = 1
+    mask_rows = [[1] * input_len + [0] * (max_input_len - input_len) for input_len in input_lengths]
+    attention_mask = torch.tensor(mask_rows, dtype=torch.long).to(self.device)
 
     return input_ids, attention_mask, input_lengths
 
