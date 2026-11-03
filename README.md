@@ -134,6 +134,7 @@ Detailed guides and runnable examples are structured under `docs/` and `examples
   - [Tinker Client Compatibility](docs/tinker-client-compatibility.md)
 - **Deployment**:
   - [Kubernetes Deployment Guide (GKE)](docs/setup/gke-setup.md)
+  - [OpenRL on GKE TPU nodes](docs/setup/tpu-on-gke.md)
 
 ## Roadmap
 
