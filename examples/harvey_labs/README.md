@@ -161,11 +161,18 @@ uses the reference recipe defaults:
 
 Keep these runtime behaviors in mind when configuring a run:
 
+- Each turn may generate up to `max_tokens` or whatever remains of
+  `max_trajectory_tokens`, whichever is smaller. When fewer than 2,048 tokens
+  of the context window remain, the episode ends with `context_overflow`
+  instead of sampling a turn too short to be useful.
 - When an episode stops at the per-turn token limit or fills the context
   window, the grader scores whatever deliverables the agent already wrote. A
   turn the parser can't read, or whose tool calls are all malformed, ends the
   episode ungraded: it counts as 0 in the pass rate and gets a training reward
   of -0.1.
+- When the judge returns no verdicts for an episode, the recipe records a
+  grading failure (`lab/reward_error=1`, `lab/graded=0`) rather than a graded
+  zero. The episode's criteria still count in the pooled denominator.
 - The recipe truncates tool results longer than `max_tool_result_tokens` and
   appends a hint to continue reading from an `offset` or narrow the search with
   `grep`.
@@ -233,7 +240,10 @@ scores separately.
 Because the pooled pass rate counts unfinished and ungraded episodes as 0, an
 increase can reflect either higher completion rates or stronger deliverables.
 To separate those effects, compare `lab/graded`, the share of episodes that the
-judge graded, alongside the pass fraction on graded episodes.
+judge graded, alongside the pass fraction on graded episodes. `harvey-results`
+also prints the number of evaluation episodes whose grading failed, for
+example `12 errors`. A nonzero count usually means the judge was unreachable
+or returned no verdicts, so check `grading.log` before comparing pass rates.
 
 Training reward averages episode rewards and may include termination penalties.
 Episodes with missing outputs or grading failures score 0. Terminal `lab/*`
@@ -248,7 +258,45 @@ diagnostics.
 | --- | --- | --- |
 | Podman | The driver runs on a machine with Podman | Enabled by default. `setup_lab.sh` builds the sandbox image. |
 | Agent Sandbox | The driver runs in a cluster | Pass `sandbox_warmpool=<SandboxWarmPool>`. Follow [agent-sandbox/README.md](agent-sandbox/README.md) to set up the warm pool. |
+| Agent Substrate | You want sandboxes that suspend while the model generates | Install the `substrate` extra and pass `sandbox_substrate_endpoint` and `sandbox_substrate_image`. See [Agent Substrate](#agent-substrate). |
 | Custom backend | You use another sandbox runtime | Pass a custom factory in Python, as shown below. |
+
+### Agent Substrate
+
+`sandbox_substrate_endpoint` runs each episode in an
+[Agent Substrate](https://github.com/agent-substrate/substrate) environment
+through the `ate-env-api` service from
+[sandboxenv-rl](https://github.com/ai-on-gke/sandboxenv-rl). The cluster needs:
+
+- Substrate at or after `48f5744c`. The backend was verified with `v1.0.0-rc.1`.
+- `ate-env-api` deployed from sandboxenv-rl, with
+  `spiffe://cluster.local/ns/ate-env/sa/ate-env-api` in the router's ingress
+  allow-list.
+- A base ActorTemplate registered with `ate-env manifest template`. On
+  `v1.0.0-rc.1`, per-template snapshot locations are behind the
+  `PerTemplateSnapshotLocation` preview gate. Without the gate, drop
+  `storageLocation` from the printed template, and snapshots go to the
+  cluster's snapshot bucket.
+
+LAB's sandbox image runs unmodified as the environment's root filesystem. Pass
+it pinned by digest:
+
+```bash
+kubectl -n ate-env port-forward svc/ate-env-api 7777:7777 &
+export SUBSTRATE_ENV_AUTH_TOKEN="$(kubectl -n ate-env get secret ate-env-api-token -o jsonpath='{.data.token}' | base64 -d)"
+uv run --extra substrate harvey-train base_url=http://127.0.0.1:9003 \
+  sandbox_substrate_endpoint=127.0.0.1:7777 \
+  sandbox_substrate_image=<registry>/lab-sandbox@sha256:<digest>
+```
+
+A sandbox suspends after `sandbox_substrate_idle_suspend_seconds` (default 30)
+without a tool call, which frees its worker while the model generates. The next
+tool call resumes it with its files and processes intact. A sandbox never
+suspends during a tool call. Set the option to `None` to keep sandboxes
+running. Each episode's `metrics.json` records the number of suspensions as
+`substrate_suspends`.
+
+### Custom backends
 
 Pass a custom factory to the Python training or evaluation API:
 
@@ -297,12 +345,18 @@ those limits are too tight before assuming the setup is broken.
 ## Development
 
 Use `chz` for recipe configuration, data objects, and CLI entrypoints. Run the
-renderer unit tests with:
+recipe's unit tests from `examples/`:
 
 ```bash
+uv run python -m unittest harvey_labs.test_fair_grading
+uv run --extra substrate python -m unittest harvey_labs.test_substrate_sandbox
 uv run python -m harvey_labs.renderers.qwen35_renderer
 uv run python -m harvey_labs.renderers.gemma4_renderer
 ```
+
+`test_fair_grading` covers the per-turn budget, budget-terminal grading, and
+judge failures. `test_substrate_sandbox` runs the Substrate backend against a
+fake `ate-env-api` client.
 
 Each renderer module includes an inline `unittest` suite that checks whether
 sampled tokens survive across turns. The tests run with the real tokenizer and
