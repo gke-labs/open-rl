@@ -55,12 +55,19 @@ class FootprintTest(unittest.TestCase):
     self.assertGreater(big.host_request_bytes, 110 * GIB)
     self.assertEqual(big.host_limit_bytes, big.host_request_bytes)
 
-  def test_tpu_workers_get_generous_host_memory(self) -> None:
-    for model in ("Qwen/Qwen3-0.6B", "google/gemma-4-E2B-it"):
-      for role in ("trainer", "sampler"):
-        fp = footprint(model, "lora", role, accelerator="tpu")
-        self.assertTrue(90 * GIB <= fp.host_request_bytes <= 110 * GIB, f"{model} {role} {fp}")
-        self.assertEqual(fp.host_limit_bytes, fp.host_request_bytes)
+  def test_tpu_host_memory_covers_the_measured_peaks(self) -> None:
+    # v6e, 100 steps: peak working set of the LoRA trainer and peak RSS of the
+    # sampler, in GiB.
+    measured = {
+      ("Qwen/Qwen3-0.6B", "trainer"): 19.1,
+      ("Qwen/Qwen3-0.6B", "sampler"): 6.5,
+      ("google/gemma-4-E2B-it", "trainer"): 18.6,
+      ("google/gemma-4-E2B-it", "sampler"): 10.6,
+    }
+    for (model, role), peak in measured.items():
+      fp = footprint(model, "lora", role, accelerator="tpu")
+      self.assertTrue(peak * GIB < fp.host_request_bytes <= 2 * peak * GIB, f"{model} {role} {fp}")
+      self.assertEqual(fp.host_limit_bytes, fp.host_request_bytes)
 
   def test_tpu_keeps_the_gpu_device_figure(self) -> None:
     for role in ("trainer", "sampler"):
