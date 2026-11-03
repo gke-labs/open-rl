@@ -170,7 +170,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(env["OPEN_RL_WORKLOAD_ID"], worker["metadata"]["name"])
 
   def test_each_worker_is_sized_for_its_roles_first_accelerator(self) -> None:
-    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu", "gpu"], "sampler_accel_prefs": ["gpu"]}
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": "tpu", "sampler_accel_prefs": "gpu"}
     s = self.store_with("job-tpu", meta)
     with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1"}):
       self.manager.ensure("job-tpu", "trainer")
@@ -206,7 +206,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(json.dumps(sampler), gpu_golden("sampler", self.tmp))
 
   def tpu_workloads(self, env: dict[str, str] | None = None) -> tuple[dict, dict]:
-    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["tpu", "gpu"]}
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": "tpu", "sampler_accel_prefs": "tpu"}
     s = self.store_with("job-tpu", meta)
     images = {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1"}
     with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, {**images, **(env or {})}):
@@ -264,7 +264,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
 
   def test_each_accelerator_reads_its_own_worker_configmap(self) -> None:
     configmaps = {"OPEN_RL_GPU_WORKER_ENV_CONFIGMAP": "gpu-env", "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP": "tpu-env"}
-    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["gpu"]}
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": "tpu", "sampler_accel_prefs": "gpu"}
     s = self.store_with("job-mixed", meta)
     with (
       patch("server.worker_manager.get_state_store", return_value=s),
@@ -283,7 +283,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       self.assertNotIn("envFrom", worker["spec"]["template"]["spec"]["containers"][0])
 
   def test_a_tpu_worker_without_its_image_fails_naming_the_variable(self) -> None:
-    s = self.store_with("job-tpu", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "sampler_accel_prefs": ["tpu"]})
+    s = self.store_with("job-tpu", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "sampler_accel_prefs": "tpu"})
     env = {k: v for k, v in os.environ.items() if k not in {"OPEN_RL_TPU_TRAINER_IMAGE", "OPEN_RL_TPU_SAMPLER_IMAGE"}}
     with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, env, clear=True):
       self.manager.ensure("job-tpu", "trainer")
@@ -297,8 +297,8 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       "base_model": "Qwen/Qwen3-0.6B",
       "fine_tuning_type": "full",
       "exclusive": True,
-      "trainer_accel_prefs": ["tpu"],
-      "sampler_accel_prefs": ["tpu"],
+      "trainer_accel_prefs": "tpu",
+      "sampler_accel_prefs": "tpu",
     }
     s = self.store_with("job-fft", meta)
     images = {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1"}
@@ -541,7 +541,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertNotEqual(sampler["spec"]["template"]["spec"]["containers"][0]["image"], "ghcr.io/org/trainer:1")
 
   def test_a_job_image_can_run_a_tpu_trainer(self) -> None:
-    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1", "trainer_accel_prefs": ["tpu"]}
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_backend": "ghcr.io/org/trainer:1", "trainer_accel_prefs": "tpu"}
     s = self.store_with("job-img-tpu", meta)
     with patch("server.worker_manager.get_state_store", return_value=s):
       self.manager.ensure("job-img-tpu", "trainer")

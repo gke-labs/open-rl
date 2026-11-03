@@ -235,8 +235,9 @@ class MetadataTest(unittest.TestCase):
     self.assertEqual(old.fine_tuning_type, "lora")
     self.assertEqual(old.lora_config.rank, 16)
     # Records written before the accelerator prefs ran on GPU.
-    self.assertEqual((old.trainer_accel_prefs, old.sampler_accel_prefs), (["gpu"], ["gpu"]))
-    self.assertEqual(decode_model_metadata('{"base_model": "base", "trainer_accel_prefs": ["tpu", "gpu"]}').trainer_accel_prefs, ["tpu", "gpu"])
+    self.assertEqual((old.trainer_accel_prefs, old.sampler_accel_prefs), ("gpu", "gpu"))
+    # Records written while the setting was a preference list hold the entry that was used, first.
+    self.assertEqual(decode_model_metadata('{"base_model": "base", "trainer_accel_prefs": ["tpu", "gpu"]}').trainer_accel_prefs, "tpu")
     bad_prefs = '{"base_model": "base", "sampler_accel_prefs": ["cuda"]}'
     for raw in ("bad json", "[]", "{}", '{"base_model": "base", "fine_tuning_type": "invalid"}', bad_prefs):
       with self.subTest(raw=raw), self.assertRaises(ValueError):

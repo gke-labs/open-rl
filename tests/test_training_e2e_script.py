@@ -27,7 +27,7 @@ class TrainingE2EAcceleratorTest(unittest.TestCase):
     self.assertEqual(tags(env), TPU_TAGS | {"team=rl", "openrl.debug=true"})
 
   def test_tpu_replaces_existing_accel_prefs(self) -> None:
-    with mock.patch.dict(os.environ, {"TINKER_TAGS": "openrl.trainer_accel_prefs=gpu|tpu,team=rl"}, clear=True):
+    with mock.patch.dict(os.environ, {"TINKER_TAGS": "openrl.trainer_accel_prefs=gpu,team=rl"}, clear=True):
       env = run_training_e2e.examples_env(make_config(accelerator="tpu"))
     self.assertEqual(tags(env), TPU_TAGS | {"team=rl"})
 
