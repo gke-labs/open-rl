@@ -1,138 +1,111 @@
-# Harvey LAB RL on the GKE scheduler stack
+# Harvey LAB RL on GKE
 
-How to run the Harvey LAB LoRA recipe against an OpenRL cluster deployed with
-the scheduler (`OPEN_RL_WORKER_MANAGER=scheduler`, see
-[gke-fft-timeslice.md](gke-fft-timeslice.md)), with one GPU for the trainer and
-one for the sampler. Verified on 2026-09-07 with Qwen3.5-9B on two H100 nodes.
+How to run the [Harvey LAB recipe](../../examples/harvey_labs/README.md) at
+its full size: the recipe's driver runs as a Kubernetes Job in the cluster
+that runs OpenRL, the episodes' sandboxes run on Agent Sandbox in a cluster of
+their own, and the judge is an OpenAI-compatible endpoint both can reach.
 
-## What the cluster needs
+```
+training cluster                                    sandbox cluster
+  openrl-system: API server, scheduler, workers       Agent Sandbox warm pool
+  harvey-labs Job (driver) ──claims, tool calls──────▶ LAB sandbox pods
+        │
+        └──grading──▶ judge (OpenAI-compatible, e.g. GLM-5.2 on vLLM)
+```
 
-The stack on `main` runs the recipe end to end only with the server fixes on
-the `harvey/k8s-stack` branch (all in `src/server` and `src/training`):
+## What you need
 
-| Fix | Why the recipe needs it |
+| Piece | What the reference run used |
 | --- | --- |
-| API server env passthrough to worker pods | Scheduler-placed samplers otherwise start at `max_model_len=8192`; LAB episodes need 64k or more. |
-| Per-session adapter snapshots | The trainer rewrote one adapter directory in place while the sampler read it over the shared volume. |
-| Adapter keys remapped to the hub layout | Qwen3.5 and Gemma 4 hubs wrap the text model; vLLM silently applies no adapter otherwise. |
-| `train_unembed` ignored by default | The tinker client asks for an `lm_head` adapter; vLLM rejects the whole adapter for these model families. |
-| Sampler host memory: 6 B/param, 3x limit | vLLM 0.25 peaks near 170 GiB of host memory for a minute while warming up Qwen3.5-9B. |
-| Chunked target-logprob projection | The full-logits path needs ~60 GiB at 64k tokens; one H100 cannot hold it beside the model. |
-| `VLLM_MAX_MODEL_LEN` capped at the model's limit | One API-server-wide value must not crash-loop smaller models. |
-| LoRA targets found through PEFT wrappers | The LoRA runtime is shared per base model; the second model to arrive otherwise fails `create_model`. |
+| OpenRL on GKE | [GKE setup](gke-setup.md), with a GPU pool of 8 × H100 80 GB: 4 for the Automodel trainer (context parallelism over 4 GPUs) and 4 for vLLM samplers |
+| Sandbox cluster | [LAB sandboxes on Agent Sandbox](../../examples/harvey_labs/agent-sandbox/README.md), on the same VPC |
+| Judge | GLM-5.2-FP8 on vLLM, served as `gpt-glm-5.2`, reachable from the training cluster's pods |
+| Shared volume | A `ReadWriteMany` PVC in the Job's namespace for logs and checkpoints (`open-rl-shared-pvc` in `cluster-job.yaml`) |
 
-Build and roll them from that branch (Cloud Build must be enabled in the project):
+## 1. Let the workers fit the window
+
+The recipe's episodes go up to 196,608 tokens. Worker pods take their limits
+from the API server's environment when they are created, so set them before
+the run starts, or delete the run's Workloads afterwards so they are recreated:
 
 ```bash
-make cloud-build-api-server cloud-build-server GCP_PROJECT=<project>
-kubectl set image deployment/open-rl-api-server API server=gcr.io/<project>/open-rl-api-server:<tag>
-kubectl set env deployment/open-rl-api-server OPEN_RL_WORKER_IMAGE=gcr.io/<project>/open-rl-server:<tag>
+kubectl -n openrl-system set env deployment/open-rl-api-server \
+  VLLM_MAX_MODEL_LEN=196608 OPEN_RL_TRAIN_TOKEN_BUDGET=196608
 ```
 
-Then set the run knobs on the API server. They ride along into every worker pod:
+The Job asks for the trainer and samplers it needs through `TINKER_TAGS`:
+`openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl.trainer_cp=4,openrl.sampler_replicas=4`.
+Without context parallelism the trainer runs out of memory: one 80 GB H100
+fits about 80k tokens of Qwen3.5-9B, and data parallelism doesn't help because
+each GPU still holds a whole sequence.
+
+## 2. Build the driver image
+
+[Dockerfile](../../examples/harvey_labs/Dockerfile) packages the client, the
+LAB fork at a pinned revision, and LAB's grading environment. From the
+repository root:
 
 ```bash
-kubectl set env deployment/open-rl-api-server \
-  VLLM_MAX_MODEL_LEN=131072 OPEN_RL_TRAIN_TOKEN_BUDGET=81920 \
-  VLLM_MAX_LORA_RANK=64 VLLM_GPU_MEMORY_UTILIZATION=0.90 \
-  ENABLE_GRADIENT_CHECKPOINTING=1 FLA_TILELANG=1
+gcloud builds submit --config cloudbuild.yaml \
+  --substitutions=_IMAGE=<registry>/harvey-labs-client,_DOCKERFILE=examples/harvey_labs/Dockerfile,_TAG=<tag> .
 ```
 
-`FLA_TILELANG=1` is for Hopper (H100/H200); leave it unset elsewhere. Worker
-pods read these when they are created, so change them before a run, or delete
-the Workloads so the next run recreates the pods.
+## 3. Launch the Job
 
-## One GPU per role
-
-The scheduler's default `binpack` strategy seats the sampler on the trainer's
-claim when a node accepts both roles. Give each role its own node with labels;
-unlabeled nodes count as both roles, so disable the rest for the run:
+Edit [cluster-job.yaml](../../examples/harvey_labs/cluster-job.yaml): the image
+you built, `OPENAI_BASE_URL` for your judge, the PVC, and `RUN` (the run's
+name, which becomes its log directory). The arguments are the recipe's
+defaults written out, so a run is reproducible from the manifest alone.
 
 ```bash
-kubectl label node <trainer-node> openrl.io/sampler=false --overwrite
-kubectl label node <sampler-node> openrl.io/trainer=false --overwrite
-kubectl label node <every-other-gpu-node> openrl.io/enabled=false --overwrite
+kubectl apply -f examples/harvey_labs/cluster-job.yaml
+kubectl logs job/harvey-labs -f
 ```
 
-Qwen3.5-9B needs 80 GB GPUs. The estimator sizes its LoRA trainer at ~21 GiB,
-so an enabled L4 node would take it and OOM on the first batch.
-
-## Reaching the API server
-
-The API server service is ClusterIP. From a workstation:
+The first `create_model` starts the trainer; the first sampling call starts
+the samplers. Watch them come up:
 
 ```bash
-nohup sh -c 'while true; do kubectl port-forward svc/open-rl-api-server-service 9003:8000 >/dev/null 2>&1; sleep 1; done' &
+kubectl -n openrl-system get workloads,pods -o wide
 ```
 
-If the driver runs on another machine (it needs Podman and the LAB checkout),
-forward the port on: `ssh -N -R 9003:127.0.0.1:9003 <driver-host>`.
-
-`kubectl port-forward` keeps a dead session when the API server pod is replaced
-(every `kubectl set env` or `set image` on the deployment does that). Kill and
-restart the loop after an API server rollout, then check
-`curl http://127.0.0.1:9003/api/v1/healthz` from the driver host; the tinker
-client gives up after a few minutes of connection errors.
-
-## Driver host
-
-Follow the recipe [README](../../examples/harvey_labs/README.md): `uv sync`
-in `examples/`, run `harvey_labs/setup_lab.sh`, and export the judge
-credentials. The default judge is GLM (`judge_model=gpt-glm-5.2`) through an
-OpenAI-compatible endpoint: `OPENAI_BASE_URL` and `OPENAI_API_KEY`. For Gemini,
-pass `judge_model=gemini-3.5-flash` and export `GEMINI_API_KEY`.
-
-## Run
+Read results from the shared volume while the run goes, from any pod that
+mounts it:
 
 ```bash
-cd examples
-TINKER_API_KEY=tml-dummy-key uv run harvey-train \
-  base_url=http://127.0.0.1:9003 \
-  model_name=Qwen/Qwen3.5-9B renderer_name=qwen3_5 \
-  max_trajectory_tokens=81920 max_tool_result_tokens=4096 max_tokens=16384 \
-  batch_size=1 rollouts_per_example=4 max_steps=2 task=<area>/<task> \
-  log_path=artifacts/harvey-labs/k8s-smoke
-```
-
-`max_trajectory_tokens` must not exceed the API server's `VLLM_MAX_MODEL_LEN`.
-Drop `task=` for the seeded 300/50 split. Context and generation budgets
-decide whether episodes reach the judge at all:
-
-| Setting | What happened |
-| --- | --- |
-| 32k or 64k context | Every episode ended by `stop/context_overflow` before writing a deliverable: reward floor, nothing graded. |
-| `max_tokens=4096` per turn | The turn that writes the deliverable is long; hitting the cap ends the episode ungraded. Use 16k. |
-| 96k and 128k context | All episodes completed and graded (pass fraction 0.54 to 0.74 untrained), then the trainer step OOMed on one 80 GB H100. Activation CPU offload does not help: the failing 11.7 GiB allocation is a per-layer transient of the eager GDN path, which the server image falls back to without causal-conv1d and the fla kernels. |
-| 80k context | Works on one H100 as configured above: 3 of 4 episodes graded, mean pass fraction 0.52, reward 0.49, optimizer step done. |
-
-Per-episode `stop/<reason>` metrics in the cookbook output say how episodes
-ended; `lab/failed_before_grading=1` means the reward function never ran. The first `create_model` creates a
-trainer Workload, the first sampling session a sampler Workload; watch them:
-
-```bash
-kubectl get workloads
-kubectl get pods -l app=open-rl-worker -o wide
+uv run harvey-results log_dir=/mnt/shared/harvey-labs/<RUN>
 ```
 
 ## What to expect
 
-- Trainer up in 2-3 minutes (image already on the node, model in the shared HF cache).
-- Sampler up in 8-10 minutes: vLLM's warmup of the Qwen3.5 GDN kernels takes
-  about 8 minutes and peaks near 170 GiB of host memory on the way. The
-  API server waits 300 s for sampler readiness on the first session; the client
-  retries, so the first step is slow but does not fail.
-- An 80k step with 4 rollouts of one task took 11 minutes end to end: 8.5
-  sampling and grading, 2.8 training. The recipe defaults to 128k; on one
-  H100 that needs the server image built with the `fastpath` extra
-  (causal-conv1d plus the fla kernels) so Qwen3.5's GDN layers stop running
-  the eager fallback, or a second trainer GPU.
+- The trainer is up in a few minutes once the image is on the node and the
+  model is in the shared Hugging Face cache. Samplers take longer the first
+  time, while vLLM compiles Qwen3.5's kernels.
+- The step-0 eval of 50 tasks comes first and takes the longest.
+- A training step of 48 episodes took 18 to 35 minutes on 8 H100s. Sampling
+  dominates, and routing each episode's turns to the sampler that already
+  holds its prefix halved the step time.
+- Held-out pass rate went from 0.54 at step 0 to 0.78 at step 35.
+
+## When episodes score zero
+
+Per-episode `stop/<reason>` metrics say how episodes ended, and
+`lab/failed_before_grading=1` means the grader never ran.
+
+| Symptom | Likely cause |
+| --- | --- |
+| Every episode ends on `context_overflow` before writing | The window is too small. 32k or 64k is not enough for LAB; the recipe uses 196,608. |
+| Episodes end on `max_tokens_reached` | The per-turn cap is too small for the turn that writes the deliverable. Keep `max_tokens` at 16k or more. |
+| `lab/reward_error` is high | The judge is unreachable or failing. Check `grading.log` under `<lab_root>/results/<run-id>/` and the firewall between the cluster and the judge. |
+| The trainer is OOM-killed on the first step | The window doesn't fit the trainer. Use the Automodel trainer with `openrl.trainer_cp`, or lower `max_trajectory_tokens` and the API server's limits together. |
+| Episodes fail before their first tool call | The sandbox claim failed. Check that the warm pool has room for a step's episodes plus its eval tasks, and that the driver can reach the sandbox pods. |
 
 ## Cleanup
 
-LoRA Workloads outlive the run (the runtime is shared per base model):
-
 ```bash
-kubectl delete workload lora-<base-model>-0-trainer lora-<base-model>-0-sampler
+kubectl delete job harvey-labs
+kubectl -n openrl-system get workloads   # delete the run's trainer and sampler Workloads
 ```
 
-Restore the node labels you changed (`openrl.io/enabled=true`, roles to `true`).
+The driver releases its sandbox claims when it stops; claims it could not
+release expire on their own after 15 minutes.

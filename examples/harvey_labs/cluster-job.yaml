@@ -2,7 +2,8 @@
 # platform, so it runs in its own namespace (default, or one of yours), not
 # in openrl-system. Sandboxes run on Agent Sandbox in a separate cluster
 # (agent-sandbox/README.md) and logs land on the namespace's shared volume.
-# Set the image, the judge endpoint, and RUN, then kubectl apply -f.
+# Replace the image, the judge endpoint, the PVC and RUN with yours, then
+# kubectl apply -f. docs/setup/harvey-lab-on-gke.md walks through it.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -26,7 +27,7 @@ spec:
           # Your build of examples/harvey_labs/Dockerfile.
           image: us-central1-docker.pkg.dev/open-rl-2-sandbox-102433/open-rl/harvey-labs-client:latest
           args:
-            - base_url=http://open-rl-gateway-service.openrl-system.svc:8000
+            - base_url=http://open-rl-api-server-service.openrl-system.svc:8000
             - sandbox_warmpool=lab-sandbox
             - log_path=/mnt/shared/harvey-labs/$(RUN)
             # The longest sequence a CP4 trainer fits on 80 GB H100s; the gateway's
