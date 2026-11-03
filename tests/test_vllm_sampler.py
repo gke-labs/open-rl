@@ -13,20 +13,21 @@ from unittest.mock import patch
 
 from accel_timeslicer.serve import start_time_slicer
 from accel_timeslicer.single_node import SingleNodeTimeSlicer
-from accel_timeslicer.time_slicer import SocketTimeSlicerClient
+from accel_timeslicer.time_slicer import SocketTimeSlicerClient, TimeSlicerRefused
 from accel_timeslicer.workload import WorkloadRef
 from server.sampling_dispatcher import Dispatcher
 from server.sampling_store import SamplingStore, future_key
-from server.vllm_sampler import Sampler, TimeSlicedDispatcher
+from server.vllm_sampler import Sampler, TimeSlicedDispatcher, run_sampling_worker
 from tests.redis_server import RedisTestCase
 from tests.test_sampling_dispatcher import SAMPLE, until
 
 
 class RecordingRestorer:
-  """Parks and restores nothing, and logs each park and restore the time slicer asks for."""
+  """Parks and restores nothing, and logs each park and restore the time slicer asks for. `unservable` is what it
+  answers when a workload's process is gone: the reason no new process can run under that name, or None."""
 
   def __init__(self, log: list) -> None:
-    self.log = log
+    self.log, self.unservable = log, None
 
   def checkpoint(self, workload: WorkloadRef) -> None:
     self.log.append(("park", workload.name))
@@ -34,8 +35,8 @@ class RecordingRestorer:
   def restore(self, workload: WorkloadRef) -> None:
     self.log.append(("restore", workload.name))
 
-  def forget(self, workload: WorkloadRef) -> None:
-    pass
+  def forget(self, workload: WorkloadRef) -> str | None:
+    return self.unservable
 
 
 class GpuSampler:
@@ -169,8 +170,9 @@ class TimeSlicedPoolTest(RedisTestCase):
     await super().asyncSetUp()
     self.store, self.pool, self.log, self.gpu = SamplingStore(self.redis), f"sampler-{uuid.uuid4()}", [], set()
     self.tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
-    socket_path = str(self.tmp / "slicer.sock")
-    server = await start_time_slicer(SingleNodeTimeSlicer(RecordingRestorer(self.log)), socket_path)
+    self.socket_path = socket_path = str(self.tmp / "slicer.sock")
+    self.restorer = RecordingRestorer(self.log)
+    server = await start_time_slicer(SingleNodeTimeSlicer(self.restorer), socket_path)
     self.addAsyncCleanup(server.wait_closed)
     self.addCleanup(server.close)
     self.sampler_slicer, self.trainer_slicer = SocketTimeSlicerClient(socket_path=socket_path), SocketTimeSlicerClient(socket_path=socket_path)
@@ -215,3 +217,20 @@ class TimeSlicedPoolTest(RedisTestCase):
     expected = [*wake, *batch, ("sleep", "sampler"), ("park", "sampler"), ("step", "trainer"), ("park", "trainer"), *turn]
     self.assertEqual(self.log, expected)
     self.assertEqual([json.loads(raw) for r in first + second for raw in await self.redis.lrange(future_key(r["request_id"]), 0, -1)], [SAMPLE] * 5)
+
+  async def test_a_sampler_the_slicer_refuses_fails_the_pending_requests_with_the_reason_and_exits(self):
+    """A restarted sampler whose name the snapshot agent still holds for a dead process is refused at REGISTER. Its
+    pool's requests fail at once with that reason, instead of waiting out the sample deadline while the pod restarts."""
+    pending = await self.accepted()
+    self.restorer.unservable = "the snapshot agent holds job sampler as SAVED for a process that exited"
+    await self.sampler_slicer.unregister(self.sampler)
+    env = {"REDIS_URL": self.url, "OPEN_RL_ACCEL_TIMESLICER_SOCKET": self.socket_path, "OPEN_RL_WORKLOAD_ID": "sampler", "OPEN_RL_CLAIM": "gpu-0"}
+    with patch.dict(os.environ, env), self.assertRaisesRegex(TimeSlicerRefused, "holds job sampler as SAVED"):
+      async with asyncio.timeout(5):
+        await run_sampling_worker(self.pool)
+    (result,) = await self.results(pending)
+    self.assertEqual(result["type"], "RequestFailedResponse")
+    self.assertIn("holds job sampler as SAVED", result["error_message"])
+
+  async def results(self, r: dict) -> list[dict]:
+    return [json.loads(raw) for raw in await self.redis.lrange(future_key(r["request_id"]), 0, -1)]

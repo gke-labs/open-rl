@@ -38,6 +38,10 @@ class TimeSlicerFault(RuntimeError):
   """The slicer could not park this process, so it still holds the accelerator and has to exit."""
 
 
+class TimeSlicerRefused(RuntimeError):
+  """The slicer answered the command with a refusal, as against a connection that failed."""
+
+
 class SocketTimeSlicerClient:
   def __init__(
     self,
@@ -128,7 +132,7 @@ class SocketTimeSlicerClient:
           # The connection stays open: closing it would hand the grant to the
           # next waiter while this process still holds the accelerator.
           raise TimeSlicerFault(response.get("error", "time slicer could not park this process"))
-        raise RuntimeError(response.get("error", "time slicer command failed"))
+        raise TimeSlicerRefused(response.get("error", "time slicer command failed"))
       return response
     except TimeSlicerFault:
       raise
