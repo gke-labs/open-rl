@@ -41,25 +41,59 @@ LAB's Python dependencies, `pandoc`, Podman, and the sandbox image. Set
 `LAB_ROOT`, `LAB_REPO`, or `LAB_REF` to change the checkout path, repository,
 or Git ref.
 
-Configure the judge endpoint for the grader in your shell environment or in
-LAB's `.env` file:
-
-```bash
-export OPENAI_BASE_URL=http://<judge-host>:8000/v1   # serves judge_model, default gpt-glm-5.2
-export OPENAI_API_KEY=unused                          # any value for a self-hosted endpoint
-```
-
-To use Gemini instead, pass `judge_model=gemini-3.5-flash` and export
-`GEMINI_API_KEY`. When a file name does not clearly identify which deliverable
-it belongs to, LAB calls Claude to match the file. Set `ANTHROPIC_API_KEY` to
-enable file matching. Without `ANTHROPIC_API_KEY`, LAB counts ambiguous
-deliverables as missing.
+Then point the grader at a judge; see [Choose a judge](#choose-a-judge).
 
 Check the OpenRL API server before a long run:
 
 ```bash
 uv run openrl-doctor --base-url http://127.0.0.1:9003
 ```
+
+## Choose a judge
+
+LAB's grader runs on the driver's machine and asks a judge model about each
+rubric criterion. Pick the judge with `judge_model`; the grader chooses the
+provider from the model name and reads its credentials from the environment
+or LAB's `.env` file:
+
+| `judge_model` starts with | Provider | Set |
+| --- | --- | --- |
+| `gpt`, `o1`, `o3`, `o4`, `o5` | OpenAI or any OpenAI-compatible server | `OPENAI_API_KEY`, and `OPENAI_BASE_URL` for a server other than OpenAI |
+| `gemini` | Google | `GEMINI_API_KEY` |
+| `claude` | Anthropic | `ANTHROPIC_API_KEY` |
+| `mistral` | Mistral | `MISTRAL_API_KEY` |
+| `glm` | A GLM deployment on a Vertex AI endpoint | `VERTEX_JUDGE_ENDPOINT`, `VERTEX_JUDGE_TOKENIZER` |
+
+The default, `judge_model=gpt-glm-5.2`, is GLM-5.2 served by vLLM behind an
+OpenAI-compatible API. To self-host a judge the same way, serve the model
+under a name that starts with `gpt-` and point the grader at it:
+
+```bash
+vllm serve <model> --served-model-name gpt-glm-5.2 --tensor-parallel-size 8
+export OPENAI_BASE_URL=http://<judge-host>:8000/v1
+export OPENAI_API_KEY=unused   # any value for a self-hosted server
+```
+
+With `OPENAI_BASE_URL` set, the grader asks the model to answer without
+reasoning first. A reasoning judge can spend its whole output limit thinking
+about a long deliverable and return no verdict.
+
+Two settings control grading throughput:
+
+- `judge_parallel` sets how many criteria of one episode are graded at once.
+  The default is 16 when the judge name contains `glm`, otherwise 1.
+- `OPEN_RL_GRADING_CONCURRENCY` (environment, default 6) sets how many
+  episodes are graded at once. A step grades 48 episodes, so raise it if the
+  judge has headroom.
+
+Separately from the judge, LAB asks Claude to match a file to its deliverable
+when the file name doesn't make it clear. That needs `ANTHROPIC_API_KEY`;
+without it, LAB counts those deliverables as missing.
+
+Different judges grade with different strictness, so keep the judge fixed
+across runs you compare. Before a long run, check that the judge answers:
+`curl $OPENAI_BASE_URL/models` for a self-hosted server, then a one-task
+[smoke test](#smoke-test).
 
 ## Train
 
