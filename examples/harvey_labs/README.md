@@ -102,7 +102,9 @@ Keep these runtime behaviors in mind when configuring a run:
 
 - When an episode stops at the per-turn token limit or fills the context
   window, the grader scores whatever deliverables the agent already wrote. A
-  malformed tool call ends the episode with a score of 0.
+  turn the parser can't read, or whose tool calls are all malformed, ends the
+  episode ungraded: it counts as 0 in the pass rate and gets a training reward
+  of -0.1.
 - The recipe truncates tool results longer than `max_tool_result_tokens` and
   appends a hint to continue reading from an `offset` or narrow the search with
   `grep`.
@@ -201,7 +203,8 @@ Training and evaluation share the same factory interface. Each call receives a
 `SandboxInterface`. See [sandbox.py](sandbox.py) for the full contract. Your
 backend must provide an isolated workspace, LAB-compatible tools, and
 binary-safe output collection into the local grading directory. Remote backends
-manage their own leases and heartbeats, while the judge runs locally. If
+manage their own leases and heartbeats. LAB's grader always runs on the
+driver's machine and calls the judge endpoint from there. If
 startup fails before the factory returns, clean up inside the factory. After
 the factory returns, the environment group owns cleanup.
 

@@ -3,8 +3,9 @@
 This guide runs the [Harvey LAB recipe](../../examples/harvey_labs/README.md)
 at full scale on GKE. The recipe's driver runs as a Kubernetes Job in the
 OpenRL training cluster, episode sandboxes run on Agent Sandbox in a separate
-cluster, and the judge runs behind an OpenAI-compatible endpoint that both can
-reach.
+cluster, and the judge runs behind an OpenAI-compatible endpoint that the
+driver can reach. The sandboxes have no network egress, so only the driver
+talks to the judge.
 
 ```
 training cluster                                    sandbox cluster
@@ -69,17 +70,19 @@ kubectl logs job/harvey-labs -f
 ```
 
 The first `create_model` call starts the trainer, and the first sampling call
-starts the samplers. Watch the Workloads and pods start:
+starts the samplers. Add `openrl.recipe=rl` to `TINKER_TAGS` to start the
+samplers together with the trainer instead. Watch the Workloads and pods start:
 
 ```bash
 kubectl -n openrl-system get workloads,pods -o wide
 ```
 
-While the Job runs, inspect progress on the shared volume from any pod that
-mounts it:
+While the Job runs, inspect progress from a pod that runs the driver image and
+mounts the shared volume. The driver image has the recipe installed as a module,
+not as the `harvey-results` command:
 
 ```bash
-uv run harvey-results log_dir=/mnt/shared/harvey-labs/<RUN>
+/app/.venv/bin/python -m harvey_labs.results log_dir=/mnt/shared/harvey-labs/<RUN>
 ```
 
 ## What to expect
@@ -99,13 +102,15 @@ On the reference 8 × H100 setup, a full run progresses as follows:
 
 ## When episodes score zero
 
-Per-episode `stop/<reason>` metrics record how episodes ended. A metric of
-`lab/failed_before_grading=1` means the grader never ran.
+Per-episode `stop/<reason>` metrics record how episodes ended.
+`lab/no_output=1` means the episode wrote no deliverable, so there was nothing
+to grade. `lab/failed_before_grading=1` means the episode ended before grading
+started, for example on a parse error.
 
 | Symptom | Likely cause |
 | --- | --- |
 | Every episode ends with `context_overflow` before writing deliverables | The context window is too small. A 32k or 64k context window is too small for LAB, and the default recipe uses 196,608 tokens. |
-| Episodes end with `max_tokens_reached` | The per-turn token limit is too small for the turn that writes the deliverable. Keep `max_tokens` at 16k or higher. |
+| Many turns hit the per-turn cap (`max_tokens_reached`) | The per-turn token limit is too small for the turn that writes the deliverable. Keep `max_tokens` at 16k or higher. |
 | `lab/reward_error` is high | The judge endpoint is unreachable or failing. Check `grading.log` under `<lab_root>/results/<run-id>/` and verify firewall rules between the training cluster and the judge. |
 | The trainer is OOM-killed on the first step | The context window exceeds trainer GPU memory. Use the Automodel trainer with `openrl.trainer_cp`, or lower `max_trajectory_tokens` and the API server's limits together. |
 | Episodes fail before the first tool call | The sandbox claim failed. Check that the warm pool can hold a step's training episodes plus evaluation tasks, and verify that the driver pod can reach the sandbox pods. |
