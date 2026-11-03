@@ -15,13 +15,6 @@ What runs on TPU:
 | Full fine-tuning | with `openrl.exclusive=true` only | The trainer and the sampler each take a node of their own; the sampler reloads the full checkpoint after every step. |
 | `openrl.trainer_backend=automodel` | no | GPU only. |
 
-Qwen3-0.6B (LoRA and FFT) and Gemma 4 E2B (LoRA) have run 100-step GSM8K
-jobs on v6e and matched the GPU learning curves; Gemma 4 E2B FFT ran on v7x,
-since its full model does not fit one v6e chip. Each worker uses one chip. The
-design is described in
-[Design Doc 018](../designs/018-tpu-support.md); this page is the operator's
-view.
-
 ## What the cluster needs
 
 | Component | Used here | Why |
