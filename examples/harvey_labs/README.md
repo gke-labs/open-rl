@@ -98,6 +98,33 @@ uses the reference recipe defaults:
 | Evaluation | 50 held-out tasks at step 0, every 5 steps via `eval_every`, and after the final step, with 1 attempt per task via `eval_rollouts_per_task` |
 | Task split | `task_split_seed=0` selects the held-out slice, and `train_split_seed=242` orders the training pool. Scenario families in the evaluation set never appear in training. |
 
+<details>
+<summary>Every setting of the reference Qwen3.5-9B run</summary>
+
+| Setting | Value |
+| --- | --- |
+| Model / renderer | `Qwen/Qwen3.5-9B`, `qwen3_5` |
+| Loss | `importance_sampling` (GRPO-style, group-centered advantages, no PPO clip) |
+| Learning rate | 2e-4, constant, no warmup |
+| LoRA | Rank 32, alpha 16 (scale 0.5), dropout 0.05, Kaiming init, bf16 adapter |
+| LoRA targets | All attention, all gated-DeltaNet linear-attention projections, all MLP; not `lm_head` |
+| Batch | 8 tasks × 6 attempts = 48 per step, streamed in minibatches of 8, 1 substep |
+| KL penalty | None |
+| Reward | Fraction of criteria passed; no process reward, no all-pass bonus; ungraded = 0 |
+| Gradient clipping | None |
+| Steps / tasks | 35 steps over 300 training tasks, temperature 1.0 |
+| Context window | 196,608 tokens |
+| Per-turn cap | 32,768 tokens |
+| Tool results | Truncated at 16,384 tokens |
+| Turns | 40 max |
+| Cut-off episodes | Graded on what was written |
+| Unreadable turns | End the episode ungraded (0 in the pass rate, -0.1 training reward) |
+| Judge | GLM-5.2-FP8 with reasoning off, up to 16 criteria graded in parallel |
+| Held-out set | 50 tasks: `task_split_seed=0`, slice 300–350; `train_split_seed=242` |
+| Eval attempts | 1 per task during training; 4 per task for the paired comparison |
+
+</details>
+
 Keep these runtime behaviors in mind when configuring a run:
 
 - When an episode stops at the per-turn token limit or fills the context
