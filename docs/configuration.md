@@ -57,8 +57,8 @@ REDIS_URL=redis://127.0.0.1:6379/0 VLLM_ARCHITECTURE_OVERRIDE=Gemma4ForCausalLM 
 | Env var | Default | What it does |
 | --- | --- | --- |
 | `OPEN_RL_TMP_DIR` | `/tmp/open-rl` | Root directory for adapter snapshots under `peft/` and saved states under `checkpoints/`. Required with `OPEN_RL_WORKER_MANAGER=scheduler`, set to the shared volume every worker pod mounts. |
-| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `auto` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `auto` uses the smaller of 16384 and the tokens whose activations fit in half of the free device memory, read at each request. A number is used as given; `0` runs one datum per pass. |
-| `OPEN_RL_DEVICE` | unset | Torch device for the trainer: `cuda`, `mps`, `cpu` or `tpu`. Unset picks the first available of `cuda`, `mps` and `cpu`. `tpu` is never picked automatically, and needs the `torch_tpu` package on a host with TPU chips. |
+| `OPEN_RL_TRAIN_TOKEN_BUDGET` | `auto` | Maximum `batch_size * max_sequence_length` for padded trainer chunks inside one `forward_backward` request. `auto` uses the smaller of 16384 and the tokens whose activations fit in half of the free device memory, read at each request; on TPU the memory probe is skipped and `auto` is 16384. A number is used as given; `0` runs one datum per pass. |
+| `OPEN_RL_DEVICE` | unset | Torch device for the trainer: `cuda`, `mps`, `cpu` or `tpu`. Unset picks the first available of `cuda`, `mps` and `cpu`. `tpu` is never picked automatically, and needs the `torch_tpu` package on a host with TPU chips; the TPU trainer image and the API server set it on TPU trainer pods. |
 | `TRAINER_CUDA_VISIBLE_DEVICES`, `SAMPLER_CUDA_VISIBLE_DEVICES` | unset | GPUs given to the trainer and sampler worker processes the local worker manager launches. |
 
 ## Worker manager
@@ -104,27 +104,39 @@ or in `TINKER_TAGS`. A tag cannot hold a comma, so separate entries with `|`
 there (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu|gpu"`). The lists are stored
 with the model when it is created and never change.
 
-Workers run on the first entry of their role's list for now; later entries are
-not used yet. TPU workers run only in scheduler mode on Kubernetes. The API
-server refuses a model that lists `tpu` anywhere for full fine-tuning unless
+Workers run on the first entry of their role's list; later entries are stored
+but not used. A model with no preference runs on GPU. On a cluster with both
+GPU and TPU nodes a model that lists `tpu` first runs on TPU and every other
+model on GPU; the scheduler never places a worker on the other kind of node.
+TPU and GPU LoRA jobs on the same base model get separate shared runtimes (the
+TPU one is named `tpu-<base model>`), so they never share a trainer or a
+sampler. A preference that no node can serve is not refused at `create_model`:
+the Workload waits for placement, since the TPU pool may be scaled to zero or
+still provisioning.
+
+TPU workers run only in scheduler mode on Kubernetes. The API server refuses a
+model that lists `tpu` anywhere for full fine-tuning unless
 `openrl.exclusive=true`, since TPU workers cannot be parked by the time slicer,
-and in the trainer list for the `automodel` trainer backend. A job's own
-trainer image can run on TPU if it includes `torch_tpu`.
+and in the trainer list for the `automodel` trainer backend. A full
+fine-tuning model with `tpu` in its sampler list always syncs weights with
+`openrl.weight_sync=full`: the TPU sampler reloads the whole checkpoint, since
+sparse deltas cannot patch its transposed weights. A job's own trainer image
+can run on TPU if it includes `torch_tpu`. Cluster setup, node pools and the
+per-model knobs are in [OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
 
 The TPU sampler image installs the released `vllm-torchtpu` wheel, which serves
-full fine-tuning but not LoRA: the multi-LoRA changes are still open upstream
-(vllm-torchtpu PRs #2376, #2359, #2378 and #2360). Until a release carries them,
-a TPU sampler image for LoRA jobs has to be built from vllm-torchtpu's main
-branch with those changes applied.
+full fine-tuning but not LoRA: multi-LoRA support is not in a release yet, so a
+TPU sampler image for LoRA jobs has to be built from vllm-torchtpu's main
+branch.
 
 In scheduler mode these variables on the API server set up the worker pods:
 
 | Env var | Default | What it does |
 | --- | --- | --- |
-| `OPEN_RL_TPU_TRAINER_IMAGE` | unset | Image for TPU trainer pods. A TPU trainer fails to start without it. |
-| `OPEN_RL_TPU_SAMPLER_IMAGE` | unset | Image for TPU sampler pods. A TPU sampler fails to start without it. |
+| `OPEN_RL_TPU_TRAINER_IMAGE` | unset | Image for TPU trainer pods, built from `src/server/Dockerfile.tpu`. A TPU trainer fails to start without it. The `k8s/deploy/tpu` overlay sets it from the `open-rl-images` ConfigMap. |
+| `OPEN_RL_TPU_SAMPLER_IMAGE` | unset | Image for TPU sampler pods, built from `src/server/Dockerfile.tpu_sampler`, for both LoRA and full fine-tuning. A TPU sampler fails to start without it. Set by the same overlay. |
 | `OPEN_RL_GPU_WORKER_ENV_CONFIGMAP` | unset | ConfigMap whose entries become env vars on GPU worker pods. |
-| `OPEN_RL_TPU_WORKER_ENV_CONFIGMAP` | unset | ConfigMap whose entries become env vars on TPU worker pods, e.g. TPU token budgets. |
+| `OPEN_RL_TPU_WORKER_ENV_CONFIGMAP` | unset | ConfigMap whose entries become env vars on TPU worker pods: `VLLM_MAX_MODEL_LEN`, `VLLM_MAX_NUM_SEQS`, `OPEN_RL_TRAIN_TOKEN_BUDGET` and `VLLM_GPU_MEMORY_UTILIZATION` are the usual ones. Pods read it when they are created. |
 
 ## Kubernetes deployment
 
@@ -132,7 +144,9 @@ On Kubernetes the release bundles set these variables. The API server runs with
 `REDIS_URL` and `OPEN_RL_WORKER_MANAGER=scheduler`; it creates a `Workload` for
 each trainer and sampler, and the OpenRL scheduler starts their pods. The API
 server writes each worker's environment into the `Workload`'s pod template, so
-there are no worker deployments to configure by hand.
+there are no worker deployments to configure by hand. The `k8s/deploy/tpu`
+overlay adds the two TPU image variables to `k8s/deploy/fft`; it serves
+TPU-only clusters and clusters with both GPU and TPU nodes.
 
 ## Sampling pools
 
