@@ -28,6 +28,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+substrate = ["ate-env-client @ git+https://github.com/ai-on-gke/sandboxenv-rl@2e568055288d33686c5d60c559219a690d408286#subdirectory=clients/python"]
 agent-sandbox = ["k8s-agent-sandbox[async,grpc]==1.0.5.post1"]
 
 [project.scripts]

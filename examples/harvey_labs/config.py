@@ -40,6 +40,11 @@ class RunConfig:
   command_timeout: int = 60
   sandbox_warmpool: str | None = None  # SandboxWarmPool name; runs sandboxes on Agent Sandbox instead of Podman.
   sandbox_namespace: str = "lab-sandboxes"
+  sandbox_substrate_endpoint: str | None = None
+  sandbox_substrate_image: str | None = None
+  sandbox_substrate_atespace: str = "ate-env"
+  # Suspend a Substrate sandbox after this many idle seconds while the model generates; None keeps it running.
+  sandbox_substrate_idle_suspend_seconds: float | None = 30.0
   judge_model: str = "gpt-glm-5.2"  # OpenAI-compatible GLM endpoint via OPENAI_BASE_URL / OPENAI_API_KEY.
   judge_parallel: int = 0  # Auto: 16 for GLM, 1 otherwise.
 
