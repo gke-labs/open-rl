@@ -46,6 +46,10 @@ class GpuSampler:
     self.gpu.add("sampler")
     self.log.append(("wake", "sampler"))
 
+  async def wake_kv_cache(self) -> None:
+    assert self.gpu == {"sampler"}, self.gpu
+    self.log.append(("wake_kv_cache", "sampler"))
+
   async def sleep(self) -> None:
     self.gpu.discard("sampler")
     self.log.append(("sleep", "sampler"))
@@ -201,7 +205,10 @@ class TimeSlicedPoolTest(RedisTestCase):
     await self.saved(*second)
     await until(lambda: self.log[-1] == ("park", "sampler"))
     batch = [("generate", "")] * 3
-    turn = [("restore", "sampler"), ("wake", "sampler"), ("load", w1), ("generate", w1), ("generate", w1), ("sleep", "sampler"), ("park", "sampler")]
-    expected = [("wake", "sampler"), *batch, ("sleep", "sampler"), ("park", "sampler"), ("step", "trainer"), ("park", "trainer"), *turn]
+    # The KV cache wakes only after the turn's weights load, so a delta update has the memory the cache would hold.
+    wake = [("wake", "sampler"), ("wake_kv_cache", "sampler")]
+    turn = [("restore", "sampler"), ("wake", "sampler"), ("load", w1), ("wake_kv_cache", "sampler"), ("generate", w1), ("generate", w1)]
+    turn += [("sleep", "sampler"), ("park", "sampler")]
+    expected = [*wake, *batch, ("sleep", "sampler"), ("park", "sampler"), ("step", "trainer"), ("park", "trainer"), *turn]
     self.assertEqual(self.log, expected)
     self.assertEqual([json.loads(raw) for r in first + second for raw in await self.redis.lrange(future_key(r["request_id"]), 0, -1)], [SAMPLE] * 5)
