@@ -111,11 +111,13 @@ def cudagraph_capture_sizes(max_num_seqs: int) -> list[int]:
 
 
 def detected_device_memory_bytes() -> int:
+  """Memory of the accelerator this process runs on, read from its torch device module (torch.cuda, torch.tpu), else 0."""
   try:
     import torch
 
-    if torch.cuda.is_available():
-      return int(torch.cuda.get_device_properties(0).total_memory)
+    device = torch.accelerator.current_accelerator(check_available=True)
+    if device is not None:
+      return int(torch.get_device_module(device).get_device_properties(0).total_memory)
   except Exception:
     pass
   return 0

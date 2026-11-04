@@ -126,7 +126,9 @@ compiles under `torchtpu-cache/` in `OPEN_RL_TMP_DIR`, so a trainer or sampler
 that meets a shape an earlier pod compiled loads the program instead of
 compiling it again. TPU samplers also share vLLM's compile cache under
 `vllm-cache/`, like GPU samplers; `VLLM_DISABLE_COMPILE_CACHE=1` in the TPU
-worker ConfigMap turns it off.
+worker ConfigMap turns it off. A TPU sampler sizes vLLM's batch limits from
+its chip's HBM as torch_tpu reports it, the way a GPU sampler sizes them from
+its device memory.
 Cluster setup, node pools and the per-model knobs are in
 [OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
 
