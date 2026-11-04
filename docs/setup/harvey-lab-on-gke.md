@@ -96,7 +96,8 @@ On the reference 8 × H100 setup, a full run progresses as follows:
 - The step-0 evaluation of 50 held-out tasks runs first and takes the longest.
 - A training step of 48 episodes took 18 to 35 minutes on 8 H100 GPUs. Sampling
   dominates step time. Routing all turns of an episode to the sampler that
-  already holds its prefix cut step time in half.
+  already holds its prefix cut step time in half. On one 8 × B200 node with the
+  same `TINKER_TAGS`, a step after the first took about 29 minutes.
 - The held-out pooled criterion pass rate rose from 0.54 at step 0 to 0.78 at
   step 35.
 
