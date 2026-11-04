@@ -12,11 +12,16 @@ ENV PYTHONUNBUFFERED=1 \
     UV_FROZEN=1
 
 # git fetches the `cluster` extra's git dependency. Everything installs from
-# wheels, so no compiler.
+# wheels, so no compiler. libgoogle-perftools4 is tcmalloc, preloaded below:
+# the trainer process runs over a thousand threads, and under glibc malloc its
+# resident memory grows every training step; tcmalloc halves that.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
+    libgoogle-perftools4 \
     && rm -rf /var/lib/apt/lists/*
+
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc.so.4
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/uv
