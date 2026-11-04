@@ -234,8 +234,9 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertEqual(env["OPEN_RL_DEVICE"], "tpu")
     self.assertEqual(container["resources"], fp.resources)
     self.assertEqual(template_spec["tolerations"], [{"key": "google.com/tpu", "operator": "Exists", "effect": "NoSchedule"}])
-    self.assertEqual([v["name"] for v in template_spec["volumes"]], ["shared-storage"])
-    self.assertEqual(container["volumeMounts"], [{"name": "shared-storage", "mountPath": "/mnt/shared"}])
+    self.assertIn({"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}, template_spec["volumes"])
+    self.assertIn({"name": "dshm", "mountPath": "/dev/shm"}, container["volumeMounts"])
+    self.assertIn({"name": "shared-storage", "mountPath": "/mnt/shared"}, container["volumeMounts"])
     self.assertNotIn("envFrom", container)
 
   def test_a_tpu_sampler_pod(self) -> None:
@@ -252,7 +253,7 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     self.assertNotIn("OPEN_RL_DEVICE", env)
     self.assertEqual(container["resources"], fp.resources)
     self.assertEqual(template_spec["tolerations"], [{"key": "google.com/tpu", "operator": "Exists", "effect": "NoSchedule"}])
-    self.assertIn({"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}, template_spec["volumes"])
+    self.assertIn({"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}, template_spec["volumes"])
     self.assertIn({"name": "dshm", "mountPath": "/dev/shm"}, container["volumeMounts"])
     self.assertIn({"name": "shared-storage", "mountPath": "/mnt/shared"}, container["volumeMounts"])
 
@@ -343,8 +344,23 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
     for pod in self.api.created:
       envs[pod["spec"]["role"]] = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
     self.assertEqual(envs["sampler"]["VLLM_CACHE_ROOT"], f"{self.tmp}/vllm-cache")
+    for env in envs.values():
+      self.assertNotIn("TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT", env)
     self.assertEqual(envs["sampler"]["TRITON_CACHE_DIR"], f"{self.tmp}/vllm-cache/triton")
     self.assertNotIn("VLLM_CACHE_ROOT", envs["trainer"])
+
+  def test_tpu_workers_keep_the_torch_tpu_compile_cache_on_the_shared_volume(self) -> None:
+    meta = {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "lora", "trainer_accel_prefs": ["tpu"], "sampler_accel_prefs": ["tpu"]}
+    s = self.store_with("job-tpu", meta)
+    images = {"OPEN_RL_TPU_TRAINER_IMAGE": "tpu-trainer:1", "OPEN_RL_TPU_SAMPLER_IMAGE": "tpu-sampler:1"}
+    with patch("server.worker_manager.get_state_store", return_value=s), patch.dict(os.environ, images):
+      self.manager.ensure("job-tpu", "trainer")
+      self.manager.ensure("job-tpu", "sampler")
+
+    self.assertEqual(len(self.api.created), 2)
+    for pod in self.api.created:
+      env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
+      self.assertEqual(env["TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT"], f"{self.tmp}/torchtpu-cache")
 
   def test_a_bare_base_model_sampler_on_an_fft_deployment_is_fft_with_a_pool_apart_from_the_shared_lora_pool(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})

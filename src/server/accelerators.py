@@ -46,16 +46,28 @@ class PodSpec:
 def pod_spec(accelerator: Accelerator, role: str) -> PodSpec:
   if accelerator == "gpu":
     return PodSpec("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest", "nvidia.com/gpu", None, "OPEN_RL_GPU_WORKER_ENV_CONFIGMAP")
-  # GKE taints TPU nodes with google.com/tpu.
+  # GKE taints TPU nodes with google.com/tpu. Both roles outgrow a container's 64 MB /dev/shm: torch_tpu writes a
+  # copy of every compiled program there (its tier-2 cache, always on with the tier-3 cache), and vLLM on TPU uses
+  # it for its own shared memory too.
+  shm = [{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}]
+  shm_mounts = [{"name": "dshm", "mountPath": "/dev/shm"}]
   if role == "trainer":
-    return PodSpec("OPEN_RL_TPU_TRAINER_IMAGE", None, "google.com/tpu", "TPU", "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP", env={"OPEN_RL_DEVICE": "tpu"})
-  # vLLM on TPU needs more shared memory than a container's default /dev/shm.
+    return PodSpec(
+      "OPEN_RL_TPU_TRAINER_IMAGE",
+      None,
+      "google.com/tpu",
+      "TPU",
+      "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP",
+      env={"OPEN_RL_DEVICE": "tpu"},
+      volumes=shm,
+      volume_mounts=shm_mounts,
+    )
   return PodSpec(
     "OPEN_RL_TPU_SAMPLER_IMAGE",
     None,
     "google.com/tpu",
     "TPU",
     "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP",
-    volumes=[{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "16Gi"}}],
-    volume_mounts=[{"name": "dshm", "mountPath": "/dev/shm"}],
+    volumes=shm,
+    volume_mounts=shm_mounts,
   )

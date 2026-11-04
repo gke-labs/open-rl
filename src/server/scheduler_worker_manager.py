@@ -166,6 +166,10 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
     values["VLLM_CACHE_ROOT"] = f"{tmp_dir}/vllm-cache"
     # Triton writes each kernel to a temp dir and renames it into place, so samplers can share one cache.
     values["TRITON_CACHE_DIR"] = f"{tmp_dir}/vllm-cache/triton"
+  # torch_tpu keeps compiled TPU programs on disk under this root, keyed by wheel fingerprint and program. On the
+  # shared volume a TPU worker loads what an earlier trainer or sampler compiled for the same shapes.
+  if worker.meta.accelerator_for(worker.role) == "tpu":
+    values["TORCH_TPU_TIER3_COMPILATION_CACHE_ROOT"] = f"{tmp_dir}/torchtpu-cache"
   values.update(worker.pod_spec.env)
   # No other worker shares an exclusive worker's GPUs, so it never parks.
   if worker.exclusive:
