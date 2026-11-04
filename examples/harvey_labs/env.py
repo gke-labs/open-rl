@@ -103,6 +103,15 @@ class LabEnvGroupBuilder(EnvGroupBuilder):
           "skills": skills,
         },
       )
+      from tinker_cookbook.rl.rollout_limits import RolloutLimits
+      from tinker_cookbook.rl.rollout_presets import RolloutConfig
+
+      rollout_config = RolloutConfig(
+        limits=RolloutLimits(
+          max_trajectory_tokens=self.config.max_trajectory_tokens,
+          max_turn_tokens=self.config.max_tokens,
+        )
+      )
       envs.append(
         LabEpisodeEnv(
           build_agent_tool_env(
@@ -111,11 +120,13 @@ class LabEnvGroupBuilder(EnvGroupBuilder):
             initial_messages=prefix_messages,
             reward_fn=reward,
             max_turns=self.config.max_turns,
-            max_trajectory_tokens=self.config.max_trajectory_tokens,
-            max_generation_tokens=self.config.max_tokens,
+            max_trajectory_tokens=None,
+            max_generation_tokens=None,
             terminate_on_length=not self.config.continue_after_truncation,
+            rollout_config=rollout_config,
           ),
           criteria_count,
+          max_trajectory_tokens=self.config.max_trajectory_tokens,
         )
       )
     return envs
