@@ -96,33 +96,31 @@ backend by default for physical checkpoint/restore.
 
 ## Choosing an accelerator
 
-A client picks the accelerators for a model's workers with two settings,
-`openrl.trainer_accel_prefs` and `openrl.sampler_accel_prefs`. Each lists
-`gpu` and `tpu`, most preferred first, and defaults to `gpu`. Pass them in the
-model's or session's `user_metadata` (`{"openrl.trainer_accel_prefs": "tpu,gpu"}`)
-or in `TINKER_TAGS`. A tag cannot hold a comma, so separate entries with `|`
-there (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu|gpu"`). The lists are stored
-with the model when it is created and never change.
+A client picks the accelerator for a model's workers with two settings,
+`openrl.trainer_accel_prefs` and `openrl.sampler_accel_prefs`. Each takes a
+single value, `gpu` or `tpu`, and defaults to `gpu`. Pass them in the model's
+or session's `user_metadata` (`{"openrl.trainer_accel_prefs": "tpu"}`) or in
+`TINKER_TAGS` (`TINKER_TAGS="openrl.trainer_accel_prefs=tpu"`). The values are
+stored with the model when it is created and never change.
 
-Workers run on the first entry of their role's list; later entries are stored
-but not used. A model with no preference runs on GPU. On a cluster with both
-GPU and TPU nodes a model that lists `tpu` first runs on TPU and every other
-model on GPU; the scheduler never places a worker on the other kind of node.
-TPU and GPU LoRA jobs on the same base model get separate shared runtimes (the
-TPU one is named `tpu-<base model>`), so they never share a trainer or a
-sampler. A preference that no node can serve is not refused at `create_model`:
-the Workload waits for placement, since the TPU pool may be scaled to zero or
-still provisioning.
+A model with no preference runs on GPU. On a cluster with both GPU and TPU
+nodes a worker whose setting is `tpu` runs on a TPU node and every other
+worker on a GPU node; the scheduler never places a worker on the other kind of
+node. TPU and GPU LoRA jobs on the same base model get separate shared
+runtimes (the TPU one is named `tpu-<base model>`), so they never share a
+trainer or a sampler. A preference that no node can serve is not refused at
+`create_model`: the Workload waits for placement, since the TPU pool may be
+scaled to zero or still provisioning.
 
 TPU workers run only in scheduler mode on Kubernetes. The API server refuses a
-model that lists `tpu` anywhere for full fine-tuning unless
+model that puts either worker of a full fine-tuning job on `tpu` unless
 `openrl.exclusive=true`, since TPU workers cannot be parked by the time slicer,
-and in the trainer list for the `automodel` trainer backend. A full
-fine-tuning model with `tpu` in its sampler list always syncs weights with
-`openrl.weight_sync=full`: the TPU sampler reloads the whole checkpoint, since
-sparse deltas cannot patch its transposed weights. A job's own trainer image
-can run on TPU if it includes `torch_tpu`. Cluster setup, node pools and the
-per-model knobs are in [OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
+and a `tpu` trainer with the `automodel` trainer backend. A full fine-tuning
+model with a `tpu` sampler always syncs weights with `openrl.weight_sync=full`:
+the TPU sampler reloads the whole checkpoint, since sparse deltas cannot patch
+its transposed weights. A job's own trainer image can run on TPU if it includes
+`torch_tpu`. Cluster setup, node pools and the per-model knobs are in
+[OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
 
 The TPU sampler image installs the released `vllm-torchtpu` wheel, which serves
 full fine-tuning but not LoRA: multi-LoRA support is not in a release yet, so a

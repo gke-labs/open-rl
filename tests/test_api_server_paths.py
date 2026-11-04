@@ -120,24 +120,24 @@ class AccelPrefsTest(ApiServerTest):
   def metadata(self, response) -> dict:
     return json.loads(api_server.state.get_value_sync(f"open_rl:model_meta:{response.json()['request_id']}"))
 
-  def prefs(self, response) -> tuple[list[str], list[str]]:
+  def prefs(self, response) -> tuple[str, str]:
     meta = self.metadata(response)
     return meta["trainer_accel_prefs"], meta["sampler_accel_prefs"]
 
   def test_gpu_by_default(self) -> None:
-    self.assertEqual(self.prefs(self.post("create_model", {"base_model": "m"})), (["gpu"], ["gpu"]))
+    self.assertEqual(self.prefs(self.post("create_model", {"base_model": "m"})), ("gpu", "gpu"))
 
   def test_prefs_come_from_tags_and_user_metadata(self) -> None:
-    session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu|gpu"]}).json()["session_id"]
-    response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": "TPU, gpu"}})
-    self.assertEqual(self.prefs(response), (["tpu", "gpu"], ["tpu", "gpu"]))
+    session_id = self.post("create_session", {"tags": ["openrl.trainer_accel_prefs=tpu"]}).json()["session_id"]
+    response = self.post("create_model", {"base_model": "m", "session_id": session_id, "user_metadata": {"openrl.sampler_accel_prefs": " TPU "}})
+    self.assertEqual(self.prefs(response), ("tpu", "tpu"))
 
-  def test_bad_prefs_are_refused(self) -> None:
-    for value, error in (("cuda", "Input should be 'gpu' or 'tpu'"), ("gpu,gpu", "lists an accelerator twice"), (["tpu", "cuda"], "Input should be")):
+  def test_unknown_accelerators_and_lists_are_refused(self) -> None:
+    for value in ("cuda", "tpu,gpu", "tpu|gpu", ["tpu"]):
       with self.subTest(value=value):
         response = self.post("create_model", {"base_model": "m", "user_metadata": {"openrl.trainer_accel_prefs": value}})
         self.assertEqual(response.status_code, 400)
-        self.assertIn(f"openrl.trainer_accel_prefs: {error}", response.json()["error"])
+        self.assertIn("openrl.trainer_accel_prefs: Input should be 'gpu' or 'tpu'", response.json()["error"])
 
   def test_shared_full_fine_tuning_on_tpu_is_refused(self) -> None:
     with patch.dict(os.environ, {"OPEN_RL_ENABLE_FFT": "true"}):
@@ -524,10 +524,6 @@ class ExclusiveMetadataTest(ApiServerTest):
     self.assertEqual(meta["full_config"]["weight_sync_strategy"], "full")
     self.assertFalse(meta["full_config"]["cpu_offload"])
 
-  def test_a_tpu_fallback_in_the_sampler_prefs_also_syncs_full(self) -> None:
-    meta = self.create_fft(**{"openrl.sampler_accel_prefs": "gpu|tpu"})
-    self.assertEqual(meta["weight_sync_config"]["strategy"], "full")
-
   def test_exclusive_full_fine_tuning_on_gpu_keeps_the_clients_strategy(self) -> None:
     meta = self.create_fft()
     self.assertEqual(meta["weight_sync_config"]["strategy"], "delta")
@@ -607,7 +603,7 @@ class TrainerBackendTest(ApiServerTest):
     self.assertEqual(self.active_set(gpu), "m-1")
     # Only one role on TPU is its own runtime, so jobs share only workers on the same hardware.
     self.assertEqual(self.active_set(create("openrl.trainer_accel_prefs=tpu")), "tpu-trainer-m-1")
-    self.assertEqual(self.active_set(create("openrl.sampler_accel_prefs=tpu|gpu")), "tpu-sampler-m-1")
+    self.assertEqual(self.active_set(create("openrl.sampler_accel_prefs=tpu")), "tpu-sampler-m-1")
     self.assertRegex(self.active_set(create(*both, "openrl.trainer_backend=ghcr.io/org/trainer:1")), r"^tpu-image-[0-9a-f]{10}-m-1$")
 
   def test_a_local_worker_manager_refuses_a_trainer_image(self) -> None:

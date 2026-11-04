@@ -3,9 +3,9 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 from server.accelerators import Accelerator
 from server.store import StateStore
@@ -34,6 +34,11 @@ class WeightSyncConfig:
     return cls(strategy=strategy)
 
 
+def first_accelerator(value: Any) -> Any:
+  """Records written while the setting was a preference list hold the entry that was used, first."""
+  return value[0] if isinstance(value, list) and value else value
+
+
 class TrainingModelMetadata(BaseModel):
   # Preserve fields written by other server versions when updating a record.
   model_config = ConfigDict(extra="allow")
@@ -48,8 +53,8 @@ class TrainingModelMetadata(BaseModel):
   exclusive: bool = False
   trainer_backend: str = "pytorch"
   # Set once when the model is created. Records from before these fields ran on GPU.
-  trainer_accel_prefs: list[Accelerator] = ["gpu"]
-  sampler_accel_prefs: list[Accelerator] = ["gpu"]
+  trainer_accel_prefs: Annotated[Accelerator, BeforeValidator(first_accelerator)] = "gpu"
+  sampler_accel_prefs: Annotated[Accelerator, BeforeValidator(first_accelerator)] = "gpu"
   trainer_gpus: int = 1
   trainer_cp: int = 1
   recipe: Literal["rl", "sft"] | None = None
@@ -75,9 +80,8 @@ class TrainingModelMetadata(BaseModel):
     return self.fine_tuning_type == "lora" and not self.exclusive and self.trainer_gpus == 1
 
   def accelerator_for(self, role: str) -> Accelerator:
-    """The accelerator a role's workers run on: the most preferred entry
-    until the scheduler chooses among them."""
-    return (self.trainer_accel_prefs if role == "trainer" else self.sampler_accel_prefs)[0]
+    """The accelerator a role's workers run on."""
+    return self.trainer_accel_prefs if role == "trainer" else self.sampler_accel_prefs
 
   def trainer_image(self) -> str | None:
     """The image trainer_backend names, when it is an image and not a trainer."""

@@ -27,7 +27,7 @@ from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, C
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import openrl_status, proto_codec
-from server.accelerators import Accelerator, check_supported, parse_accel_prefs
+from server.accelerators import Accelerator, check_supported, parse_accelerator
 from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
   TrainingModelMetadata,
@@ -208,13 +208,13 @@ class Settings(BaseModel):
     default="pytorch",
     description="The trainer the model runs on: pytorch, automodel (LoRA only), or an image like ghcr.io/org/trainer:tag that runs its own trainer.",
   )
-  trainer_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = Field(
-    default=["gpu"],
-    description="The accelerators the model's trainer may run on, most preferred first: gpu, tpu or tpu,gpu (tpu|gpu in a tag).",
+  trainer_accel_prefs: Annotated[Accelerator, BeforeValidator(parse_accelerator)] = Field(
+    default="gpu",
+    description="The accelerator the model's trainer runs on: gpu or tpu.",
   )
-  sampler_accel_prefs: Annotated[list[Accelerator], BeforeValidator(parse_accel_prefs)] = Field(
-    default=["gpu"],
-    description="The accelerators the model's sampler may run on, most preferred first, like openrl.trainer_accel_prefs.",
+  sampler_accel_prefs: Annotated[Accelerator, BeforeValidator(parse_accelerator)] = Field(
+    default="gpu",
+    description="The accelerator the model's sampler runs on: gpu or tpu.",
   )
   trainer_gpus: int = Field(
     default=1,
@@ -510,7 +510,7 @@ async def _extract_and_persist_model_metadata(
   weight_sync = settings.weight_sync or "delta"
   # A TPU sampler holds its linear weights transposed, so sparse patches in
   # checkpoint coordinates cannot apply; it reloads full checkpoints instead.
-  if fine_tuning_type == "full" and "tpu" in settings.sampler_accel_prefs and weight_sync != "full":
+  if fine_tuning_type == "full" and settings.sampler_accel_prefs == "tpu" and weight_sync != "full":
     print(f"[API_SERVER] weight sync {weight_sync} -> full: a TPU sampler reloads full checkpoints")
     weight_sync = "full"
   weight_sync_cfg = WeightSyncConfig(strategy=weight_sync)

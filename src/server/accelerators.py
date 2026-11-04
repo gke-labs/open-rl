@@ -1,9 +1,9 @@
 """What differs between GPU and TPU workers.
 
-A client lists the accelerators a model's trainer and sampler may run on, most
-preferred first, with the openrl.trainer_accel_prefs and
-openrl.sampler_accel_prefs settings. Both default to gpu. The lists are fixed
-at creation and stored on the model's metadata record.
+A client names the accelerator a model's trainer and sampler run on with the
+openrl.trainer_accel_prefs and openrl.sampler_accel_prefs settings. Each takes
+one accelerator and defaults to gpu. Both are fixed at creation and stored on
+the model's metadata record.
 """
 
 from dataclasses import dataclass, field
@@ -14,28 +14,18 @@ from training.types import FineTuningType
 Accelerator = Literal["gpu", "tpu"]
 
 
-def parse_accel_prefs(value: Any) -> Any:
-  # TINKER_TAGS splits on commas, so a tag separates entries with | instead.
-  if isinstance(value, str):
-    value = [entry.strip().lower() for entry in value.replace("|", ",").split(",")]
-  if isinstance(value, list):
-    if not value:
-      raise ValueError("needs at least one accelerator")
-    if len(set(value)) != len(value):
-      raise ValueError(f"lists an accelerator twice: {value!r}")
-  return value
+def parse_accelerator(value: Any) -> Any:
+  """Case and surrounding whitespace do not matter in a tag or user_metadata value."""
+  return value.strip().lower() if isinstance(value, str) else value
 
 
-def check_supported(
-  fine_tuning_type: FineTuningType, trainer_backend: str, trainer_prefs: list[Accelerator], sampler_prefs: list[Accelerator], exclusive: bool
-) -> None:
-  """Refuse a model whose workers could land where they cannot run. A list
-  with tpu in any position counts, so a later fallback cannot reach it."""
+def check_supported(fine_tuning_type: FineTuningType, trainer_backend: str, trainer: Accelerator, sampler: Accelerator, exclusive: bool) -> None:
+  """Refuse a model whose workers could land where they cannot run."""
   # Time slicing parks FFT workers with vLLM sleep mode and CPU offload, which TPU workers lack.
-  if fine_tuning_type == "full" and not exclusive and ("tpu" in trainer_prefs or "tpu" in sampler_prefs):
+  if fine_tuning_type == "full" and not exclusive and "tpu" in (trainer, sampler):
     raise ValueError("Full fine-tuning on TPU needs openrl.exclusive=true")
   # A job's own trainer image may run on TPU if it carries torch_tpu.
-  if trainer_backend == "automodel" and "tpu" in trainer_prefs:
+  if trainer_backend == "automodel" and trainer == "tpu":
     raise ValueError("openrl.trainer_backend=automodel needs a GPU trainer")
 
 
