@@ -9,80 +9,24 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import io
-import json
 import logging
 import os
-import re
 import shlex
 import signal
-import tarfile
 import uuid
-from collections.abc import Coroutine
 from pathlib import Path
 from typing import Any
 
 from tinker_cookbook.sandbox.sandbox_interface import SandboxResult
 
+from .remote_sandbox import OUTPUT, WORKSPACE, GuestSandbox, RemoteFiles, remote_tool_executor, tar_bytes
 from .sandbox import LabSandbox, SandboxRequest, add_lab_to_path
 
 logger = logging.getLogger(__name__)
 
-WORKSPACE = "/workspace"
-DOCUMENTS = "/workspace/documents"
-OUTPUT = "/workspace/output"
 READY_TIMEOUT = 300
 # Slack over the in-guest coreutils timeout to cover snapshot resume and gRPC round trips.
 RPC_SLACK = 180
-COLLECT_ATTEMPTS = 4
-
-# Runs in the guest so glob and grep see the sandbox filesystem, with the same
-# ordering, limits, and symlink rules as LAB's host-side versions.
-SEARCH_SCRIPT = r"""
-import json, re, sys
-from pathlib import Path
-a = json.loads(sys.argv[1])
-root = Path(a["root"])
-real = root.resolve()
-def under(p):
-  try:
-    p.resolve().relative_to(real)
-    return True
-  except ValueError:
-    return False
-if a["kind"] == "glob":
-  found = sorted((m for m in root.glob(a["pattern"]) if m.is_file() and under(m)), key=lambda p: p.stat().st_mtime, reverse=True)
-  print(json.dumps([str(m.relative_to(root)) for m in found[:100]]))
-  sys.exit()
-regex = re.compile(a["pattern"])
-out = []
-for f in root.glob(a["file_glob"] or "**/*"):
-  if not f.is_file() or not under(f):
-    continue
-  try:
-    text = f.read_text(encoding="utf-8", errors="replace")
-  except Exception:
-    continue
-  hits = list(regex.finditer(text))
-  if not hits:
-    continue
-  rel = str(f.relative_to(root))
-  if a["mode"] == "files_with_matches":
-    out.append(rel)
-  elif a["mode"] == "count":
-    out.append(f"{rel}: {len(hits)}")
-  elif a["mode"] == "content":
-    out.extend(f"{rel}:{i + 1}: {line}" for i, line in enumerate(text.split("\n")) if regex.search(line))
-print(json.dumps(out[:250]))
-"""
-
-
-def tar_bytes(entries: list[tuple[Path, str]]) -> bytes:
-  buffer = io.BytesIO()
-  with tarfile.open(fileobj=buffer, mode="w") as tar:
-    for source, arcname in entries:
-      tar.add(source, arcname=arcname)
-  return buffer.getvalue()
 
 
 async def wait_ready(env: Any) -> None:
@@ -104,7 +48,7 @@ async def wait_ready(env: Any) -> None:
     delay = min(delay * 2, 5)
 
 
-class SubstrateLabSandbox:
+class SubstrateLabSandbox(GuestSandbox):
   """Async LabSandbox over one ate-env environment.
 
   With idle_suspend_seconds set, the environment is suspended once no tool
@@ -182,33 +126,15 @@ class SubstrateLabSandbox:
     timed_out = result.exit_code in (124, 137)
     return SandboxResult(stdout=result.stdout, stderr=result.stderr, exit_code=result.exit_code, metrics={"timed_out": timed_out})
 
-  async def exec(self, command: str, cwd: str, timeout: int, env: dict[str, str] | None = None) -> SandboxResult:
-    """Match LAB's Podman exec: canonical path variables, bash -lc, coreutils timeout."""
-    variables = {"DOCUMENTS_DIR": DOCUMENTS, "OUTPUT_DIR": OUTPUT, "WORKSPACE_DIR": WORKSPACE, **(env or {})}
-    exports = "export " + " ".join(f"{k}={shlex.quote(v)}" for k, v in variables.items())
-    wrapped = f"{exports}; cd {shlex.quote(cwd)} && timeout --kill-after=2 {timeout} bash -lc {shlex.quote(command)}"
-    return await self.shell(wrapped, timeout)
-
-  async def run_command(self, command: str, workdir: str | None = None, timeout: int = 60, max_output_bytes: int | None = None) -> SandboxResult:
-    result = await self.exec(command, workdir or WORKSPACE, timeout)
-    cap = max_output_bytes if max_output_bytes is not None else 128 * 1024
-    return SandboxResult(
-      stdout=result.stdout.encode()[:cap].decode(errors="replace"),
-      stderr=result.stderr.encode()[:cap].decode(errors="replace"),
-      exit_code=result.exit_code,
-      metrics=result.metrics,
-    )
-
-  async def read_file(self, path: str, max_bytes: int | None = None, timeout: int = 60) -> SandboxResult:
+  async def read_bytes(self, path: str) -> bytes:
     from ate_env.errors import NotFoundError
 
     try:
-      data = await self.env.read_file_bytes(path)
+      return await self.env.read_file_bytes(path)
     except NotFoundError as exc:
       raise FileNotFoundError(path) from exc
     except Exception as exc:
       raise OSError(f"{path}: {exc}") from exc
-    return SandboxResult(stdout=data[:max_bytes].decode(errors="replace"), stderr="", exit_code=0)
 
   async def write_file(self, path: str, content: str | bytes, executable: bool = False, timeout: int = 60) -> SandboxResult:
     data = content.encode() if isinstance(content, str) else content
@@ -216,19 +142,6 @@ class SubstrateLabSandbox:
     if executable:
       return await self.shell(f"chmod +x -- {shlex.quote(path)}", timeout)
     return SandboxResult(stdout="", stderr="", exit_code=0)
-
-  async def exists(self, path: str) -> bool:
-    return (await self.shell(f"test -e {shlex.quote(path)}", 30)).exit_code == 0
-
-  async def search(self, args: dict[str, Any]) -> list[str]:
-    command = f"python3 -c {shlex.quote(SEARCH_SCRIPT)} {shlex.quote(json.dumps(args))}"
-    result = await self.shell(command, 60)
-    if result.exit_code != 0:
-      raise OSError(f"search failed in {self.sandbox_id}: {result.stderr.strip()[-500:]}")
-    return json.loads(result.stdout)
-
-  async def send_heartbeat(self, timeout: int = 30) -> None:
-    pass
 
   async def execute_tool(self, name: str, arguments: str | dict[str, Any]) -> str:
     async with self.active():
@@ -239,27 +152,7 @@ class SubstrateLabSandbox:
 
   async def collect_outputs(self, destination: Path) -> None:
     async with self.active():
-      for attempt in range(COLLECT_ATTEMPTS):
-        try:
-          data = await self.pack_outputs()
-          break
-        except Exception:
-          if attempt == COLLECT_ATTEMPTS - 1:
-            raise
-          await asyncio.sleep(2**attempt)
-    destination.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
-      await asyncio.to_thread(tar.extractall, destination, filter="data")
-
-  async def pack_outputs(self) -> bytes:
-    archive = f"{WORKSPACE}/.lab-output.tar"
-    packed = await self.shell(f"tar -C {OUTPUT} -cf {archive} .", 120)
-    if packed.exit_code != 0:
-      raise RuntimeError(f"could not pack outputs in {self.sandbox_id}: {packed.stderr.strip()}")
-    try:
-      return await self.env.read_file_bytes(archive)
-    except Exception as exc:
-      raise OSError(f"failed to read {archive}: {exc}") from exc
+      await super().collect_outputs(destination)
 
   async def cleanup(self) -> None:
     self.live.discard(self)
@@ -268,102 +161,6 @@ class SubstrateLabSandbox:
       self.idle_task.cancel()
     async with asyncio.timeout(60):
       await self.client.delete(self.sandbox_id, atespace=self.env.atespace)
-
-
-class RemoteFiles:
-  """The synchronous Sandbox surface LAB's ToolExecutor calls from its worker thread."""
-
-  def __init__(self, sandbox: SubstrateLabSandbox):
-    self.sandbox = sandbox
-    self.documents_dir = sandbox.request.documents_dir
-    self.output_dir = sandbox.request.output_dir
-    self.workspace_dir = sandbox.request.workspace_dir
-
-  def call(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
-    return asyncio.run_coroutine_threadsafe(coroutine, self.sandbox.loop).result()
-
-  def exec(self, command: str, *, cwd: str = WORKSPACE, timeout: int | None = None, env: dict[str, str] | None = None) -> Any:
-    from sandbox.sandbox import ExecResult, Sandbox
-
-    Sandbox.assert_sandbox_path(cwd)
-    try:
-      result = self.call(self.sandbox.exec(command, cwd, timeout or self.sandbox.request.command_timeout, env))
-    except Exception as exc:
-      return ExecResult(stdout="", stderr=f"substrate exec failed: {type(exc).__name__}: {exc}", returncode=1)
-    if result.metrics["timed_out"]:
-      return ExecResult(stdout=result.stdout, stderr=result.stderr, returncode=None, timed_out=True)
-    return ExecResult(stdout=result.stdout, stderr=result.stderr, returncode=result.exit_code)
-
-  def read_file(self, path: str) -> bytes:
-    from ate_env.errors import NotFoundError
-    from sandbox.sandbox import Sandbox
-
-    Sandbox.assert_sandbox_path(path)
-    try:
-      return self.call(self.sandbox.env.read_file_bytes(path))
-    except NotFoundError as exc:
-      raise FileNotFoundError(path) from exc
-    except Exception as exc:
-      raise OSError(f"{path}: {exc}") from exc
-
-  def write_file(self, path: str, content: bytes | str) -> None:
-    from sandbox.sandbox import Sandbox
-
-    Sandbox.assert_sandbox_path(path)
-    if not Sandbox.is_writable(path):
-      raise PermissionError(f"write denied: {path} is not under a writable mount")
-    data = content.encode() if isinstance(content, str) else content
-    self.call(self.sandbox.env.write_file(path, data))
-
-  def exists(self, path: str) -> bool:
-    from sandbox.sandbox import Sandbox
-
-    try:
-      Sandbox.assert_sandbox_path(path)
-    except ValueError:
-      return False
-    return self.call(self.sandbox.exists(path))
-
-
-def remote_tool_executor(files: RemoteFiles, shell_timeout: int) -> Any:
-  """LAB's ToolExecutor with glob and grep run in the guest instead of on host mounts."""
-  from harness.tools import ToolExecutor
-
-  class RemoteToolExecutor(ToolExecutor):
-    def search_root(self, search_path: str | None) -> str | None:
-      sb_path = self._resolve_search_path(search_path)
-      if not self.sandbox.exists(sb_path):
-        return None
-      return DOCUMENTS if sb_path == "/" else sb_path
-
-    def _glob(self, pattern: str, search_path: str | None) -> str:
-      if not pattern:
-        return "Error: pattern is required"
-      self.glob_count += 1
-      root = self.search_root(search_path)
-      if root is None:
-        return f"Error: path does not exist: {search_path}"
-      matches = files.call(files.sandbox.search({"kind": "glob", "root": root, "pattern": pattern}))
-      if not matches:
-        return f"No files matching '{pattern}' in {self._resolve_search_path(search_path)}"
-      return "\n".join(matches)
-
-    def _grep(self, pattern_str: str, search_path: str | None, file_glob: str | None, output_mode: str) -> str:
-      if not pattern_str:
-        return "Error: pattern is required"
-      self.grep_count += 1
-      root = self.search_root(search_path)
-      if root is None:
-        return f"Error: path does not exist: {search_path}"
-      try:
-        re.compile(pattern_str)
-      except re.error as e:
-        return f"Error: invalid regex: {e}"
-      args = {"kind": "grep", "root": root, "pattern": pattern_str, "file_glob": file_glob, "mode": output_mode}
-      results = files.call(files.sandbox.search(args))
-      return "\n".join(results) if results else f"No matches for '{pattern_str}'"
-
-  return RemoteToolExecutor(sandbox=files, shell_timeout=shell_timeout)
 
 
 class SubstrateSandboxFactory:
