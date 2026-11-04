@@ -53,9 +53,11 @@ RUN uv sync --frozen --extra tpu --extra cluster
 # The venv is on PATH so a job that names this image as its trainer runs
 # `python -u -m server.training_requests_processor` like any other image.
 # TORCH_DEVICE_BACKEND_AUTOLOAD stays unset: torch_tpu only registers its
-# device with autoload on.
+# device with autoload on. TORCH_TPU_DEFER_AND_FUSE selects torch_tpu's fused
+# eager mode, which runs the training step about twice as fast as the default.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONPATH="/app/src:/app:$PYTHONPATH" \
-    OPEN_RL_DEVICE=tpu
+    OPEN_RL_DEVICE=tpu \
+    TORCH_TPU_DEFER_AND_FUSE=1
 
 CMD ["uv", "run", "python", "-u", "-m", "server.training_requests_processor"]
