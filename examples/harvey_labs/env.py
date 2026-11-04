@@ -108,7 +108,7 @@ class LabEnvGroupBuilder(EnvGroupBuilder):
 
       rollout_config = RolloutConfig(
         limits=RolloutLimits(
-          max_trajectory_tokens=self.config.max_trajectory_tokens,
+          max_trajectory_tokens=self.config.resolved_max_trajectory_tokens,
           max_turn_tokens=self.config.max_tokens,
         )
       )
@@ -126,7 +126,7 @@ class LabEnvGroupBuilder(EnvGroupBuilder):
             rollout_config=rollout_config,
           ),
           criteria_count,
-          max_trajectory_tokens=self.config.max_trajectory_tokens,
+          max_trajectory_tokens=self.config.resolved_max_trajectory_tokens,
         )
       )
     return envs
