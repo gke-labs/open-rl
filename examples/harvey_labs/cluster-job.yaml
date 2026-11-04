@@ -30,9 +30,10 @@ spec:
             - base_url=http://open-rl-api-server-service.openrl-system.svc:8000
             - sandbox_warmpool=lab-sandbox
             - log_path=/mnt/shared/harvey-labs/$(RUN)
-            # The longest sequence a CP4 trainer fits on 80 GB H100s; the gateway's
-            # VLLM_MAX_MODEL_LEN and OPEN_RL_TRAIN_TOKEN_BUDGET must match.
-            - max_trajectory_tokens=196608
+            # Qwen3.5-9B's full context window, the recipe default. The gateway's
+            # VLLM_MAX_MODEL_LEN and OPEN_RL_TRAIN_TOKEN_BUDGET must fit it; lower
+            # all three on GPUs that cannot hold it.
+            - max_trajectory_tokens=262144
             # The rest matches the reference Qwen3.5-9B run.
             - max_tokens=32768
             - max_tool_result_tokens=16384

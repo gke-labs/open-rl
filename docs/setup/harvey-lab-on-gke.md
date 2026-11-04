@@ -26,14 +26,18 @@ training cluster                                    sandbox cluster
 
 ## 1. Set the context window on the API server
 
-Episodes in this recipe reach up to 196,608 tokens. Because the OpenRL API
-server passes its token limits to worker pods only when creating them, set
-these environment variables on the API server before starting the run:
+By default the recipe uses the model's full context window: 262,144 tokens for
+Qwen3.5-9B. Because the OpenRL API server passes its token limits to worker
+pods only when creating them, set these environment variables on the API
+server before starting the run:
 
 ```bash
 kubectl -n openrl-system set env deployment/open-rl-api-server \
-  VLLM_MAX_MODEL_LEN=196608 OPEN_RL_TRAIN_TOKEN_BUDGET=196608
+  VLLM_MAX_MODEL_LEN=262144 OPEN_RL_TRAIN_TOKEN_BUDGET=262144
 ```
+
+We ran it on hardware that fits that window. On GPUs with less memory, pass a
+smaller `max_trajectory_tokens` in the Job and lower both limits to match.
 
 If Workloads for the run already exist, delete them after updating the API
 server so OpenRL recreates the worker pods with the new limits.
@@ -110,7 +114,7 @@ started, for example on a parse error.
 
 | Symptom | Likely cause |
 | --- | --- |
-| Every episode ends with `context_overflow` before writing deliverables | The context window is too small. A 32k or 64k context window is too small for LAB, and the default recipe uses 196,608 tokens. |
+| Every episode ends with `context_overflow` before writing deliverables | The context window is too small. A 32k or 64k context window is too small for LAB, and the default recipe uses the model's full window (262,144 tokens for Qwen3.5-9B). |
 | Many turns hit the per-turn cap (`max_tokens_reached`) | The per-turn token limit is too small for the turn that writes the deliverable. Keep `max_tokens` at 16k or higher. |
 | `lab/reward_error` is high | The judge endpoint is unreachable or failing. Check `grading.log` under `<lab_root>/results/<run-id>/` and verify firewall rules between the training cluster and the judge. |
 | The trainer is OOM-killed on the first step | The context window exceeds trainer GPU memory. Use the Automodel trainer with `openrl.trainer_cp`, or lower `max_trajectory_tokens` and the API server's limits together. |

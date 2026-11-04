@@ -17,7 +17,7 @@ quality on graded episodes, with a 95% CI of 10.4 to 18.7. Scores improved on
 
 | Component | Default recipe | Notes |
 | --- | --- | --- |
-| OpenRL deployment | A GKE deployment. See [GKE setup](../../docs/setup/gke-setup.md). | The 196,608-token context window requires a trainer with context parallelism. The default recipe uses Automodel on 4 × 80 GB GPUs with CP4, plus 4 vLLM samplers. Eight H100 GPUs fit the full setup. |
+| OpenRL deployment | A GKE deployment. See [GKE setup](../../docs/setup/gke-setup.md). | The recipe uses the model's full context window (262,144 tokens for Qwen3.5-9B), which requires a trainer with context parallelism. The default recipe uses Automodel on 4 GPUs with CP4, plus 4 vLLM samplers. We ran it on one 8 × B200 node and on 8 × H100. On smaller GPUs, lower the window; see [Train](#train). |
 | Judge | GLM-5.2 behind an OpenAI-compatible endpoint with reasoning turned off | Any endpoint that serves the model named by `judge_model` works. Gemini also works. See [Setup](#setup). |
 | Sandboxes | Podman on the driver machine, where the recipe client runs | When the driver runs in a cluster, use [Agent Sandbox](agent-sandbox/README.md). See [Sandbox backends](#sandbox-backends). |
 | LAB | The fork cloned by `setup_lab.sh` | Provides the tasks, tools, sandbox image, and grader. |
@@ -107,15 +107,19 @@ export TINKER_TAGS=openrl.trainer_backend=automodel,openrl.trainer_gpus=4,openrl
 uv run harvey-train base_url=http://127.0.0.1:9003 log_path=artifacts/harvey-labs/my-run
 ```
 
-Before `harvey-train` creates its workers, the API server must allow the
-196,608-token context window. Set `VLLM_MAX_MODEL_LEN` and
-`OPEN_RL_TRAIN_TOKEN_BUDGET` on the API server to at least
-`max_trajectory_tokens`, which defaults to 196608:
+By default `max_trajectory_tokens` is the model's full context window, read
+from its Hugging Face config: 262,144 tokens for Qwen3.5-9B and 131,072 for
+Gemma 4 E4B. Before `harvey-train` creates its workers, set `VLLM_MAX_MODEL_LEN`
+and `OPEN_RL_TRAIN_TOKEN_BUDGET` on the API server to at least that window:
 
 ```bash
 kubectl -n openrl-system set env deployment/open-rl-api-server \
-  VLLM_MAX_MODEL_LEN=196608 OPEN_RL_TRAIN_TOKEN_BUDGET=196608
+  VLLM_MAX_MODEL_LEN=262144 OPEN_RL_TRAIN_TOKEN_BUDGET=262144
 ```
+
+We ran the recipe on hardware that fits the full window (8 × B200, and
+8 × H100 for Qwen3.5-9B). If your GPUs run out of memory, set
+`max_trajectory_tokens` lower and lower the two API server limits to match.
 
 Pass overrides using `chz` `key=value` arguments. Run `uv run harvey-train --help`
 or check [config.py](config.py) for every option. Running without overrides
@@ -127,7 +131,7 @@ uses the reference recipe defaults:
 | Batch | 8 tasks per step via `batch_size` and 6 attempts per task via `rollouts_per_example`. `stream_minibatches` streams minibatches to the trainer while sampling continues. |
 | Optimizer | LoRA rank 32, constant `learning_rate=2e-4`, and no KL penalty |
 | Loss and reward | Importance sampling with group-centered advantages. Reward equals passed criteria divided by total criteria, or 0 when ungraded. |
-| Episode limits | `max_turns=40`, `max_tokens=32768` per turn, `max_trajectory_tokens=196608`, and `max_tool_result_tokens=16384` |
+| Episode limits | `max_turns=40`, `max_tokens=32768` per turn, `max_trajectory_tokens` = the model's full window (262,144 for Qwen3.5-9B), and `max_tool_result_tokens=16384` |
 | Length | `max_steps=35` across 300 training tasks |
 | Evaluation | 50 held-out tasks at step 0, every 5 steps via `eval_every`, and after the final step, with 1 attempt per task via `eval_rollouts_per_task` |
 | Task split | `task_split_seed=0` selects the held-out slice, and `train_split_seed=242` orders the training pool. Scenario families in the evaluation set never appear in training. |
@@ -147,7 +151,7 @@ uses the reference recipe defaults:
 | Reward | Fraction of criteria passed; no process reward, no all-pass bonus; ungraded = 0 |
 | Gradient clipping | None |
 | Steps / tasks | 35 steps over 300 training tasks, temperature 1.0 |
-| Context window | 196,608 tokens |
+| Context window | 262,144 tokens (the model's full window) |
 | Per-turn cap | 32,768 tokens |
 | Tool results | Truncated at 16,384 tokens |
 | Turns | 40 max |
