@@ -50,6 +50,8 @@ class SocketTimeSlicerClient:
     self.port = port
     self.reader: asyncio.StreamReader | None = None
     self.writer: asyncio.StreamWriter | None = None
+    # One request on the connection at a time: a reply belongs to the request that sent it.
+    self.lock = asyncio.Lock()
     # Set when a release could not park this process. The caller finishes
     # publishing its results and exits; the grant moves on once it is gone.
     self.faulted: str | None = None
@@ -81,21 +83,33 @@ class SocketTimeSlicerClient:
     return await self.request({"command": "REGISTER", **workload.as_payload()})
 
   async def unregister(self, workload: WorkloadRef) -> dict[str, Any]:
-    return await self.request({"command": "UNREGISTER", **workload.as_payload()})
+    async with self.lock:
+      if self.faulted:
+        # The process still holds the accelerator, so its seat frees when it exits, not before.
+        return {"ok": False, "error": self.faulted}
+      return await self.exchange({"command": "UNREGISTER", **workload.as_payload()})
 
   @asynccontextmanager
   async def acquire(self, workload: WorkloadRef) -> AsyncIterator[None]:
-    payload = workload.as_payload()
-    await self.request({"command": "ACQUIRE", **payload})
+    await self.request({"command": "ACQUIRE", **workload.as_payload()})
     try:
       yield
     finally:
-      try:
-        await self.request({"command": "RELEASE", **payload})
-      except TimeSlicerFault as exc:
-        self.faulted = str(exc)
+      # The park runs to its reply even if the caller is cancelled meanwhile. The daemon is checkpointing this
+      # process, and a request that follows waits for the lock, so it sees the park's outcome first.
+      await asyncio.shield(self.release(workload))
+
+  async def release(self, workload: WorkloadRef) -> None:
+    try:
+      await self.request({"command": "RELEASE", **workload.as_payload()})
+    except TimeSlicerFault as exc:
+      self.faulted = str(exc)
 
   async def request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    async with self.lock:
+      return await self.exchange(payload)
+
+  async def exchange(self, payload: dict[str, Any]) -> dict[str, Any]:
     await self.connect()
     assert self.reader is not None
     assert self.writer is not None
@@ -118,7 +132,8 @@ class SocketTimeSlicerClient:
       return response
     except TimeSlicerFault:
       raise
-    except Exception:
+    except (Exception, asyncio.CancelledError):
+      # A reply still owed on this connection would be read as the answer to the next request.
       await self.close()
       raise
 

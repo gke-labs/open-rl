@@ -313,6 +313,51 @@ class FailedCheckpointTest(unittest.IsolatedAsyncioTestCase):
         await server.wait_closed()
 
 
+class ExitDuringParkTest(unittest.IsolatedAsyncioTestCase):
+  """A worker that exits cancels its dispatcher, whose turn is being parked, and unregisters at once. The sampler
+  in issue #403 died here: two coroutines read its one slicer connection."""
+
+  async def asyncSetUp(self) -> None:
+    self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+    self.workload = WorkloadRef(name="101")
+
+  async def start(self, restorer: BlockingRestorer) -> tuple[SingleNodeTimeSlicer, SocketTimeSlicerClient, asyncio.Task]:
+    """A daemon over `restorer`, a registered client, and its turn, cancelled while the daemon is mid-park."""
+    restorer.block_checkpoint = True
+    agent = SingleNodeTimeSlicer(restorer)
+    server = await start_time_slicer(agent, str(Path(self.tmp) / "accel-timeslicer.sock"))
+    self.addAsyncCleanup(server.wait_closed)
+    self.addCleanup(server.close)
+    client = SocketTimeSlicerClient(str(Path(self.tmp) / "accel-timeslicer.sock"))
+    self.addAsyncCleanup(client.close)
+    await client.register(self.workload)
+    on_gpu = asyncio.Event()
+
+    async def turn() -> None:
+      async with client.acquire(self.workload):
+        on_gpu.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(turn())
+    await on_gpu.wait()
+    task.cancel()
+    self.assertTrue(await asyncio.to_thread(restorer.checkpoint_started.wait, 1.0))
+    return agent, client, task
+
+  async def test_the_unregister_after_a_cancelled_turn_waits_for_the_park(self) -> None:
+    restorer = BlockingRestorer()
+    agent, client, task = await self.start(restorer)
+    unregister = asyncio.create_task(client.unregister(self.workload))
+    await asyncio.sleep(0.05)
+    self.assertFalse(unregister.done())
+    restorer.finish_checkpoint.set()
+    self.assertTrue((await asyncio.wait_for(unregister, timeout=1.0))["ok"])
+    await asyncio.wait({task})
+    self.assertEqual(restorer.simple_labels(), [("checkpoint", "101")])
+    self.assertNotIn("101", agent.workloads)
+    self.assertFalse(agent.running)
+
+
 class SingleNodeTimeSlicerSocketTest(unittest.IsolatedAsyncioTestCase):
   async def test_persistent_socket_clients_alternate(self) -> None:
     restorer = RecordingRestorer()

@@ -188,7 +188,7 @@ async def run_sampling_worker(pool: str) -> None:
   store = SamplingStore(redis_client(os.environ["REDIS_URL"]))
   if time_slicer is not None:
     await time_slicer.register(workload)
-  sampler = None
+  sampler = task = None
   try:
     async with holding_gpu(time_slicer, workload):
       is_lora = os.environ.get("OPEN_RL_FINE_TUNING_TYPE") == "lora"
@@ -216,8 +216,13 @@ async def run_sampling_worker(pool: str) -> None:
         raise RuntimeError(f"The sampler for pool {pool} cannot serve: {sampler_failed=} {time_slicer_failed=}")
       await asyncio.wait({task}, timeout=1)
   finally:
-    # A faulted process still holds the GPU; the turn moves on once it exits and its connection closes.
-    if time_slicer is not None and not time_slicer.faulted:
+    if task is not None:
+      # The dispatcher leaves its turn first, so the unregister follows the park on the slicer's connection.
+      task.cancel()
+      await asyncio.wait({task})
+    if time_slicer is not None:
+      # A faulted process stays registered: it still holds the GPU, and the turn moves on once it exits and its
+      # connection closes.
       await time_slicer.unregister(workload)
     if sampler is not None:
       sampler.engine.shutdown()
