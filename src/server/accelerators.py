@@ -51,6 +51,8 @@ def pod_spec(accelerator: Accelerator, role: str) -> PodSpec:
   # it for its own shared memory too.
   shm = [{"name": "dshm", "emptyDir": {"medium": "Memory", "sizeLimit": "4Gi"}}]
   shm_mounts = [{"name": "dshm", "mountPath": "/dev/shm"}]
+  # The trainer runs torch_tpu's fused eager mode, which runs a training step
+  # about twice as fast as the default op-by-op mode.
   if role == "trainer":
     return PodSpec(
       "OPEN_RL_TPU_TRAINER_IMAGE",
@@ -58,7 +60,7 @@ def pod_spec(accelerator: Accelerator, role: str) -> PodSpec:
       "google.com/tpu",
       "TPU",
       "OPEN_RL_TPU_WORKER_ENV_CONFIGMAP",
-      env={"OPEN_RL_DEVICE": "tpu"},
+      env={"OPEN_RL_DEVICE": "tpu", "TORCH_TPU_DEFER_AND_FUSE": "1"},
       volumes=shm,
       volume_mounts=shm_mounts,
     )

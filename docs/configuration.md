@@ -119,12 +119,14 @@ and a `tpu` trainer with the `automodel` trainer backend. A full fine-tuning
 model with a `tpu` sampler always syncs weights with `openrl.weight_sync=full`:
 the TPU sampler reloads the whole checkpoint, since sparse deltas cannot patch
 its transposed weights. A job's own trainer image can run on TPU if it includes
-`torch_tpu`. TPU worker pods keep the programs torch_tpu compiles under
-`torchtpu-cache/` in `OPEN_RL_TMP_DIR`, so a trainer or sampler that meets a
-shape an earlier pod compiled loads the program instead of compiling it again.
-TPU samplers also share vLLM's compile cache under `vllm-cache/`, like GPU
-samplers; `VLLM_DISABLE_COMPILE_CACHE=1` in the TPU worker ConfigMap turns it
-off.
+`torch_tpu`. TPU trainer pods run torch_tpu's fused eager mode
+(`TORCH_TPU_DEFER_AND_FUSE=1`), which runs a training step about twice as fast
+as the default op-by-op mode. TPU worker pods keep the programs torch_tpu
+compiles under `torchtpu-cache/` in `OPEN_RL_TMP_DIR`, so a trainer or sampler
+that meets a shape an earlier pod compiled loads the program instead of
+compiling it again. TPU samplers also share vLLM's compile cache under
+`vllm-cache/`, like GPU samplers; `VLLM_DISABLE_COMPILE_CACHE=1` in the TPU
+worker ConfigMap turns it off.
 Cluster setup, node pools and the per-model knobs are in
 [OpenRL on GKE TPU nodes](setup/tpu-on-gke.md).
 
