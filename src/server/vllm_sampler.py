@@ -14,7 +14,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
+from accel_timeslicer.time_slicer import TimeSlicerClient, TimeSlicerRefused, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
 from server.lora_snapshots import snapshot_root
 from server.sampling_dispatcher import Dispatcher, RevisionUnloadable, delta_applies, failed, redis_client
@@ -187,7 +187,14 @@ async def run_sampling_worker(pool: str) -> None:
   workload = workload_from_env(os.getpid(), name=local_workload_name("sampler", pool), claim=SAMPLER_CLAIM) if time_slicer else None
   store = SamplingStore(redis_client(os.environ["REDIS_URL"]))
   if time_slicer is not None:
-    await time_slicer.register(workload)
+    try:
+      await time_slicer.register(workload)
+    except TimeSlicerRefused as exc:
+      # No process under this name can serve the pool again, so its requests fail now instead of at their deadline.
+      for r in await store.pending(pool, limit=None):
+        await store.set_result(r, failed(f"The sampler for pool {pool} cannot run: {exc}"))
+      await store.redis.aclose()
+      raise
   sampler = task = None
   try:
     async with holding_gpu(time_slicer, workload):
