@@ -184,6 +184,11 @@ Weight synchronization between the decoupled Trainer and Sampler pods is achieve
 * **Single-Writer / Multi-Reader Access Pattern:** The Trainer pod operates with write access, serializing updated safetensors checkpoint shards (`sampler-X`) to the persistent filesystem at each training step. Sampler pods operate as read-only consumers, fetching updated checkpoint shards directly into local page cache before generating rollout batches.
 * **Performance Limitations & Improvement Opportunities:** While filesystem-based synchronization cleanly decouples process lifecycle management, serializing multi-gigabyte weight tensors across network storage (NFS) introduces noticeable I/O latency (~78 to 179 seconds per step). This mechanism is not the most performant method, and significant improvement opportunities exist—such as implementing direct peer-to-peer GPU memory transfers (via NCCL or CUDA IPC on shared nodes) or in-memory host RAM streaming to eliminate filesystem I/O entirely.
 
+### I. Full Fine-Tuning on TPU
+FFT also runs on Cloud TPU nodes, with the same trainer and sampler code on `torch-tpu` and `vllm-torchtpu`, under two constraints that follow from the hardware:
+* **Exclusive only:** There is no time-slicer for TPU (`cuda-checkpoint` has no `libtpu` equivalent), so a TPU FFT model must set `openrl.exclusive=true`. The trainer and the sampler each take a TPU node of their own through a whole-node DRA claim, and the API server switches time slicing off on both pods.
+* **Full reload every step:** The TPU platform stores linear weights transposed, so sparse deltas cannot patch them. The API server forces `openrl.weight_sync=full`, and after each step the sampler reloads the whole checkpoint from the shared volume in place, through a worker extension that supplies the weight-update calls the TPU worker lacks. A Qwen3-0.6B step on v6e, including the checkpoint write and the reload, took about 35 s.
+
 ---
 
 ## 5. End-to-End Execution Workflows & Turn-Taking Models
