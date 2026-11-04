@@ -1,0 +1,43 @@
+# Pulls the worker image onto every GPU node the scheduler may use, at deploy
+# time instead of inside the first job. A worker image pull takes minutes on a
+# fresh node, and a cold job pays it for its trainer and its sampler. The
+# container only sleeps and holds no GPU. The kustomize images transformer
+# rewrites the image like every other OpenRL image, so a release that bumps
+# the tag re-pulls on every node as the DaemonSet rolls.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: open-rl-worker-prepull
+  labels:
+    app: open-rl-worker-prepull
+spec:
+  selector:
+    matchLabels:
+      app: open-rl-worker-prepull
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Nothing runs here, so every node can pull at once.
+      maxUnavailable: 100%
+  template:
+    metadata:
+      labels:
+        app: open-rl-worker-prepull
+    spec:
+      nodeSelector:
+        openrl.io/enabled: "true"
+      # GPU nodes only: TPU nodes run a different worker image and keep their taint.
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: prepull
+          image: ghcr.io/gke-labs/open-rl/server:latest
+          command: ["sleep", "infinity"]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              memory: 64Mi

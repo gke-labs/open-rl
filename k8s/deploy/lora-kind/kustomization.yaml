@@ -4,3 +4,15 @@ namespace: openrl-system
 resources:
   - ../base
   - storage.yaml
+
+patches:
+  # Workers pull from the cluster-local registry, so there is nothing to pre-pull.
+  - target:
+      kind: DaemonSet
+      name: open-rl-worker-prepull
+    patch: |
+      $patch: delete
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: open-rl-worker-prepull
