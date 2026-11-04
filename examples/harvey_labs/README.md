@@ -348,15 +348,14 @@ Use `chz` for recipe configuration, data objects, and CLI entrypoints. Run the
 recipe's unit tests from `examples/`:
 
 ```bash
-uv run python -m unittest harvey_labs.test_fair_grading
-uv run --extra substrate python -m unittest harvey_labs.test_substrate_sandbox
+uv run python -m unittest harvey_labs.test_fair_grading harvey_labs.test_substrate_sandbox
 uv run python -m harvey_labs.renderers.qwen35_renderer
 uv run python -m harvey_labs.renderers.gemma4_renderer
 ```
 
-`test_fair_grading` covers the per-turn budget, budget-terminal grading, and
-judge failures. `test_substrate_sandbox` runs the Substrate backend against a
-fake `ate-env-api` client.
+`test_fair_grading` covers the per-turn budget floor and empty-judge error
+accounting. `test_substrate_sandbox` covers the Substrate backend lifecycle and
+idle suspend against a fake `ate-env-api` client.
 
 Each renderer module includes an inline `unittest` suite that checks whether
 sampled tokens survive across turns. The tests run with the real tokenizer and
