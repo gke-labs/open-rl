@@ -52,14 +52,19 @@ AUTOMODEL_CP = int(os.getenv("OPEN_RL_AUTOMODEL_CP", "1"))
 # fit the sampler's limit, and it is the same knob.
 MAX_LORA_RANK = int(os.getenv("VLLM_MAX_LORA_RANK", "64"))
 
-# LoRA targets per LoraConfig flag, matched as model.*.layers.*.<name> so a
-# vision tower or an MTP head the samplers cannot place is never wrapped.
+# LoRA targets per LoraConfig flag, matched only under the decoder's layers
+# (model.layers or, in a multimodal checkpoint, model.language_model.layers) so
+# a vision or audio tower or an MTP head the samplers cannot place is never
+# wrapped. Automodel's matcher turns ".*" into "(.*)", which also eats the dots
+# around it: "model.*.layers.*.k_proj" matched Gemma 4's
+# model.audio_tower.layers.N.self_attn.relative_k_proj.
 # train_attn covers Qwen3.5's linear-attention projections too. The kaiming A
 # init is PEFT's, so an lr means the same thing here as on the LoRA worker.
 LORA_TARGETS = {
   "train_attn": ("q_proj", "k_proj", "v_proj", "o_proj", "in_proj_qkv", "in_proj_z", "in_proj_b", "in_proj_a", "out_proj"),
   "train_mlp": ("gate_proj", "up_proj", "down_proj"),
 }
+DECODER_LAYERS = ("model.layers", "model.language_model.layers")
 
 # Decoder layers per activation checkpoint. Automodel's own checkpointing wraps
 # attention and MLP separately and stashes four tensors per layer; a group of
@@ -150,7 +155,7 @@ def lora_target_names(config: LoraConfig) -> set[str]:
 
 def lora_target_patterns(config: LoraConfig) -> list[str]:
   """Automodel PEFT patterns for the modules a LoraConfig asks to train."""
-  patterns = [f"model.*.layers.*.{name}" for flag, names in LORA_TARGETS.items() if getattr(config, flag) for name in names]
+  patterns = [f"{layers}.*.{name}" for layers in DECODER_LAYERS for name in sorted(lora_target_names(config))]
   if config.train_unembed:
     # The tinker LoraConfig asks for this by default, but vLLM rejects the whole
     # adapter when it carries lm_head weights for models such as Qwen3.5 and Gemma.
@@ -433,19 +438,38 @@ class AutomodelTrainingWorker(BaseTrainerWorker):
 
     seq_len = target_token_ids.shape[1]
     cp_mesh = self.device_mesh["cp"]
-    context, batch, layout = shard_batch_aux_only(cp_mesh, None, {"input_ids": input_ids, "labels": target_token_ids.clone()})
+    batch = {"input_ids": input_ids, "labels": target_token_ids.clone()}
+    # Gemma 4 shards its own batch: it installs its sliding-window-aware ring
+    # attention, embeds and slices the sequence in its forward, and lays the
+    # shards out contiguously rather than round-robin.
+    model_shard = getattr(model, "_cp_shard_batch_aux_only", None)
+    if model_shard is not None:
+      context, batch, layout = model_shard(cp_mesh, None, batch)
+    else:
+      context, batch, layout = shard_batch_aux_only(cp_mesh, None, batch)
     # Closing the context before the backward runs the attention grads and the
     # checkpoint recompute as local attention, and the grads come out wrong.
     self.close_cp_context()
     self.cp_context = contextlib.ExitStack()
     self.cp_context.enter_context(context())
     aux = {key: batch[key] for key in ("padding_mask", "_packed_seq_ids") if key in batch}
-    outputs = model(
-      input_ids=batch["input_ids"], position_ids=batch["position_ids"], use_cache=False, logits_to_keep=1, output_hidden_states=True, **aux
-    )
+    # Gemma 4's CP forward does not pass hidden states up; read the text model's output instead.
+    captured: dict[str, torch.Tensor] = {}
+    text_model = getattr(getattr(model, "model", None), "language_model", None)
+    hook = text_model.register_forward_hook(lambda _, __, out: captured.update(hidden=out.last_hidden_state)) if model_shard is not None else None
+    try:
+      outputs = model(
+        input_ids=batch["input_ids"], position_ids=batch["position_ids"], use_cache=False, logits_to_keep=1, output_hidden_states=True, **aux
+      )
+    finally:
+      if hook is not None:
+        hook.remove()
+    hidden = outputs.hidden_states[-1] if outputs.hidden_states is not None else captured["hidden"]
     # Padding slots carry an ignore index and are cut off after the gather.
-    local = self.project_target_logprobs(model, outputs.hidden_states[-1], batch["labels"].clamp_min(0))
+    local = self.project_target_logprobs(model, hidden, batch["labels"].clamp_min(0))
     gathered = GatherSequenceShards.apply(local, cp_mesh.get_group(), self.cp_size, cp_mesh.get_local_rank())
+    if model_shard is not None:
+      return gathered[:, :seq_len]
     order = round_robin_permutation(self.cp_size, layout.padded_seq_len, gathered.device)
     return torch.zeros_like(gathered).index_copy(1, order, gathered)[:, :seq_len]
 
