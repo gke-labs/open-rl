@@ -1,4 +1,4 @@
-IMG ?= ghcr.io/gke-labs/open-rl/scheduler:latest
+IMG ?= ghcr.io/openrl-dev/openrl/scheduler:latest
 CONTROLLER_TOOLS_VERSION ?= v0.19.0
 
 CRD_MANIFEST := ../deploy/base/00-workload-crd.yaml

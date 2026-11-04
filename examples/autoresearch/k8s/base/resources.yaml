@@ -57,7 +57,7 @@ spec:
       activeDeadlineSeconds: 21600
       containers:
       - name: researcher
-        image: ghcr.io/gke-labs/open-rl/autoresearch:latest
+        image: ghcr.io/openrl-dev/openrl/autoresearch:latest
         imagePullPolicy: Always
         resources:
           requests:
@@ -89,7 +89,7 @@ spec:
       # exits, so the run stays inspectable until the Sandbox is deleted or
       # the deadline passes.
       - name: ui
-        image: ghcr.io/gke-labs/open-rl/autoresearch:latest
+        image: ghcr.io/openrl-dev/openrl/autoresearch:latest
         imagePullPolicy: Always
         command: ["sh", "-c"]
         args:

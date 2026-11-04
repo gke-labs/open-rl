@@ -18,7 +18,7 @@ that we need help with, including:
 * Bugs in our automation scripts
 
 If anything doesn't make sense, or doesn't work when you run it, please
-[open an issue](https://github.com/gke-labs/open-rl/issues/new) and let us know.
+[open an issue](https://github.com/openrl-dev/openrl/issues/new) and let us know.
 
 Please note that this project has a [Code of Conduct](CODE_OF_CONDUCT.md) that all
 contributors are expected to follow.
@@ -36,7 +36,7 @@ We welcome many different types of contributions, including:
 * Release management
 
 Not everything happens through a GitHub pull request. If you would like to discuss an idea
-before writing code, open a [GitHub issue](https://github.com/gke-labs/open-rl/issues) and
+before writing code, open a [GitHub issue](https://github.com/openrl-dev/openrl/issues) and
 let's talk it through.
 
 <!-- TODO: OpenRL does not yet have a public developer meeting, mailing list, or chat
@@ -44,9 +44,9 @@ let's talk it through.
 
 ## Find an Issue
 
-Issues labelled [`good first issue`](https://github.com/gke-labs/open-rl/labels/good%20first%20issue)
+Issues labelled [`good first issue`](https://github.com/openrl-dev/openrl/labels/good%20first%20issue)
 have extra context to help you make your first contribution.
-[`help wanted`](https://github.com/gke-labs/open-rl/labels/help%20wanted) issues are suitable
+[`help wanted`](https://github.com/openrl-dev/openrl/labels/help%20wanted) issues are suitable
 for anyone who isn't a core maintainer and are a good next step after your first pull request.
 
 Sometimes there won't be any issues with these labels. That's OK — there is likely still

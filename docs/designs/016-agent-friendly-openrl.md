@@ -135,8 +135,8 @@ version OpenRL supports.
     "settings_howto": "Pass as user_metadata on create_session or create_model, or as TINKER_TAGS=openrl.key=value,...",
     "limits": {"vllm_max_model_len": 8192, "train_token_budget": 65536,
                "session_ttl_seconds": 120, "session_reap_interval_seconds": 30},
-    "skill_url": "https://github.com/gke-labs/open-rl/releases/download/v0.0.6/openrl-skill.tar.gz",
-    "getting_started_url": "https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md"
+    "skill_url": "https://github.com/openrl-dev/openrl/releases/download/v0.0.6/openrl-skill.tar.gz",
+    "getting_started_url": "https://github.com/openrl-dev/openrl/blob/main/docs/getting-started.md"
   }
 }
 ```
@@ -373,12 +373,12 @@ the "verified on" stamp set to the release version, listed in
 canonical; the asset is a copy, so a clone at the tag and the asset are
 the same thing. `get_server_capabilities` reports
 `openrl.skill_url` for the running version
-(`https://github.com/gke-labs/open-rl/releases/download/<version>/openrl-skill.tar.gz`),
+(`https://github.com/openrl-dev/openrl/releases/download/<version>/openrl-skill.tar.gz`),
 so an agent that starts from an endpoint finds the matching reference in
 one call. The tarball is the primary install path, since it works for
 every agent, for scripted installs, and for air-gapped clusters. Claude
 Code users get a second path, a `.claude-plugin/marketplace.json` so
-`/plugin marketplace add gke-labs/open-rl` works and can pin a tag; other
+`/plugin marketplace add openrl-dev/openrl` works and can pin a tag; other
 agents' package mechanisms can be added the same way, beside the tarball
 rather than instead of it. Installing is still a manual step for every agent, so the
 getting-started guide gets one install command right after

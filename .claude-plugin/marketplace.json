@@ -3,7 +3,7 @@
   "description": "OpenRL: a self-hosted, Kubernetes-native post-training API that serves the Tinker API.",
   "owner": {
     "name": "GKE Labs",
-    "url": "https://github.com/gke-labs/open-rl"
+    "url": "https://github.com/openrl-dev/openrl"
   },
   "plugins": [
     {

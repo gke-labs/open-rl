@@ -52,7 +52,7 @@ jobs:
   # main deploys everywhere; a fork also deploys its website/* branches, for previews
   deploy:
     needs: build
-    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.repository_owner != 'gke-labs')
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || github.repository_owner != 'openrl-dev')
     runs-on: ubuntu-latest
     permissions:
       pages: write

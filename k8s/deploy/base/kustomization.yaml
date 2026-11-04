@@ -20,8 +20,8 @@ configMapGenerator:
       - ENABLE_GCP_TRACE=0
   - name: open-rl-images
     literals:
-      - worker=ghcr.io/gke-labs/open-rl/server:latest
-      - dispatcher=ghcr.io/gke-labs/open-rl/api-server:latest
+      - worker=ghcr.io/openrl-dev/openrl/server:latest
+      - dispatcher=ghcr.io/openrl-dev/openrl/api-server:latest
 
 # Dynamic worker images receive the same image transformations as containers.
 configurations:

@@ -39,7 +39,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 WORKLOAD = REPO_ROOT / "k8s" / "perf" / "workload.conf"
-CLIENT_IMAGE = "ghcr.io/gke-labs/open-rl/client:latest"
+CLIENT_IMAGE = "ghcr.io/openrl-dev/openrl/client:latest"
 APP_LABEL = "open-rl-perf"
 RUN_LABEL = "openrl.io/perf-run"
 WORKER_SELECTOR = "app in (open-rl-trainer-worker,open-rl-sampler-worker)"

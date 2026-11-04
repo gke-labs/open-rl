@@ -28,9 +28,9 @@ configMapGenerator:
       - OPEN_RL_WEIGHT_SYNC_STRATEGY="delta"
 
 images:
-  - name: ghcr.io/gke-labs/open-rl/server
+  - name: ghcr.io/openrl-dev/openrl/server
     newTag: latest
-  - name: ghcr.io/gke-labs/open-rl/api-server
+  - name: ghcr.io/openrl-dev/openrl/api-server
     newTag: latest
 
 # FFT remains an optional deployment with cooperative GPU sharing.

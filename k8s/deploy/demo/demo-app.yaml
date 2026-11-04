@@ -50,7 +50,7 @@ spec:
       terminationGracePeriodSeconds: 2
       containers:
       - name: demo
-        image: ghcr.io/gke-labs/open-rl/api-server:latest
+        image: ghcr.io/openrl-dev/openrl/api-server:latest
         command: ["sh", "-c", "cd /app && uv run python /demo/app.py"]
         ports:
         - name: http
@@ -64,7 +64,7 @@ spec:
           value: http://open-rl-api-server-service:8000
         # The client image the sweep's Jobs run; an overlay points it at its own build.
         - name: CLIENT_IMAGE
-          value: ghcr.io/gke-labs/open-rl/client:latest
+          value: ghcr.io/openrl-dev/openrl/client:latest
         # Shown on the Fleet tab next to the namespace; optional.
         - name: CLUSTER_NAME
           value: ""

@@ -9,7 +9,7 @@ resources:
   - ../../base
 
 images:
-  - name: ghcr.io/gke-labs/open-rl/scheduler
+  - name: ghcr.io/openrl-dev/openrl/scheduler
     newName: open-rl/scheduler
     newTag: smoke
 

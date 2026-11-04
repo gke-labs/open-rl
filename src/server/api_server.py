@@ -862,7 +862,7 @@ async def lifespan(_: FastAPI):
 # The release tag, baked in at image build (OPEN_RL_VERSION build arg); the
 # VERSION file is an internal counter and does not name a release.
 OPEN_RL_VERSION = os.getenv("OPEN_RL_VERSION") or "dev"  # an empty build arg must not become the version
-RELEASES_URL = "https://github.com/gke-labs/open-rl/releases"
+RELEASES_URL = "https://github.com/openrl-dev/openrl/releases"
 EXAMPLE_MODELS = ["Qwen/Qwen2.5-0.5B", "Qwen/Qwen3-0.6B", "google/gemma-4-e2b", "Qwen/Qwen3-8B"]
 
 app = FastAPI(
@@ -872,7 +872,7 @@ app = FastAPI(
     "A self-hosted, Kubernetes-native post-training API that serves the Tinker API. "
     "Tinker SDK clients use the /api/v1 paths. GET /api/v1/openrl/models/{model_id} is OpenRL's own: "
     "what the server knows about one model, its settings, its workers and whether its session is live. "
-    "Repository and docs: https://github.com/gke-labs/open-rl"
+    "Repository and docs: https://github.com/openrl-dev/openrl"
   ),
   lifespan=lifespan,
 )
@@ -989,7 +989,7 @@ def openrl_info() -> dict[str, Any]:
       "session_reap_interval_seconds": SESSION_REAP_INTERVAL_SEC,
     },
     "skill_url": f"{RELEASES_URL}/download/{OPEN_RL_VERSION}/openrl-skill.tar.gz" if release else None,
-    "getting_started_url": "https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md",
+    "getting_started_url": "https://github.com/openrl-dev/openrl/blob/main/docs/getting-started.md",
   }
 
 

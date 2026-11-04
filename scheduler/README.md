@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: worker
-          image: ghcr.io/gke-labs/open-rl/worker:latest
+          image: ghcr.io/openrl-dev/openrl/worker:latest
 ```
 
 Everything else — device, tier, claim, node — is derived and reported back in

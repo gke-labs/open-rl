@@ -32,7 +32,7 @@ spec:
       serviceAccountName: open-rl-sa
       containers:
       - name: api-server
-        image: ghcr.io/gke-labs/open-rl/api-server:latest
+        image: ghcr.io/openrl-dev/openrl/api-server:latest
         imagePullPolicy: IfNotPresent
         command: ["uv", "run", "uvicorn", "server.api_server:app", "--host", "0.0.0.0", "--port", "8000"]
         ports:

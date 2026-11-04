@@ -117,7 +117,7 @@ spec:
       containers:
       - name: manager
         # Built by `make docker-build docker-push` from controller/.
-        image: ghcr.io/gke-labs/open-rl/scheduler:latest
+        image: ghcr.io/openrl-dev/openrl/scheduler:latest
         args:
         - --leader-elect
         - --health-probe-bind-address=:8081

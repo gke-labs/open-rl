@@ -118,12 +118,12 @@ Apply **only one** of the following release bundles. Both install the same API s
 
 *   **Option A: LoRA.** Trainer and sampler workers each get a GPU of their own.
     ```bash
-    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+    kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
     ```
 
 *   **Option B: LoRA and full fine-tuning (FFT).** Adds FFT workers, which can share a GPU with other FFT workers, and two DaemonSets that coordinate that sharing on each GPU node: the accelerator time-slicer and the llm-d snapshot agent.
     ```bash
-    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml
+    kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-fft.yaml
     ```
     The DaemonSets run privileged, with host PID and host network, and schedule onto nodes labeled `nvidia.com/gpu.present=true` (set on the pool above). The snapshot agent checkpoints CUDA processes and needs NVIDIA driver r570 or newer, which the `latest` driver installer above provides. FFT workers never share a GPU with a LoRA worker. See [GKE FFT Time-Slice Setup](gke-fft-timeslice.md) for how the sharing works.
 

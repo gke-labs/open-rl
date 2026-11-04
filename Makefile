@@ -323,7 +323,7 @@ dashboard-apply:
 # ---------------------------------------------------------------------------
 # Images published by .github/workflows/build-and-push.yml. The names must match
 # the manifests exactly or the pin silently does nothing.
-IMAGE_REPO     ?= ghcr.io/gke-labs/open-rl
+IMAGE_REPO     ?= ghcr.io/openrl-dev/openrl
 RELEASE_IMAGES ?= server api-server client scheduler
 # Gitignored; the release job uploads everything in here.
 DIST_DIR       ?= dist
