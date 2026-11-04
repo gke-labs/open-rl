@@ -1,37 +1,64 @@
 # syntax=docker/dockerfile:1
 
-# TPU sampler image. BASE_IMAGE must already have torch, torch_tpu and a vLLM
-# TPU build that keeps the model as torch Parameters, so a full checkpoint can
-# be reloaded in place each step. open-rl's dependencies are held to the
-# versions the base already has.
+# TPU sampler image. Same layout as src/server/Dockerfile.tpu, with the
+# `tpu-sampler` extra (vllm-torchtpu: vLLM for TPU on torch-tpu, CPU torch,
+# JAX and libtpu) instead of `tpu`. The model stays torch Parameters, so a full
+# checkpoint can be reloaded in place each step.
+# TODO: multi-LoRA on TPU is not in this release; it needs vllm-torchtpu built
+# from main with PRs #2376, #2359, #2378 and #2360 until a release carries them.
 
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
+FROM ubuntu:22.04
 
-# UV_NO_PROJECT: workers start with `uv run`, which would otherwise build an
-# empty project venv in /app instead of using the base's python.
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    UV_NO_PROJECT=1
+    DEBIAN_FRONTEND=noninteractive \
+    UV_FROZEN=1
+
+# git fetches the `cluster` extra's git dependency. Everything installs from
+# wheels, so no compiler. libgoogle-perftools4 is tcmalloc, preloaded below as
+# in the upstream vllm-torchtpu image: torch_tpu's host side runs many threads
+# and glibc malloc holds on to freed memory under that thread count.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+    libgoogle-perftools4 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libtcmalloc.so.4
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uv/bin/uv
+ENV PATH="/uv/bin:$PATH"
+
+# Install Python 3.12 via uv
+RUN uv python install 3.12
 
 WORKDIR /app
+
+# Copy dependency files
 COPY pyproject.toml .
-COPY src src
+COPY uv.lock .
 
-# Installed into the base's python so vLLM finds the delta-sync plugin's entry point.
-# /app/.venv sees that python's packages: a routed sampler's readiness probe runs
-# /app/.venv/bin/python, the GPU worker image's interpreter.
+# Same uv settings as src/server/Dockerfile.
+ENV UV_LINK_MODE=copy \
+    UV_COMPILE_BYTECODE=1 \
+    UV_NO_SYNC=1
+
 RUN --mount=type=cache,target=/root/.cache/uv \
-    PY="$(command -v python)" && \
-    uv pip freeze --python "$PY" > /tmp/base-constraints.txt && \
-    uv pip install --python "$PY" --constraint /tmp/base-constraints.txt . && \
-    rm -rf build src/*.egg-info /tmp/base-constraints.txt && \
-    uv venv --system-site-packages --python "$PY" /app/.venv
+    uv sync --frozen --no-install-project --extra tpu-sampler --extra cluster
 
-# vLLM saves the compiled model to disk and reuses it on its next start. On TPU,
-# a reused copy can make vLLM run the model uncompiled, one op at a time, which
-# crashes the TPU runtime. Without the saved copy, every start compiles again.
-ENV PYTHONPATH=/app/src \
+# Copy source code
+COPY . .
+
+# Install the project, so vLLM finds the delta-sync plugin's entry point.
+RUN uv sync --frozen --extra tpu-sampler --extra cluster
+
+# The venv is on PATH: a routed sampler's readiness probe runs
+# /app/.venv/bin/python. vLLM saves the compiled model to disk and reuses it on
+# its next start; on TPU a reused copy can make vLLM run the model uncompiled,
+# one op at a time, which crashes the TPU runtime, so the saved copy is off.
+ENV PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src:/app:$PYTHONPATH" \
     VLLM_DISABLE_COMPILE_CACHE=1
 
 CMD ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
