@@ -54,11 +54,8 @@ COPY . .
 RUN uv sync --frozen --extra tpu-sampler --extra cluster
 
 # The venv is on PATH: a routed sampler's readiness probe runs
-# /app/.venv/bin/python. vLLM saves the compiled model to disk and reuses it on
-# its next start; on TPU a reused copy can make vLLM run the model uncompiled,
-# one op at a time, which crashes the TPU runtime, so the saved copy is off.
+# /app/.venv/bin/python.
 ENV PATH="/app/.venv/bin:$PATH" \
-    PYTHONPATH="/app/src:/app:$PYTHONPATH" \
-    VLLM_DISABLE_COMPILE_CACHE=1
+    PYTHONPATH="/app/src:/app:$PYTHONPATH"
 
 CMD ["uv", "run", "python", "-u", "-m", "server.vllm_sampler"]
