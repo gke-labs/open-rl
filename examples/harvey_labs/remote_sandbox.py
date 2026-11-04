@@ -26,45 +26,8 @@ DOCUMENTS = "/workspace/documents"
 OUTPUT = "/workspace/output"
 COLLECT_ATTEMPTS = 4
 
-# Runs in the guest so glob and grep see the sandbox filesystem, with the same
-# ordering, limits, and symlink rules as LAB's host-side versions.
-SEARCH_SCRIPT = r"""
-import json, re, sys
-from pathlib import Path
-a = json.loads(sys.argv[1])
-root = Path(a["root"])
-real = root.resolve()
-def under(p):
-  try:
-    p.resolve().relative_to(real)
-    return True
-  except ValueError:
-    return False
-if a["kind"] == "glob":
-  found = sorted((m for m in root.glob(a["pattern"]) if m.is_file() and under(m)), key=lambda p: p.stat().st_mtime, reverse=True)
-  print(json.dumps([str(m.relative_to(root)) for m in found[:100]]))
-  sys.exit()
-regex = re.compile(a["pattern"])
-out = []
-for f in root.glob(a["file_glob"] or "**/*"):
-  if not f.is_file() or not under(f):
-    continue
-  try:
-    text = f.read_text(encoding="utf-8", errors="replace")
-  except Exception:
-    continue
-  hits = list(regex.finditer(text))
-  if not hits:
-    continue
-  rel = str(f.relative_to(root))
-  if a["mode"] == "files_with_matches":
-    out.append(rel)
-  elif a["mode"] == "count":
-    out.append(f"{rel}: {len(hits)}")
-  elif a["mode"] == "content":
-    out.extend(f"{rel}:{i + 1}: {line}" for i, line in enumerate(text.split("\n")) if regex.search(line))
-print(json.dumps(out[:250]))
-"""
+# Sent to the guest and run there with python3 so glob and grep see the sandbox filesystem.
+SEARCH_SCRIPT = (Path(__file__).parent / "guest_search.py").read_text()
 
 
 def tar_bytes(entries: list[tuple[Path, str]]) -> bytes:
