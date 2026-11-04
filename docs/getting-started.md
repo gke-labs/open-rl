@@ -81,7 +81,8 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
   --version="25.8.0" --create-namespace --namespace nvidia-dra-driver-gpu \
-  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
+  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/" \
+  --set gpuResourcesEnabledOverride=true
 ```
 
 When the drivers are up, the GPU node has a `ResourceSlice` from driver
