@@ -1,5 +1,6 @@
 """One configuration shared by training, evaluation, and LAB environments."""
 
+from functools import cache
 from pathlib import Path
 
 import chz
@@ -9,7 +10,7 @@ from tinker_cookbook import model_info
 @chz.chz
 class RunConfig:
   # Defaults are the Qwen3.5-9B recipe that raised held-out reward from 0.57
-  # to 0.72-0.74 over 30 steps (run 5b, Automodel LoRA at a 196k window).
+  # to 0.72-0.74 over 30 steps (run 5b, Automodel LoRA at the full 256k window).
   model_name: str = "Qwen/Qwen3.5-9B"
   renderer_name: str | None = None
   base_url: str | None = None
@@ -29,8 +30,9 @@ class RunConfig:
   max_steps: int = 35
   max_turns: int = 40
   max_tokens: int = 32 * 1024
-  # The gateway's VLLM_MAX_MODEL_LEN and OPEN_RL_TRAIN_TOKEN_BUDGET must fit it.
-  max_trajectory_tokens: int = 192 * 1024
+  # None uses the model's full context window. The gateway's VLLM_MAX_MODEL_LEN
+  # and OPEN_RL_TRAIN_TOKEN_BUDGET must fit it; lower all three on smaller GPUs.
+  max_trajectory_tokens: int | None = None
   max_tool_result_tokens: int = 16 * 1024
   # When a turn stops on the per-turn max_tokens cap: False ends the episode
   # there, as the reference LAB harness does, and it is graded on what was
@@ -57,9 +59,21 @@ class RunConfig:
   log_groups: int = 0  # Trajectory groups printed to the console per step; 0 keeps the console to steps and metrics.
 
   @property
+  def resolved_max_trajectory_tokens(self) -> int:
+    return self.max_trajectory_tokens or context_window(self.model_name)
+
+  @property
   def resolved_renderer(self) -> str:
     if self.renderer_name:
       return self.renderer_name
     if "gemma" in self.model_name.lower():
       return "gemma4"
     return model_info.get_recommended_renderer_name(self.model_name)
+
+
+@cache
+def context_window(model_name: str) -> int:
+  """The model's maximum sequence length, from its Hugging Face config."""
+  from transformers import AutoConfig
+
+  return AutoConfig.from_pretrained(model_name).get_text_config().max_position_embeddings

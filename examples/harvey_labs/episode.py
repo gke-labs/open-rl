@@ -3,7 +3,8 @@ and grade episodes the cookbook would otherwise end ungraded."""
 
 from dataclasses import replace
 
-from tinker_cookbook.rl.types import Env, InitialObservationOverflow
+import tinker
+from tinker_cookbook.rl.types import STOP_METRIC_PREFIX, Env, InitialObservationOverflow, StepResult, StopReason
 
 # Missing keys are excluded from cookbook's metric averages. Fill zeroes on
 # ordinary transitions so these flags measure rates rather than presence.
@@ -18,9 +19,11 @@ _BUDGET_LIMIT_METRICS = ("context_overflow", "max_tokens_reached")
 
 
 class LabEpisodeEnv(Env):
-  def __init__(self, env: Env, criteria_count: int):
+  def __init__(self, env: Env, criteria_count: int, max_trajectory_tokens: int | None = None, min_turn_budget: int = 2048):
     self.env = env
     self.criteria_count = criteria_count
+    self.max_trajectory_tokens = max_trajectory_tokens
+    self.min_turn_budget = min_turn_budget
 
   def __getattr__(self, name):
     return getattr(self.env, name)
@@ -44,14 +47,35 @@ class LabEpisodeEnv(Env):
       )
     return metrics
 
+  def _enforce_floor(self, observation, result_or_obs):
+    if self.max_trajectory_tokens and self.max_trajectory_tokens - observation.length < self.min_turn_budget:
+      metrics = {"context_overflow": 1.0, f"{STOP_METRIC_PREFIX}{StopReason.CONTEXT_OVERFLOW}": 1.0}
+      if isinstance(result_or_obs, StepResult):
+        return replace(
+          result_or_obs,
+          episode_done=True,
+          next_observation=tinker.ModelInput.empty(),
+          metrics={**(result_or_obs.metrics or {}), **metrics},
+        )
+      else:
+        return InitialObservationOverflow(
+          reward=0.0, metrics=metrics, logs={"initial_observation_overflow": "Observation too long to allow min_turn_budget."}
+        )
+    return result_or_obs
+
   async def initial_observation(self):
     observation = await self.env.initial_observation()
+    if not isinstance(observation, InitialObservationOverflow):
+      # A regular start is an (observation, stop_condition) pair.
+      observation = self._enforce_floor(observation[0], observation)
     if isinstance(observation, InitialObservationOverflow):
       return replace(observation, metrics=self._metrics(observation.metrics, True))
     return observation
 
   async def step(self, action, *, extra=None):
     result = await self.env.step(action, extra=extra)
+    if not result.episode_done:
+      result = self._enforce_floor(result.next_observation, result)
     if result.episode_done and self.ended_on_budget(result.metrics):
       result = await self.grade_budget_terminal(result)
     metrics = self._metrics(result.metrics, result.episode_done)
