@@ -115,12 +115,25 @@ class PodmanLabSandbox:
     await asyncio.to_thread(self._sandbox.stop)
 
 
-def configured_sandbox_factory(sandbox_warmpool: str | None, sandbox_namespace: str) -> SandboxFactory:
-  if not sandbox_warmpool:
+def configured_sandbox_factory(config: Any) -> SandboxFactory:
+  if config.sandbox_substrate_endpoint:
+    if config.sandbox_warmpool:
+      raise ValueError("Cannot set both sandbox_substrate_endpoint and sandbox_warmpool.")
+    if not config.sandbox_substrate_image:
+      raise ValueError("sandbox_substrate_image is required when sandbox_substrate_endpoint is set.")
+    from .substrate_sandbox import SubstrateSandboxFactory
+
+    return SubstrateSandboxFactory(
+      config.sandbox_substrate_endpoint,
+      config.sandbox_substrate_image,
+      config.sandbox_substrate_atespace,
+      config.sandbox_substrate_idle_suspend_seconds,
+    )
+  if not config.sandbox_warmpool:
     return podman_sandbox_factory
   from .agent_sandbox import AgentSandboxFactory
 
-  return AgentSandboxFactory(sandbox_warmpool, sandbox_namespace)
+  return AgentSandboxFactory(config.sandbox_warmpool, config.sandbox_namespace)
 
 
 async def podman_sandbox_factory(request: SandboxRequest) -> LabSandbox:
