@@ -19,7 +19,7 @@ import httpx
 import redis.asyncio as redis
 
 from server.sampling_store import SamplingStore, accepted_at, job_of
-from server.telemetry import serving, set_phase
+from server.telemetry import sending, sent_done, serving, set_phase
 from server.vllm_options import sample_params, sample_result
 
 logger = logging.getLogger(__name__)
@@ -174,6 +174,7 @@ class Dispatcher:
     """Saves the sampler's answer. None, or an error, leaves the record pending to be sent again."""
     self.served[job_of(r)] = next(self.sends)
     started_at = time.time()
+    sending(job_of(r))  # live: this job has a request with the engine
     try:
       # A sampler that never answers must not hold the send past its record's deadline.
       timeout = max(0.0, accepted_at(r) + SAMPLE_DEADLINE_SECONDS - time.time())
@@ -181,6 +182,8 @@ class Dispatcher:
     except Exception as exc:
       logger.info("Retrying %s after %r", r["request_id"], exc)
       return
+    finally:
+      sent_done(job_of(r))
     if result is not None:
       await self.set_result(r, result, started_at)
 

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import time
 from datetime import datetime
@@ -13,7 +14,7 @@ from server.observability.kubernetes import namespace
 from server.observability.log_selector import ClientLines, WorkerPods
 from server.observability.steps import steps
 from server.store import get_state_store
-from server.telemetry import key
+from server.telemetry import LIVE_KEY, LIVE_STALE_SECONDS, key
 from server.worker_manager import owner_id
 
 router = APIRouter(tags=["inspection"])
@@ -58,6 +59,26 @@ async def activity(since: Bound = None, until: Bound = None, run_id: str | None 
   lanes = fleet.lanes(held, low, high, run_id, node_id)
   await fleet.active_runs(lanes, low, high)
   return {"since": since, "until": until, "errors": held["errors"], "lanes": lanes}
+
+
+@router.get("/api/v1/inspect/now")
+async def now():
+  """Every live worker's state now, for a reader polling about once a second: its pod, role and phase (waiting for the
+  time slicer, on_gpu during a turn, ready between turns) with when it began, the op it runs (`current`: run_id, op,
+  since) and the runs it has sampling requests in flight for (`in_flight`). Workers write this the moment it changes,
+  and it is read straight from the store with no cache, so it trails the workers by a write and a poll. A worker that
+  has not written for LIVE_STALE_SECONDS is left out. `at` is the server's clock, for a reader's own skew."""
+  at = time.time()
+  raw = await get_state_store().read_fields(LIVE_KEY)
+  workers = []
+  for value in raw.values():
+    try:
+      w = json.loads(value)
+    except ValueError:
+      continue
+    if at - (w.get("at") or 0) <= LIVE_STALE_SECONDS and w.get("phase") != "exited":
+      workers.append(w)
+  return {"at": at, "workers": sorted(workers, key=lambda w: (w.get("pod") or "", w.get("id") or ""))}
 
 
 @router.get("/api/v1/inspect/query")

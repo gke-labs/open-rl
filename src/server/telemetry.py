@@ -47,6 +47,11 @@ MAX_TURNS = 200
 SDK_ERRORS = 200
 MESSAGE_CHARS = 500
 FLUSH_SECONDS = 5
+# Live state: each worker's entry in one hash, written the moment its state changes so a reader sees it within a poll,
+# and refreshed with every flush. An entry older than LIVE_STALE_SECONDS belongs to a process that stopped writing.
+LIVE_KEY = "open_rl:live"
+LIVE_TTL_SECONDS = 120
+LIVE_STALE_SECONDS = 20
 FINISH_SECONDS = 5  # how long an exiting process waits for its last flush
 FAILED = "RequestFailedResponse"
 SECRET = re.compile(r"authorization|cookie|api[-_]?key|access[-_]?token|secret|password", re.I)
@@ -114,6 +119,17 @@ class Worker:
       "config": {"env": {k: v for k, v in sorted(os.environ.items()) if k.startswith(CONFIG_ENV) and not SECRET.search(k)}},
     }
     self.outstanding: dict[str, Outstanding] = {}
+    # What it is doing now, for live readers: the op it runs (trainer) and the jobs it has requests in flight for
+    # (sampler), each with when it began. The event loop changes these; the recorder's thread reads them.
+    self.current: dict | None = None
+    self.in_flight: dict[str, list] = {}  # run -> [count, since]
+
+  def live(self) -> str:
+    """The worker's state now, small enough to write on every change."""
+    r = self.record
+    in_flight = [{"run_id": run, "count": count, "since": since} for run, (count, since) in list(self.in_flight.items())]
+    state = {k: r.get(k) for k in ("id", "pod", "node", "role", "runtime_id", "phase", "phase_since")}
+    return json.dumps(state | {"current": self.current, "in_flight": in_flight, "at": time.time()})
 
   def snapshot(self) -> str:
     """The record as JSON, with outstanding requests counted by op and run, each group showing its oldest."""
@@ -173,14 +189,37 @@ class Recorder:
     # Each run's step count before this process's first step, read on this thread before its first op is written.
     self.step_starts: dict[str, int] = {}
     self.stopped = threading.Event()
+    self.changed = threading.Event()  # set when the worker's live state changes
+    self.live_store = None
     self.thread = threading.Thread(target=self.beat, name="telemetry", daemon=True)
 
   def beat(self) -> None:
-    while not self.stopped.wait(FLUSH_SECONDS):
-      self.flush()
+    last_flush = time.monotonic()
+    while not self.stopped.is_set():
+      self.changed.wait(max(0.0, FLUSH_SECONDS - (time.monotonic() - last_flush)))
+      self.changed.clear()
+      if self.stopped.is_set():
+        break
+      self.write_live()
+      if time.monotonic() - last_flush >= FLUSH_SECONDS:
+        self.flush()
+        last_flush = time.monotonic()
     if self.worker is not None:
       self.worker.record.update(phase="exited", phase_since=time.time())
     self.flush()
+    if self.worker is not None:
+      with suppress(Exception):
+        get_state_store().delete_field_sync(LIVE_KEY, self.worker.record["id"])
+
+  def write_live(self) -> None:
+    """One HSET on a store kept between writes (live writes come many times a flush); rebuilt after a failure."""
+    if self.worker is None:
+      return
+    try:
+      self.live_store = self.live_store or get_state_store()
+      self.live_store.set_field_sync(LIVE_KEY, self.worker.record["id"], self.worker.live(), LIVE_TTL_SECONDS)
+    except Exception:
+      self.live_store = None
 
   def flush(self) -> None:
     entries = []
@@ -230,6 +269,7 @@ async def finish() -> None:
   if stopping is None:
     return
   stopping.stopped.set()
+  stopping.changed.set()  # wakes the recorder's wait
   deadline = time.monotonic() + FINISH_SECONDS
   while stopping.thread.is_alive() and time.monotonic() < deadline:
     await asyncio.sleep(0.02)
@@ -246,9 +286,35 @@ async def serving(role: str, runtime_id: str | None):
 
 
 @best_effort
+def live_changed() -> None:
+  """The worker's live state changed: the recorder writes it now rather than at the next flush."""
+  if recorder is not None:
+    recorder.changed.set()
+
+
 def set_phase(phase: str) -> None:
   if (w := worker()) is not None and w.record["phase"] != phase:
     w.record.update(phase=phase, phase_since=time.time())
+    live_changed()
+
+
+@best_effort
+def sending(run_id: str) -> None:
+  """A sampler sent one of a job's requests to its engine; it is in flight until sent_done."""
+  if (w := worker()) is not None:
+    entry = w.in_flight.setdefault(run_id, [0, time.time()])
+    entry[0] += 1
+    if entry[0] == 1:
+      live_changed()
+
+
+@best_effort
+def sent_done(run_id: str) -> None:
+  if (w := worker()) is not None and run_id in w.in_flight:
+    w.in_flight[run_id][0] -= 1
+    if w.in_flight[run_id][0] <= 0:
+      del w.in_flight[run_id]
+      live_changed()
 
 
 @best_effort
@@ -262,6 +328,7 @@ async def gpu_turn(slot):
   """Take the time slicer's slot for the body and show it on the worker record: the wait from asking to the grant, then
   the turn, which holds the wake and the sleep around the work."""
   asked = time.time()
+  set_phase("waiting")
   async with slot:
     granted = time.time()
     note("waits", asked, granted)
@@ -369,6 +436,9 @@ async def observe_operation(command: Command, runtime_id: str | None, call: Call
   """Run one trainer op and record how it went. Returns or raises exactly as the op does."""
   started_at, found = time.time(), set()
   mark_observed(command.request_id)
+  if (w := worker()) is not None:
+    w.current = {"run_id": command.model_id, "op": "forward" if getattr(command, "forward_only", False) else command.op, "since": started_at}
+    live_changed()
   token = nonfinite_names.set(found)  # the op's worker threads copy this context, so they add to found
   try:
     result = await call()
@@ -377,6 +447,9 @@ async def observe_operation(command: Command, runtime_id: str | None, call: Call
     raise
   finally:
     nonfinite_names.reset(token)
+    if (w := worker()) is not None:
+      w.current = None
+      live_changed()
   op_finished(command, runtime_id, started_at, found, result=result)
   return result
 
