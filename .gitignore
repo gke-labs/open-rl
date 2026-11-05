@@ -60,6 +60,9 @@ Thumbs.db
 
 # Local benchmark run outputs
 runs/
+# Harvey LAB checkout (setup_lab.sh) and run logs (default log_path)
+examples/harvey_labs/harvey-labs/
+examples/artifacts/
 *.pyc
 docs/fft/2026-08-20-*.html
 docs/fft/2026-08-20-*.md
