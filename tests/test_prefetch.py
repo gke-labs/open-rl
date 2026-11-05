@@ -62,3 +62,28 @@ class PrefetchTest(unittest.TestCase):
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class ReadWholeTest(unittest.TestCase):
+  """read_whole returns a file's exact bytes however the file splits into parallel chunks."""
+
+  def setUp(self):
+    self.dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+
+  def check(self, size: int, **kwargs) -> None:
+    path = self.dir / f"f{size}"
+    data = os.urandom(size)
+    path.write_bytes(data)
+    self.assertEqual(prefetch.read_whole(path, **kwargs), data)
+
+  def test_a_size_that_is_not_a_multiple_of_the_chunk(self):
+    self.check(5 * 1024 + 7, chunk=1024, threads=4)
+
+  def test_more_chunks_than_threads(self):
+    self.check(64 * 1024, chunk=1000, threads=3)
+
+  def test_one_thread_and_one_chunk(self):
+    self.check(4096, chunk=1 << 20, threads=1)
+
+  def test_an_empty_file(self):
+    self.check(0)
