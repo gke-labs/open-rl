@@ -187,6 +187,9 @@ class _TrainingRequestsStoreStub(_FutureStoreStub):
     self.batches = list(batches)
     self.queried_model_ids = []
 
+  async def queued(self, model_id):
+    return 0  # nothing waits between batches, so a turn takes no more than its batch
+
   async def get_requests_for_model(self, model_id):
     self.queried_model_ids.append(model_id)
     if self.batches:
