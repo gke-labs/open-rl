@@ -191,6 +191,33 @@ def worker_container(worker: Worker) -> tuple[str, list[str]]:
   return image, ["uv", "run", "python", "-u", "-m", TRAINER_MODULE]
 
 
+def shared_dirs() -> list[str]:
+  """The directories under OPEN_RL_TMP_DIR that stay on the shared volume when OPEN_RL_LOCAL_HOST_PATH holds the rest."""
+  return [d.strip() for d in os.getenv("OPEN_RL_SHARED_DIRS", "runs").split(",") if d.strip()]
+
+
+def use_local_tmp(spec: dict[str, Any], container: dict[str, Any]) -> bool:
+  """Experimental, single-node clusters only: OPEN_RL_TMP_DIR lives on OPEN_RL_LOCAL_HOST_PATH, a host directory such as
+  the node's local SSDs, except for the directories in OPEN_RL_SHARED_DIRS, which are mounted back from the shared
+  volume. A pod sees only what was written on its own node: caches fill per node, and a sampler finds its trainer's
+  delta or adapter, or its pool's revision, only if they run on the same node. One host mount, not one per directory,
+  so files still move between directories by rename and hard link (a LoRA save moves the adapter from peft into
+  sampler_lora). Returns whether it applied."""
+  host_path = os.getenv("OPEN_RL_LOCAL_HOST_PATH")
+  if not host_path:
+    return False
+  root = tmp_root()
+  within = os.path.relpath(root, "/mnt/shared")
+  if within.startswith(".."):
+    raise ValueError(f"OPEN_RL_LOCAL_HOST_PATH needs OPEN_RL_TMP_DIR under /mnt/shared, not {root}")
+  container["volumeMounts"].append({"name": "local-tmp", "mountPath": root})
+  container["volumeMounts"] += [
+    {"name": "shared-storage", "mountPath": os.path.join(root, d), "subPath": os.path.join(within, d)} for d in shared_dirs()
+  ]
+  spec["volumes"].append({"name": "local-tmp", "hostPath": {"path": host_path, "type": "DirectoryOrCreate"}})
+  return True
+
+
 def pod_template(worker: Worker) -> dict[str, Any]:
   """The complete worker pod minus placement. Node selection and claims are
   the scheduler's; it rejects a template that carries them."""
@@ -218,6 +245,8 @@ def pod_template(worker: Worker) -> dict[str, Any]:
       "tolerations": [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}],
     },
   }
+
+  use_local_tmp(template["spec"], template["spec"]["containers"][0])
 
   # NCCL moves data between ranks through /dev/shm, which is 64Mi by default.
   if worker.devices > 1:
@@ -300,6 +329,20 @@ def dispatcher_body(pool: str, owner: str) -> dict[str, Any]:
     "resources": {"requests": {"cpu": "125m", "memory": "256Mi"}, "limits": {"memory": "4Gi"}},
     "volumeMounts": [{"name": "router", "mountPath": ROUTER_CONFIG}],
   }
+  pod_spec: dict[str, Any] = {
+    "serviceAccountName": "open-rl-sampler-dispatcher",
+    "containers": [dispatcher, envoy, epp],
+    "volumes": [
+      {"name": "router", "configMap": {"name": "open-rl-sampler-router"}},
+      {"name": "shared-storage", "persistentVolumeClaim": {"claimName": os.getenv("OPEN_RL_SHARED_PVC", "open-rl-shared-pvc")}},
+    ],
+  }
+  # The dispatcher writes the pool's revision file, which its samplers' readiness probes read: with a host temp root it
+  # must run on their node, named by OPEN_RL_LOCAL_NODE_SELECTOR (key=value).
+  if use_local_tmp(pod_spec, dispatcher) and (selector := os.getenv("OPEN_RL_LOCAL_NODE_SELECTOR")):
+    key, _, value = selector.partition("=")
+    pod_spec["nodeSelector"] = {key: value}
+    pod_spec["tolerations"] = [{"key": "nvidia.com/gpu", "operator": "Exists", "effect": "NoSchedule"}]
   return {
     "apiVersion": "apps/v1",
     "kind": "Deployment",
@@ -310,14 +353,7 @@ def dispatcher_body(pool: str, owner: str) -> dict[str, Any]:
       "selector": {"matchLabels": labels},
       "template": {
         "metadata": {"labels": labels},
-        "spec": {
-          "serviceAccountName": "open-rl-sampler-dispatcher",
-          "containers": [dispatcher, envoy, epp],
-          "volumes": [
-            {"name": "router", "configMap": {"name": "open-rl-sampler-router"}},
-            {"name": "shared-storage", "persistentVolumeClaim": {"claimName": os.getenv("OPEN_RL_SHARED_PVC", "open-rl-shared-pvc")}},
-          ],
-        },
+        "spec": pod_spec,
       },
     },
   }
