@@ -15,10 +15,10 @@ produces a release; nothing else does.
 Images, published to GHCR by `.github/workflows/build-and-push.yml` and tagged with the git tag
 verbatim:
 
-- `ghcr.io/gke-labs/open-rl/server:<tag>`
-- `ghcr.io/gke-labs/open-rl/api-server:<tag>`
-- `ghcr.io/gke-labs/open-rl/client:<tag>` (the e2e client, `src/server/Dockerfile.client`)
-- `ghcr.io/gke-labs/open-rl/scheduler:<tag>`
+- `ghcr.io/openrl-dev/openrl/server:<tag>`
+- `ghcr.io/openrl-dev/openrl/api-server:<tag>`
+- `ghcr.io/openrl-dev/openrl/client:<tag>` (the e2e client, `src/server/Dockerfile.client`)
+- `ghcr.io/openrl-dev/openrl/scheduler:<tag>`
 
 Assets, attached to the GitHub Release:
 
@@ -71,7 +71,7 @@ Every bundle has its images pinned to the release tag. The API server reports th
 4. **Verify on a clean cluster.**
 
    ```bash
-   kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/download/v0.0.2/openrl-lora.yaml
+   kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/download/v0.0.2/openrl-lora.yaml
    kubectl -n openrl-system get pods -o jsonpath='{..image}'
    ```
 

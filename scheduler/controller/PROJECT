@@ -14,7 +14,7 @@ domain: openrl.io
 layout:
 - go.kubebuilder.io/v4
 projectName: open-rl-scheduler
-repo: github.com/gke-labs/open-rl/scheduler/controller
+repo: github.com/openrl-dev/openrl/scheduler/controller
 resources:
 - api:
     crdVersion: v1
@@ -22,13 +22,13 @@ resources:
   controller: true
   domain: openrl.io
   kind: Workload
-  path: github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1
+  path: github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1
   version: v1alpha1
 - api:
     crdVersion: v1
     namespaced: true
   domain: openrl.io
   kind: ClaimLedger
-  path: github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1
+  path: github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1
   version: v1alpha1
 version: "3"

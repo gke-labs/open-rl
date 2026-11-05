@@ -8,7 +8,7 @@ description: >-
 
 OpenRL release: dev
 
-OpenRL (github.com/gke-labs/open-rl) serves the Tinker API on a Kubernetes
+OpenRL (github.com/openrl-dev/openrl) serves the Tinker API on a Kubernetes
 cluster your platform team runs. Any `tinker` SDK client or `tinker-cookbook`
 recipe works against it; your training loop runs on your machine and the
 GPUs do the work on the cluster. Facts here were verified on v0.0.6 plus the

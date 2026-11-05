@@ -229,10 +229,10 @@ uses for keywords, strings, comments and highlighted lines.
   openrl.dev.      AAAA  2606:50c0:8001::153
   openrl.dev.      AAAA  2606:50c0:8002::153
   openrl.dev.      AAAA  2606:50c0:8003::153
-  www.openrl.dev.  CNAME gke-labs.github.io.
+  www.openrl.dev.  CNAME openrl-dev.github.io.
   ```
 
-  GitHub also asks for a `_github-pages-challenge-gke-labs` TXT record
+  GitHub also asks for a `_github-pages-challenge-openrl-dev` TXT record
   to verify the domain for the organization; the value comes from the
   organization's Pages settings.
 - openrl.io: GitHub Pages serves one custom domain per site, so the
@@ -284,7 +284,7 @@ git worktree add ../open-rl-site -b website/scaffold upstream/main
 cd ../open-rl-site
 hugo server -s site -D
 git push -u origin website/scaffold
-gh pr create --repo gke-labs/open-rl --base main --head droot:website/scaffold
+gh pr create --repo openrl-dev/openrl --base main --head droot:website/scaffold
 
 # when the PR has merged
 cd ../open-rl && git worktree remove ../open-rl-site
@@ -319,7 +319,7 @@ if the reviewers of those workflows agree.
 1. openrl.dev as canonical, and where the DNS for each domain is
    hosted.
 2. Hugo and GitHub Pages, or a different pair.
-3. Who has admin on gke-labs/open-rl for the Pages settings and the
+3. Who has admin on openrl-dev/openrl for the Pages settings and the
    organization-level domain verification.
 4. Which self-hosted sans. Candidates with an Avenir-like feel under
    the Open Font License: Figtree, Nunito Sans, Outfit.

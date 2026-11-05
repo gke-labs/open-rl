@@ -58,7 +58,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
-          images: ghcr.io/gke-labs/open-rl/${{ matrix.image_name }}
+          images: ghcr.io/openrl-dev/openrl/${{ matrix.image_name }}
           # Tags every push `sha-<short>`, the default branch `latest`, and a
           # `v*` tag push `v<x.y.z>`. The literal `v` keeps the image tag equal
           # to the git tag, which the bundle pins to. The sha outranks `latest`

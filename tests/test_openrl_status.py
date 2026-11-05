@@ -68,7 +68,7 @@ class StatusViewsTest(unittest.IsolatedAsyncioTestCase):
     self.assertTrue(info["models"]["any_huggingface_model"])
     self.assertEqual(info["limits"]["vllm_max_model_len"], 8192)
     self.assertEqual(info["limits"]["session_ttl_seconds"], 120)
-    self.assertEqual(info["skill_url"], "https://github.com/gke-labs/open-rl/releases/download/v9.9.9/openrl-skill.tar.gz")
+    self.assertEqual(info["skill_url"], "https://github.com/openrl-dev/openrl/releases/download/v9.9.9/openrl-skill.tar.gz")
     # Deployment facts only; nothing about other clients' models or the fleet.
     self.assertNotIn("endpoints", info)
     # The settings are described once, in the OpenAPI document; capabilities point there.

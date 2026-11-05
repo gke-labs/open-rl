@@ -1,4 +1,4 @@
-module github.com/gke-labs/open-rl/scheduler/controller
+module github.com/openrl-dev/openrl/scheduler/controller
 
 go 1.26.0
 

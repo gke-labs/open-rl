@@ -19,8 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 const (

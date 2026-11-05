@@ -5,7 +5,7 @@ Stamps the scenario, image, and extra arguments into k8s/eval/e2e-client-job.yam
 applies it with kubectl, and streams the logs. Stdlib only - no uv needed:
 
   python3 scripts/run_cluster_e2e.py --scenario fft-gsm8k-rl-x2 \\
-    --args "base_model=Qwen/Qwen3-8B steps=30 jitter_sec=5" --image ghcr.io/gke-labs/open-rl/client:latest
+    --args "base_model=Qwen/Qwen3-8B steps=30 jitter_sec=5" --image ghcr.io/openrl-dev/openrl/client:latest
 
 --print-only shows the rendered manifest and kubectl commands without running anything.
 """

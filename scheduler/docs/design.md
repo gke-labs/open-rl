@@ -306,7 +306,7 @@ spec:
       restartPolicy: OnFailure
       containers:
       - name: worker
-        image: ghcr.io/gke-labs/open-rl/trainer:latest
+        image: ghcr.io/openrl-dev/openrl/trainer:latest
         command:
         - uv
         - run

@@ -24,8 +24,8 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 // The placement storm: random fleets, random workload churn, a random DRA,

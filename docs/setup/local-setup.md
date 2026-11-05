@@ -36,8 +36,8 @@ gcloud compute instances create openrl-vm \
 Once you have accessed your VM, clone the repository and stay in the repository root for the following steps:
 
 ```bash
-git clone https://github.com/gke-labs/open-rl.git
-cd open-rl
+git clone https://github.com/openrl-dev/openrl.git
+cd openrl
 ```
 
 ### 3. System Packages

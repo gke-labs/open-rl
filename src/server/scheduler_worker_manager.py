@@ -182,12 +182,12 @@ def worker_container(worker: Worker) -> tuple[str, list[str]]:
   """The image and command. An Automodel trainer, or one from an image the job
   names, runs the python on its image's PATH."""
   if worker.role == "trainer" and worker.meta.trainer_backend != "pytorch":
-    image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/gke-labs/open-rl/automodel:latest")
+    image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/openrl-dev/openrl/automodel:latest")
     if worker.devices > 1:
       torchrun = ["-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={worker.devices}"]
       return image, ["python", "-u", *torchrun, "-m", TRAINER_MODULE]
     return image, ["python", "-u", "-m", TRAINER_MODULE]
-  image = os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest")
+  image = os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/openrl-dev/openrl/server:latest")
   return image, ["uv", "run", "python", "-u", "-m", TRAINER_MODULE]
 
 
@@ -273,7 +273,7 @@ def dispatcher_body(pool: str, owner: str) -> dict[str, Any]:
   dispatcher = {
     "name": "dispatcher",
     # The dispatcher is a small CPU process; the API-server image carries it without the GPU stack.
-    "image": os.getenv("OPEN_RL_DISPATCHER_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"),
+    "image": os.getenv("OPEN_RL_DISPATCHER_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/openrl-dev/openrl/server:latest"),
     "command": ["uv", "run", "python", "-u", "-m", "server.sampling_dispatcher"],
     "env": env,
     "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],

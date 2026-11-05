@@ -1,6 +1,6 @@
 # OpenRL: self-hosted API for your RL Infrastructure
 
-[![Release](https://img.shields.io/github/v/release/gke-labs/open-rl?label=release)](https://github.com/gke-labs/open-rl/releases/latest)
+[![Release](https://img.shields.io/github/v/release/openrl-dev/openrl?label=release)](https://github.com/openrl-dev/openrl/releases/latest)
 
 OpenRL implements [Tinker](https://tinker-docs.thinkingmachines.ai/) compatible API for fine-tuning language models that you can run on your own infrastructure (machine or a kubernetes cluster). You can use the Tinker SDK to orchestrate RL training loops by writing imperative Python code directly from your local machine.
 
@@ -161,7 +161,7 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 <!-- TODO: Add a developer mailing list, chat channel, and public developer meeting once
      these are set up. -->
 
-- **Questions and discussion**: [GitHub Issues](https://github.com/gke-labs/open-rl/issues)
+- **Questions and discussion**: [GitHub Issues](https://github.com/openrl-dev/openrl/issues)
 - **Reporting a vulnerability**: see our [Security Policy](SECURITY.md) — please do not open a
   public issue for security reports
 - **How the project is run**: [GOVERNANCE.md](GOVERNANCE.md)

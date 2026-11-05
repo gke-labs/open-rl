@@ -55,7 +55,7 @@ Apply one bundle, for example LoRA only:
 
 ```bash
 kubectl --context my-cluster apply --server-side \
-  -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+  -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
 ```
 
 From a checkout, render the overlay with the image tag to deploy. `latest`
@@ -109,7 +109,7 @@ download the bundle and edit the `open-rl-shared-pvc` claim in place. Keep the
 name so the API server and workers find it; change the storage class and size:
 
 ```bash
-curl -fsSLO https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+curl -fsSLO https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
 ```
 
 ```yaml
