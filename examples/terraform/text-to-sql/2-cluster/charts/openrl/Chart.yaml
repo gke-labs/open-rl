@@ -1,0 +1,5 @@
+apiVersion: v2
+name: openrl
+description: OpenRL LoRA control plane. Terraform renders examples/text-to-sql into .tmp/openrl-lora.yaml, which this chart prints verbatim.
+type: application
+version: 0.1.0

@@ -1,0 +1,2 @@
+{{- /* Read with .Files.Get so the bundle is never parsed as a Go template. */ -}}
+{{ .Files.Get ".tmp/openrl-lora.yaml" }}
