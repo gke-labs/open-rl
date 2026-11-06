@@ -169,7 +169,10 @@ Participation in this project is governed by our [Code of Conduct](CODE_OF_CONDU
 
 ## License
 
-This project is licensed under the [Apache 2.0 License](LICENSE).
+Code is licensed under the [Apache 2.0 License](LICENSE). Documentation, including the
+`docs/` tree, the website content under `site/`, and this README, is licensed under
+[Creative Commons Attribution 4.0 International](LICENSE-docs) (CC BY 4.0), per the
+[CNCF IP Policy](https://github.com/cncf/foundation/blob/main/charter.md#11-ip-policy).
 
 ## Disclaimer
 
