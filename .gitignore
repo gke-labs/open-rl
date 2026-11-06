@@ -64,6 +64,37 @@ runs/
 examples/harvey_labs/harvey-labs/
 examples/artifacts/
 *.pyc
+
+# Recipe run outputs (metrics.jsonl, config.json, code.diff per run)
+examples/text-to-sql/artifacts/
+
+# Terraform: providers, state (holds cluster CA certs and access tokens),
+# plans, crash logs, local overrides and per-user variable values.
+# Commit *.tfvars.example only.
+.terraform.lock.hcl
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+*.tfvars.json
+.terraformrc
+terraform.rc
+
+# Packaged Helm charts
+**/charts/*.tgz
+
+# Local credentials and environment files
+.env
+.env.*
+*.kubeconfig
+kubeconfig
 docs/fft/2026-08-20-*.html
 docs/fft/2026-08-20-*.md
 
@@ -75,3 +106,6 @@ site/.hugo_build.lock
 
 # The site serves this on purpose (design 016).
 !site/static/llms.txt
+
+# Local scratch output, e.g. the rendered OpenRL bundle in examples/terraform/*/2-cluster/charts/*/.tmp/.
+.tmp/

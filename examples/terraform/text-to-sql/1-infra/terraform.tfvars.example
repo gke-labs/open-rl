@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and edit.
+project_id = "my-gcp-project"
+# zone     = "us-central1-a"
+# gpu_spot = true
