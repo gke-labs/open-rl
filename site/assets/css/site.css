@@ -45,6 +45,8 @@ img, svg, canvas { max-width: 100%; }
 .top nav a { text-decoration: none; color: var(--ink-soft); }
 .top nav a:hover { color: var(--accent); }
 .foot { margin-top: 64px; padding: 20px 0 28px; font-size: .75rem; color: var(--ink-faint); text-align: center; }
+.foot p + p { margin-top: 10px; }
+.foot .cncf img { display: block; margin: 0 auto 8px; height: 40px; width: auto; }
 
 /* ---------- inner pages: blog list and posts ---------- */
 .page-title { font-size: 2.4rem; font-weight: 600; letter-spacing: -.012em; margin: 56px 0 8px; }
