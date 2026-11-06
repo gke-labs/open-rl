@@ -89,6 +89,37 @@ def read_range(path: Path, offset: int, length: int) -> int:
   return done
 
 
+# A whole file read into memory by parallel reads: on a network filesystem a memory-mapped read faults a few pages at a
+# time with one or two reads in flight, which made a 200 MiB sparse delta take about 10 s on Filestore; 16 parallel
+# 8 MiB reads of the same file took under 1 s.
+WHOLE_FILE_THREADS = 16
+WHOLE_FILE_CHUNK_BYTES = 8 * 1024 * 1024
+
+
+def read_whole(path: str | Path, threads: int = WHOLE_FILE_THREADS, chunk: int = WHOLE_FILE_CHUNK_BYTES) -> bytes:
+  """The file's bytes, read by up to `threads` parallel reads of `chunk` bytes each."""
+  size = os.path.getsize(path)
+  buf = bytearray(size)
+  view = memoryview(buf)
+
+  def read_part(offset: int) -> None:
+    end = min(offset + chunk, size)
+    fd = os.open(path, os.O_RDONLY)
+    try:
+      while offset < end:
+        got = os.preadv(fd, [view[offset:end]], offset)
+        if got <= 0:
+          raise EOFError(f"{path} ended at {offset} of {size} bytes")
+        offset += got
+    finally:
+      os.close(fd)
+
+  starts = range(0, size, chunk)
+  with ThreadPoolExecutor(max_workers=max(1, min(threads, len(starts)))) as pool:
+    list(pool.map(read_part, starts))
+  return bytes(buf)
+
+
 def prefetch(name_or_path: str) -> int:
   """Warm the page cache for name_or_path's safetensors and return the bytes read.
   Errors are logged, not raised: without the prefetch the load is only slower."""

@@ -2,11 +2,12 @@
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
 import torch
-from safetensors.torch import load_file
+from safetensors.torch import load as load_safetensors
 from vllm.distributed.weight_transfer.base import WeightTransferEngine, WeightTransferInitInfo, WeightTransferUpdateInfo
 from vllm.distributed.weight_transfer.factory import WeightTransferEngineFactory
 from vllm.model_executor.model_loader.checkpoint_weight_patch import CheckpointWeightPatch, load_checkpoint_weight_patches
@@ -14,6 +15,7 @@ from vllm.model_executor.model_loader.reload import finalize_layerwise_reload, i
 from vllm.model_executor.model_loader.weight_utils import safetensors_weights_iterator
 
 from server.model_metadata import SPARSE_DELTA_VERSION
+from training.prefetch import read_whole
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,14 @@ def read_sparse_patches(path: Path, metadata: dict, device: torch.device | str =
     raise ValueError("Sparse layer_names and layer_shapes must be matching lists")
   if any(not isinstance(name, str) or not name for name in names) or len(set(names)) != len(names):
     raise ValueError("Sparse layer_names must be unique non-empty strings")
-  tensors = load_file(str(path / "delta.safetensors"), device="cpu")
+  # Read whole with parallel reads, then decoded from memory: a memory-mapped load over NFS keeps one or two reads in
+  # flight and took about 10 s for a 200 MiB delta, all of it while the sampler held the GPU.
+  started = time.monotonic()
+  data = read_whole(path / "delta.safetensors")
+  read_seconds = time.monotonic() - started
+  tensors = load_safetensors(data)
+  decode_seconds = time.monotonic() - started - read_seconds
+  print(f"[delta] read {len(data) / 2**20:.0f} MiB from {path} in {read_seconds:.2f} s, decoded in {decode_seconds:.2f} s", flush=True)
   expected = {f"{i}.{kind}" for i in range(len(names)) for kind in ("indices", "values")}
   if set(tensors) != expected:
     raise ValueError("Sparse tensor keys do not match the declared layers")
