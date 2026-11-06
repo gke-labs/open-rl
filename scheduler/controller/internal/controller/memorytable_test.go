@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 const gib = placement.GiB

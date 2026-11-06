@@ -106,7 +106,7 @@ async def run(config: RunConfig, *, sandbox_factory: SandboxFactory = podman_san
 def main() -> None:
   force_rich_log_colors()
   config = chz.entrypoint(RunConfig, allow_hyphens=True)
-  asyncio.run(run(config, sandbox_factory=configured_sandbox_factory(config.sandbox_warmpool, config.sandbox_namespace)))
+  asyncio.run(run(config, sandbox_factory=configured_sandbox_factory(config)))
 
 
 if __name__ == "__main__":

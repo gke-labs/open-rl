@@ -81,7 +81,8 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
   --version="25.8.0" --create-namespace --namespace nvidia-dra-driver-gpu \
-  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
+  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/" \
+  --set gpuResourcesEnabledOverride=true
 ```
 
 When the drivers are up, the GPU node has a `ResourceSlice` from driver
@@ -126,7 +127,7 @@ Apply the release. Server-side apply is required because the Workload CRD is
 larger than the client-side apply limit:
 
 ```bash
-kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
 ```
 
 This installs the API server, the scheduler, Redis, and a shared volume into
@@ -141,7 +142,7 @@ runs LoRA workers as above and adds full fine-tuning workers, which can take
 turns on a shared GPU. Apply it instead of the LoRA release:
 
 ```bash
-kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml
+kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-fft.yaml
 ```
 
 It adds two DaemonSets that coordinate GPU sharing on each GPU node, the
@@ -200,8 +201,8 @@ configured default.
 ## 3. Get the examples
 
 ```bash
-git clone https://github.com/gke-labs/open-rl.git
-cd open-rl
+git clone https://github.com/openrl-dev/openrl.git
+cd openrl
 uv --project examples sync
 ```
 
@@ -237,7 +238,7 @@ How to install them depends on the agent:
   directly; each one links its references by relative path.
 - **Claude Code:** both repositories publish a plugin marketplace.
   ```
-  /plugin marketplace add gke-labs/open-rl
+  /plugin marketplace add openrl-dev/openrl
   /plugin install openrl@open-rl
   /plugin marketplace add thinking-machines-lab/tinker-cookbook
   /plugin install tinker@tinker-skills
@@ -353,7 +354,7 @@ still running to release their GPUs, then everything the release created. This
 also deletes the shared volume and its data:
 
 ```bash
-kubectl delete -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+kubectl delete -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
 ```
 
 Use `openrl-fft.yaml` if you applied the FFT release. If you created the GKE

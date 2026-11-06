@@ -9,6 +9,9 @@ Two FFT jobs and two LoRA jobs on the same base model come in:
   fft-job 3c4d     3c4d                fft-3c4d-trainer            nothing
   lora-job 5e6f    qwen-qwen2-5-0-5b-<hash>   lora-qwen-qwen2-5-0-5b-<hash>-0-trainer   one runtime
   lora-job 7a8b    qwen-qwen2-5-0-5b-<hash>   lora-qwen-qwen2-5-0-5b-<hash>-0-trainer   with 5e6f
+  lora-job 9b0c    qwen-qwen2-5-0-5b-slot1-<hash>   lora-qwen-qwen2-5-0-5b-slot1-<hash>-0-trainer   a second runtime, once
+                                                                                  OPEN_RL_LORA_JOBS_PER_RUNTIME
+                                                                                  fills the first
   automodel 9c0d   automodel-qwen-qwen2-5-0-5b-<hash>   lora-automodel-qwen-qwen2-5-0-5b-<hash>-0-trainer   one Automodel
                                                                                   runtime, apart from PyTorch's
   image 1d2e       image-<hash>-qwen-qwen2-5-0-5b-<hash>   lora-image-<hash>-qwen-qwen2-5-0-5b-<hash>-0-trainer   one runtime
@@ -178,6 +181,8 @@ def pod_env(worker: Worker) -> list[dict[str, Any]]:
   env.append(downward("OPEN_RL_ACCEL_TIMESLICER_HOST", "status.hostIP"))
   if worker.pool:
     env.append(downward("POD_IP", "status.podIP"))
+  # The pod a worker names on the records it keeps.
+  env += [downward("POD_NAME", "metadata.name"), downward("POD_UID", "metadata.uid"), downward("NODE_NAME", "spec.nodeName")]
   return env
 
 
@@ -186,7 +191,7 @@ def worker_container(worker: Worker) -> tuple[str, list[str]]:
   names, runs the python on its image's PATH. Automodel is GPU-only
   (check_supported); a job's image for a TPU trainer must carry torch_tpu."""
   if worker.role == "trainer" and worker.meta.trainer_backend != "pytorch":
-    image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/gke-labs/open-rl/automodel:latest")
+    image = worker.meta.trainer_image() or os.getenv("OPEN_RL_AUTOMODEL_IMAGE", "ghcr.io/openrl-dev/openrl/automodel:latest")
     if worker.devices > 1:
       torchrun = ["-m", "torch.distributed.run", "--standalone", f"--nproc-per-node={worker.devices}"]
       return image, ["python", "-u", *torchrun, "-m", TRAINER_MODULE]
@@ -286,7 +291,7 @@ def dispatcher_body(pool: str, owner: str) -> dict[str, Any]:
   dispatcher = {
     "name": "dispatcher",
     # The dispatcher is a small CPU process; the API-server image carries it without the GPU stack.
-    "image": os.getenv("OPEN_RL_DISPATCHER_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"),
+    "image": os.getenv("OPEN_RL_DISPATCHER_IMAGE") or os.getenv("OPEN_RL_WORKER_IMAGE", "ghcr.io/openrl-dev/openrl/server:latest"),
     "command": ["uv", "run", "python", "-u", "-m", "server.sampling_dispatcher"],
     "env": env,
     "volumeMounts": [{"name": "shared-storage", "mountPath": "/mnt/shared"}],

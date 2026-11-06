@@ -199,6 +199,15 @@ wheels = [
 ]
 
 [[package]]
+name = "ate-env-client"
+version = "0.1.0"
+source = { git = "https://github.com/ai-on-gke/sandboxenv-rl?subdirectory=clients%2Fpython&rev=2e568055288d33686c5d60c559219a690d408286#2e568055288d33686c5d60c559219a690d408286" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+
+[[package]]
 name = "attrs"
 version = "26.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1873,9 +1882,13 @@ dependencies = [
 agent-sandbox = [
     { name = "k8s-agent-sandbox", extra = ["async", "grpc"] },
 ]
+substrate = [
+    { name = "ate-env-client" },
+]
 
 [package.metadata]
 requires-dist = [
+    { name = "ate-env-client", marker = "extra == 'substrate'", git = "https://github.com/ai-on-gke/sandboxenv-rl?subdirectory=clients%2Fpython&rev=2e568055288d33686c5d60c559219a690d408286" },
     { name = "chz", specifier = ">=0.4.0" },
     { name = "datasets", specifier = ">=4.5.0" },
     { name = "huggingface-hub", specifier = ">=0.28.1" },
@@ -1894,7 +1907,7 @@ requires-dist = [
     { name = "tinker-cookbook", extras = ["math-rl"], specifier = "==0.5.7" },
     { name = "transformers", specifier = ">=5.16.1" },
 ]
-provides-extras = ["agent-sandbox"]
+provides-extras = ["substrate", "agent-sandbox"]
 
 [[package]]
 name = "opentelemetry-api"

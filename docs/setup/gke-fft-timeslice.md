@@ -237,7 +237,8 @@ GPUs and serves `ResourceClaim` allocations:
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
   --version="25.8.0" --create-namespace --namespace nvidia-dra-driver-gpu \
-  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
+  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/" \
+  --set gpuResourcesEnabledOverride=true
 ```
 
 Notes:

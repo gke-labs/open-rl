@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 // Labels the controller stamps on the objects it owns, and reads back to

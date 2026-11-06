@@ -55,11 +55,11 @@ class LoraTargetsTest(unittest.TestCase):
 
   def test_targets_follow_the_config(self) -> None:
     attn = lora_target_patterns(LoraConfig(train_attn=True, train_mlp=False))
-    self.assertIn("model.*.layers.*.q_proj", attn)
-    self.assertIn("model.*.layers.*.in_proj_qkv", attn)
+    self.assertIn("model.layers.*.q_proj", attn)
+    self.assertIn("model.language_model.layers.*.in_proj_qkv", attn)
     self.assertFalse(any(pattern.endswith(("gate_proj", "up_proj", "down_proj", "lm_head")) for pattern in attn))
     both = lora_target_patterns(LoraConfig())
-    self.assertIn("model.*.layers.*.gate_proj", both)
+    self.assertIn("model.language_model.layers.*.gate_proj", both)
     self.assertNotIn("lm_head", both)
 
   def test_unembed_is_never_wrapped(self) -> None:

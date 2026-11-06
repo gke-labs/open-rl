@@ -25,6 +25,9 @@ class RecordingRestorer:
   def restore(self, target: WorkloadRef) -> None:
     self.calls.append(("restore", target))
 
+  def forget(self, target: WorkloadRef) -> None:
+    self.calls.append(("forget", target))
+
   def labels(self) -> list[tuple[str, str, str]]:
     return [(op, target.name, target.claim) for op, target in self.calls]
 
@@ -264,6 +267,57 @@ class SingleNodeTimeSlicerTest(unittest.IsolatedAsyncioTestCase):
     self.assertEqual(restorer.simple_labels(), [("checkpoint", "job-a")])
 
 
+class FakeAgentClient:
+  """Stands in for the llm-d snapshot agent's client. Like the agent, it completes every snapshot it is asked for."""
+
+  def __init__(self) -> None:
+    self.calls = []
+
+  def snapshot_and_wait(self, job_id, group="", poll_interval_sec=1.0, backend_config=None):
+    self.calls.append(("snapshot", job_id))
+    return SimpleNamespace(status="OPERATION_STATUS_COMPLETE", error=None)
+
+  def close(self) -> None:
+    pass
+
+
+class RestartAfterParkTest(unittest.IsolatedAsyncioTestCase):
+  """A container restarted in place registers under its predecessor's workload name. The llm-d agent keeps the dead
+  process's job as SAVED and refuses to snapshot it again, so the daemon refuses the name with that reason instead of
+  granting turns the new process can never leave. A restorer that holds nothing for a dead process serves it."""
+
+  async def park_then_die(self, agent: SingleNodeTimeSlicer, workload: WorkloadRef) -> None:
+    await agent.register(workload, connection_id=1)
+    self.assertTrue((await agent.acquire(workload))["ok"])
+    self.assertTrue((await agent.release(workload))["ok"])
+    await agent.connection_closed(1)
+
+  async def test_a_restart_under_a_name_the_agent_holds_as_saved_is_refused_with_the_reason(self) -> None:
+    client = FakeAgentClient()
+    agent = SingleNodeTimeSlicer(LlmDCheckpointRestorer(client))
+    workload = WorkloadRef(name="job-a")
+    await self.park_then_die(agent, workload)
+
+    registered = await agent.register(workload, connection_id=2)
+    self.assertFalse(registered["ok"])
+    self.assertIn("job job-a as SAVED", registered["error"])
+    self.assertFalse((await agent.acquire(workload))["ok"])
+    self.assertEqual(client.calls, [("snapshot", "job-a")])
+
+  async def test_a_restart_after_a_park_the_restorer_can_redo_is_served(self) -> None:
+    restorer = RecordingRestorer()
+    agent = SingleNodeTimeSlicer(restorer)
+    workload = WorkloadRef(name="101")
+    await self.park_then_die(agent, workload)
+
+    self.assertTrue((await agent.register(workload, connection_id=2))["ok"])
+    self.assertTrue((await agent.acquire(workload))["ok"])
+    self.assertTrue((await agent.release(workload))["ok"])
+    self.assertTrue((await agent.unregister(workload))["ok"])
+    self.assertEqual(restorer.simple_labels(), [("checkpoint", "101"), ("forget", "101"), ("checkpoint", "101"), ("forget", "101")])
+    self.assertNotIn("101", agent.workloads)
+
+
 class FailedCheckpointTest(unittest.IsolatedAsyncioTestCase):
   async def test_failed_checkpoint_keeps_the_grant_until_the_process_is_gone(self) -> None:
     agent = SingleNodeTimeSlicer(FailingCheckpointRestorer())
@@ -311,6 +365,51 @@ class FailedCheckpointTest(unittest.IsolatedAsyncioTestCase):
         await client_b.close()
         server.close()
         await server.wait_closed()
+
+
+class ExitDuringParkTest(unittest.IsolatedAsyncioTestCase):
+  """A worker that exits cancels its dispatcher, whose turn is being parked, and unregisters at once. The sampler
+  in issue #403 died here: two coroutines read its one slicer connection."""
+
+  async def asyncSetUp(self) -> None:
+    self.tmp = self.enterContext(tempfile.TemporaryDirectory())
+    self.workload = WorkloadRef(name="101")
+
+  async def start(self, restorer: BlockingRestorer) -> tuple[SingleNodeTimeSlicer, SocketTimeSlicerClient, asyncio.Task]:
+    """A daemon over `restorer`, a registered client, and its turn, cancelled while the daemon is mid-park."""
+    restorer.block_checkpoint = True
+    agent = SingleNodeTimeSlicer(restorer)
+    server = await start_time_slicer(agent, str(Path(self.tmp) / "accel-timeslicer.sock"))
+    self.addAsyncCleanup(server.wait_closed)
+    self.addCleanup(server.close)
+    client = SocketTimeSlicerClient(str(Path(self.tmp) / "accel-timeslicer.sock"))
+    self.addAsyncCleanup(client.close)
+    await client.register(self.workload)
+    on_gpu = asyncio.Event()
+
+    async def turn() -> None:
+      async with client.acquire(self.workload):
+        on_gpu.set()
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(turn())
+    await on_gpu.wait()
+    task.cancel()
+    self.assertTrue(await asyncio.to_thread(restorer.checkpoint_started.wait, 1.0))
+    return agent, client, task
+
+  async def test_the_unregister_after_a_cancelled_turn_waits_for_the_park(self) -> None:
+    restorer = BlockingRestorer()
+    agent, client, task = await self.start(restorer)
+    unregister = asyncio.create_task(client.unregister(self.workload))
+    await asyncio.sleep(0.05)
+    self.assertFalse(unregister.done())
+    restorer.finish_checkpoint.set()
+    self.assertTrue((await asyncio.wait_for(unregister, timeout=1.0))["ok"])
+    await asyncio.wait({task})
+    self.assertEqual(restorer.simple_labels(), [("checkpoint", "101"), ("forget", "101")])
+    self.assertNotIn("101", agent.workloads)
+    self.assertFalse(agent.running)
 
 
 class SingleNodeTimeSlicerSocketTest(unittest.IsolatedAsyncioTestCase):

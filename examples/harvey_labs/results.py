@@ -57,23 +57,28 @@ def eval_result(row: dict) -> dict | None:
     passed = row.get(prefix + "lab/criteria_passed")
     total = row.get(prefix + "lab/criteria_total")
     episodes = row.get(prefix + "total_episodes")
+    reward_error = row.get(prefix + "lab/reward_error")
     if passed is not None and total:
       return {
         "pass_rate": passed / total,
         "aggregation": "pooled_criteria",
         "criteria_passed": passed * episodes if episodes else None,
         "criteria_total": total * episodes if episodes else None,
+        "reward_errors": reward_error * episodes if (reward_error is not None and episodes) else 0.0,
         "episodes": episodes,
       }
   rate = env_get(row, "test/", "lab/criteria_pass_fraction")
   if rate is None:
     return None
+  reward_error_rate = env_get(row, "test/", "lab/reward_error") or 0.0
+  episodes = env_get(row, "test/", "total_episodes")
   return {
     "pass_rate": rate,
     "aggregation": "mean_episode_fraction",
     "criteria_passed": None,
     "criteria_total": None,
-    "episodes": env_get(row, "test/", "total_episodes"),
+    "reward_errors": reward_error_rate * episodes if episodes else 0.0,
+    "episodes": episodes,
   }
 
 
@@ -126,8 +131,9 @@ def format_eval(result: dict | None, label: str = "Eval") -> str:
   counts = ""
   if result["criteria_total"] is not None:
     counts = f", {result['criteria_passed']:.0f}/{result['criteria_total']:.0f} criteria"
+  errors = f", {result.get('reward_errors', 0.0):.0f} errors" if result.get("reward_errors") else ""
   step = f"; after batch {result['step']}" if "step" in result else ""
-  return f"{label}: {result['pass_rate']:.1%} ({result['aggregation']}{counts}{step})"
+  return f"{label}: {result['pass_rate']:.1%} ({result['aggregation']}{counts}{errors}{step})"
 
 
 def format_summary(results: dict) -> str:

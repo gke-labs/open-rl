@@ -80,8 +80,9 @@ find the objects there and create nothing.
 | One replica with a GPU of its own | One sampler Workload | None |
 | FFT that is not exclusive and has one trainer GPU | One sampler Workload, seated on the trainer's claim | None |
 
-All LoRA jobs on one base model share one pool, `sampler-<base model>`. An FFT
-job has a pool of its own. A request creates nothing. It is an entry in the
+All LoRA jobs on one base model share one pool, `sampler-<base model>`, or one
+pool per runtime when `OPEN_RL_LORA_JOBS_PER_RUNTIME` splits them. An FFT job
+has a pool of its own. A request creates nothing. It is an entry in the
 stream until it has a result.
 
 ## One request

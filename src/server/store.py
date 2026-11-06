@@ -5,6 +5,8 @@ import json
 import os
 import time
 from abc import ABC, abstractmethod
+from collections import Counter
+from dataclasses import dataclass, field
 from functools import cache
 from typing import Any
 
@@ -39,6 +41,11 @@ class RequestStore(ABC):
   @abstractmethod
   async def get_result(self, req_id: str, timeout: float) -> dict[str, Any] | None:
     """Block until the future resolves or the timeout is reached."""
+    pass
+
+  @abstractmethod
+  async def queued(self, model_id: str) -> int:
+    """How many of the model's requests wait in its queue."""
     pass
 
 
@@ -97,6 +104,9 @@ class InMemoryStore(RequestStore):
             continue
 
         await self.active_tenants_cv.wait()
+
+  async def queued(self, model_id: str) -> int:
+    return queue.qsize() if (queue := self.queues.get(model_id)) else 0
 
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     raise RuntimeError("Per-model full fine-tuning workers require REDIS_URL; in-memory queues cannot be shared across processes")
@@ -181,6 +191,9 @@ class RedisStore(RequestStore):
         await self.redis.lmove(active_list, active_list, "LEFT", "RIGHT")
         return batch
 
+  async def queued(self, model_id: str) -> int:
+    return await self.redis.llen(f"open_rl:queue:{model_id}")
+
   async def get_requests_for_model(self, model_id: str) -> list[dict[str, Any]]:
     queue_key = f"open_rl:queue:{model_id}"
     try:
@@ -234,6 +247,17 @@ class RedisStore(RequestStore):
       await asyncio.sleep(0.1)
 
 
+@dataclass
+class Writes:
+  """Writes applied together, each key expiring a TTL after: JSON items appended to lists that keep their newest
+  `limit`, amounts added to counters and to counts in hashes, and values set."""
+
+  appends: dict[str, tuple[list[str], int]] = field(default_factory=dict)  # key -> (items, limit)
+  counts: Counter[str] = field(default_factory=Counter)
+  fields: dict[str, Counter[str]] = field(default_factory=dict)
+  values: dict[str, str] = field(default_factory=dict)
+
+
 class StateStore(ABC):
   """Application state stored as values with expiry and sets of members."""
 
@@ -280,6 +304,26 @@ class StateStore(ABC):
     ttl_seconds after the last push."""
     pass
 
+  @abstractmethod
+  async def recent(self, key: str) -> list[str]:
+    """The list push_recent_sync keeps at key, newest first."""
+    pass
+
+  @abstractmethod
+  def write_sync(self, writes: Writes, ttl_seconds: float) -> None:
+    """Apply writes in one round trip, without the event loop, for a thread."""
+    pass
+
+  @abstractmethod
+  async def read_samples(self, key: str, last: int | None = None) -> list[dict[str, Any]]:
+    """The JSON items of a list write_sync appends to, oldest first, or only its last ones."""
+    pass
+
+  @abstractmethod
+  async def read_counts(self, key: str) -> dict[str, int]:
+    """The counts in a hash write_sync adds to."""
+    pass
+
 
 class InMemoryStateStore(StateStore):
   def __init__(self):
@@ -287,6 +331,7 @@ class InMemoryStateStore(StateStore):
     self.expiries: dict[str, float] = {}
     self.sets: dict[str, set[str]] = {}
     self.lists: dict[str, list[str]] = {}
+    self.hashes: dict[str, Counter[str]] = {}
 
   async def set_value(self, key: str, value: str, ttl_seconds: float | None = None) -> None:
     self.kv_store[key] = value
@@ -324,6 +369,28 @@ class InMemoryStateStore(StateStore):
   def push_recent_sync(self, key: str, values: list[str], keep: int, ttl_seconds: float) -> None:
     self.lists[key] = (values[::-1] + self.lists.get(key, []))[:keep]
 
+  async def recent(self, key: str) -> list[str]:
+    return list(self.lists.get(key, []))
+
+  def write_sync(self, writes: Writes, ttl_seconds: float) -> None:
+    # Lists and hashes here never expire.
+    for key, (items, limit) in writes.appends.items():
+      self.lists[key] = [*self.lists.get(key, []), *items][-limit:]
+    for key, amount in writes.counts.items():
+      self.kv_store[key] = str(int(self.get_value_sync(key) or 0) + amount)
+      self.expiries[key] = time.monotonic() + ttl_seconds
+    for key, counts in writes.fields.items():
+      self.hashes.setdefault(key, Counter()).update(counts)
+    for key, value in writes.values.items():
+      self.kv_store[key] = value
+      self.expiries[key] = time.monotonic() + ttl_seconds
+
+  async def read_samples(self, key: str, last: int | None = None) -> list[dict[str, Any]]:
+    return [json.loads(item) for item in self.lists.get(key, [])[-(last or 0) :]]
+
+  async def read_counts(self, key: str) -> dict[str, int]:
+    return dict(self.hashes.get(key, {}))
+
 
 class RedisStateStore(StateStore):
   def __init__(self, client: redis.Redis, sync_client: sync_redis.Redis):
@@ -359,6 +426,32 @@ class RedisStateStore(StateStore):
   def push_recent_sync(self, key: str, values: list[str], keep: int, ttl_seconds: float) -> None:
     self.sync_redis.pipeline().lpush(key, *values).ltrim(key, 0, keep - 1).expire(key, int(ttl_seconds)).execute()
 
+  async def recent(self, key: str) -> list[str]:
+    return await self.redis.lrange(key, 0, -1)
+
+  def write_sync(self, writes: Writes, ttl_seconds: float) -> None:
+    ttl = int(ttl_seconds)
+    pipe = self.sync_redis.pipeline(transaction=False)
+    for key, (items, limit) in writes.appends.items():
+      pipe.rpush(key, *items).ltrim(key, -limit, -1).expire(key, ttl)
+    for key, amount in writes.counts.items():
+      pipe.incrby(key, amount).expire(key, ttl)
+    for key, counts in writes.fields.items():
+      for name, amount in counts.items():
+        pipe.hincrby(key, name, amount)
+      pipe.expire(key, ttl)
+    for key, value in writes.values.items():
+      pipe.set(key, value, ex=ttl)
+    pipe.execute()
+
+  async def read_samples(self, key: str, last: int | None = None) -> list[dict[str, Any]]:
+    raw = await self.redis.lrange(key, -(last or 0), -1)
+    # Decoded off the event loop, since a list holds up to thousands of records.
+    return await asyncio.to_thread(lambda: [json.loads(item) for item in raw])
+
+  async def read_counts(self, key: str) -> dict[str, int]:
+    return {name: int(count) for name, count in (await self.redis.hgetall(key)).items()}
+
 
 @cache
 def redis_client(redis_url: str) -> redis.Redis:
@@ -377,5 +470,7 @@ def get_store() -> RequestStore:
 def get_state_store() -> StateStore:
   redis_url = os.environ.get("REDIS_URL")
   if redis_url:
-    return RedisStateStore(redis_client(redis_url), sync_redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=5))
+    # Timeouts, so a Redis that stops answering costs a thread its call rather than the thread.
+    sync_client = sync_redis.Redis.from_url(redis_url, decode_responses=True, socket_timeout=5, socket_connect_timeout=5)
+    return RedisStateStore(redis_client(redis_url), sync_client)
   return InMemoryStateStore()

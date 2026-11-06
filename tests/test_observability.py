@@ -12,11 +12,12 @@ from fastapi.testclient import TestClient
 
 from server import api_server
 from server.model_metadata import TrainingModelMetadata
-from server.observability import cloud_logging, fleet
+from server.observability import cloud_logging, fleet, metrics
 from server.store import InMemoryStateStore
 from server.worker_manager import FAILED, READY, STARTING, STOPPED, WAITING_FOR_PLACEMENT
 
 NO_CLUSTER = {"available": True, "pods": [], "nodes": [], "workloads": None, "errors": []}
+T = datetime(2026, 10, 28, 12, tzinfo=UTC).timestamp()
 
 
 def meta(**fields) -> str:
@@ -40,11 +41,25 @@ class ApiTest(unittest.TestCase):
     self.enterContext(mock.patch.object(fleet, "get_state_store", return_value=self.store))
     self.enterContext(mock.patch("server.observability.router.get_state_store", return_value=self.store))
 
-  def get(self, path: str, cluster: dict = NO_CLUSTER, **records: str) -> dict:
+  def get(self, path: str, cluster: dict | None = NO_CLUSTER, **records: str) -> dict:
     for key, value in records.items():
       asyncio.run(self.store.set_value(f"open_rl:{key}", value))
-    self.enterContext(mock.patch.object(fleet, "kubernetes", mock.AsyncMock(return_value=copy.deepcopy(cluster))))
+    if cluster is not None:
+      self.enterContext(mock.patch.object(fleet, "kubernetes", mock.AsyncMock(return_value=copy.deepcopy(cluster))))
     return TestClient(api_server.app).get(path).json()
+
+  def serve_workloads(self, *workloads: dict) -> None:
+    def listing(items) -> object:
+      return lambda *args, **kwargs: SimpleNamespace(data=json.dumps({"items": list(items)}))
+
+    api = SimpleNamespace(list_namespaced_pod=listing([]), list_node=listing([]), list_cluster_custom_object=listing([]))
+    api.list_namespaced_custom_object = listing(workloads)
+    self.enterContext(mock.patch("server.observability.kubernetes.kubernetes_api", return_value=(api, api)))
+
+  def released(self, runtime: str, name: str, gpus: list[str], placed_at: float, released_at: float) -> None:
+    record = {"name": name, "role": "trainer", "node": "n1", "pod": f"orw-{name}", "gpu_uuids": gpus, "training_kind": "fft"}
+    record.update(placed_at=placed_at, released_at=released_at)
+    self.store.push_recent_sync(f"open_rl:placements:{runtime}", [json.dumps(record)], 200, 3600)
 
 
 class InventoryTest(ApiTest):
@@ -81,28 +96,20 @@ class InventoryTest(ApiTest):
     self.assertTrue(any("bad" in error for error in body["errors"]), body["errors"])
 
   def test_placements_list_the_workloads_holding_gpus_with_the_runs_they_serve(self):
-    def listing(items) -> object:
-      return lambda *args, **kwargs: SimpleNamespace(data=json.dumps({"items": list(items)}))
-
     placed, released = "2026-10-29T12:00:00Z", "2026-10-29T12:10:00Z"
-    workloads = (
+    self.serve_workloads(
       workload("fft-a", "fft-1", "fft", placedAt=placed),
       workload("lora-a", "Qwen/Qwen3-8B", "lora", placedAt=placed),
       workload("fft-gone", "fft-2", "fft", placedAt=placed, releasedAt=released, nodeName=""),
       workload("fft-deleting", "fft-3", "fft", deleting=True, placedAt=placed),
       workload("fft-waiting", "fft-4", "fft", nodeName=""),
     )
-    api = SimpleNamespace(list_namespaced_pod=listing([]), list_node=listing([]), list_cluster_custom_object=listing([]))
-    api.list_namespaced_custom_object = listing(workloads)
-    self.enterContext(mock.patch("server.observability.kubernetes.kubernetes_api", return_value=(api, api)))
     records = {
       "model_meta:fft-1": meta(fine_tuning_type="full", status="completed"),
       "model_meta:lora-live": meta(),
       "model_meta:lora-done": meta(status="completed"),
     }
-    for key, value in records.items():
-      asyncio.run(self.store.set_value(f"open_rl:{key}", value))
-    body = TestClient(api_server.app).get("/api/v1/inspect/inventory").json()
+    body = self.get("/api/v1/inspect/inventory", None, **records)
 
     at = datetime(2026, 10, 29, 12, tzinfo=UTC).timestamp()
     self.assertEqual(
@@ -120,6 +127,130 @@ class InventoryTest(ApiTest):
         },
       ],
     )
+
+
+class ActivityTest(ApiTest):
+  def test_a_workloads_lane_joins_its_live_and_released_placements_clipped_to_the_window(self):
+    self.serve_workloads(workload("fft-a", "fft-1", "fft", placedAt="2026-10-28T11:30:00Z"))
+    self.released("fft-1", "fft-a", ["GPU-fft-a"], T - 3 * 3600, T - 2 * 3600)
+    self.released("fft-1", "fft-a", ["GPU-fft-a"], T - 6 * 3600, T - 5 * 3600)
+    self.released("fft-1", "fft-a", ["GPU-other"], T - 3 * 3600, T - 2 * 3600)
+    window = "since=2026-10-28T09:30:00Z&until=2026-10-28T11:50:00Z"
+    body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4 * 3600)})
+
+    lane = {"name": "fft-a", "role": "trainer", "node": "n1", "pod": "orw-fft-a", "run_ids": ["fft-1"], "shared_gpu": False}
+    idle = {"turns": [], "waits": [], "active": {}}  # no worker record, so no slicer turns; no op records either
+    self.assertEqual(
+      body["lanes"],
+      [
+        lane | {"gpu_uuids": ["GPU-fft-a"], "intervals": [[T - 150 * 60, T - 2 * 3600], [T - 30 * 60, T - 10 * 60]], "ended": False} | idle,
+        lane | {"gpu_uuids": ["GPU-other"], "intervals": [[T - 150 * 60, T - 2 * 3600]], "ended": True} | idle,
+      ],
+    )
+    self.assertEqual(body["errors"], [])
+
+  def test_a_lane_carries_its_workers_turns_and_waits_clipped_to_the_placement_and_the_window(self):
+    self.released("fft-1", "fft-a", ["GPU-fft-a"], T - 3600, T - 1800)
+    # The same pod name appears in an earlier placement; only the process alive during this one counts.
+    earlier = {"id": "w0", "pod": "orw-fft-a", "started_at": T - 9000, "heartbeat_at": T - 7200, "turns": [[T - 8000, T - 7900]], "waits": []}
+    worker = {"id": "w1", "pod": "orw-fft-a", "started_at": T - 3600, "heartbeat_at": T - 1800, "phase": "exited"}
+    worker |= {"turns": [[T - 3500, T - 3400], [T - 2500, T - 1700]], "waits": [[T - 3600, T - 3500]]}
+    for record in (earlier, worker):
+      asyncio.run(self.store.set_value(f"open_rl:worker:{record['id']}", json.dumps(record)))
+    window = "since=2026-10-28T11:10:00Z&until=2026-10-28T12:00:00Z"  # T - 3000 onwards
+    body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4000)})
+
+    (lane,) = body["lanes"]
+    self.assertEqual((lane["intervals"], lane["turns"], lane["waits"]), ([[T - 3000, T - 1800]], [[T - 2500, T - 1800]], []))
+
+  def test_a_lane_shows_when_each_run_it_serves_had_work_on_its_worker(self):
+    self.released("fft-1", "fft-t", ["GPU-t"], T - 3600, T - 1800)
+    sampler = {"name": "fft-s", "role": "sampler", "node": "n1", "pod": "orw-fft-s", "gpu_uuids": ["GPU-s"], "training_kind": "fft"}
+    self.store.push_recent_sync("open_rl:placements:fft-1", [json.dumps(sampler | {"placed_at": T - 3600, "released_at": T - 1800})], 200, 3600)
+
+    def op(started: float, at: float, pod: str) -> str:
+      return json.dumps({"operation": "forward_backward", "status": "succeeded", "started_at": started, "at": at, "role": "trainer", "pod": pod})
+
+    # two ops in this lane's pod, one in another pod of the same run (a relaunch elsewhere), one before the window
+    ops = [op(T - 3000, T - 2900, "orw-fft-t"), op(T - 2800, T - 2700, "orw-fft-t")]
+    ops += [op(T - 2600, T - 2500, "orw-elsewhere"), op(T - 3300, T - 3200, "orw-fft-t")]
+    self.store.push_recent_sync("open_rl:operations:fft-1", ops, 100, 3600)
+    group = json.dumps({"operation": "sample", "started_at": T - 3100, "at": T - 2950, "count": 8, "role": "sampler", "pod": "dispatcher-0"})
+    self.store.push_recent_sync("open_rl:operations:fft-1:samples", [group], 100, 3600)
+    window = "since=2026-10-28T11:10:00Z&until=2026-10-28T12:00:00Z"  # T - 3000 on
+    body = self.get(f"/api/v1/inspect/activity?{window}", None, **{"model_meta:fft-1": meta(fine_tuning_type="full", created_at=T - 4000)})
+
+    by_name = {lane["name"]: lane for lane in body["lanes"]}
+    self.assertEqual(by_name["fft-t"]["active"], {"fft-1": [[T - 3000, T - 2900], [T - 2800, T - 2700]]})
+    self.assertEqual(by_name["fft-s"]["active"], {"fft-1": [[T - 3000, T - 2950]]})
+
+  def test_live_lanes_come_back_with_an_error_when_redis_fails(self):
+    self.serve_workloads(workload("fft-a", "fft-1", "fft", placedAt="2026-10-28T11:30:00Z"))
+    self.enterContext(mock.patch.object(self.store, "scan_values", mock.AsyncMock(side_effect=ConnectionError("redis down"))))
+    response = TestClient(api_server.app).get("/api/v1/inspect/activity?since=2026-10-28T11:00:00Z&until=2026-10-28T12:00:00Z")
+
+    self.assertEqual(response.status_code, 200)
+    self.assertEqual([(lane["name"], lane["gpu_uuids"]) for lane in response.json()["lanes"]], [("fft-a", ["GPU-fft-a"])])
+    self.assertEqual(response.json()["errors"], ["Redis read failed: redis down"])
+
+  def test_lanes_that_held_one_gpu_at_overlapping_times_are_marked_shared(self):
+    self.serve_workloads()
+    self.released("fft-1", "fft-a", ["GPU-0", "GPU-1"], T - 600, T - 300)
+    self.released("fft-2", "fft-b", ["GPU-1"], T - 400, T - 100)
+    self.released("fft-3", "fft-c", ["GPU-0"], T - 300, T)
+    runs = {f"model_meta:fft-{i}": meta(fine_tuning_type="full") for i in (1, 2, 3)}
+    body = self.get("/api/v1/inspect/activity?since=2026-10-28T11:00:00Z&until=2026-10-28T12:00:00Z", None, **runs)
+
+    self.assertEqual({lane["name"]: lane["shared_gpu"] for lane in body["lanes"]}, {"fft-a": True, "fft-b": True, "fft-c": False})
+
+
+class QueryTest(ApiTest):
+  def setUp(self):
+    super().setUp()
+    self.sent, self.answers = [], {}
+
+    async def get(url: str, params: dict) -> dict:
+      self.sent.append(params["query"])
+      metric = next(m for m in ("DCGM_FI_PROF_GR_ENGINE_ACTIVE", "DCGM_FI_DEV_GPU_UTIL") if m in params["query"])
+      return {"status": "success", "data": {"result": self.answers.get(metric, [])}}
+
+    self.enterContext(mock.patch.dict(os.environ, {"OPEN_RL_PROMETHEUS_URL": "http://prometheus:9090"}))
+    self.enterContext(mock.patch.object(metrics, "get", get))
+    placed = "2026-10-28T11:00:00Z"
+    self.serve_workloads(workload("fft-a", "fft-1", "fft", placedAt=placed), workload("fft-b", "fft-2", "fft", placedAt=placed))
+    self.runs = {"model_meta:fft-1": meta(fine_tuning_type="full"), "model_meta:fft-2": meta(fine_tuning_type="full")}
+
+  def test_without_a_metrics_source_queries_say_how_to_configure_one(self):
+    os.environ.pop("OPEN_RL_PROMETHEUS_URL")
+    body = self.get("/api/v1/inspect/query?name=gpu_util&run_id=fft-1", None, **self.runs)
+
+    self.assertEqual((body["available"], body["error"]), (False, "No metrics source configured. Set OPEN_RL_PROMETHEUS_URL."))
+    self.assertEqual(self.sent, [])
+
+  def test_a_query_reads_only_the_gpus_the_run_held(self):
+    self.answers["DCGM_FI_DEV_GPU_UTIL"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "42"]]}]
+    body = self.get("/api/v1/inspect/query?name=gpu_util&run_id=fft-1", None, **self.runs)
+
+    self.assertEqual((body["metric"], body["series"]), ("DCGM_FI_DEV_GPU_UTIL", [{"labels": {"UUID": "GPU-fft-a"}, "points": [[T, 42.0]]}]))
+    unescaped = [q.replace("\\", "") for q in self.sent]
+    self.assertTrue(unescaped and all("GPU-fft-a" in q and "GPU-fft-b" not in q for q in unescaped), self.sent)
+
+  def test_a_source_that_answers_null_for_no_series_is_read_as_empty(self):
+    # Managed Service for Prometheus answers "result": null where plain Prometheus answers [].
+    self.answers["DCGM_FI_PROF_GR_ENGINE_ACTIVE"] = None
+    self.answers["DCGM_FI_DEV_GPU_UTIL"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "30"]]}]
+    body = self.get("/api/v1/inspect/query?name=gpu_busy&run_id=fft-1", None, **self.runs)
+
+    self.assertEqual((body["available"], body["metric"], body["series"][0]["points"]), (True, "DCGM_FI_DEV_GPU_UTIL", [[T, 30.0]]))
+
+  def test_gpu_busy_falls_back_to_gpu_util_and_says_which_it_read(self):
+    self.answers["DCGM_FI_DEV_GPU_UTIL"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "30"]]}]
+    fallback = self.get("/api/v1/inspect/query?name=gpu_busy&run_id=fft-1", None, **self.runs)
+    self.answers["DCGM_FI_PROF_GR_ENGINE_ACTIVE"] = [{"metric": {"UUID": "GPU-fft-a"}, "values": [[T, "25"]]}]
+    profiled = self.get("/api/v1/inspect/query?name=gpu_busy&run_id=fft-1", None)
+
+    self.assertEqual((fallback["metric"], fallback["series"][0]["points"]), ("DCGM_FI_DEV_GPU_UTIL", [[T, 30.0]]))
+    self.assertEqual((profiled["metric"], profiled["series"][0]["points"]), ("DCGM_FI_PROF_GR_ENGINE_ACTIVE", [[T, 25.0]]))
 
 
 class JoinTest(unittest.TestCase):

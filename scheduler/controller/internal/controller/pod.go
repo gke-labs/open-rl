@@ -14,8 +14,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 // Time-slicer contract, mirrored from src/accel_timeslicer/workload.py. A pod

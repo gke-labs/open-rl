@@ -220,6 +220,17 @@ type Request struct {
 	// HostRequestBytes is the pod template's memory request: what this
 	// worker's pod asks the node for, resident or parked.
 	HostRequestBytes int64
+	// MaxSeats is the most workers a shared claim may hold once this one
+	// joins; zero means no limit. A ledger at the limit is not a candidate:
+	// the worker cuts its own claim, and if no device is free it waits. Set
+	// from the controller's flag, not from the spec: it is fleet policy.
+	MaxSeats int
+}
+
+// AtSeatLimit reports whether a claim already holds as many workers as the
+// request allows a shared claim to hold.
+func (r Request) AtSeatLimit(claim *Claim) bool {
+	return r.MaxSeats > 0 && claim.Workers() >= r.MaxSeats
 }
 
 // OwnerKey is the fairness unit the timeslicer serves this worker under; a
@@ -301,10 +312,10 @@ func candidateNodes(req Request, fleet *Fleet) map[string]int {
 }
 
 // SelectClaim picks the allocated claim a worker should join, or nil:
-// single-device only, role and host-memory checked -- host memory is the one
-// ceiling on how many workers may park on a node -- preferring fewest owners,
-// then fewest workers, then name. Advisory -- the ledger's CAS booking is what
-// makes it stick.
+// single-device only, role, seat limit and host memory checked -- host memory
+// is the node-wide ceiling on parked workers, MaxSeats the per-claim one --
+// preferring fewest owners, then fewest workers, then name. Advisory -- the
+// ledger's CAS booking is what makes it stick.
 func SelectClaim(req Request, fleet *Fleet) *Claim {
 	if !req.Shareable || req.Devices > 0 {
 		return nil
@@ -335,6 +346,9 @@ func SelectClaim(req Request, fleet *Fleet) *Claim {
 			continue
 		}
 		if req.Memory > node.DeviceMemoryBytes {
+			continue
+		}
+		if req.AtSeatLimit(claim) {
 			continue
 		}
 		// Node-wide: every pod on the node draws from one allocatable pool.
@@ -383,6 +397,10 @@ func Explain(req Request, fleet *Fleet, detail string) string {
 	case len(candidateNodes(req, fleet)) > 0:
 		// The hardware exists; it is busy. Retrying is the right move.
 		reason = "WaitingForCapacity: a pool fits this workload but none has a free seat or a free accelerator"
+		// Only a worker that could have shared is waiting on the limit.
+		if req.MaxSeats > 0 && req.Shareable && req.Devices == 0 {
+			reason += fmt.Sprintf("; shared claims hold at most %d workers", req.MaxSeats)
+		}
 	default:
 		biggest := pools[0]
 		for _, node := range pools[1:] {

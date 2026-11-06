@@ -19,11 +19,11 @@ HOST           ?= 127.0.0.1
 PORT           ?= 9003
 # The fully qualified base URL used by local CLI tools and clients
 BASE_URL       ?= http://$(HOST):$(PORT)
-UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_trainer_logprob_chunks tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_perf_compare_script tests.test_delta_weight_sync tests.test_diffing_backends tests.test_sampler_weight_rotation tests.test_sampler_batch_limits tests.test_commands tests.test_weight_sync_config tests.test_exclusive_trainer tests.test_delete_model tests.test_automodel_worker tests.test_worker_thread_device tests.test_trainer_data_parallel tests.test_openrl_status tests.test_skill_docs tests.test_trainer_ready tests.test_sampling_store tests.test_lora_snapshots tests.test_prefetch tests.test_pool_accept tests.test_sampling_dispatcher tests.test_vllm_sampler tests.test_vllm_options tests.test_observability tests.test_accelerators tests.test_trainer_shape_bucketing tests.test_device tests.test_tpu_weights tests.test_training_e2e_script tests.test_sampler_engine_kwargs
+UNIT_TESTS ?= tests.test_session_lifecycle tests.test_proto_codec tests.test_forward_only tests.test_fft_batch_failure tests.test_api_server_paths tests.test_accel_timeslicer tests.test_trainer_optimizer_correctness tests.test_trainer_logprob_chunks tests.test_worker_manager tests.test_scheduler_worker_manager tests.test_estimator tests.test_redis_store tests.test_cluster_eval_script tests.test_perf_compare_script tests.test_delta_weight_sync tests.test_diffing_backends tests.test_sampler_weight_rotation tests.test_sampler_batch_limits tests.test_commands tests.test_weight_sync_config tests.test_exclusive_trainer tests.test_delete_model tests.test_automodel_worker tests.test_worker_thread_device tests.test_trainer_data_parallel tests.test_openrl_status tests.test_skill_docs tests.test_trainer_ready tests.test_sampling_store tests.test_lora_snapshots tests.test_prefetch tests.test_pool_accept tests.test_sampling_dispatcher tests.test_vllm_sampler tests.test_vllm_options tests.test_observability tests.test_accelerators tests.test_trainer_shape_bucketing tests.test_device tests.test_tpu_weights tests.test_training_e2e_script tests.test_sampler_engine_kwargs tests.test_lora_runtime_slots tests.test_telemetry
 # Only forward BASE_URL to e2e when the user supplied it. The Makefile default
 # is for local CLI usage; e2e should start its own backend by default.
 TRAINING_TEST_BASE_URL ?= $(if $(filter environment command line,$(origin BASE_URL)),$(BASE_URL),)
-UNIT_TESTS += tests.test_observability_kubernetes
+UNIT_TESTS += tests.test_observability_kubernetes tests.test_summaries
 TRAINING_TEST_EXTRA ?= gpu
 TRAINING_TEST_ARGS ?=
 PIGLATIN_TEST_PYTHONPATH ?= examples/sft/pig-latin
@@ -335,7 +335,7 @@ dashboard-apply:
 # ---------------------------------------------------------------------------
 # Images published by .github/workflows/build-and-push.yml. The names must match
 # the manifests exactly or the pin silently does nothing.
-IMAGE_REPO     ?= ghcr.io/gke-labs/open-rl
+IMAGE_REPO     ?= ghcr.io/openrl-dev/openrl
 RELEASE_IMAGES ?= server api-server client scheduler
 # Gitignored; the release job uploads everything in here.
 DIST_DIR       ?= dist

@@ -826,7 +826,7 @@
         <p class="tag">GPUs for work, not for people.</p>
         <p class="tag sub">A post-training service you host yourself. RL and SFT on your Kubernetes cluster, behind the Tinker API.</p>
         <p class="who">OpenRL Authors</p>
-        <a class="repo" href="https://github.com/gke-labs/open-rl" target="_blank" rel="noopener">github.com/gke-labs/open-rl</a>
+        <a class="repo" href="https://github.com/openrl-dev/openrl" target="_blank" rel="noopener">github.com/openrl-dev/openrl</a>
       </div>
     </section>
 
@@ -1144,7 +1144,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
           </div></div>
           <div class="step"><span class="n">3</span><div>
             <p>Install OpenRL. The standard manifest enables both LoRA and full fine-tuning.</p>
-            <pre class="wrap"><span class="p">$ </span><span class="cmd">kubectl</span> apply <span class="fl">--server-side -f</span> https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml</pre>
+            <pre class="wrap"><span class="p">$ </span><span class="cmd">kubectl</span> apply <span class="fl">--server-side -f</span> https://github.com/openrl-dev/openrl/releases/latest/download/openrl-fft.yaml</pre>
           </div></div>
         </div>
         <div class="col" data-step="2">
@@ -1159,7 +1159,7 @@ svc = tinker.ServiceClient(
 trainer = <span class="k">await</span> svc.create_lora_training_client_async(
     base_model=<span class="s">"google/gemma-4-e2b"</span>, rank=16)
 <span class="c"># then sample, score, forward_backward, optim_step</span></pre>
-          <p><code>openrl-doctor --base-url … --train</code> checks the deployment end to end. The full walk-through is <a href="https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md" target="_blank" rel="noopener">docs/getting-started.md</a>.</p>
+          <p><code>openrl-doctor --base-url … --train</code> checks the deployment end to end. The full walk-through is <a href="https://github.com/openrl-dev/openrl/blob/main/docs/getting-started.md" target="_blank" rel="noopener">docs/getting-started.md</a>.</p>
         </div>
       </div>
     </section>
@@ -1201,7 +1201,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
           <p><i class="next">next</i><span>Financial domain recipes, paper reproductions, custom sampler images, and the checkpoints API.</span></p>
         </div>
       </div>
-      <p class="fine">The full plan, by focus area and initiative, is in <a href="https://github.com/gke-labs/open-rl/blob/main/ROADMAP.md" target="_blank" rel="noopener">ROADMAP.md</a>. To change it, open an issue with the roadmap label.</p>
+      <p class="fine">The full plan, by focus area and initiative, is in <a href="https://github.com/openrl-dev/openrl/blob/main/ROADMAP.md" target="_blank" rel="noopener">ROADMAP.md</a>. To change it, open an issue with the roadmap label.</p>
     </section>
 
     <!-- slide 23: build it with us -->
@@ -1211,7 +1211,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
         <p>We have applied to donate OpenRL to the CNCF, for a vendor-neutral home.</p>
       </div>
       <div class="cta">
-        <a href="https://github.com/gke-labs/open-rl" target="_blank" rel="noopener">github.com/gke-labs/open-rl</a>
+        <a href="https://github.com/openrl-dev/openrl" target="_blank" rel="noopener">github.com/openrl-dev/openrl</a>
         <p>The roadmap and the issues are public. File one, or pick one up.</p>
       </div>
       <div class="tryit">
@@ -1232,7 +1232,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
         <h1>Thank you.</h1>
         <p>GPUs for work, not for people. Standard RL loops on shared Kubernetes accelerators.</p>
         <p class="who">OpenRL Authors</p>
-        <a class="repo" href="https://github.com/gke-labs/open-rl" target="_blank" rel="noopener">github.com/gke-labs/open-rl</a>
+        <a class="repo" href="https://github.com/openrl-dev/openrl" target="_blank" rel="noopener">github.com/openrl-dev/openrl</a>
       </div>
     </section>
 
@@ -1587,7 +1587,7 @@ trainer = <span class="k">await</span> svc.create_lora_training_client_async(
       <div class="n">0.57 → 0.72 <small>held-out reward, 30 steps</small></div>
       <p>Harvey's Legal Agent Benchmark: documents in a sandbox, tools to read them, deliverables graded by a judge. Recipe in the repo, 32k-token turns in a 192k context.</p>
     </div>
-    <div class="links" data-step="2"><span><span class="b">openrl.dev</span></span><span><span class="b">github.com/gke-labs/open-rl</span></span><span><b>CNCF Sandbox</b> project</span><span><b>Agent skill</b> in every release</span></div>
+    <div class="links" data-step="2"><span><span class="b">openrl.dev</span></span><span><span class="b">github.com/openrl-dev/openrl</span></span><span><b>CNCF Sandbox</b> project</span><span><b>Agent skill</b> in every release</span></div>
   </div></div>
 </section>
 

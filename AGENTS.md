@@ -173,7 +173,7 @@ kubectl delete pods -l timeslice.io/group=samplers --ignore-not-found
 ### Kustomize Deployment & Base Manifest Best Practices (`Tip`)
 To prevent noisy container image tag diffs inside pull requests while ensuring clean deployments across Kubernetes environments, always follow this Kustomize pattern:
 1. **Deploy via Kustomize (`-k`)**: Always apply directory manifests via `kubectl apply -k <directory>` rather than `kubectl apply -f <directory>`.
-2. **Keep Base YAMLs at `:latest` or Placeholder**: In all base/rendered YAML template files (`04-api-server.yaml`, `05-worker-pod-template.yaml`, `07-accel-timeslicer-daemonset.yaml`, `09-sampler-pod-template.yaml`, `04-deployment.yaml`, etc.), keep container image tags permanently set to a static placeholder (`e.g. image: ghcr.io/gke-labs/open-rl/server:latest` or `/API server:latest`). **Never bump image tags inside these base template files.**
+2. **Keep Base YAMLs at `:latest` or Placeholder**: In all base/rendered YAML template files (`04-api-server.yaml`, `05-worker-pod-template.yaml`, `07-accel-timeslicer-daemonset.yaml`, `09-sampler-pod-template.yaml`, `04-deployment.yaml`, etc.), keep container image tags permanently set to a static placeholder (`e.g. image: ghcr.io/openrl-dev/openrl/server:latest` or `/API server:latest`). **Never bump image tags inside these base template files.**
 3. **Single Source of Truth for Version Bumps**: When releasing or bumping image versions (`e.g. 0.1.75 -> 0.1.76`), modify **only**:
    - `VERSION` (`at repository root`)
    - The `newTag:` field inside the target environment's `kustomization.yaml` (`e.g. k8s/deploy/distributed-fft-timeslice/kustomization.yaml`)

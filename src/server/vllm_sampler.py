@@ -14,11 +14,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from accel_timeslicer.time_slicer import TimeSlicerClient, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
+from accel_timeslicer.time_slicer import TimeSlicerClient, TimeSlicerRefused, time_slicer_client_from_env, time_slicing_enabled, workload_from_env
 from accel_timeslicer.workload import SAMPLER_CLAIM, WorkloadRef, local_workload_name
 from server.lora_snapshots import snapshot_root
 from server.sampling_dispatcher import Dispatcher, RevisionUnloadable, delta_applies, failed, redis_client
 from server.sampling_store import SamplingStore
+from server.telemetry import gpu_turn, serving, set_phase
 from server.vllm_options import engine_args, sample_params, sample_result
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,12 @@ class Sampler:
     self.update_failed = False
 
   async def wake(self) -> None:
-    await self.engine.wake_up(tags=["weights", "kv_cache"])
+    """Wakes the weights alone. The KV cache follows in `wake_kv_cache` once the turn's weights are settled, since a
+    delta update needs the headroom the cache would hold."""
+    await self.engine.wake_up(tags=["weights"])
+
+  async def wake_kv_cache(self) -> None:
+    await self.engine.wake_up(tags=["kv_cache"])
 
   async def sleep(self) -> None:
     await self.engine.sleep(level=1)
@@ -133,7 +139,7 @@ async def holding_gpu(time_slicer: TimeSlicerClient | None, workload: WorkloadRe
   if time_slicer is None:
     yield
     return
-  async with time_slicer.acquire(workload):
+  async with gpu_turn(time_slicer.acquire(workload)):
     if sampler is not None:
       await sampler.wake()
     try:
@@ -159,6 +165,7 @@ class TimeSlicedDispatcher(Dispatcher):
     async with holding_gpu(self.time_slicer, self.workload, self.sampler):
       await self.read()  # requests that arrived while the turn was pending join it
       if await self.ready():
+        await self.sampler.wake_kv_cache()
         await asyncio.gather(*(self.send(r) for r in self.to_send()[: self.concurrency]))
 
 
@@ -180,8 +187,15 @@ async def run_sampling_worker(pool: str) -> None:
   workload = workload_from_env(os.getpid(), name=local_workload_name("sampler", pool), claim=SAMPLER_CLAIM) if time_slicer else None
   store = SamplingStore(redis_client(os.environ["REDIS_URL"]))
   if time_slicer is not None:
-    await time_slicer.register(workload)
-  sampler = None
+    try:
+      await time_slicer.register(workload)
+    except TimeSlicerRefused as exc:
+      # No process under this name can serve the pool again, so its requests fail now instead of at their deadline.
+      for r in await store.pending(pool, limit=None):
+        await store.set_result(r, failed(f"The sampler for pool {pool} cannot run: {exc}"))
+      await store.redis.aclose()
+      raise
+  sampler = task = None
   try:
     async with holding_gpu(time_slicer, workload):
       is_lora = os.environ.get("OPEN_RL_FINE_TUNING_TYPE") == "lora"
@@ -189,6 +203,7 @@ async def run_sampling_worker(pool: str) -> None:
       if time_slicer is not None:
         await sampler.sleep()  # give the memory back before releasing the turn
     Path(READY_FILE).touch()
+    set_phase("ready")
     concurrency = int(os.getenv("OPEN_RL_DISPATCH_CONCURRENCY", "256"))
     if time_slicer is not None:
       dispatcher = TimeSlicedDispatcher(store, pool, sampler, concurrency, time_slicer, workload)
@@ -208,12 +223,22 @@ async def run_sampling_worker(pool: str) -> None:
         raise RuntimeError(f"The sampler for pool {pool} cannot serve: {sampler_failed=} {time_slicer_failed=}")
       await asyncio.wait({task}, timeout=1)
   finally:
-    # A faulted process still holds the GPU; the turn moves on once it exits and its connection closes.
-    if time_slicer is not None and not time_slicer.faulted:
+    if task is not None:
+      # The dispatcher leaves its turn first, so the unregister follows the park on the slicer's connection.
+      task.cancel()
+      await asyncio.wait({task})
+    if time_slicer is not None:
+      # A faulted process stays registered: it still holds the GPU, and the turn moves on once it exits and its
+      # connection closes.
       await time_slicer.unregister(workload)
     if sampler is not None:
       sampler.engine.shutdown()
     await store.redis.aclose()
+
+
+async def serve_pool(pool: str) -> None:
+  async with serving("sampler", pool):
+    await run_sampling_worker(pool)
 
 
 def main() -> None:
@@ -221,7 +246,7 @@ def main() -> None:
   parser.add_argument("--pool", required=True, help="The sampling pool whose stream this replica serves")
   args = parser.parse_args()
   logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-  asyncio.run(run_sampling_worker(args.pool))
+  asyncio.run(serve_pool(args.pool))
 
 
 if __name__ == "__main__":

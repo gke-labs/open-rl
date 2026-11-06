@@ -89,7 +89,7 @@ This makes it straightforward to test custom training loops, different framework
 
 Harvey's Legal Agent Benchmark (LAB) is a set of 1,251 long-horizon legal tasks across different practice areas. In each task, the model works inside a sandboxed environment containing source documents (contracts, board minutes, financial filings) and uses tools to inspect files and draft deliverables such as memos, letters, spreadsheets, and timelines, which are then graded against a rubric by an LLM judge.
 
-The [Harvey LAB recipe](https://github.com/gke-labs/open-rl/tree/main/examples/harvey_labs) in our repository is a complete GRPO training loop built on `tinker-cookbook`. It uses [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) to isolate the per-task workspaces and includes a Kubernetes Job manifest to run the training loop inside the cluster. Over 30 steps, held-out reward improves from 0.57 to 0.72–0.74. We use this recipe to test OpenRL on realistic multi-turn workloads, and it serves as a working reference if you are building your own tool-using RL environments.
+The [Harvey LAB recipe](https://github.com/openrl-dev/openrl/tree/main/examples/harvey_labs) in our repository is a complete GRPO training loop built on `tinker-cookbook`. It uses [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox) to isolate the per-task workspaces and includes a Kubernetes Job manifest to run the training loop inside the cluster. Over 30 steps, held-out reward improves from 0.57 to 0.72–0.74. We use this recipe to test OpenRL on realistic multi-turn workloads, and it serves as a working reference if you are building your own tool-using RL environments.
 
 ## Configuring jobs through settings
 
@@ -133,7 +133,7 @@ Next up on our roadmap:
 - **Multi-GPU full fine-tuning** on the Automodel trainer backend, followed by GPU time-slicing for multi-GPU workloads.
 - **Custom sampler images and prefix-aware routing** across sampler replicas.
 
-We will share deeper posts on each of the capabilities above over the coming weeks. In the meantime, if you want to try them out, see the [getting-started guide](https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md) or browse the [v0.0.6](https://github.com/gke-labs/open-rl/releases/tag/v0.0.6) and [v0.0.7](https://github.com/gke-labs/open-rl/releases/tag/v0.0.7) release notes on GitHub. If you hit any issues, please [let us know](https://github.com/gke-labs/open-rl/issues).
+We will share deeper posts on each of the capabilities above over the coming weeks. In the meantime, if you want to try them out, see the [getting-started guide](https://github.com/openrl-dev/openrl/blob/main/docs/getting-started.md) or browse the [v0.0.6](https://github.com/openrl-dev/openrl/releases/tag/v0.0.6) and [v0.0.7](https://github.com/openrl-dev/openrl/releases/tag/v0.0.7) release notes on GitHub. If you hit any issues, please [let us know](https://github.com/openrl-dev/openrl/issues).
 
 ## Acknowledgements
 

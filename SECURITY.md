@@ -7,7 +7,7 @@ If you discover a security vulnerability in OpenRL, please report it responsibly
 
 To report a vulnerability, use GitHub Private Vulnerability Reporting:
 
-* **[Report a vulnerability](https://github.com/gke-labs/open-rl/security/advisories/new)**
+* **[Report a vulnerability](https://github.com/openrl-dev/openrl/security/advisories/new)**
 
 <!-- TODO: Set up a project security email (e.g. openrl-security@googlegroups.com) and
      add it here as an alternative reporting channel for reporters who cannot or prefer
@@ -49,7 +49,7 @@ When a security issue is confirmed, the OpenRL maintainers will:
 2. Assign a CVE identifier if appropriate
 3. Release a patched version
 4. Publish a security advisory via
-   [GitHub Security Advisories](https://github.com/gke-labs/open-rl/security/advisories)
+   [GitHub Security Advisories](https://github.com/openrl-dev/openrl/security/advisories)
 
 ## Security Response Team
 

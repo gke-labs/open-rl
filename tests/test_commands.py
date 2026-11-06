@@ -61,6 +61,13 @@ class CommandWireFormatTest(unittest.TestCase):
     datum = commands.wire(command)["payload"]["data"][0]
     self.assertEqual([token for chunk in datum["model_input"]["chunks"] for token in chunk["tokens"]], [1, 2])
 
+  def test_enqueue_stamp_keeps_the_envelope_existing_workers_accept(self) -> None:
+    trace_context = {"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01", commands.ENQUEUED_AT_KEY: "1700000000.5"}
+    raw = commands.wire(commands.OptimStep(request_id="r", model_id="m", trace_context=trace_context))
+    # A worker from before the stamp forbids any envelope key it does not know.
+    self.assertEqual(set(raw), {"op", "request_id", "model_id", "trace_context", "payload"})
+    self.assertEqual(commands.parse_command(raw).enqueued_at, 1700000000.5)
+
   def test_ambiguous_envelope_is_rejected(self) -> None:
     with self.assertRaises(ValueError):
       commands.parse_command({"request_id": "r", "model_id": "m", "op": "optim_step", "payload": {"model_id": "other"}})

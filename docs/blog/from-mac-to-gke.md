@@ -2,7 +2,7 @@
 
 RL fine-tuning is one of the most powerful ways to specialize language models — but the infrastructure behind it has traditionally been a nightmare. You're either wrestling with GPU allocation, rewriting training scripts for different backends, or managing job lifecycles by hand.
 
-[OpenRL](https://github.com/google/open-rl) is a self-hosted, open-source API that makes this simple. Write your training loop once using the Tinker SDK, run it on your Mac to iterate fast, then point it at a GKE cluster when you're ready to scale. Same code, any backend.
+[OpenRL](https://github.com/openrl-dev/openrl) is a self-hosted, open-source API that makes this simple. Write your training loop once using the Tinker SDK, run it on your Mac to iterate fast, then point it at a GKE cluster when you're ready to scale. Same code, any backend.
 
 Let's walk through it.
 
@@ -66,7 +66,7 @@ Here's the key insight: **your client code doesn't change.** The Tinker API abst
 
 ```bash
 # Deploy to GKE
-kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
 
 # Port-forward to your local machine
 kubectl -n openrl-system port-forward svc/open-rl-api-server-service 8000:8000

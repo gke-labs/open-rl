@@ -8,6 +8,7 @@ import torch
 from torch.utils.checkpoint import checkpoint
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
+from server import telemetry
 from training import losses
 from training.device import resolve_device
 from training.types import Datum
@@ -49,6 +50,8 @@ class BaseTrainerWorker:
     self.tokenizer: PreTrainedTokenizerBase | None = None
     self.device = resolve_device()
     self.last_token_budget: int | None = None
+    # What the last save moved, for the op record: a sparse delta's density and size, or empty for a full checkpoint.
+    self.last_save_metrics: dict[str, float] = {}
 
   def is_ready(self) -> bool:
     """Whether a model is loaded and the worker can serve requests. The
@@ -198,7 +201,7 @@ class BaseTrainerWorker:
       completed_loss_fn_outputs.append(output)
 
     return {
-      "metrics": {"loss:mean": self.sanitize_float(mean_loss), "loss:sum": self.sanitize_float(total_loss)},
+      "metrics": self.sanitize_metrics({"loss:mean": mean_loss, "loss:sum": total_loss}),
       "loss_fn_outputs": completed_loss_fn_outputs,
       "loss_fn_output_type": "ArrayRecord",
     }
@@ -451,6 +454,11 @@ class BaseTrainerWorker:
       prompt_logprobs.append(self.sanitize_float(logprob))
 
     return prompt_logprobs
+
+  def sanitize_metrics(self, metrics: dict[str, float]) -> dict[str, float]:
+    """The metrics with NaN and infinity replaced, for JSON. Telemetry gets the names of the replaced ones first."""
+    telemetry.nonfinite(name for name, value in metrics.items() if not math.isfinite(value))
+    return {name: self.sanitize_float(value) for name, value in metrics.items()}
 
   def sanitize_float(self, val: float) -> float:
     if math.isinf(val):

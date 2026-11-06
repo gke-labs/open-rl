@@ -27,6 +27,7 @@ from pydantic import AfterValidator, AliasChoices, BaseModel, BeforeValidator, C
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from server import openrl_status, proto_codec
+from server import telemetry as run_records
 from server.accelerators import Accelerator, check_supported, parse_accelerator
 from server.lora_snapshots import snapshot_name, snapshot_root
 from server.model_metadata import (
@@ -64,16 +65,19 @@ owner_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 async def bind_session(session_id: str | None, model_id: str) -> None:
   if not session_id:
     return
+  run_records.session_seen(session_id)
   owner = await asyncio.to_thread(owner_of, model_id)
   async with owner_locks[owner]:
+    # On the owner, for the reaper: workers stay while any attached session lives.
+    if worker_manager is not None:
+      await session_registry.attach(session_id, owner)
     # On the model, for the model view: which sessions are this model's own.
+    # After the attach, so the session is live by the time the model lists it;
+    # a job whose listed sessions are all dead loses its place on a shared runtime.
     meta = await get_model_metadata(state, model_id)
     if meta is not None and session_id not in meta.session_ids:
       meta.session_ids.append(session_id)
       await persist_model_metadata(state, model_id, meta)
-    # On the owner, for the reaper: workers stay while any attached session lives.
-    if worker_manager is not None:
-      await session_registry.attach(session_id, owner)
 
 
 async def reap_owner(owner: str) -> None:
@@ -86,6 +90,67 @@ async def reap_owner(owner: str) -> None:
       if get_sampler_backend() == "vllm":
         await SamplingStore(store.redis).delete_if_empty(pool_name(model))
     await session_registry.forget(owner)
+
+
+# Counting a base model's runtimes and claiming a place on one take turns, so two
+# jobs created at once cannot both take a runtime's last place.
+slot_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
+
+def runtime_jobs_key(runtime: str) -> str:
+  return f"open_rl:runtime_jobs:{runtime}"
+
+
+async def job_is_live(model_id: str) -> bool:
+  """A job holds its place on a shared runtime until it is deleted or every
+  session it was bound to has expired. A job bound to no session holds it until
+  it is deleted."""
+  meta = await get_model_metadata(state, model_id)
+  if meta is None or meta.status != "active":
+    return False
+  for session_id in meta.session_ids:
+    if await session_registry.live(session_id):
+      return True
+  return not meta.session_ids
+
+
+async def prune_runtime_jobs(runtime: str) -> int:
+  """Drop the jobs that no longer hold a place on a shared runtime, and return
+  how many still do."""
+  key = runtime_jobs_key(runtime)
+  live = 0
+  for job in await state.set_members(key):
+    if await job_is_live(job):
+      live += 1
+    else:
+      await state.remove_from_set(key, job)
+  return live
+
+
+async def persist_on_runtime_slot(model_id: str, meta: TrainingModelMetadata) -> None:
+  """Persist a new job's metadata, on the base model's first shared runtime
+  that has room when the job is a shared LoRA job.
+
+  Every LoRA job on a base model otherwise shares one trainer and one sampler,
+  and the trainer takes the jobs one at a time, so step time grows with each
+  job. OPEN_RL_LORA_JOBS_PER_RUNTIME caps the jobs per runtime; the next job
+  starts another one, placed like any LoRA runtime: it waits for GPUs up to the
+  scheduler's placement timeout, and may share a GPU unless the scheduler's
+  seat limit is set. Unset or 0 keeps a single runtime.
+  """
+  cap = env_int("OPEN_RL_LORA_JOBS_PER_RUNTIME") or 0
+  if cap <= 0 or worker_manager is None or not meta.shares_runtime():
+    await persist_model_metadata(state, model_id, meta)
+    return
+  async with slot_locks[meta.shared_runtime(0)]:
+    slot = 0
+    while await prune_runtime_jobs(meta.shared_runtime(slot)) >= cap:
+      slot += 1
+    meta.runtime_slot = slot
+    # The metadata lands before the job claims its place, so a prune that runs
+    # before this request finishes finds the job live rather than unknown.
+    await persist_model_metadata(state, model_id, meta)
+    await state.add_to_set(runtime_jobs_key(meta.runtime(model_id)), model_id)
 
 
 provider = TracerProvider()
@@ -555,7 +620,7 @@ async def _extract_and_persist_model_metadata(
   )
   if meta_obj.sampler_replicas > 1 and meta_obj.shares_gpu():
     raise ValueError("openrl.sampler_replicas above 1 needs samplers on GPUs of their own; set openrl.exclusive=true")
-  await persist_model_metadata(state, model_id, meta_obj)
+  await persist_on_runtime_slot(model_id, meta_obj)
 
   return model_id, meta_obj
 
@@ -585,7 +650,9 @@ async def enqueue(command: Command) -> str:
   carrier = await open_future(command.request_id)
 
   active_set_id = await _resolve_active_set_id(command.model_id)
+  carrier[commands.ENQUEUED_AT_KEY] = str(time.time())
   await store.put_request(commands.wire(command.model_copy(update={"trace_context": carrier})), active_set_id=active_set_id)
+  run_records.enqueued(command.model_id)
   # One line per training request so a request that never reaches a worker can
   # be traced end to end (the workers log the same id when they pop it).
   print(f"[API_SERVER] enqueued op={command.op} request_id={command.request_id} model_id={command.model_id} active_set={active_set_id}")
@@ -641,6 +708,12 @@ def check_sampler_backend() -> None:
     )
 
 
+def check_lora_jobs_per_runtime() -> None:
+  value = os.getenv("OPEN_RL_LORA_JOBS_PER_RUNTIME", "")
+  if value and not value.isdigit():
+    raise RuntimeError(f"OPEN_RL_LORA_JOBS_PER_RUNTIME is {value!r}; it must be 0 (one runtime) or a positive number of jobs")
+
+
 def translate_future_result(result: dict) -> dict:
   result_type = result.get("type")
   if result_type in {"model_created", "model_loaded_from_state"}:
@@ -673,6 +746,8 @@ def translate_future_result(result: dict) -> dict:
     response["type"] = public_type_by_internal_type[result_type]
     if result_type == "state_saved" and isinstance(response.get("path"), str):
       response["path"] = tinker_state_path(response["path"])
+    if result_type in ("state_saved", "sampler_weights_saved", "weights_saved"):
+      response.pop("metrics", None)  # recorded by telemetry on the worker; not part of the SDK's save responses
     return response
 
   return result
@@ -769,6 +844,9 @@ async def lifespan(_: FastAPI):
   global worker_manager
   task = None
   check_sampler_backend()
+  check_lora_jobs_per_runtime()
+  # The in-process trainer's records, and the requests this server enqueues, are written from here.
+  run_records.start("api_server", worker_record=False)
   if is_fft_enabled() or os.getenv("REDIS_URL") or os.getenv("OPEN_RL_WORKER_MANAGER"):
     worker_manager = create_worker_manager()
   if is_single_process_mode():
@@ -803,12 +881,13 @@ async def lifespan(_: FastAPI):
     if worker_manager is not None:
       worker_manager.close()
       worker_manager = None
+    await run_records.finish()
 
 
 # The release tag, baked in at image build (OPEN_RL_VERSION build arg); the
 # VERSION file is an internal counter and does not name a release.
 OPEN_RL_VERSION = os.getenv("OPEN_RL_VERSION") or "dev"  # an empty build arg must not become the version
-RELEASES_URL = "https://github.com/gke-labs/open-rl/releases"
+RELEASES_URL = "https://github.com/openrl-dev/openrl/releases"
 EXAMPLE_MODELS = ["Qwen/Qwen2.5-0.5B", "Qwen/Qwen3-0.6B", "google/gemma-4-e2b", "Qwen/Qwen3-8B"]
 
 app = FastAPI(
@@ -818,7 +897,7 @@ app = FastAPI(
     "A self-hosted, Kubernetes-native post-training API that serves the Tinker API. "
     "Tinker SDK clients use the /api/v1 paths. GET /api/v1/openrl/models/{model_id} is OpenRL's own: "
     "what the server knows about one model, its settings, its workers and whether its session is live. "
-    "Repository and docs: https://github.com/gke-labs/open-rl"
+    "Repository and docs: https://github.com/openrl-dev/openrl"
   ),
   lifespan=lifespan,
 )
@@ -935,7 +1014,7 @@ def openrl_info() -> dict[str, Any]:
       "session_reap_interval_seconds": SESSION_REAP_INTERVAL_SEC,
     },
     "skill_url": f"{RELEASES_URL}/download/{OPEN_RL_VERSION}/openrl-skill.tar.gz" if release else None,
-    "getting_started_url": "https://github.com/gke-labs/open-rl/blob/main/docs/getting-started.md",
+    "getting_started_url": "https://github.com/openrl-dev/openrl/blob/main/docs/getting-started.md",
   }
 
 
@@ -981,6 +1060,7 @@ async def create_session(req: CreateSessionRequest):
     raise HTTPException(status_code=400, detail=str(exc)) from exc
   session_id = f"sess-{uuid.uuid4().hex[:12]}"
   await session_registry.update_metadata(session_id, user_metadata)
+  run_records.session_seen(session_id, user_metadata)
   return {"session_id": session_id, "type": "create_session"}
 
 
@@ -988,6 +1068,7 @@ async def create_session(req: CreateSessionRequest):
 async def session_heartbeat(req: SessionHeartbeatRequest):
   if req.session_id:
     await session_registry.heartbeat(req.session_id)
+    run_records.session_seen(req.session_id)
   return {"type": "session_heartbeat"}
 
 
@@ -1447,5 +1528,6 @@ async def list_adapters():
 
 
 @app.post("/api/v1/telemetry")
-async def telemetry(_: dict):
+async def telemetry(body: dict):
+  run_records.sdk_events(body)
   return {"status": "accepted"}

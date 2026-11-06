@@ -53,7 +53,7 @@ make server BASE_MODEL="Qwen/Qwen3-4B-Instruct-2507"
 
 ## Checkpointing Limitation
 
-OpenRL does not yet implement full Tinker-compatible durable checkpoint management. For recipes that expose periodic checkpoint saves, set `save_every=0`; See [gke-labs/open-rl#83](https://github.com/gke-labs/open-rl/issues/83) for more details.
+OpenRL does not yet implement full Tinker-compatible durable checkpoint management. For recipes that expose periodic checkpoint saves, set `save_every=0`; See [openrl-dev/openrl#83](https://github.com/openrl-dev/openrl/issues/83) for more details.
 
 ## Supervised Learning Loop
 

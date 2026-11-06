@@ -94,7 +94,7 @@ gcloud container clusters get-credentials "${CLUSTER}" --location="${REGION}"
 Install two drivers:
 
 - **The NVIDIA GPU driver**, the kernel driver and CUDA libraries on the node. GKE normally installs it, but the pool above turns that off (`gpu-driver-version=disabled`) as the GKE DRA setup requires, so install it with Google's installer DaemonSet. The `latest` installer also provides the CUDA checkpoint support the FFT bundle needs.
-- **The NVIDIA DRA driver**, a Kubernetes add-on (Helm v3). It replaces the GKE device plugin, which exposes GPUs as an `nvidia.com/gpu` count. Instead, it publishes each GPU as a `ResourceSlice` with its model and memory, and allocates GPUs to `ResourceClaim`s of DeviceClass `gpu.nvidia.com`. The OpenRL scheduler places every worker by creating such a claim, so without this driver no worker is ever placed.
+- **The NVIDIA DRA driver**, a Kubernetes add-on (Helm v3). It replaces the GKE device plugin, which exposes GPUs as an `nvidia.com/gpu` count. Instead, it publishes each GPU as a `ResourceSlice` with its model and memory, and allocates GPUs to `ResourceClaim`s of DeviceClass `gpu.nvidia.com`. The OpenRL scheduler places every worker by creating such a claim, so without this driver no worker is ever placed. Chart 25.8.0 refuses to install with GPU allocation on (its default) unless you also set `gpuResourcesEnabledOverride=true`. Keep allocation on: the chart's alternative, `resources.gpus.enabled=false`, publishes no GPUs.
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container-engine-accelerators/master/nvidia-driver-installer/cos/daemonset-preloaded-latest.yaml
@@ -102,7 +102,8 @@ kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/container
 helm repo add nvidia https://helm.ngc.nvidia.com/nvidia
 helm install nvidia-dra-driver-gpu nvidia/nvidia-dra-driver-gpu \
   --version="25.8.0" --create-namespace --namespace nvidia-dra-driver-gpu \
-  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/"
+  --set nvidiaDriverRoot="/home/kubernetes/bin/nvidia/" \
+  --set gpuResourcesEnabledOverride=true
 ```
 
 Check that the GPU node has a `ResourceSlice` from driver `gpu.nvidia.com` listing both GPUs:
@@ -117,12 +118,12 @@ Apply **only one** of the following release bundles. Both install the same API s
 
 *   **Option A: LoRA.** Trainer and sampler workers each get a GPU of their own.
     ```bash
-    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-lora.yaml
+    kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-lora.yaml
     ```
 
 *   **Option B: LoRA and full fine-tuning (FFT).** Adds FFT workers, which can share a GPU with other FFT workers, and two DaemonSets that coordinate that sharing on each GPU node: the accelerator time-slicer and the llm-d snapshot agent.
     ```bash
-    kubectl apply --server-side -f https://github.com/gke-labs/open-rl/releases/latest/download/openrl-fft.yaml
+    kubectl apply --server-side -f https://github.com/openrl-dev/openrl/releases/latest/download/openrl-fft.yaml
     ```
     The DaemonSets run privileged, with host PID and host network, and schedule onto nodes labeled `nvidia.com/gpu.present=true` (set on the pool above). The snapshot agent checkpoints CUDA processes and needs NVIDIA driver r570 or newer, which the `latest` driver installer above provides. FFT workers never share a GPU with a LoRA worker. See [GKE FFT Time-Slice Setup](gke-fft-timeslice.md) for how the sharing works.
 

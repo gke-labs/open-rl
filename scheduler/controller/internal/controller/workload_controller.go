@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -26,8 +27,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 // WorkloadReconciler turns Workload requests into ResourceClaims
@@ -61,6 +62,14 @@ type WorkloadReconciler struct {
 	// PlacementStrategy orders the two placement moves; the zero value reads
 	// as binpack.
 	PlacementStrategy placement.Strategy
+	// MaxSeatsPerClaim caps how many workers share one claim; zero means no
+	// limit, one is exclusive placement. A worker that finds every eligible
+	// ledger at the limit cuts its own claim and, if no device is free, waits
+	// on capacity like any other: Pending until one is added or a seat
+	// frees, Failed if PlacementTimeout runs out first. It bounds a
+	// time-sliced step at the limit times the single-worker time, and it
+	// turns a full fleet into standing claims an autoscaler can see.
+	MaxSeatsPerClaim int
 	// MaxConcurrentReconciles is how many workers place at once.
 	MaxConcurrentReconciles int
 
@@ -116,7 +125,9 @@ func (r *WorkloadReconciler) Reconcile(ctx context.Context, req ctrl.Request) (c
 		return ctrl.Result{}, fmt.Errorf("cannot read the fleet, placing nothing this pass: %w", err)
 	}
 
-	return r.place(ctx, &worker, requestFrom(&worker), fleet)
+	request := requestFrom(&worker)
+	request.MaxSeats = r.MaxSeatsPerClaim
+	return r.place(ctx, &worker, request, fleet)
 }
 
 type placementScope struct {
@@ -543,23 +554,35 @@ func (r *WorkloadReconciler) teardown(ctx context.Context, worker *openrlv1alpha
 
 // joinExistingClaim books a seat on the claim SelectClaim proposes, re-reads
 // the fleet to verify concurrent bookings did not overcommit the node, and
-// keeps the caller's fleet snapshot current.
+// keeps the caller's fleet snapshot current. A ledger that refuses the
+// booking -- full, retiring, or holding an exclusive resident -- is dropped
+// from the candidates and selection runs again, so losing one race does not
+// cut a dedicated claim while another ledger has room.
 //
 // Because both racers write their seat before either re-reads, at least the
 // second reader sees the union across all claims on the node and yields.
 // Simultaneous racers may both observe the overcommit and both release their
 // seats; that double yield is benign and intentional.
 func (r *WorkloadReconciler) joinExistingClaim(ctx context.Context, worker *openrlv1alpha1.Workload, request placement.Request, fleet *placement.Fleet, current string) (*placement.Claim, *openrlv1alpha1.Seat, error) {
-	target := placement.SelectClaim(request, fleet)
-	if target == nil || target.Name == current {
-		return nil, nil, nil
-	}
-	_, seat, err := r.ensureSeat(ctx, target.Name, newSeat(worker, request), false)
-	if err == errBookingContended {
-		return nil, nil, nil
-	}
-	if err != nil {
-		return nil, nil, err
+	candidates := *fleet
+	candidates.Claims = maps.Clone(fleet.Claims)
+	var target *placement.Claim
+	var seat *openrlv1alpha1.Seat
+	for {
+		target = placement.SelectClaim(request, &candidates)
+		if target == nil || target.Name == current {
+			return nil, nil, nil
+		}
+		var err error
+		_, seat, err = r.ensureSeat(ctx, target.Name, newSeat(worker, request), false)
+		if err == errBookingContended {
+			delete(candidates.Claims, target.Name)
+			continue
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		break
 	}
 	fresh, err := r.readFleet(ctx)
 	if err != nil {
@@ -839,6 +862,20 @@ func managedClaims() predicate.Predicate {
 	})
 }
 
+// seatFreed passes ledger events that free a seat: a seat dropped from the
+// list, or the ledger retired. A seat added never unblocks a waiting worker,
+// so bookings and new ledgers do not wake the fleet.
+func seatFreed() predicate.Predicate {
+	return predicate.Funcs{
+		CreateFunc: func(event.CreateEvent) bool { return false },
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			before, okBefore := e.ObjectOld.(*openrlv1alpha1.ClaimLedger)
+			after, okAfter := e.ObjectNew.(*openrlv1alpha1.ClaimLedger)
+			return okBefore && okAfter && len(after.Spec.Seats) < len(before.Spec.Seats)
+		},
+	}
+}
+
 // SetupWithManager registers the reconciler.
 func (r *WorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.reader = mgr.GetAPIReader()
@@ -876,6 +913,7 @@ func (r *WorkloadReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&openrlv1alpha1.Workload{}).
 		Owns(&corev1.Pod{}).
 		Watches(&resourcev1.ResourceClaim{}, wakeAll, builder.WithPredicates(managedClaims())).
+		Watches(&openrlv1alpha1.ClaimLedger{}, wakeAll, builder.WithPredicates(managedClaims(), seatFreed())).
 		Watches(&corev1.Node{}, wakeAll, builder.WithPredicates(nodeCapacityChanged)).
 		WithOptions(controller.Options{MaxConcurrentReconciles: max(1, r.MaxConcurrentReconciles)}).
 		Complete(r)

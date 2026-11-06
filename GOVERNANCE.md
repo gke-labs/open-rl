@@ -43,7 +43,7 @@ The OpenRL project and its leadership embrace the following values:
 
 ## Maintainers
 
-OpenRL Maintainers have write access to the [project GitHub repository](https://github.com/gke-labs/open-rl).
+OpenRL Maintainers have write access to the [project GitHub repository](https://github.com/openrl-dev/openrl).
 They can merge their own patches or patches from others. The current maintainers can be found
 in [MAINTAINERS.md](MAINTAINERS.md). Maintainers collectively manage the project's resources
 and contributors.

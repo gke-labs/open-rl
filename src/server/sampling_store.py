@@ -8,6 +8,8 @@ from typing import Any
 
 import redis.asyncio as redis
 
+from server.telemetry import sample_answered
+
 RESULT_TTL_SECONDS = 300
 # An accepted request may never get a result, so its idempotency key expires instead of staying until Redis is full.
 PENDING_TTL_SECONDS = 3 * 24 * 3600
@@ -52,6 +54,11 @@ def job_and_revision(fields: dict[str, str]) -> tuple[str, str]:
   return job_of(record), record["revision"]
 
 
+def accepted_at(r: dict[str, Any]) -> float:
+  """When the record's request was accepted. A stream id starts with that time in milliseconds."""
+  return int(r["entry_id"].split("-")[0]) / 1000
+
+
 def entry_record(entry_id: str, fields: dict[str, str]) -> dict[str, Any]:
   return {**json.loads(fields["record"], object_hook=compact_prompt), "entry_id": entry_id}
 
@@ -88,8 +95,9 @@ class SamplingStore:
   async def wait_for_new(self, pool: str, after: str, timeout_ms: int) -> None:
     await self.redis.xread({stream_key(pool): after}, count=1, block=timeout_ms)
 
-  async def set_result(self, record: dict[str, Any], result: dict[str, Any]) -> bool:
-    """Save the first final result and drop the pending entry. False if it already has one."""
+  async def set_result(self, record: dict[str, Any], result: dict[str, Any], started_at: float | None = None) -> bool:
+    """Save the first final result and drop the pending entry. False if it already has one. A saved result is recorded
+    as a sample its client got, started at started_at, or when the request was accepted."""
     stream, future, entry_id = stream_key(record["pool"]), future_key(record["request_id"]), record["entry_id"]
 
     async def save(pipe) -> bool:
@@ -104,7 +112,10 @@ class SamplingStore:
       return True
 
     # Every set_result writes the result key, so watching it lets only one through.
-    return await self.redis.transaction(save, future, value_from_callable=True)
+    saved = await self.redis.transaction(save, future, value_from_callable=True)
+    if saved:
+      sample_answered(job_of(record), record["pool"], record["request_id"], result, started_at or accepted_at(record))
+    return saved
 
   async def entries(self, stream: str, until: str = "+"):
     """The stream's entries up to `until`, a page at a time."""

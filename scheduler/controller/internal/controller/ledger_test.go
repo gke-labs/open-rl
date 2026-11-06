@@ -13,9 +13,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	openrlv1alpha1 "github.com/gke-labs/open-rl/scheduler/controller/api/v1alpha1"
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	openrlv1alpha1 "github.com/openrl-dev/openrl/scheduler/controller/api/v1alpha1"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 func getLedger(t *testing.T, r *WorkloadReconciler, name string) *openrlv1alpha1.ClaimLedger {
@@ -120,6 +121,95 @@ func TestRebookingAdoptsTheRecordedSeat(t *testing.T) {
 	ledger := getLedger(t, r, ledgerNameFor(w.Status.ClaimName))
 	if len(ledger.Spec.Seats) != 1 {
 		t.Fatalf("rebooking grew the chart to %d seats: %+v", len(ledger.Spec.Seats), ledger.Spec.Seats)
+	}
+}
+
+// The seat limit is enforced inside the ledger's CAS loop, so a joiner
+// selecting from a snapshot that predates the last booking is refused.
+func TestBookingRefusesASeatPastTheLimit(t *testing.T) {
+	r := newReconciler(t, append(enabledNode(), trainerWorker("w-a", "model-a"), trainerWorker("w-b", "model-b"), trainerWorker("w-c", "model-c"))...)
+	r.PlacementStrategy = placement.StrategyBinPack
+	r.MaxSeatsPerClaim = 2
+	settle(t, r, "w-a")
+	claim := claimOf(t, r, "w-a")
+	allocateClaim(t, r, claim)
+	settle(t, r, "w-b")
+	if got := claimOf(t, r, "w-b"); got != claim {
+		t.Fatalf("w-b on %q, want %q", got, claim)
+	}
+	c := getWorker(t, r, "w-c")
+	if _, _, err := r.ensureSeat(context.Background(), claim, newSeat(c, requestFrom(c)), false); err != errBookingContended {
+		t.Fatalf("booking a third seat under a limit of two returned %v, want errBookingContended", err)
+	}
+	// A re-book that would add a seat is refused too: the limit holds on
+	// every write path, not only on joins.
+	if _, _, err := r.ensureSeat(context.Background(), claim, newSeat(c, requestFrom(c)), true); err != errBookingContended {
+		t.Fatalf("re-booking an unseated worker onto a full ledger returned %v, want errBookingContended", err)
+	}
+	// The founder's own re-book adopts its seat and is never refused.
+	a := getWorker(t, r, "w-a")
+	if _, _, err := r.ensureSeat(context.Background(), claim, newSeat(a, requestFrom(a)), true); err != nil {
+		t.Fatalf("re-booking the founder: %v", err)
+	}
+}
+
+// A booking refused on the selected ledger moves on to the next eligible one
+// instead of cutting a dedicated claim another ledger could have spared.
+func TestJoinRetriesTheNextLedgerWhenTheFirstIsFull(t *testing.T) {
+	ctx := context.Background()
+	r := newReconciler(t, append(enabledNode(),
+		trainerWorker("w-a", "model-a"), trainerWorker("w-b", "model-b"), trainerWorker("w-c", "model-c"),
+		trainerWorker("w-d", "model-d"), trainerWorker("w-e", "model-e"), trainerWorker("w-f", "model-f"))...)
+	r.PlacementStrategy = placement.StrategyBinPack
+	// Two allocated ledgers: a limit of one makes w-c cut a claim of its own.
+	r.MaxSeatsPerClaim = 1
+	settle(t, r, "w-a")
+	first := claimOf(t, r, "w-a")
+	allocateClaim(t, r, first)
+	settle(t, r, "w-c")
+	second := claimOf(t, r, "w-c")
+	if second == first {
+		t.Fatal("w-c joined under a limit of one, want a claim of its own")
+	}
+	allocateClaim(t, r, second)
+
+	r.MaxSeatsPerClaim = 3
+	book := func(name, claim string) {
+		t.Helper()
+		w := getWorker(t, r, name)
+		if _, _, err := r.ensureSeat(ctx, claim, newSeat(w, requestFrom(w)), false); err != nil {
+			t.Fatalf("booking %s on %s: %v", name, claim, err)
+		}
+	}
+	// Snapshot: the first ledger holds one seat and the second two, so
+	// selection prefers the first.
+	book("w-b", second)
+	fleet, err := r.readFleet(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := getWorker(t, r, "w-f")
+	request := requestFrom(f)
+	request.MaxSeats = 3
+	if got := placement.SelectClaim(request, fleet); got == nil || got.Name != first {
+		t.Fatalf("snapshot selects %v, want %q", got, first)
+	}
+	// Behind the snapshot, the first ledger fills to the limit.
+	book("w-d", first)
+	book("w-e", first)
+
+	joined, _, err := r.joinExistingClaim(ctx, f, request, fleet, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if joined == nil || joined.Name != second {
+		t.Fatalf("joined %v, want the ledger with room %q", joined, second)
+	}
+	if got := len(getLedger(t, r, ledgerNameFor(second)).Spec.Seats); got != 3 {
+		t.Fatalf("second ledger holds %d seats, want 3", got)
+	}
+	if got := len(getLedger(t, r, ledgerNameFor(first)).Spec.Seats); got != 3 {
+		t.Fatalf("first ledger holds %d seats after the refused join, want 3", got)
 	}
 }
 
@@ -576,5 +666,30 @@ func TestWaitsForATerminatingPredecessorClaim(t *testing.T) {
 	settle(t, r, "w-a")
 	if got := claimOf(t, r, "w-a"); got != claimNameFor(w) {
 		t.Fatalf("placed on %q, want the fresh %q", got, claimNameFor(w))
+	}
+}
+
+// Only a ledger event that frees a seat wakes the fleet: a booking cannot
+// unblock anyone, a release or a retirement can.
+func TestSeatFreedWakesOnlyOnReleasedSeats(t *testing.T) {
+	seat := func(n int) *openrlv1alpha1.ClaimLedger {
+		l := &openrlv1alpha1.ClaimLedger{}
+		for i := 0; i < n; i++ {
+			l.Spec.Seats = append(l.Spec.Seats, openrlv1alpha1.Seat{Workload: fmt.Sprintf("w-%d", i)})
+		}
+		return l
+	}
+	p := seatFreed()
+	if p.Create(event.CreateEvent{Object: seat(1)}) {
+		t.Error("a new ledger woke the fleet")
+	}
+	if p.Update(event.UpdateEvent{ObjectOld: seat(1), ObjectNew: seat(2)}) {
+		t.Error("a booking woke the fleet")
+	}
+	if !p.Update(event.UpdateEvent{ObjectOld: seat(2), ObjectNew: seat(1)}) {
+		t.Error("a released seat did not wake the fleet")
+	}
+	if !p.Delete(event.DeleteEvent{Object: seat(1)}) {
+		t.Error("a retired ledger did not wake the fleet")
 	}
 }

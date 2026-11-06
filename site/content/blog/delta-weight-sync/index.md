@@ -58,7 +58,7 @@ On the sampler side, applying a delta means updating the changed parameters in p
 
 **1. Custom weight transfer backend.**
 - vLLM provides a pluggable [weight transfer engine](https://docs.vllm.ai/en/latest/training/weight_transfer/base/) <sup>[4]</sup> interface that receives weight updates while generation is paused, driven through start, update, and finish hooks.
-- OpenRL registers a [`delta_snapshot` backend](https://github.com/gke-labs/open-rl/blob/5fae60a5213fd05fcaf17b955f25629bbc2c0fdb/src/server/delta_weight_transfer_engine.py) enabled via `WeightTransferConfig(backend="delta_snapshot")`, avoiding a custom vLLM fork.
+- OpenRL registers a [`delta_snapshot` backend](https://github.com/openrl-dev/openrl/blob/5fae60a5213fd05fcaf17b955f25629bbc2c0fdb/src/server/delta_weight_transfer_engine.py) enabled via `WeightTransferConfig(backend="delta_snapshot")`, avoiding a custom vLLM fork.
 
 **2. In-place sparse patching.**
 - Inside that backend, we pass the changed positions and values to vLLM's [checkpoint weight patch loader](https://docs.vllm.ai/en/latest/api/vllm/model_executor/model_loader/checkpoint_weight_patch/), indexed by the original Hugging Face parameter names.

@@ -18,7 +18,8 @@ from typing import Any
 import httpx
 import redis.asyncio as redis
 
-from server.sampling_store import SamplingStore, job_of
+from server.sampling_store import SamplingStore, accepted_at, job_of
+from server.telemetry import serving, set_phase
 from server.vllm_options import sample_params, sample_result
 
 logger = logging.getLogger(__name__)
@@ -42,11 +43,6 @@ def tmp_root() -> str:
 def revision_file(pool: str) -> Path:
   """The readiness probe compares vLLM's weight version with the revision in this file."""
   return Path(tmp_root(), "sampling", pool, "revision")
-
-
-def accepted_at(r: dict[str, Any]) -> float:
-  """When the record's request was accepted. A stream id starts with that time in milliseconds."""
-  return int(r["entry_id"].split("-")[0]) / 1000
 
 
 def failed(message: str) -> dict[str, str]:
@@ -170,13 +166,14 @@ class Dispatcher:
     turns = sorted(jobs.items(), key=lambda job: self.served.get(job[0], -1))
     return [r for turn in itertools.zip_longest(*(records for _, records in turns)) for r in turn if r is not None]
 
-  async def set_result(self, r: dict[str, Any], result: dict[str, Any]) -> None:
-    await self.store.set_result(r, result)
+  async def set_result(self, r: dict[str, Any], result: dict[str, Any], started_at: float | None = None) -> None:
+    await self.store.set_result(r, result, started_at)
     self.records.pop(r["entry_id"], None)
 
   async def send(self, r: dict[str, Any]) -> None:
     """Saves the sampler's answer. None, or an error, leaves the record pending to be sent again."""
     self.served[job_of(r)] = next(self.sends)
+    started_at = time.time()
     try:
       # A sampler that never answers must not hold the send past its record's deadline.
       timeout = max(0.0, accepted_at(r) + SAMPLE_DEADLINE_SECONDS - time.time())
@@ -185,7 +182,7 @@ class Dispatcher:
       logger.info("Retrying %s after %r", r["request_id"], exc)
       return
     if result is not None:
-      await self.set_result(r, result)
+      await self.set_result(r, result, started_at)
 
 
 class HttpSampler:
@@ -368,7 +365,8 @@ async def main() -> None:
   logging.getLogger("httpx").setLevel(logging.WARNING)
   router = os.getenv("OPEN_RL_SAMPLER_ROUTER", "http://127.0.0.1:8081")
   store, pool = SamplingStore(redis_client(os.environ["REDIS_URL"])), os.environ["OPEN_RL_SAMPLER_POOL"]
-  async with http_client() as http:
+  async with serving("dispatcher", pool), http_client() as http:
+    set_phase("ready")
     sampler = HttpSampler(http, pool, router, [])
     task = asyncio.create_task(Dispatcher(store, pool, sampler, int(os.getenv("OPEN_RL_DISPATCH_CONCURRENCY", "256"))).run())
     for sig in (signal.SIGTERM, signal.SIGINT):

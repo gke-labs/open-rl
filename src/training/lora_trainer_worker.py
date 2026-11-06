@@ -331,11 +331,7 @@ class LoraTrainingWorker(BaseTrainerWorker):
 
     self.save_adapter(model_id)
 
-    return {
-      "metrics": {
-        "grad_norm:mean": self.sanitize_float(total_norm.item()),
-      },
-    }
+    return {"metrics": self.sanitize_metrics({"grad_norm:mean": total_norm.item()})}
 
   def generate(
     self,

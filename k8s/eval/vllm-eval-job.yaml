@@ -38,7 +38,7 @@ spec:
       restartPolicy: Never
       containers:
       - name: eval
-        image: ghcr.io/gke-labs/open-rl/server:latest
+        image: ghcr.io/openrl-dev/openrl/server:latest
         imagePullPolicy: Always
         command: ["uv", "run", "python", "-m", "server.scripts.run_vllm_eval"]
         env:

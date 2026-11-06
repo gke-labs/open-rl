@@ -85,7 +85,7 @@ What changes when you choose Automodel:
 
 - The trainer runs a different image, the one the platform owner set as
   `OPEN_RL_AUTOMODEL_IMAGE`. The endpoint does not report which, and a deployment that
-  never set it runs `ghcr.io/gke-labs/open-rl/automodel:latest`. A first start pulls that
+  never set it runs `ghcr.io/openrl-dev/openrl/automodel:latest`. A first start pulls that
   image (several GiB) on top of the usual durations.
 - The job gets a trainer of its own, keyed `automodel-<base-model>`, so it never shares
   with PyTorch LoRA jobs on the same base model and starts cold every time: expect the

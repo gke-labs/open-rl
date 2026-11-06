@@ -3,7 +3,7 @@ package controller
 import (
 	"sort"
 
-	"github.com/gke-labs/open-rl/scheduler/controller/internal/placement"
+	"github.com/openrl-dev/openrl/scheduler/controller/internal/placement"
 )
 
 // MemoryTable supplies per-device memory, by attribute value, for drivers

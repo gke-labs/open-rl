@@ -64,7 +64,7 @@ class PodSpecTest(unittest.TestCase):
     for role in ("trainer", "sampler"):
       with self.subTest(role=role):
         spec = pod_spec("gpu", role)
-        self.assertEqual((spec.image_env, spec.default_image), ("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest"))
+        self.assertEqual((spec.image_env, spec.default_image), ("OPEN_RL_WORKER_IMAGE", "ghcr.io/openrl-dev/openrl/server:latest"))
         self.assertEqual(spec.toleration_key, "nvidia.com/gpu")
         # The CRD defaults the type to GPU, so GPU Workloads leave it out.
         self.assertIsNone(spec.workload_type)

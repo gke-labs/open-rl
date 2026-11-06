@@ -59,6 +59,9 @@ class TrainingModelMetadata(BaseModel):
   trainer_cp: int = 1
   recipe: Literal["rl", "sft"] | None = None
   client_log_id: str | None = None
+  # Which of the base model's shared LoRA runtimes serves this job. The API
+  # server fills runtimes up to OPEN_RL_LORA_JOBS_PER_RUNTIME jobs each.
+  runtime_slot: int = 0
   status: str = "active"
   updated_at: float = 0.0
   completed_at: float | None = None
@@ -94,16 +97,23 @@ class TrainingModelMetadata(BaseModel):
     base model's shared runtime."""
     if not self.shares_runtime():
       return f"base-{model_id}" if model_id == self.base_model else model_id
+    return self.shared_runtime(self.runtime_slot)
+
+  def shared_runtime(self, slot: int) -> str:
+    """The id of one of the shared LoRA runtimes for this job's base model and
+    trainer backend. Slot 0 keeps the plain id."""
     # A TPU runtime is its own; GPU keeps the bare id. When only one role runs on
     # TPU the id names it, so jobs share only workers on the same hardware.
     on_tpu = [role for role in ("trainer", "sampler") if self.accelerator_for(role) == "tpu"]
     accel = "" if not on_tpu else "tpu-" if len(on_tpu) == 2 else f"tpu-{on_tpu[0]}-"
     if self.trainer_backend == "pytorch":
-      return f"{accel}{self.base_model}"
-    if image := self.trainer_image():
+      shared = f"{accel}{self.base_model}"
+    elif image := self.trainer_image():
       # An image ref is not label safe, so a hash of it keeps images apart.
-      return f"{accel}image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
-    return f"{accel}{self.trainer_backend}-{self.base_model}"
+      shared = f"{accel}image-{hashlib.sha256(image.encode()).hexdigest()[:10]}-{self.base_model}"
+    else:
+      shared = f"{accel}{self.trainer_backend}-{self.base_model}"
+    return shared if slot == 0 else f"{shared}#slot{slot}"
 
   def pool(self, model_id: str) -> str:
     """The sampling pool that serves this job's runtime. Base model names are not

@@ -25,7 +25,7 @@
           "containers": [
             {
               "name": "worker",
-              "image": "ghcr.io/gke-labs/open-rl/server:latest",
+              "image": "ghcr.io/openrl-dev/openrl/server:latest",
               "command": [
                 "uv",
                 "run",
@@ -104,6 +104,30 @@
                       "fieldPath": "status.hostIP"
                     }
                   }
+                },
+                {
+                  "name": "POD_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "metadata.name"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_UID",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "metadata.uid"
+                    }
+                  }
+                },
+                {
+                  "name": "NODE_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "spec.nodeName"
+                    }
+                  }
                 }
               ],
               "resources": {
@@ -169,7 +193,7 @@
           "containers": [
             {
               "name": "worker",
-              "image": "ghcr.io/gke-labs/open-rl/server:latest",
+              "image": "ghcr.io/openrl-dev/openrl/server:latest",
               "command": [
                 "uv",
                 "run",
@@ -261,6 +285,30 @@
                   "valueFrom": {
                     "fieldRef": {
                       "fieldPath": "status.podIP"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "metadata.name"
+                    }
+                  }
+                },
+                {
+                  "name": "POD_UID",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "metadata.uid"
+                    }
+                  }
+                },
+                {
+                  "name": "NODE_NAME",
+                  "valueFrom": {
+                    "fieldRef": {
+                      "fieldPath": "spec.nodeName"
                     }
                   }
                 },

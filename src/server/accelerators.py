@@ -45,7 +45,7 @@ class PodSpec:
 
 def pod_spec(accelerator: Accelerator, role: str) -> PodSpec:
   if accelerator == "gpu":
-    return PodSpec("OPEN_RL_WORKER_IMAGE", "ghcr.io/gke-labs/open-rl/server:latest", "nvidia.com/gpu", None, "OPEN_RL_GPU_WORKER_ENV_CONFIGMAP")
+    return PodSpec("OPEN_RL_WORKER_IMAGE", "ghcr.io/openrl-dev/openrl/server:latest", "nvidia.com/gpu", None, "OPEN_RL_GPU_WORKER_ENV_CONFIGMAP")
   # GKE taints TPU nodes with google.com/tpu. Both roles outgrow a container's 64 MB /dev/shm: torch_tpu writes a
   # copy of every compiled program there (its tier-2 cache, always on with the tier-3 cache), and vLLM on TPU uses
   # it for its own shared memory too.

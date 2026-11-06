@@ -210,7 +210,7 @@ patches:
             restartPolicy: OnFailure
             containers:
             - name: trainer-worker
-              image: ghcr.io/gke-labs/open-rl/server:latest
+              image: ghcr.io/openrl-dev/openrl/server:latest
               imagePullPolicy: IfNotPresent
               command: ["uv", "run", "python", "-m", "server.training_requests_processor"]
               env:

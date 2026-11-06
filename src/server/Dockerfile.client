@@ -36,5 +36,13 @@ COPY . .
 # Expose source directories via PYTHONPATH instead of modifying .venv after COPY . .
 ENV PYTHONPATH="/app/src:/app/examples:/app:$PYTHONPATH"
 
+# Install the two projects now, so a container does not build them and byte-compile
+# their files on every start (8 s on an idle node, 27 s with a dozen clients
+# starting at once). UV_NO_SYNC keeps `uv run` from re-checking the environments.
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --extra cluster && \
+    uv --project examples sync --frozen
+ENV UV_NO_SYNC=1
+
 WORKDIR /app
 ENTRYPOINT ["uv", "run", "python", "scripts/run_training_e2e.py"]

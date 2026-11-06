@@ -106,7 +106,7 @@ class LabRubricReward:
 
     scores = json.loads((self.run_dir / "scores.json").read_text(encoding="utf-8"))
     reward, rubric_metrics = reward_from_scores(scores)
-    return reward, {**metrics, **rubric_metrics, "lab/graded": 1.0}
+    return reward, {**metrics, **rubric_metrics}
 
   def write_metadata(self, history: list[Message]) -> None:
     self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -123,9 +123,16 @@ def reward_from_scores(scores: dict[str, Any]) -> tuple[float, dict[str, float]]
   n_passed = int(scores.get("n_passed", 0) or 0)
   pass_fraction = n_passed / n_criteria if n_criteria else 0.0
   all_pass = float(bool(scores.get("all_pass")))
+  if n_criteria == 0:
+    # The judge returned no verdicts: a grading failure, not a graded zero.
+    # Criteria totals are left to the caller's defaults so it still counts in
+    # the pooled denominator like other failed episodes.
+    return 0.0, {"lab/all_pass": 0.0, "lab/reward_error": 1.0, "lab/graded": 0.0}
   return pass_fraction, {
     "lab/criteria_total": float(n_criteria),
     "lab/criteria_passed": float(n_passed),
     "lab/criteria_pass_fraction": pass_fraction,
     "lab/all_pass": all_pass,
+    "lab/reward_error": 0.0,
+    "lab/graded": 1.0,
   }

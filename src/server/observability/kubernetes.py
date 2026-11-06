@@ -34,16 +34,37 @@ def problem(status: dict) -> str | None:
   return None
 
 
-def gpu_capacity(node: dict, slices: list[dict]) -> int:
-  """A node using DRA publishes no nvidia.com/gpu capacity; its GPUs are the devices in its NVIDIA ResourceSlices. Only
-  each pool's newest generation counts: while the driver restarts, old and new generations coexist."""
-  name, capacity = node["metadata"]["name"], int((node["status"].get("capacity") or {}).get("nvidia.com/gpu", 0))
+def gpus(node: dict, slices: list[dict]) -> list[dict]:
+  """The GPUs a DRA node's NVIDIA ResourceSlices publish, each by the name and UUID a Workload's placement names it by,
+  with its product and memory. Only each pool's newest generation counts: while the driver restarts, old and new
+  generations coexist. A node without DRA publishes none here."""
+  name = node["metadata"]["name"]
   mine = [s["spec"] for s in slices if s["spec"].get("nodeName") == name and s["spec"].get("driver") == "gpu.nvidia.com"]
   newest: dict[str, int] = {}
   for pool in (spec["pool"] for spec in mine):
     newest[pool["name"]] = max(newest.get(pool["name"], 0), pool["generation"])
-  devices = sum(len(spec.get("devices") or []) for spec in mine if spec["pool"]["generation"] == newest[spec["pool"]["name"]])
-  return max(capacity, devices)
+  found = []
+  for spec in mine:
+    if spec["pool"]["generation"] != newest[spec["pool"]["name"]]:
+      continue
+    for device in spec.get("devices") or []:
+      attributes = device.get("attributes") or (device.get("basic") or {}).get("attributes") or {}  # resource.k8s.io v1, or v1beta1
+      capacity = device.get("capacity") or (device.get("basic") or {}).get("capacity") or {}
+      found.append(
+        {
+          "name": device.get("name"),
+          "uuid": (attributes.get("uuid") or {}).get("string"),
+          "product": (attributes.get("productName") or {}).get("string"),
+          "memory": (capacity.get("memory") or {}).get("value"),
+        }
+      )
+  return sorted(found, key=lambda d: d["name"] or "")
+
+
+def gpu_capacity(node: dict, slices: list[dict]) -> int:
+  """A node using DRA publishes no nvidia.com/gpu capacity; its GPUs are the devices in its NVIDIA ResourceSlices."""
+  capacity = int((node["status"].get("capacity") or {}).get("nvidia.com/gpu", 0))
+  return max(capacity, len(gpus(node, slices)))
 
 
 @cache
@@ -91,7 +112,7 @@ async def kubernetes() -> Cluster:
     labels, status = node["metadata"].get("labels") or {}, node["status"]
     row = {"name": node["metadata"]["name"], "ready": any(c["type"] == "Ready" and c["status"] == "True" for c in status.get("conditions") or [])}
     row.update(accelerator=labels.get("cloud.google.com/gke-accelerator") or labels.get("nvidia.com/gpu.product"))
-    row["gpu_capacity"] = gpu_capacity(node, slices or [])
+    row.update(gpu_capacity=gpu_capacity(node, slices or []), gpus=gpus(node, slices or []))
     result["nodes"].append(row | {"openrl_enabled": labels.get("openrl.io/enabled") == "true"})
   for item in workloads or []:
     spec, status = item["spec"], item.get("status") or {}

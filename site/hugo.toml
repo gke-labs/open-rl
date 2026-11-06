@@ -7,7 +7,7 @@ timeZone = "UTC"
 
 [params]
   description = "A self-hosted, Kubernetes-native post-training API for fine-tuning LLMs."
-  repo = "https://github.com/gke-labs/open-rl"
+  repo = "https://github.com/openrl-dev/openrl"
   ogImage = "img/og.jpg"
 
 [markup]

@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 from training.types import Datum, FFTConfig, FineTuningType, LoraConfig
 
 SHUTDOWN_REQUEST_ID = "SHUTDOWN_SENTINEL"
+# Rides in trace_context, which workers from before the stamp already accept; they forbid a new field.
+ENQUEUED_AT_KEY = "openrl-enqueued-at"
 
 
 class Command(BaseModel):
@@ -21,6 +23,12 @@ class Command(BaseModel):
   request_id: str
   model_id: str
   trace_context: dict[str, str] | None = None
+
+  @property
+  def enqueued_at(self) -> float | None:
+    """When the API server queued it, in Unix seconds, for the trainer's record of how long it waited."""
+    stamp = (self.trace_context or {}).get(ENQUEUED_AT_KEY)
+    return None if stamp is None else float(stamp)
 
 
 class CreateModel(Command):
