@@ -324,6 +324,20 @@ class StateStore(ABC):
     """The counts in a hash write_sync adds to."""
     pass
 
+  @abstractmethod
+  def set_field_sync(self, key: str, field: str, value: str, ttl_seconds: float) -> None:
+    """Set one field of a hash of strings; the hash expires a TTL after its last write."""
+    pass
+
+  @abstractmethod
+  def delete_field_sync(self, key: str, field: str) -> None:
+    pass
+
+  @abstractmethod
+  async def read_fields(self, key: str) -> dict[str, str]:
+    """Every field of a hash set_field_sync writes."""
+    pass
+
 
 class InMemoryStateStore(StateStore):
   def __init__(self):
@@ -332,6 +346,7 @@ class InMemoryStateStore(StateStore):
     self.sets: dict[str, set[str]] = {}
     self.lists: dict[str, list[str]] = {}
     self.hashes: dict[str, Counter[str]] = {}
+    self.fields: dict[str, dict[str, str]] = {}
 
   async def set_value(self, key: str, value: str, ttl_seconds: float | None = None) -> None:
     self.kv_store[key] = value
@@ -390,6 +405,15 @@ class InMemoryStateStore(StateStore):
 
   async def read_counts(self, key: str) -> dict[str, int]:
     return dict(self.hashes.get(key, {}))
+
+  def set_field_sync(self, key: str, field: str, value: str, ttl_seconds: float) -> None:
+    self.fields.setdefault(key, {})[field] = value
+
+  def delete_field_sync(self, key: str, field: str) -> None:
+    self.fields.get(key, {}).pop(field, None)
+
+  async def read_fields(self, key: str) -> dict[str, str]:
+    return dict(self.fields.get(key, {}))
 
 
 class RedisStateStore(StateStore):
@@ -451,6 +475,15 @@ class RedisStateStore(StateStore):
 
   async def read_counts(self, key: str) -> dict[str, int]:
     return {name: int(count) for name, count in (await self.redis.hgetall(key)).items()}
+
+  def set_field_sync(self, key: str, field: str, value: str, ttl_seconds: float) -> None:
+    self.sync_redis.pipeline(transaction=False).hset(key, field, value).expire(key, int(ttl_seconds)).execute()
+
+  def delete_field_sync(self, key: str, field: str) -> None:
+    self.sync_redis.hdel(key, field)
+
+  async def read_fields(self, key: str) -> dict[str, str]:
+    return await self.redis.hgetall(key)
 
 
 @cache

@@ -410,3 +410,73 @@ async def all_answered(test: SampleRecordTest, records: list[dict]) -> bool:
 
 if __name__ == "__main__":
   unittest.main()
+
+
+class LiveStateTest(unittest.TestCase):
+  """A worker's live entry: what it does now, written by the recorder the moment it changes."""
+
+  def setUp(self):
+    self.store = InMemoryStateStore()
+    self.rec = telemetry.Recorder("trainer", telemetry.Worker("trainer", "run-a"))
+    telemetry.buffer.clear()
+    self.addCleanup(telemetry.buffer.clear)  # an op test buffers its record; the next test must not count it
+    for target, value in ((telemetry, {"recorder": self.rec, "get_state_store": lambda: self.store}),):
+      for name, v in value.items():
+        patcher = patch.object(target, name, v)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+  def live(self) -> dict:
+    self.rec.write_live()
+    return json.loads(self.store.fields[telemetry.LIVE_KEY][self.rec.worker.record["id"]])
+
+  def test_a_phase_change_wakes_the_recorder_and_is_written(self):
+    telemetry.set_phase("waiting")
+    self.assertTrue(self.rec.changed.is_set())
+    self.assertEqual(self.live()["phase"], "waiting")
+
+  def test_a_turn_reports_waiting_then_on_gpu_then_ready(self):
+    phases = []
+
+    class Slot:
+      async def __aenter__(slot):
+        phases.append(self.live()["phase"])
+
+      async def __aexit__(slot, *exc):
+        return False
+
+    async def turn():
+      async with telemetry.gpu_turn(Slot()):
+        phases.append(self.live()["phase"])
+
+    asyncio.run(turn())
+    self.assertEqual(phases + [self.live()["phase"]], ["waiting", "on_gpu", "ready"])
+
+  def test_an_op_names_its_run_while_it_runs(self):
+    seen = {}
+
+    async def call():
+      seen.update(self.live()["current"])
+      return {}
+
+    command = types.SimpleNamespace(model_id="run-a", request_id="r1", op="forward_backward", forward_only=False, enqueued_at=None)
+    asyncio.run(telemetry.observe_operation(command, "run-a", call))
+    self.assertEqual((seen["run_id"], seen["op"]), ("run-a", "forward_backward"))
+    self.assertIsNone(self.live()["current"])
+
+  def test_in_flight_requests_are_counted_per_run(self):
+    for run in ("a", "a", "b"):
+      telemetry.sending(run)
+    telemetry.sent_done("a")
+    self.assertEqual({e["run_id"]: e["count"] for e in self.live()["in_flight"]}, {"a": 1, "b": 1})
+    telemetry.sent_done("a")
+    telemetry.sent_done("b")
+    self.assertEqual(self.live()["in_flight"], [])
+
+  def test_now_serves_fresh_workers_only(self):
+    store, at = InMemoryStateStore(), time.time()
+    for wid, age, phase in (("fresh", 1, "on_gpu"), ("stale", telemetry.LIVE_STALE_SECONDS + 5, "on_gpu"), ("gone", 1, "exited")):
+      store.set_field_sync(telemetry.LIVE_KEY, wid, json.dumps({"id": wid, "pod": wid, "phase": phase, "at": at - age}), 60)
+    with patch("server.observability.router.get_state_store", return_value=store):
+      body = TestClient(api_server.app).get("/api/v1/inspect/now").json()
+    self.assertEqual([w["id"] for w in body["workers"]], ["fresh"])
