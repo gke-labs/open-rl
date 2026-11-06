@@ -186,6 +186,76 @@ class SchedulerWorkerManagerTest(unittest.TestCase):
       env = {e["name"]: e.get("value") for e in pod["spec"]["template"]["spec"]["containers"][0]["env"]}
       self.assertEqual({k: env.get(k) for k in settings}, settings)
 
+  def test_the_temp_root_can_live_on_a_host_directory(self) -> None:
+    s = self.store_with("job-fft-1", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "full"})
+    host = "/mnt/stateful_partition/kube-ephemeral-ssd/openrl"
+    settings = {"OPEN_RL_TMP_DIR": "/mnt/shared/open-rl", "OPEN_RL_LOCAL_HOST_PATH": host, "OPEN_RL_SHARED_DIRS": "runs, other"}
+    with patch.dict(os.environ, settings), patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-fft-1", "trainer")
+      self.manager.ensure("job-fft-1", "sampler")
+    self.assertEqual(len(self.api.created), 2)
+    for pod in self.api.created:
+      spec = pod["spec"]["template"]["spec"]
+      mounts = [m for m in spec["containers"][0]["volumeMounts"] if m["name"] in ("shared-storage", "local-tmp")]
+      self.assertEqual(
+        mounts,
+        [
+          {"name": "shared-storage", "mountPath": "/mnt/shared"},
+          {"name": "local-tmp", "mountPath": "/mnt/shared/open-rl"},
+          {"name": "shared-storage", "mountPath": "/mnt/shared/open-rl/runs", "subPath": "open-rl/runs"},
+          {"name": "shared-storage", "mountPath": "/mnt/shared/open-rl/other", "subPath": "open-rl/other"},
+        ],
+        "one host mount for the temp root, so peft and sampler_lora share a mount and adapters move by rename",
+      )
+      volume = next(v["hostPath"] for v in spec["volumes"] if v["name"] == "local-tmp")
+      self.assertEqual(volume, {"path": host, "type": "DirectoryOrCreate"})
+
+  def test_runs_stay_on_the_shared_volume_by_default(self) -> None:
+    s = self.store_with("job-fft-1", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "full"})
+    settings = {"OPEN_RL_TMP_DIR": "/mnt/shared/open-rl", "OPEN_RL_LOCAL_HOST_PATH": "/ssd"}
+    with patch.dict(os.environ, settings), patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-fft-1", "trainer")
+    mounts = self.api.created[0]["spec"]["template"]["spec"]["containers"][0]["volumeMounts"]
+    self.assertEqual([m.get("subPath") for m in mounts if m["name"] == "shared-storage"], [None, "open-rl/runs"])
+
+  def test_a_temp_root_outside_the_shared_volume_is_refused(self) -> None:
+    s = self.store_with("job-fft-1", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "full"})
+    with (
+      patch.dict(os.environ, {"OPEN_RL_LOCAL_HOST_PATH": "/ssd"}),
+      patch("server.worker_manager.get_state_store", return_value=s),
+      self.assertRaises(ValueError),
+    ):
+      self.manager.ensure("job-fft-1", "trainer")
+
+  def test_a_dispatcher_shares_the_host_temp_root_and_runs_on_its_node(self) -> None:
+    from server.scheduler_worker_manager import dispatcher_body
+
+    settings = {
+      "OPEN_RL_TMP_DIR": "/mnt/shared/open-rl",
+      "OPEN_RL_LOCAL_HOST_PATH": "/ssd",
+      "OPEN_RL_LOCAL_NODE_SELECTOR": "cloud.google.com/gke-accelerator=nvidia-h100-80gb",
+    }
+    with patch.dict(os.environ, settings):
+      spec = dispatcher_body("sampler-x", "job-1")["spec"]["template"]["spec"]
+    dispatcher = next(c for c in spec["containers"] if c["name"] == "dispatcher")
+    self.assertIn({"name": "local-tmp", "mountPath": "/mnt/shared/open-rl"}, dispatcher["volumeMounts"], "it writes the revision its samplers read")
+    self.assertEqual(spec["nodeSelector"], {"cloud.google.com/gke-accelerator": "nvidia-h100-80gb"})
+    self.assertIn({"name": "local-tmp", "hostPath": {"path": "/ssd", "type": "DirectoryOrCreate"}}, spec["volumes"])
+
+  def test_a_dispatcher_keeps_the_shared_volume_by_default(self) -> None:
+    from server.scheduler_worker_manager import dispatcher_body
+
+    spec = dispatcher_body("sampler-x", "job-1")["spec"]["template"]["spec"]
+    self.assertNotIn("nodeSelector", spec)
+    self.assertEqual([v["name"] for v in spec["volumes"]], ["router", "shared-storage"])
+
+  def test_everything_stays_on_the_shared_volume_by_default(self) -> None:
+    s = self.store_with("job-fft-1", {"base_model": "Qwen/Qwen3-0.6B", "fine_tuning_type": "full"})
+    with patch("server.worker_manager.get_state_store", return_value=s):
+      self.manager.ensure("job-fft-1", "trainer")
+    spec = self.api.created[0]["spec"]["template"]["spec"]
+    self.assertEqual([v["name"] for v in spec["volumes"]], ["shared-storage"])
+
   def test_samplers_keep_the_vllm_compile_cache_on_the_shared_volume(self) -> None:
     s = self.store_with("job-lora-1", {"base_model": "Qwen/Qwen2.5-0.5B", "fine_tuning_type": "lora"})
     with patch("server.worker_manager.get_state_store", return_value=s):
