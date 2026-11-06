@@ -34,6 +34,9 @@ When defining or refactoring classes, **always explicitly initialize all instanc
 - **Correct**: `self._my_flag = False` in `__init__`, then `if self._my_flag:` later.
 - **Avoid**: `if getattr(self, "_my_flag", False):` without explicit initialization.
 
+### Commit Sign-off (`Rule`)
+Every commit must carry a DCO `Signed-off-by` line (see `CONTRIBUTING.md`): commit with `git commit -s`. The `DCO` check blocks pull requests that contain unsigned commits.
+
 ### Linter & Formatting Checks (`Rule`)
 Before creating commits or opening pull requests, **always run linter and formatting checks across the repository from the root directory (`/open-rl`)**:
 ```bash

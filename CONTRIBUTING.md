@@ -140,15 +140,20 @@ pre-commit install
 
 ## Sign Your Commits
 
-Contributions to this project must be accompanied by a
-[Contributor License Agreement](https://cla.developers.google.com/about) (CLA). You (or your
-employer) retain the copyright to your contribution; the CLA simply gives us permission to use
-and redistribute your contributions as part of the project.
+OpenRL uses the [Developer Certificate of Origin](https://developercertificate.org/) (DCO).
+Signing off a commit certifies that you wrote the change, or otherwise have the right to submit
+it, under the project's Apache-2.0 license. You keep the copyright to your contribution.
 
-If you or your current employer have already signed the Google CLA (even if it was for a
-different project), you probably don't need to do it again.
+Sign off every commit with `git commit -s` (or `--signoff`), which appends a line like:
 
-Visit <https://cla.developers.google.com/> to see your current agreements or to sign a new one.
+```text
+Signed-off-by: Jane Doe <jane@example.com>
+```
+
+The name and email must match the commit author (`git config user.name` and `user.email`;
+GitHub noreply addresses work). The `DCO` check on every pull request fails if any commit is
+missing the line. To fix commits already on your branch, run `git rebase --signoff main` and
+force-push.
 
 ## Pull Request Checklist
 
@@ -156,7 +161,7 @@ When you submit your pull request, our automated systems will run checks on your
 require that your pull request passes these checks. Before submitting, please check the
 following locally:
 
-* [ ] You have signed the [CLA](https://cla.developers.google.com/).
+* [ ] Every commit is signed off (`git commit -s`), so the `DCO` check passes.
 * [ ] `make lint` passes (Ruff lint and format checks).
 * [ ] `make test` passes.
 * [ ] New code has tests covering it.
