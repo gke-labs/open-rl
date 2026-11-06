@@ -174,6 +174,9 @@ def make_engine(sleep_mode: bool, is_lora: bool) -> Any:
   from vllm.engine.arg_utils import AsyncEngineArgs
   from vllm.engine.async_llm_engine import AsyncLLMEngine
 
+  # vLLM posts hardware, model and config details to stats.vllm.ai unless told not to; the engine subprocess
+  # inherits this. Operators can set the variable to 0 to opt back in.
+  os.environ.setdefault("VLLM_NO_USAGE_STATS", "1")
   args = engine_args(is_lora, sleep_mode=sleep_mode)
   if transfer := args.get("weight_transfer_config"):
     args["weight_transfer_config"] = WeightTransferConfig(**transfer)
