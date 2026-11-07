@@ -26,18 +26,28 @@ a Job is matched to its run.
   presets. Start submits one client Job per row and count, each running the
   repo's `fft-gsm8k-rl` or `lora-gsm8k-rl` scenario with
   `TINKER_TAGS=openrl.recipe=rl`. Stop releases the run's workers through
-  `delete_model` and deletes the Job. Jobs are listed newest first; sweeps get
-  a letter (A is the newest) so job numbers stay unambiguous across sweeps.
-- **Fleet.** Counts, the job table with step progress, and the pool: a box
-  per node with one row per GPU and a chip per worker holding it. A chip is
-  lit while its worker is computing (a time-slicer turn, or a shared LoRA
-  runtime serving one of its runs) and soft while it waits for its turn.
-  Below the pool: the queue (jobs without a GPU yet; outlined while the pod
-  is still starting) and the share of the pool's GPU time held by a job since
-  the first submit, computed from the placements the server recorded. Click
-  a GPU row or a job row to open it on the Timeline tab. Counts, bars and
-  states move to each new poll instead of jumping; a worker that gets a GPU
-  flies from its job's tag in the queue to its row.
+  `delete_model` and deletes the Job. Under the spec, cards show the recipe
+  every job runs (GSM8K, GRPO, the batch, sampling and learning rates, from
+  `RECIPE` in `app.py`, the same settings the Jobs get) and sum up the spec as
+  it is edited. The job list below is collapsed until opened; jobs are listed
+  newest first, and sweeps get a letter (A is the newest) so job numbers stay
+  unambiguous across sweeps.
+- **Fleet.** A headline (how many jobs share how many GPUs), counts (running,
+  the queue while anything waits, done, steps done), the job table, and the
+  pool: a box per node with one row per GPU and one chip per job a worker
+  serves, so the jobs on a shared LoRA runtime show one by one like full
+  fine-tuning workers. A chip is lit while that job's work is on the GPU (a
+  time-slicer turn, or the job's ops on a shared runtime) and outlined while
+  it waits for its turn. Below the pool: the queue (only while a job waits)
+  and the share of the pool's GPU time held by a job since the first submit,
+  computed from the placements the server recorded. Click a GPU row or a job
+  row to open it on the Timeline tab. Counts, bars and states move to each
+  new poll instead of jumping; a worker that gets a GPU flies from its job's
+  tag in the queue to its row. The sweep selector opens on no sweep: the pool
+  with no job's counts or chips, any worker holding a GPU drawn as a neutral
+  chip, the shot before a demo starts. Starting a sweep switches it to the
+  active sweeps; it also offers every sweep or one sweep, and `?sweep=active`,
+  `?sweep=all` or `?sweep=<run>` opens on those.
 - **Timeline.** One occupancy trace per GPU: 1 while a worker is on it,
   coloured by the holder, 0 when idle; the thin band at the base is a worker
   that holds the GPU between time-slicer turns. The default window, fit,
@@ -54,6 +64,13 @@ a Job is matched to its run.
   and output length, one line per job in its colour with the sweep's mean on
   top, or one job alone. Read from the `metrics.jsonl` the client writes to
   the log directory the app assigned it (`RUNS_ROOT/<job>`).
+
+## Live state
+
+The lights and the timeline's current turn come from `/api/v1/inspect/now`,
+polled twice a second, which serves each worker's state as it wrote it the
+moment it changed. On an API server without that endpoint, the page replays
+the activity history instead, about 8 s behind.
 
 ## Presenting
 

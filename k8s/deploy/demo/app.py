@@ -46,21 +46,28 @@ APP_LABEL = "openrl-demo"
 RUN_LABEL = "openrl.io/demo-run"
 HERE = Path(__file__).parent
 
+# Every client Job runs the e2e script's GSM8K RL scenario (tinker_cookbook's math_rl recipe) with these settings;
+# the Sweep tab shows RECIPE under the spec, so what it says is what the Jobs run.
+GROUP_SIZE, GROUPS_PER_BATCH, MAX_TOKENS = 8, 8, 512
+RECIPE = {
+  "dataset": "GSM8K",
+  "group_size": GROUP_SIZE,
+  "groups_per_batch": GROUPS_PER_BATCH,
+  "max_tokens": MAX_TOKENS,
+  "temperature": 1.0,  # run_training_e2e.run_gsm8k_rl
+  "learning_rate": {"lora": "1e-4", "fft": "1e-5"},  # run_training_e2e.run_gsm8k_rl
+  "lora_rank": 32,  # tinker_cookbook math_rl CLIConfig default
+  "loss": "importance sampling",  # tinker_cookbook math_rl CLIConfig default, with kl_penalty_coef 0
+}
+
 PRESETS = {
-  "keynote-20": {
+  "mixed-20": {
     "steps": 4,
     "jobs": [
       {"kind": "lora", "model": "google/gemma-4-e2b", "count": 5, "steps": 8},
       {"kind": "lora", "model": "Qwen/Qwen3-0.6B", "count": 5, "steps": 8},
       {"kind": "fft", "model": "google/gemma-4-e2b", "count": 5, "steps": 4},
       {"kind": "fft", "model": "Qwen/Qwen3-0.6B", "count": 5, "steps": 4},
-    ],
-  },
-  "qwen-8": {
-    "steps": 5,
-    "jobs": [
-      {"kind": "lora", "model": "Qwen/Qwen3-0.6B", "count": 4, "steps": 5},
-      {"kind": "fft", "model": "Qwen/Qwen3-0.6B", "count": 4, "steps": 5},
     ],
   },
   "smoke-2": {"steps": 2, "jobs": [{"kind": "fft", "model": "Qwen/Qwen3-0.6B", "count": 2, "steps": 2}]},
@@ -111,9 +118,9 @@ def job_manifest(run: str, job: str, kind: str, model: str, steps: int, seed: in
                 f"log_dir={RUNS_ROOT}/{job}",
                 f"base_model={model}",
                 f"steps={steps}",
-                "group_size=8",
-                "groups_per_batch=8",
-                "max_tokens=512",
+                f"group_size={GROUP_SIZE}",
+                f"groups_per_batch={GROUPS_PER_BATCH}",
+                f"max_tokens={MAX_TOKENS}",
                 f"extra=seed={seed}",
               ],
               # openrl.recipe=rl makes the API server start the sampler with the trainer instead of on the first sample
@@ -319,7 +326,7 @@ async def metrics(jobs: str):
 
 @app.get("/api/sweep/presets")
 async def presets():
-  return {"presets": PRESETS, "namespace": NAMESPACE, "cluster": CLUSTER_NAME}
+  return {"presets": PRESETS, "recipe": RECIPE, "namespace": NAMESPACE, "cluster": CLUSTER_NAME}
 
 
 @app.get("/api/sweep/jobs")
@@ -329,7 +336,7 @@ async def jobs():
 
 @app.post("/api/sweep/start")
 async def start(body: dict):
-  run = re.sub(r"[^a-z0-9-]", "-", str(body.get("run") or time.strftime("demo-%H%M%S")).lower())[:30].strip("-")
+  run = re.sub(r"[^a-z0-9-]", "-", str(body.get("run") or time.strftime("sweep-%H%M%S")).lower())[:30].strip("-")
   specs = body.get("jobs") or []
   if not specs:
     raise HTTPException(400, "no jobs")
