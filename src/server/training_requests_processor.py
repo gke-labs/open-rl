@@ -84,6 +84,12 @@ def older_versions(path: str, keep: int) -> list[str]:
   return versions[: max(0, len(versions) - keep)]
 
 
+# How long, after the batch a turn was taken for, a time-sliced trainer keeps taking requests that queued for its model
+# before it releases the GPU. Requests that arrive while the turn waits or runs (an optim_step sent right after its forward_backward) join it
+# instead of waiting for a turn of their own behind every other worker on the GPU. 0 turns the drain off.
+TURN_DRAIN_SECONDS = float(os.getenv("OPEN_RL_TURN_DRAIN_SECONDS", "5"))
+
+
 class TrainingRequestsProcessor:
   """Drains training commands for one worker.
 
@@ -120,6 +126,7 @@ class TrainingRequestsProcessor:
     self.snapshot_registered = False
     self.state: StateStore | None = None  # opened on first use; tests inject one
     self.ready_announced_at = float("-inf")
+    self.shutdown_drained = False  # a shutdown_workers taken while draining a turn; run_once honours it after answering
 
   async def run(self) -> None:
     print(f"[WORKER] Training requests processor started (model={self.model_id} active_set={self.active_tenant_set_id}).")
@@ -199,6 +206,17 @@ class TrainingRequestsProcessor:
       batch = await asyncio.to_thread(broadcast_object, batch)
     return batch or []
 
+  async def queued_now(self, deadline: float) -> list[dict[str, Any]]:
+    """Requests already queued for this model, without waiting for one, or none once the deadline has passed. Rank 0
+    decides and fans the result out, as next_batch does, so every rank runs the same sequence."""
+    batch = None
+    if is_primary():
+      ready = self.dedicated and time.monotonic() < deadline and await self.store.queued(self.model_id) > 0
+      batch = await self.store.get_requests_for_model(self.model_id) if ready else []
+    if is_distributed():
+      batch = await asyncio.to_thread(broadcast_object, batch)
+    return batch or []
+
   async def fetch_requests(self) -> list[dict[str, Any]]:
     if self.dedicated:
       return await self.store.get_requests_for_model(self.model_id)
@@ -243,7 +261,7 @@ class TrainingRequestsProcessor:
       # from restarting on fresh weights mid-run; the run fails on its next call.
       print(f"[WORKER] Time slicer could not park this process: {self.time_slicer.faulted}. Exiting to free the accelerator.")
       await self.exit_gracefully(unregister=False)
-    if shutdown:
+    if shutdown or self.shutdown_drained:
       await self.exit_gracefully()
 
   async def answer_batch(self, requests: list[dict[str, Any]]) -> tuple[list[tuple[str | None, dict[str, Any]]], Exception | None]:
@@ -278,6 +296,22 @@ class TrainingRequestsProcessor:
         try:
           for request in gpu_reqs:
             results.append(await self.handle_request(request))
+          # Requests that queued while this turn waited or ran join it. The budget counts from here, after the batch
+          # the turn was taken for, which on a busy GPU can itself run far longer than the budget; it bounds only the
+          # work the drain adds. A save ends the drain: as within any batch, saves run after its GPU ops, so nothing
+          # queued after a save may run before it.
+          deadline = time.monotonic() + TURN_DRAIN_SECONDS
+          while not save_reqs:
+            more = await self.queued_now(deadline)
+            if not more:
+              break
+            self.shutdown_drained |= any(r.get("op") == "shutdown_workers" for r in more)
+            more = [r for r in more if r.get("op") != "shutdown_workers"]
+            requests.extend(more)  # so a failure answers them too
+            popped(more)
+            save_reqs.extend(r for r in more if r.get("op") in save_ops)
+            for request in (r for r in more if r.get("op") not in save_ops):
+              results.append(await self.handle_request(request))
         finally:
           await asyncio.to_thread(self.worker.sleep)
 
